@@ -1,0 +1,311 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap");
+@import "tailwindcss";
+
+:root {
+  --bg: #f3f5fa;
+  --surface: #ffffff;
+  --surface-hover: #edf1f9;
+  --border: #d4dae5;
+  --text-primary: #121823;
+  --text-secondary: #5f6573;
+  --primary: #00b4d8;
+  --success: #10b981;
+  --error: #ef4444;
+  --warning: #f59e0b;
+}
+
+.dark {
+  --bg: #0a0a0e;
+  --surface: #151519;
+  --surface-hover: #1a1a1e;
+  --border: #2a2d33;
+  --text-primary: #e4e6ed;
+  --text-secondary: #a0a3b0;
+  --primary: #00b4d8;
+  --success: #10b981;
+  --error: #ef4444;
+  --warning: #f59e0b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: "Inter", system-ui, sans-serif;
+  font-size: 14px;
+  background: var(--bg);
+  color: var(--text-primary);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body.column-resize-active {
+  cursor: col-resize;
+  user-select: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.nav-button {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+  background: transparent;
+  padding: 0.7rem 0.75rem;
+  font-weight: 500;
+  transition: all 140ms ease;
+}
+
+.nav-button:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.nav-button-active {
+  border-color: color-mix(in oklab, var(--primary) 38%, transparent);
+  background: color-mix(in oklab, var(--primary) 16%, transparent);
+  color: var(--primary);
+}
+
+.group-capsule-button {
+  width: 100%;
+  max-width: 206px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, var(--border) 86%, transparent);
+  background: color-mix(in oklab, var(--surface) 90%, var(--bg) 10%);
+  color: var(--text-secondary);
+  padding: 0.52rem 0.95rem;
+  font-size: 0.86rem;
+  font-weight: 600;
+  transition: all 150ms ease;
+}
+
+.group-capsule-button:hover {
+  border-color: color-mix(in oklab, var(--primary) 36%, var(--border) 64%);
+  color: var(--text-primary);
+}
+
+.group-capsule-button-active {
+  border-color: color-mix(in oklab, var(--primary) 58%, transparent);
+  background: color-mix(in oklab, var(--primary) 16%, var(--surface) 84%);
+  color: var(--primary);
+}
+
+.group-capsule-count {
+  min-width: 1.9rem;
+  text-align: center;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
+  background: color-mix(in oklab, var(--surface) 72%, var(--bg) 28%);
+  color: var(--text-primary);
+  padding: 0.08rem 0.45rem;
+  font-size: 0.74rem;
+}
+
+.column-resize-handle {
+  width: 8px;
+  min-width: 8px;
+  height: 20px;
+  border: 0;
+  border-radius: 3px;
+  background: color-mix(in oklab, var(--text-secondary) 46%, transparent);
+  cursor: col-resize;
+  opacity: 0.48;
+  transition: opacity 120ms ease;
+}
+
+.column-resize-handle:hover {
+  opacity: 0.95;
+}
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: color-mix(in oklab, var(--surface) 86%, var(--bg) 14%);
+  color: var(--text-secondary);
+  padding: 0.48rem 0.65rem;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+.filter-chip-open {
+  border-color: color-mix(in oklab, var(--primary) 55%, var(--border) 45%);
+}
+
+.filter-select-button,
+.filter-date {
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  outline: none;
+}
+
+.filter-select-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-width: 220px;
+  cursor: pointer;
+}
+
+.filter-menu {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  left: 0;
+  z-index: 30;
+  width: 280px;
+  max-width: min(380px, calc(100vw - 2rem));
+  max-height: 320px;
+  overflow: auto;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow:
+    0 14px 28px -20px rgba(0, 0, 0, 0.8),
+    0 10px 20px -16px rgba(0, 0, 0, 0.65);
+}
+
+.filter-menu-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  padding: 0.55rem 0.7rem;
+  cursor: pointer;
+}
+
+.filter-menu-item:hover {
+  background: var(--surface-hover);
+}
+
+.filter-menu-item-active {
+  color: var(--primary);
+  background: color-mix(in oklab, var(--primary) 14%, transparent);
+}
+
+.filter-date {
+  color-scheme: light;
+}
+
+.dark .filter-date {
+  color-scheme: dark;
+}
+
+select,
+option {
+  background: var(--surface);
+  color: var(--text-primary);
+}
+
+.pager-button {
+  min-width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-secondary);
+  transition: all 140ms ease;
+}
+
+.pager-button:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.pager-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pager-button-active {
+  border-color: color-mix(in oklab, var(--primary) 60%, transparent);
+  background: color-mix(in oklab, var(--primary) 24%, transparent);
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.icon-button {
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-secondary);
+  padding: 0.4rem 0.65rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.icon-button:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.table-head {
+  background: color-mix(in oklab, var(--surface) 84%, var(--bg) 16%);
+}
+
+.table-row:nth-child(odd) {
+  background: color-mix(in oklab, var(--surface) 90%, var(--bg) 10%);
+}
+
+.mobile-nav {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+  padding: 0.5rem 0.25rem;
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
+.mobile-nav-active {
+  border-color: color-mix(in oklab, var(--primary) 38%, transparent);
+  background: color-mix(in oklab, var(--primary) 16%, transparent);
+  color: var(--primary);
+}
+
+.form-input {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: color-mix(in oklab, var(--surface) 92%, black 8%);
+  color: var(--text-primary);
+  padding: 0.55rem 0.75rem;
+  outline: none;
+}
+
+.form-input:focus {
+  border-color: var(--primary);
+}

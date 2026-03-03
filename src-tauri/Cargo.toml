@@ -1,0 +1,24 @@
+[package]
+name = "staff-kit"
+version = "0.1.0"
+description = "Staff Kit desktop employee management tool"
+authors = ["Staff Kit Team"]
+edition = "2021"
+
+[package.metadata]
+
+[lib]
+name = "staff_kit_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.0.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0.0", features = [] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+rusqlite = { version = "0.32", features = ["bundled"] }
+calamine = "0.31"
+chrono = { version = "0.4", features = ["serde"] }
+tauri-plugin-dialog = "2"
