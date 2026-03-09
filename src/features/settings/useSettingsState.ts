@@ -164,15 +164,28 @@ export function useSettingsState({
             setDbPathMessage(`⚠️ Click "Confirm Move" to copy DB to: ${folder}`)
             return
         }
-        // Step 2 — actually move
+        // Step 2 — actually move/link
         try {
             setMovingDb(true)
             setDbPathMessage("")
             setDbMovePending(false)
-            const newPath = await staffApi.moveDatabaseTo(folder)
-            setDbPathMessage(`✅ Database copied to: ${newPath}. Restart app on all machines to switch to the new location.`)
+            const result = await staffApi.moveDatabaseTo(folder)
+            if (result.startsWith("LINKED:")) {
+                const path = result.slice("LINKED:".length)
+                setDbPathMessage(
+                    `✅ Linked to shared database at: ${path}\n` +
+                    `Please restart the app to load the shared data.`
+                )
+            } else {
+                const path = result.startsWith("COPIED:") ? result.slice("COPIED:".length) : result
+                setDbPathMessage(
+                    `✅ Database copied to: ${path}\n` +
+                    `Restart app on all machines to switch to the new location.`
+                )
+            }
         } catch (error) {
             setDbPathMessage(`❌ ${getErrorMessage(error)}`)
+            setDbMovePending(false)
         } finally {
             setMovingDb(false)
         }
