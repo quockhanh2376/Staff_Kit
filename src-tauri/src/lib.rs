@@ -260,6 +260,15 @@ fn get_db_custom_path(app: tauri::AppHandle) -> Result<Option<String>, String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            // Show the main window after WebView2 has finished initializing.
+            // We set visible:false in tauri.conf.json to avoid the black flash
+            // that appears before the first frame is rendered.
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             ping,
             init_database,
