@@ -307,14 +307,34 @@ export function SettingsView({
                                     placeholder="D:\OneDrive - Company\StaffKit"
                                     disabled={settings.isMovingDb}
                                 />
-                                <button
-                                    className="mt-2 rounded-[8px] border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)] disabled:opacity-50"
-                                    onClick={() => void settings.handleMoveDatabase()}
-                                    type="button"
-                                    disabled={settings.isMovingDb || !settings.dbCustomPathInput.trim()}
-                                >
-                                    {settings.isMovingDb ? "Moving..." : "Move Database Here"}
-                                </button>
+                                {settings.dbMovePending ? (
+                                    <div className="mt-2 flex gap-2">
+                                        <button
+                                            className="rounded-[8px] border border-green-500/60 bg-green-500/15 px-3 py-1.5 text-xs font-semibold text-green-400 transition hover:bg-green-500/25 disabled:opacity-50"
+                                            onClick={() => void settings.handleMoveDatabase()}
+                                            type="button"
+                                            disabled={settings.isMovingDb}
+                                        >
+                                            {settings.isMovingDb ? "Moving..." : "✅ Confirm Move"}
+                                        </button>
+                                        <button
+                                            className="rounded-[8px] border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--text-secondary)] transition hover:bg-[var(--surface-hover)]"
+                                            onClick={settings.handleMoveDatabaseCancel}
+                                            type="button"
+                                        >
+                                            Cancel
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <button
+                                        className="mt-2 rounded-[8px] border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)] disabled:opacity-50"
+                                        onClick={() => void settings.handleMoveDatabase()}
+                                        type="button"
+                                        disabled={settings.isMovingDb || !settings.dbCustomPathInput.trim()}
+                                    >
+                                        Move Database Here
+                                    </button>
+                                )}
                                 {settings.dbPathMessage && (
                                     <div className="mt-2 rounded-[6px] border border-[var(--primary)]/30 bg-[var(--primary)]/8 px-2 py-1.5 text-[11px] text-[var(--text-primary)]">
                                         {settings.dbPathMessage}

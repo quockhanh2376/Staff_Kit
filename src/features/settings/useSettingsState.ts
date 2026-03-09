@@ -38,6 +38,7 @@ export function useSettingsState({
     const [dbCustomPathInput, setDbCustomPathInput] = useState("")
     const [isMovingDb, setMovingDb] = useState(false)
     const [dbPathMessage, setDbPathMessage] = useState("")
+    const [dbMovePending, setDbMovePending] = useState(false)
 
     // Load backup settings + current DB custom path
     useEffect(() => {
@@ -157,20 +158,29 @@ export function useSettingsState({
             setDbPathMessage("Please enter a folder path.")
             return
         }
-        const confirmed = window.confirm(
-            `Move database to:\n${folder}\n\nThe current database will be copied to the new location. All users should point to this shared folder.`
-        )
-        if (!confirmed) return
+        // Step 1 — show inline confirmation
+        if (!dbMovePending) {
+            setDbMovePending(true)
+            setDbPathMessage(`⚠️ Click "Confirm Move" to copy DB to: ${folder}`)
+            return
+        }
+        // Step 2 — actually move
         try {
             setMovingDb(true)
             setDbPathMessage("")
+            setDbMovePending(false)
             const newPath = await staffApi.moveDatabaseTo(folder)
-            setDbPathMessage(`✅ Database moved to: ${newPath}. Restart app for all users.`)
+            setDbPathMessage(`✅ Database copied to: ${newPath}. Restart app on all machines to switch to the new location.`)
         } catch (error) {
-            setGlobalError(getErrorMessage(error))
+            setDbPathMessage(`❌ ${getErrorMessage(error)}`)
         } finally {
             setMovingDb(false)
         }
+    }
+
+    const handleMoveDatabaseCancel = () => {
+        setDbMovePending(false)
+        setDbPathMessage("")
     }
 
     const handleResetAllData = async () => {
@@ -219,6 +229,8 @@ export function useSettingsState({
         setDbCustomPathInput,
         isMovingDb,
         dbPathMessage,
+        dbMovePending,
         handleMoveDatabase,
+        handleMoveDatabaseCancel,
     }
 }

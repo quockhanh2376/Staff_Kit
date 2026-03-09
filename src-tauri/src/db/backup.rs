@@ -161,6 +161,11 @@ pub fn set_db_custom_path(app: &AppHandle, new_path: Option<&str>) -> Result<(),
 /// Change DB to a new location: copies current DB file there, then updates the setting.
 /// Returns the new full DB file path.
 pub fn move_database_to(app: &AppHandle, target_folder: &str) -> Result<String, String> {
+    let target_folder = target_folder.trim();
+    if target_folder.is_empty() {
+        return Err("Target folder path cannot be empty.".to_string());
+    }
+
     let current_path = super::resolve_database_path(app)?;
 
     let target_dir = PathBuf::from(target_folder);
@@ -169,7 +174,14 @@ pub fn move_database_to(app: &AppHandle, target_folder: &str) -> Result<String, 
 
     let target_path = target_dir.join(DB_FILE_NAME);
 
-    // Copy current DB to new location (keep old one as fallback)
+    // Checkpoint WAL fully BEFORE copying so the copied file is complete
+    {
+        let conn = super::open_encrypted_connection(&current_path)?;
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+            .map_err(|err| format!("failed to checkpoint WAL before move: {err}"))?;
+    }
+
+    // Copy current DB to new location (keep old one as fallback until restart)
     fs::copy(&current_path, &target_path)
         .map_err(|err| format!("failed to copy database to new location: {err}"))?;
 
