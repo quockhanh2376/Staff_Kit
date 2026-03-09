@@ -4,6 +4,33 @@
   sqliteVersion: string
 }
 
+export type BackupSettings = {
+  backupDirectoryPath: string
+  autoBackupEnabled: boolean
+  retentionFiles: number
+  autoBackupIntervalDays: number
+  autoBackupRetentionDays: number
+}
+
+export type SnapshotInfo = {
+  filename: string
+  label: string
+  timestamp: string
+  sizeMb: number
+  fullPath: string
+}
+
+export type BackupRunResult = {
+  backupFilePath: string
+  retainedFiles: number
+  performed: boolean
+}
+
+export type BackupSettingsUpdateInput = {
+  backupDirectoryPath: string
+  autoBackupEnabled: boolean
+}
+
 export type EmployeeRecord = {
   id: number
   employeeId: string
@@ -42,6 +69,8 @@ export type EmployeeQueryInput = {
   staffGroup?: string | null
   startDateFrom?: string | null
   startDateTo?: string | null
+  sortKey?: string | null
+  sortDirection?: "asc" | "desc" | null
   limit?: number
   offset?: number
 }
@@ -57,21 +86,52 @@ export type LocalAccountRecord = {
   id: number
   accountKey: string
   displayName: string
+  username: string
   role: "admin" | "user"
   isActive: boolean
+  forcePasswordReset: boolean
   createdAt: string
   updatedAt: string
 }
 
 export type LocalAccountCreateInput = {
   displayName: string
+  username: string
+  password?: string | null
+  recoveryCode?: string | null
   role: "admin" | "user"
 }
 
 export type LocalAccountUpdateInput = {
   id: number
   displayName: string
+  username: string
   role: "admin" | "user"
+}
+
+export type LocalAccountLoginInput = {
+  username: string
+  password: string
+}
+
+export type LocalPasswordChangeInput = {
+  accountId: number
+  currentPassword: string
+  newPassword: string
+  newRecoveryCode?: string | null
+}
+
+export type LocalPasswordResetInput = {
+  adminAccountId: number
+  targetAccountId: number
+  newPassword: string
+  newRecoveryCode?: string | null
+}
+
+export type LocalForgotPasswordInput = {
+  username: string
+  recoveryCode: string
+  newPassword: string
 }
 
 export type EmployeePayload = {
@@ -94,6 +154,11 @@ export type EmployeePayload = {
   dynamicFields?: Record<string, string> | null
 }
 
+export type MoveEmployeesGroupInput = {
+  employeeIds: number[]
+  targetStaffGroup: string
+}
+
 export type EmployeeColumnDefinition = {
   key: string
   label: string
@@ -108,18 +173,22 @@ export type EmployeeColumnUpsertInput = {
 export type TeamRecord = {
   id: number
   name: string
+  parentId: number | null
+  parentName: string | null
   memberCount: number
 }
 
 export type TeamUpsertInput = {
   id?: number | null
   name: string
+  parentName?: string | null
 }
 
 export type ImportExcelInput = {
   filePath?: string | null
   filePaths?: string[] | null
   selectedColumnKeys?: string[] | null
+  targetStaffGroup?: string | null
 }
 
 export type ImportColumnOption = {
@@ -151,5 +220,30 @@ export type ImportReport = {
   updated: number
   skipped: number
   failed: number
+  errors: ImportErrorItem[]
+}
+
+export type FieldChange = {
+  fieldKey: string
+  fieldLabel: string
+  oldValue: string | null
+  newValue: string | null
+}
+
+export type ImportPreviewRow = {
+  rowNumber: number
+  employeeId: string
+  fullName: string
+  isUpdate: boolean
+  changes: FieldChange[]
+}
+
+export type ImportPreviewResult = {
+  sourceFiles: string[]
+  sheetName: string
+  previewRows: ImportPreviewRow[]
+  totalChanges: number
+  totalNew: number
+  totalUpdates: number
   errors: ImportErrorItem[]
 }

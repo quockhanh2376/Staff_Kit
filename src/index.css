@@ -2,29 +2,33 @@
 @import "tailwindcss";
 
 :root {
-  --bg: #f3f5fa;
+  --bg: #f1f4f2;
   --surface: #ffffff;
-  --surface-hover: #edf1f9;
-  --border: #d4dae5;
-  --text-primary: #121823;
-  --text-secondary: #5f6573;
-  --primary: #00b4d8;
+  --surface-hover: #eaf4eb;
+  --border: #cfd9d0;
+  --text-primary: #111a14;
+  --text-secondary: #4f5a53;
+  --primary: #16a34a;
   --success: #10b981;
   --error: #ef4444;
   --warning: #f59e0b;
+  --highlight-bg: #d1fae5;
+  --highlight-text: #065f46;
 }
 
 .dark {
-  --bg: #0a0a0e;
-  --surface: #151519;
-  --surface-hover: #1a1a1e;
-  --border: #2a2d33;
-  --text-primary: #e4e6ed;
-  --text-secondary: #a0a3b0;
-  --primary: #00b4d8;
+  --bg: #070d0b;
+  --surface: #0e1a12;
+  --surface-hover: #142b1a;
+  --border: #1e3626;
+  --text-primary: #edfff3;
+  --text-secondary: #93c4a4;
+  --primary: #22c55e;
   --success: #10b981;
   --error: #ef4444;
   --warning: #f59e0b;
+  --highlight-bg: rgba(34, 197, 94, 0.18);
+  --highlight-text: #86efac;
 }
 
 * {
@@ -40,7 +44,7 @@ body,
 body {
   margin: 0;
   font-family: "Inter", system-ui, sans-serif;
-  font-size: 14px;
+  font-size: 17.5px;
   background: var(--bg);
   color: var(--text-primary);
   text-rendering: optimizeLegibility;
@@ -130,9 +134,9 @@ textarea {
   height: 20px;
   border: 0;
   border-radius: 3px;
-  background: color-mix(in oklab, var(--text-secondary) 46%, transparent);
+  background: color-mix(in oklab, var(--text-secondary) 60%, transparent);
   cursor: col-resize;
-  opacity: 0.48;
+  opacity: 0.52;
   transition: opacity 120ms ease;
 }
 
@@ -157,6 +161,7 @@ textarea {
 }
 
 .filter-select-button,
+.filter-select-input,
 .filter-date {
   border: 0;
   background: transparent;
@@ -171,6 +176,16 @@ textarea {
   gap: 0.5rem;
   min-width: 220px;
   cursor: pointer;
+}
+
+.filter-select-input {
+  min-width: 220px;
+  width: 220px;
+}
+
+.filter-select-input::placeholder {
+  color: var(--text-secondary);
+  opacity: 1;
 }
 
 .filter-menu {
@@ -270,11 +285,27 @@ option {
 }
 
 .table-head {
-  background: color-mix(in oklab, var(--surface) 84%, var(--bg) 16%);
+  background: color-mix(in oklab, var(--surface) 78%, var(--bg) 22%);
+}
+
+.table-head th {
+  position: sticky;
+  top: 0;
+  z-index: 12;
+  background: color-mix(in oklab, var(--surface) 78%, var(--bg) 22%);
+  box-shadow: inset 0 -1px 0 color-mix(in oklab, var(--border) 88%, transparent);
 }
 
 .table-row:nth-child(odd) {
-  background: color-mix(in oklab, var(--surface) 90%, var(--bg) 10%);
+  background: color-mix(in oklab, var(--surface) 88%, var(--bg) 12%);
+}
+
+.table-row:hover {
+  background: color-mix(in oklab, var(--surface-hover) 75%, var(--surface) 25%);
+}
+
+.table-row td {
+  line-height: 1.38;
 }
 
 .mobile-nav {
@@ -300,12 +331,17 @@ option {
   width: 100%;
   border-radius: 8px;
   border: 1px solid var(--border);
-  background: color-mix(in oklab, var(--surface) 92%, black 8%);
+  background: color-mix(in oklab, var(--surface) 92%, var(--bg) 8%);
   color: var(--text-primary);
   padding: 0.55rem 0.75rem;
   outline: none;
 }
 
+.form-input::placeholder {
+  color: color-mix(in oklab, var(--text-secondary) 88%, transparent);
+}
+
 .form-input:focus {
   border-color: var(--primary);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--primary) 22%, transparent);
 }

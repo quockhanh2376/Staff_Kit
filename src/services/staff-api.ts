@@ -1,6 +1,10 @@
 ﻿import { invoke } from "@tauri-apps/api/core"
 import type {
   DatabaseStatus,
+  BackupRunResult,
+  BackupSettings,
+  BackupSettingsUpdateInput,
+  SnapshotInfo,
   EmployeeColumnDefinition,
   EmployeeGroupCounts,
   EmployeeColumnUpsertInput,
@@ -8,12 +12,18 @@ import type {
   EmployeePayload,
   EmployeeQueryInput,
   EmployeeRecord,
+  MoveEmployeesGroupInput,
+  LocalAccountLoginInput,
   LocalAccountCreateInput,
   LocalAccountRecord,
+  LocalForgotPasswordInput,
+  LocalPasswordChangeInput,
+  LocalPasswordResetInput,
   LocalAccountUpdateInput,
   ImportColumnsPreview,
   ImportExcelInput,
   ImportReport,
+  ImportPreviewResult,
   TeamRecord,
   TeamUpsertInput,
 } from "../types/staff"
@@ -46,6 +56,33 @@ export const staffApi = {
 
   getDatabaseStatus: () => call<DatabaseStatus>("get_database_status"),
 
+  getBackupSettings: () => call<BackupSettings>("get_backup_settings"),
+
+  updateBackupSettings: (payload: BackupSettingsUpdateInput) =>
+    call<BackupSettings>("update_backup_settings", {
+      payload: {
+        backupDirectoryPath: payload.backupDirectoryPath,
+        autoBackupEnabled: payload.autoBackupEnabled,
+      },
+    }),
+
+  backupDatabaseNow: () => call<BackupRunResult>("backup_database_now"),
+
+  runAutoBackupIfDue: () => call<BackupRunResult>("run_auto_backup_if_due"),
+
+  listHistorySnapshots: () => call<SnapshotInfo[]>("list_history_snapshots"),
+
+  createHistorySnapshot: (label: string) =>
+    call<SnapshotInfo>("create_history_snapshot_cmd", { label }),
+
+  restoreHistorySnapshot: (filename: string) =>
+    call<void>("restore_history_snapshot", { filename }),
+
+  moveDatabaseTo: (targetFolder: string) =>
+    call<string>("move_database_to", { targetFolder }),
+
+  getDbCustomPath: () => call<string | null>("get_db_custom_path"),
+
   listEmployees: (filters: EmployeeQueryInput) =>
     call<EmployeeListResponse>("list_employees", {
       filters,
@@ -64,6 +101,9 @@ export const staffApi = {
     call<LocalAccountRecord>("create_local_account", {
       payload: {
         displayName: payload.displayName,
+        username: payload.username,
+        password: payload.password ?? null,
+        recoveryCode: payload.recoveryCode ?? null,
         role: payload.role,
       },
     }),
@@ -73,7 +113,45 @@ export const staffApi = {
       payload: {
         id: payload.id,
         displayName: payload.displayName,
+        username: payload.username,
         role: payload.role,
+      },
+    }),
+
+  loginLocalAccount: (payload: LocalAccountLoginInput) =>
+    call<LocalAccountRecord>("login_local_account", {
+      payload: {
+        username: payload.username,
+        password: payload.password,
+      },
+    }),
+
+  changeLocalAccountPassword: (payload: LocalPasswordChangeInput) =>
+    call<boolean>("change_local_account_password", {
+      payload: {
+        accountId: payload.accountId,
+        currentPassword: payload.currentPassword,
+        newPassword: payload.newPassword,
+        newRecoveryCode: payload.newRecoveryCode ?? null,
+      },
+    }),
+
+  adminResetLocalAccountPassword: (payload: LocalPasswordResetInput) =>
+    call<boolean>("admin_reset_local_account_password", {
+      payload: {
+        adminAccountId: payload.adminAccountId,
+        targetAccountId: payload.targetAccountId,
+        newPassword: payload.newPassword,
+        newRecoveryCode: payload.newRecoveryCode ?? null,
+      },
+    }),
+
+  forgotLocalAccountPassword: (payload: LocalForgotPasswordInput) =>
+    call<boolean>("forgot_local_account_password", {
+      payload: {
+        username: payload.username,
+        recoveryCode: payload.recoveryCode,
+        newPassword: payload.newPassword,
       },
     }),
 
@@ -113,6 +191,14 @@ export const staffApi = {
       payload,
     }),
 
+  moveEmployeesGroup: (payload: MoveEmployeesGroupInput) =>
+    call<number>("move_employees_group", {
+      payload: {
+        employeeIds: payload.employeeIds,
+        targetStaffGroup: payload.targetStaffGroup,
+      },
+    }),
+
   deleteEmployee: (id: number) =>
     call<boolean>("delete_employee", {
       id,
@@ -138,6 +224,17 @@ export const staffApi = {
         filePath: payload.filePath ?? null,
         filePaths: payload.filePaths ?? null,
         selectedColumnKeys: payload.selectedColumnKeys ?? null,
+        targetStaffGroup: payload.targetStaffGroup ?? null,
+      },
+    }),
+
+  previewImportExcel: (payload: ImportExcelInput = {}) =>
+    call<ImportPreviewResult>("preview_import_excel", {
+      payload: {
+        filePath: payload.filePath ?? null,
+        filePaths: payload.filePaths ?? null,
+        selectedColumnKeys: payload.selectedColumnKeys ?? null,
+        targetStaffGroup: payload.targetStaffGroup ?? null,
       },
     }),
 

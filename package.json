@@ -1,19 +1,20 @@
 {
   "name": "staff-kit",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc -b --pretty false",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b ; vite build",
     "lint": "eslint .",
     "check:frontend": "npm run lint && npm run typecheck && npm run build",
     "check:tauri": "cargo check --manifest-path src-tauri/Cargo.toml",
     "check:quality": "npm run check:frontend && npm run check:tauri",
     "preview": "vite preview",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri": "tauri.cmd",
+    "tauri:dev": "tauri.cmd dev",
+    "tauri:build": "tauri.cmd build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.1",
