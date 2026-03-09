@@ -117,6 +117,8 @@ export function useAuthState({
     const activeAccountName = activeAccount?.displayName ?? DEFAULT_ACCOUNT_NAME
     const isAdminAccount = activeAccount?.role === "admin"
     const canAccessSettings = isAdminAccount
+    const canImportData = isAdminAccount       // Only admins can import Excel
+    const canResetData = isAdminAccount        // Only admins can reset all data
     const canEditEmployeeTable = activeAccount !== null
 
     const handleLoginSubmit = async (event: FormEvent<HTMLFormElement>, setGlobalError: (msg: string | null) => void) => {
@@ -310,6 +312,8 @@ export function useAuthState({
         activeAccountName,
         isAdminAccount,
         canAccessSettings,
+        canImportData,
+        canResetData,
         canEditEmployeeTable,
         isLoadingAccounts,
         isMutatingAccounts,
