@@ -158,10 +158,21 @@ pub fn set_db_custom_path(app: &AppHandle, new_path: Option<&str>) -> Result<(),
     write_db_settings(app, &settings)
 }
 
-/// Change DB to a new location: copies current DB file there, then updates the setting.
-/// Returns the new full DB file path.
+/// Change DB to a new location, with two modes:
+///
+/// **LINK mode** (target DB already exists):
+///   The target folder already has a `staff_kit.sqlite3` — just update
+///   `db_settings.json` to point there. The existing shared data is preserved.
+///
+/// **COPY mode** (target folder is empty / no DB there yet):
+///   Copy the current local DB to the new location, then update the setting.
+///
+/// Returns `(new_full_path, linked)` where `linked = true` means LINK mode was used.
 pub fn move_database_to(app: &AppHandle, target_folder: &str) -> Result<String, String> {
-    let current_path = super::resolve_database_path(app)?;
+    let target_folder = target_folder.trim();
+    if target_folder.is_empty() {
+        return Err("Target folder path cannot be empty.".to_string());
+    }
 
     let target_dir = PathBuf::from(target_folder);
     fs::create_dir_all(&target_dir)
@@ -169,13 +180,37 @@ pub fn move_database_to(app: &AppHandle, target_folder: &str) -> Result<String, 
 
     let target_path = target_dir.join(DB_FILE_NAME);
 
-    // Copy current DB to new location (keep old one as fallback)
-    fs::copy(&current_path, &target_path)
-        .map_err(|err| format!("failed to copy database to new location: {err}"))?;
+    if target_path.exists() {
+        // ── LINK MODE: shared DB already exists → just point to it ──────────
+        // Validate it is a valid (openable) SQLite / SQLCipher file first
+        super::open_encrypted_connection(&target_path)
+            .map_err(|_| {
+                "The database at the target path could not be opened. \
+                 Make sure it is a valid Staff Kit database encrypted with the same version."
+                    .to_string()
+            })?;
 
-    set_db_custom_path(app, Some(target_folder))?;
+        set_db_custom_path(app, Some(target_folder))?;
 
-    Ok(target_path.to_string_lossy().to_string())
+        Ok(format!("LINKED:{}", target_path.to_string_lossy()))
+    } else {
+        // ── COPY MODE: no DB at target → copy local DB there ────────────────
+        let current_path = super::resolve_database_path(app)?;
+
+        // Checkpoint WAL fully BEFORE copying so the copied file is complete
+        {
+            let conn = super::open_encrypted_connection(&current_path)?;
+            conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+                .map_err(|err| format!("failed to checkpoint WAL before move: {err}"))?;
+        }
+
+        fs::copy(&current_path, &target_path)
+            .map_err(|err| format!("failed to copy database to new location: {err}"))?;
+
+        set_db_custom_path(app, Some(target_folder))?;
+
+        Ok(format!("COPIED:{}", target_path.to_string_lossy()))
+    }
 }
 
 // ── History snapshots ─────────────────────────────────────────────────────────

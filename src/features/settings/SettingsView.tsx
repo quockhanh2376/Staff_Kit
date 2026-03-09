@@ -196,35 +196,43 @@ export function SettingsView({
                             </div>
                         </div>
 
-                        {/* RIGHT — Import Excel */}
+                        {/* RIGHT — Import Excel (admin only) */}
                         <div className="flex flex-col gap-4">
                             <div className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/25 p-3">
                                 <div className="mb-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
                                     Import Excel
                                 </div>
-                                <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                                    Select one or multiple Excel files, then choose the columns before importing into app data.
-                                </p>
-                                <div className="mt-2 text-xs text-[var(--text-secondary)]">
-                                    Import target:{" "}
-                                    <span className="font-semibold text-[var(--text-primary)]">{imp.importTargetGroupLabel}</span>
-                                </div>
-                                <button
-                                    className="mt-3 inline-flex items-center gap-2 rounded-[8px] bg-[var(--primary)] px-3 py-2 text-sm font-semibold text-[#00131c] disabled:opacity-50"
-                                    onClick={() => void imp.handlePickImportFiles()}
-                                    type="button"
-                                    disabled={imp.isImporting}
-                                >
-                                    {imp.isImporting ? (
-                                        <LoaderCircle className="animate-spin" size={14} />
-                                    ) : (
-                                        <Upload size={14} />
-                                    )}
-                                    {imp.isImporting ? "Preparing import..." : "Import Excel"}
-                                </button>
+                                {auth.canImportData ? (
+                                    <>
+                                        <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                                            Select one or multiple Excel files, then choose the columns before importing into app data.
+                                        </p>
+                                        <div className="mt-2 text-xs text-[var(--text-secondary)]">
+                                            Import target:{" "}
+                                            <span className="font-semibold text-[var(--text-primary)]">{imp.importTargetGroupLabel}</span>
+                                        </div>
+                                        <button
+                                            className="mt-3 inline-flex items-center gap-2 rounded-[8px] bg-[var(--primary)] px-3 py-2 text-sm font-semibold text-[#00131c] disabled:opacity-50"
+                                            onClick={() => void imp.handlePickImportFiles()}
+                                            type="button"
+                                            disabled={imp.isImporting}
+                                        >
+                                            {imp.isImporting ? (
+                                                <LoaderCircle className="animate-spin" size={14} />
+                                            ) : (
+                                                <Upload size={14} />
+                                            )}
+                                            {imp.isImporting ? "Preparing import..." : "Import Excel"}
+                                        </button>
+                                    </>
+                                ) : (
+                                    <p className="mt-2 text-xs text-[var(--text-secondary)] opacity-60">
+                                        🔒 Admin access required.
+                                    </p>
+                                )}
                             </div>
 
-                            {/* Import target group selector */}
+                            {/* Import target group selector — visible to all, read-only for standard users */}
                             <div className="grid grid-cols-2 gap-2 text-sm text-[var(--text-secondary)]">
                                 {STAFF_GROUP_BUTTONS.map((item) => {
                                     const isSelected = imp.importTargetGroup === item.key
@@ -234,9 +242,10 @@ export function SettingsView({
                                             className={`rounded-[10px] border px-3 py-2 text-left transition ${isSelected
                                                 ? "border-[var(--primary)]/55 bg-[var(--primary)]/10"
                                                 : "border-[var(--border)] bg-[var(--surface)] hover:border-[var(--primary)]/35"
-                                                }`}
-                                            onClick={() => imp.setImportTargetGroup(item.key as StaffGroupKey)}
+                                                } ${!auth.canImportData ? "pointer-events-none opacity-60" : ""}`}
+                                            onClick={() => auth.canImportData && imp.setImportTargetGroup(item.key as StaffGroupKey)}
                                             type="button"
+                                            disabled={!auth.canImportData}
                                         >
                                             <div className="text-xs uppercase tracking-[0.06em]">{item.label}</div>
                                             <div className="mt-1 text-[18px] font-semibold text-[var(--text-primary)]">
@@ -307,14 +316,34 @@ export function SettingsView({
                                     placeholder="D:\OneDrive - Company\StaffKit"
                                     disabled={settings.isMovingDb}
                                 />
-                                <button
-                                    className="mt-2 rounded-[8px] border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)] disabled:opacity-50"
-                                    onClick={() => void settings.handleMoveDatabase()}
-                                    type="button"
-                                    disabled={settings.isMovingDb || !settings.dbCustomPathInput.trim()}
-                                >
-                                    {settings.isMovingDb ? "Moving..." : "Move Database Here"}
-                                </button>
+                                {settings.dbMovePending ? (
+                                    <div className="mt-2 flex gap-2">
+                                        <button
+                                            className="rounded-[8px] border border-green-500/60 bg-green-500/15 px-3 py-1.5 text-xs font-semibold text-green-400 transition hover:bg-green-500/25 disabled:opacity-50"
+                                            onClick={() => void settings.handleMoveDatabase()}
+                                            type="button"
+                                            disabled={settings.isMovingDb}
+                                        >
+                                            {settings.isMovingDb ? "Moving..." : "✅ Confirm Move"}
+                                        </button>
+                                        <button
+                                            className="rounded-[8px] border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--text-secondary)] transition hover:bg-[var(--surface-hover)]"
+                                            onClick={settings.handleMoveDatabaseCancel}
+                                            type="button"
+                                        >
+                                            Cancel
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <button
+                                        className="mt-2 rounded-[8px] border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)] disabled:opacity-50"
+                                        onClick={() => void settings.handleMoveDatabase()}
+                                        type="button"
+                                        disabled={settings.isMovingDb || !settings.dbCustomPathInput.trim()}
+                                    >
+                                        Move Database Here
+                                    </button>
+                                )}
                                 {settings.dbPathMessage && (
                                     <div className="mt-2 rounded-[6px] border border-[var(--primary)]/30 bg-[var(--primary)]/8 px-2 py-1.5 text-[11px] text-[var(--text-primary)]">
                                         {settings.dbPathMessage}
@@ -419,22 +448,24 @@ export function SettingsView({
 
 
 
-            {/* Data Reset */}
-            <div className="mt-4 max-w-3xl rounded-[12px] border border-red-500/45 bg-red-500/10 p-4">
-                <div className="text-sm font-semibold text-red-300">Temporary Reset (Data Wipe)</div>
-                <p className="mt-1 text-xs text-red-200/90">
-                    Delete all employees, teams, imported dynamic columns, and imported values. Use this only while preparing data.
-                </p>
-                <button
-                    className="mt-3 inline-flex items-center gap-2 rounded-[8px] border border-red-400/60 bg-red-500/20 px-3 py-2 text-sm font-semibold text-red-100 disabled:opacity-50"
-                    onClick={() => void settings.handleResetAllData()}
-                    type="button"
-                    disabled={settings.isResettingData}
-                >
-                    {settings.isResettingData ? <LoaderCircle className="animate-spin" size={14} /> : null}
-                    {settings.isResettingData ? "Resetting..." : "Reset All Data (Temporary)"}
-                </button>
-            </div>
+            {/* Data Reset — admin only */}
+            {auth.canResetData && (
+                <div className="mt-4 max-w-3xl rounded-[12px] border border-red-500/45 bg-red-500/10 p-4">
+                    <div className="text-sm font-semibold text-red-300">Temporary Reset (Data Wipe)</div>
+                    <p className="mt-1 text-xs text-red-200/90">
+                        Delete all employees, teams, imported dynamic columns, and imported values. Use this only while preparing data.
+                    </p>
+                    <button
+                        className="mt-3 inline-flex items-center gap-2 rounded-[8px] border border-red-400/60 bg-red-500/20 px-3 py-2 text-sm font-semibold text-red-100 disabled:opacity-50"
+                        onClick={() => void settings.handleResetAllData()}
+                        type="button"
+                        disabled={settings.isResettingData}
+                    >
+                        {settings.isResettingData ? <LoaderCircle className="animate-spin" size={14} /> : null}
+                        {settings.isResettingData ? "Resetting..." : "Reset All Data (Temporary)"}
+                    </button>
+                </div>
+            )}
         </section>
     )
 }
