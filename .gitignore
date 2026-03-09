@@ -76,3 +76,9 @@ Thumbs.db
 # Local research cache
 bmad_method_ref/
 .opencode
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo

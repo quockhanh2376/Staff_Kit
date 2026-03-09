@@ -12,8 +12,9 @@
     "check:tauri": "cargo check --manifest-path src-tauri/Cargo.toml",
     "check:quality": "npm run check:frontend && npm run check:tauri",
     "preview": "vite preview",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri": "tauri.cmd",
+    "tauri:dev": "tauri.cmd dev",
+    "tauri:build": "tauri.cmd build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.1",
