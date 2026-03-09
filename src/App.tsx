@@ -53,14 +53,16 @@ function App() {
   }, [globalError])
 
   // ── Theme ────────────────────────────────────────────────────────────────────
-  const setTheme = useCallback((nextTheme: Theme) => {
+  // Kept here as a placeholder — actual setTheme defined after activeUserScope below
+  const setTheme = useCallback((nextTheme: Theme, key?: string) => {
     setThemeState(nextTheme)
-    localStorage.setItem(THEME_KEY, nextTheme)
+    localStorage.setItem(key ?? "staffkit-theme", nextTheme)
     document.documentElement.classList.toggle("dark", nextTheme === "dark")
   }, [])
 
+  // Initial theme load (before login, use a generic key; swapped after login via effect below)
   useEffect(() => {
-    const saved = (localStorage.getItem(THEME_KEY) as Theme | null) ?? "dark"
+    const saved = (localStorage.getItem("staffkit-theme") as Theme | null) ?? "dark"
     setTheme(saved)
   }, [setTheme])
 
@@ -100,6 +102,13 @@ function App() {
     () => buildScopedStorageKey(COLUMN_WIDTHS_KEY, activeUserScope),
     [activeUserScope],
   )
+
+  // Restore per-user theme preference on login / account switch
+  const scopedThemeKey = buildScopedStorageKey(THEME_KEY, activeUserScope)
+  useEffect(() => {
+    const saved = (localStorage.getItem(scopedThemeKey) as Theme | null) ?? "dark"
+    setTheme(saved, scopedThemeKey)
+  }, [scopedThemeKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Column state ─────────────────────────────────────────────────────────────
   const col = useColumnState({
@@ -189,11 +198,11 @@ function App() {
   useEffect(() => {
     if (!isAuthenticated) return
     col.resetColumnPrefsOnAuth()
-    // Load note for this user
-    const noteKey = `sidebar-note:${normalizeUserScope(DEFAULT_ACCOUNT_NAME)}`
+    // Load this user's private note
+    const noteKey = buildScopedStorageKey("sidebar-note", activeUserScope)
     setSidebarNote(localStorage.getItem(noteKey) ?? "")
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated, scopedColumnPrefsKey, scopedColumnLabelOverridesKey, scopedColumnWidthsKey])
+  }, [isAuthenticated, activeUserScope, scopedColumnPrefsKey, scopedColumnLabelOverridesKey, scopedColumnWidthsKey])
 
   // ── Derived employee labels ───────────────────────────────────────────────────
   const selectedGroupLabel = useMemo(
@@ -353,7 +362,7 @@ function App() {
                 const val = e.target.value
                 setSidebarNote(val)
                 setNoteSaved(false)
-                const noteKey = `sidebar-note:${normalizeUserScope(DEFAULT_ACCOUNT_NAME)}`
+                const noteKey = buildScopedStorageKey("sidebar-note", activeUserScope)
                 // debounce via inline timeout ref approach
                 clearTimeout((window as unknown as Record<string, number>).__noteTimer)
                   ; (window as unknown as Record<string, number>).__noteTimer = window.setTimeout(() => {
