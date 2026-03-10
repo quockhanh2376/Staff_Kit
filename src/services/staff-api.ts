@@ -142,10 +142,8 @@ export const staffApi = {
   adminResetLocalAccountPassword: (payload: LocalPasswordResetInput) =>
     call<boolean>("admin_reset_local_account_password", {
       payload: {
-        adminAccountId: payload.adminAccountId,
-        targetAccountId: payload.targetAccountId,
+        id: payload.targetAccountId,
         newPassword: payload.newPassword,
-        newRecoveryCode: payload.newRecoveryCode ?? null,
       },
     }),
 
