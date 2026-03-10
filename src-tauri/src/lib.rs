@@ -252,6 +252,14 @@ fn move_database_to(
 }
 
 #[tauri::command]
+fn restore_database_from_file(
+    app: tauri::AppHandle,
+    source_path: String,
+) -> Result<(), String> {
+    db::restore_database_from_file(&app, &source_path)
+}
+
+#[tauri::command]
 fn get_db_custom_path(app: tauri::AppHandle) -> Result<Option<String>, String> {
     db::get_db_custom_path(&app)
 }
@@ -282,6 +290,7 @@ pub fn run() {
             restore_history_snapshot,
             move_database_to,
             get_db_custom_path,
+            restore_database_from_file,
             list_employees,
             search_employees,
             list_employee_group_counts,

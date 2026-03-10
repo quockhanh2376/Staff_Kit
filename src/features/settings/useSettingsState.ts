@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
+import { open as openFileDialog } from "@tauri-apps/plugin-dialog"
 import { staffApi } from "../../services/staff-api"
 import type { BackupSettings, SnapshotInfo } from "../../types/staff"
 import { getErrorMessage } from "../../lib/utils"
@@ -196,6 +197,31 @@ export function useSettingsState({
         setDbPathMessage("")
     }
 
+    const handleRestoreFromFile = async () => {
+        try {
+            const selected = await openFileDialog({
+                title: "Select a Staff Kit backup database file",
+                filters: [{ name: "SQLite Database", extensions: ["sqlite3", "sqlite", "db"] }],
+                multiple: false,
+            })
+            if (!selected) return
+            const filePath = typeof selected === "string" ? selected : (selected as { path: string }).path
+
+            const confirmed = window.confirm(
+                `Restore database from:\n${filePath}\n\nThe current database will be saved as a snapshot first. App will reload after restore.`
+            )
+            if (!confirmed) return
+
+            setSnapshotMessage("")
+            await staffApi.restoreDatabaseFromFile(filePath)
+            setSnapshotMessage("✅ Restore complete. Reloading data...")
+            await loadSnapshots()
+            triggerReload()
+        } catch (error) {
+            setGlobalError(getErrorMessage(error))
+        }
+    }
+
     const handleResetAllData = async () => {
         const firstConfirm = window.confirm(
             "This will delete ALL employees, teams, and imported columns. Are you sure?",
@@ -245,5 +271,6 @@ export function useSettingsState({
         dbMovePending,
         handleMoveDatabase,
         handleMoveDatabaseCancel,
+        handleRestoreFromFile,
     }
 }

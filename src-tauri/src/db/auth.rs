@@ -14,7 +14,7 @@ use super::schema::{
     ACTIVE_LOCAL_ACCOUNT_SETTING_KEY, DEFAULT_ADMIN_SEED_SETTING_KEY, DEFAULT_LOCAL_ACCOUNT_KEY,
     DEFAULT_LOCAL_ACCOUNT_NAME, DEFAULT_LOCAL_ACCOUNT_PASSWORD,
     DEFAULT_LOCAL_ACCOUNT_RECOVERY_CODE, DEFAULT_LOCAL_ACCOUNT_USERNAME,
-    DEFAULT_NEW_LOCAL_ACCOUNT_PASSWORD, LOCAL_ACCOUNT_ROLE_ADMIN, LOCAL_ACCOUNT_ROLE_USER,
+    DEFAULT_NEW_LOCAL_ACCOUNT_PASSWORD, LOCAL_ACCOUNT_ROLE_ADMIN, LOCAL_ACCOUNT_ROLE_SUPER_ADMIN, LOCAL_ACCOUNT_ROLE_USER,
 };
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -27,6 +27,7 @@ pub struct LocalAccountRecord {
     pub display_name: String,
     pub username: String,
     pub role: String,
+    pub is_super_admin: bool,
     pub is_active: bool,
     pub force_password_reset: bool,
     pub created_at: String,
@@ -471,17 +472,14 @@ fn query_local_accounts(conn: &Connection) -> Result<Vec<LocalAccountRecord>, St
     for row in rows {
         let (id, account_key, display_name, username, role_raw, force_password_reset, created_at, updated_at) =
             row.map_err(|err| format!("failed to read local account row: {err}"))?;
-        let role = if role_raw.eq_ignore_ascii_case(LOCAL_ACCOUNT_ROLE_ADMIN) {
-            LOCAL_ACCOUNT_ROLE_ADMIN.to_string()
-        } else {
-            LOCAL_ACCOUNT_ROLE_USER.to_string()
-        };
+        let role = parse_account_role(&role_raw);
 
         items.push(LocalAccountRecord {
             id,
             account_key,
             display_name,
             username,
+            is_super_admin: role == LOCAL_ACCOUNT_ROLE_SUPER_ADMIN,
             role,
             is_active: false,
             force_password_reset: force_password_reset > 0,
@@ -513,16 +511,13 @@ fn load_local_account_by_id(conn: &Connection, id: i64) -> Result<LocalAccountRe
         params![id],
         |row| {
             let role_raw: String = row.get(4)?;
-            let role = if role_raw.eq_ignore_ascii_case(LOCAL_ACCOUNT_ROLE_ADMIN) {
-                LOCAL_ACCOUNT_ROLE_ADMIN.to_string()
-            } else {
-                LOCAL_ACCOUNT_ROLE_USER.to_string()
-            };
+            let role = parse_account_role(&role_raw);
             Ok(LocalAccountRecord {
                 id: row.get(0)?,
                 account_key: row.get(1)?,
                 display_name: row.get(2)?,
                 username: row.get(3)?,
+                is_super_admin: role == LOCAL_ACCOUNT_ROLE_SUPER_ADMIN,
                 role,
                 is_active: active_id == Some(id),
                 force_password_reset: row.get::<_, i64>(5)? > 0,
@@ -582,7 +577,19 @@ fn set_active_local_account_id(conn: &Connection, id: i64) -> Result<(), String>
 fn normalize_local_account_role(value: Option<String>) -> String {
     let normalized =
         normalize_optional_text(value).unwrap_or_else(|| LOCAL_ACCOUNT_ROLE_USER.to_string());
-    if normalized.eq_ignore_ascii_case(LOCAL_ACCOUNT_ROLE_ADMIN) {
+    if normalized.eq_ignore_ascii_case(LOCAL_ACCOUNT_ROLE_SUPER_ADMIN) {
+        LOCAL_ACCOUNT_ROLE_SUPER_ADMIN.to_string()
+    } else if normalized.eq_ignore_ascii_case(LOCAL_ACCOUNT_ROLE_ADMIN) {
+        LOCAL_ACCOUNT_ROLE_ADMIN.to_string()
+    } else {
+        LOCAL_ACCOUNT_ROLE_USER.to_string()
+    }
+}
+
+fn parse_account_role(raw: &str) -> String {
+    if raw.eq_ignore_ascii_case(LOCAL_ACCOUNT_ROLE_SUPER_ADMIN) {
+        LOCAL_ACCOUNT_ROLE_SUPER_ADMIN.to_string()
+    } else if raw.eq_ignore_ascii_case(LOCAL_ACCOUNT_ROLE_ADMIN) {
         LOCAL_ACCOUNT_ROLE_ADMIN.to_string()
     } else {
         LOCAL_ACCOUNT_ROLE_USER.to_string()
@@ -865,6 +872,13 @@ fn ensure_default_admin_account(conn: &Connection) -> Result<(), String> {
             .map_err(humanize_sqlite_error)?;
         }
     }
+
+    // Always ensure the default admin 'adman' is super_admin, even on migration from older versions
+    conn.execute(
+        "UPDATE app_local_accounts SET role = ?, updated_at = datetime('now') WHERE username = ? COLLATE NOCASE AND role != ?",
+        params![LOCAL_ACCOUNT_ROLE_SUPER_ADMIN, DEFAULT_LOCAL_ACCOUNT_USERNAME, LOCAL_ACCOUNT_ROLE_SUPER_ADMIN],
+    )
+    .map_err(humanize_sqlite_error)?;
 
     mark_default_admin_seeded(conn)?;
     Ok(())

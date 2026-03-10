@@ -216,17 +216,23 @@ export function SettingsView({
                                                     </div>
                                                     <div className="mt-2">
                                                         <label className="mb-1 block text-[11px] text-[var(--text-secondary)]">Role</label>
-                                                        <select
-                                                            className="rounded-[8px] border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-xs"
-                                                            value={auth.editDraftRole}
-                                                            onChange={(e) =>
-                                                                auth.setEditDraftRole(e.target.value === "admin" ? "admin" : "user")
-                                                            }
-                                                            disabled={auth.isMutatingAccounts}
-                                                        >
-                                                            <option value="user">Standard User</option>
-                                                            <option value="admin">Admin</option>
-                                                        </select>
+                                                        {account.isSuperAdmin ? (
+                                                            <div className="rounded-[8px] border border-[var(--border)] bg-[var(--surface-hover)] px-2 py-1.5 text-xs text-[var(--text-secondary)]">
+                                                                🔑 Super Admin (locked — only adman)
+                                                            </div>
+                                                        ) : (
+                                                            <select
+                                                                className="rounded-[8px] border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-xs"
+                                                                value={auth.editDraftRole}
+                                                                onChange={(e) =>
+                                                                    auth.setEditDraftRole(e.target.value === "admin" ? "admin" : "user")
+                                                                }
+                                                                disabled={auth.isMutatingAccounts}
+                                                            >
+                                                                <option value="user">Standard User</option>
+                                                                <option value="admin">Admin</option>
+                                                            </select>
+                                                        )}
                                                     </div>
                                                     <div className="mt-3 flex gap-2">
                                                         <button
@@ -328,15 +334,24 @@ export function SettingsView({
                     {/* Header */}
                     <div className="mb-3 flex items-center justify-between gap-2">
                         <div className="text-sm font-semibold text-[var(--text-primary)]">Database &amp; Backup</div>
-                        <button
-                            className="inline-flex items-center gap-2 rounded-[8px] bg-[var(--primary)] px-3 py-2 text-xs font-semibold text-[#00131c] transition hover:brightness-110 disabled:opacity-50"
-                            onClick={() => void settings.handleBackupNow()}
-                            type="button"
-                            disabled={settings.isBackingUpData || settings.isSavingBackupSettings}
-                        >
-                            {settings.isBackingUpData ? <LoaderCircle className="animate-spin" size={13} /> : null}
-                            {settings.isBackingUpData ? "Backing up..." : "Backup Data"}
-                        </button>
+                        <div className="flex gap-2">
+                            <button
+                                className="inline-flex items-center gap-2 rounded-[8px] border border-[var(--border)] bg-[var(--surface-hover)] px-3 py-2 text-xs font-semibold text-[var(--text-primary)] transition hover:brightness-110 disabled:opacity-50"
+                                onClick={() => void settings.handleRestoreFromFile()}
+                                type="button"
+                            >
+                                Restore Data
+                            </button>
+                            <button
+                                className="inline-flex items-center gap-2 rounded-[8px] bg-[var(--primary)] px-3 py-2 text-xs font-semibold text-[#00131c] transition hover:brightness-110 disabled:opacity-50"
+                                onClick={() => void settings.handleBackupNow()}
+                                type="button"
+                                disabled={settings.isBackingUpData || settings.isSavingBackupSettings}
+                            >
+                                {settings.isBackingUpData ? <LoaderCircle className="animate-spin" size={13} /> : null}
+                                {settings.isBackingUpData ? "Backing up..." : "Backup Data"}
+                            </button>
+                        </div>
                     </div>
 
                     {/* 2-column body */}

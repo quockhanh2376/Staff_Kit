@@ -83,6 +83,9 @@ export const staffApi = {
 
   getDbCustomPath: () => call<string | null>("get_db_custom_path"),
 
+  restoreDatabaseFromFile: (sourcePath: string) =>
+    call<void>("restore_database_from_file", { sourcePath }),
+
   listEmployees: (filters: EmployeeQueryInput) =>
     call<EmployeeListResponse>("list_employees", {
       filters,

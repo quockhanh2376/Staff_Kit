@@ -11,6 +11,7 @@ pub(super) const STAFF_GROUP_OFFBOARDING: &str = "offboarding";
 pub(super) const STAFF_GROUP_INTERNAL_MOVEMENT: &str = "internal_movement";
 
 // ── Local account roles / defaults ────────────────────────────────────────────
+pub(super) const LOCAL_ACCOUNT_ROLE_SUPER_ADMIN: &str = "super_admin";
 pub(super) const LOCAL_ACCOUNT_ROLE_ADMIN: &str = "admin";
 pub(super) const LOCAL_ACCOUNT_ROLE_USER: &str = "user";
 pub(super) const DEFAULT_LOCAL_ACCOUNT_NAME: &str = "adman";

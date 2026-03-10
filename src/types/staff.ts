@@ -87,7 +87,8 @@ export type LocalAccountRecord = {
   accountKey: string
   displayName: string
   username: string
-  role: "admin" | "user"
+  role: "super_admin" | "admin" | "user"
+  isSuperAdmin: boolean
   isActive: boolean
   forcePasswordReset: boolean
   createdAt: string
@@ -99,14 +100,14 @@ export type LocalAccountCreateInput = {
   username: string
   password?: string | null
   recoveryCode?: string | null
-  role: "admin" | "user"
+  role: "super_admin" | "admin" | "user"
 }
 
 export type LocalAccountUpdateInput = {
   id: number
   displayName: string
   username: string
-  role: "admin" | "user"
+  role: "super_admin" | "admin" | "user"
 }
 
 export type LocalAccountLoginInput = {

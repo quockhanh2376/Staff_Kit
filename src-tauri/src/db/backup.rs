@@ -333,6 +333,46 @@ pub fn restore_history_snapshot(app: &AppHandle, filename: &str) -> Result<(), S
     Ok(())
 }
 
+/// Restores the database from any arbitrary backup file chosen by the user.
+/// Saves the current state as "before_restore" before overwriting.
+pub fn restore_database_from_file(app: &AppHandle, source_path: &str) -> Result<(), String> {
+    let source = Path::new(source_path);
+
+    // Basic validation
+    if !source.exists() {
+        return Err(format!("file not found: {source_path}"));
+    }
+    if !source.is_file() {
+        return Err("selected path is not a file".to_string());
+    }
+    let ext = source.extension().and_then(|e| e.to_str()).unwrap_or("");
+    if ext != "sqlite3" && ext != "sqlite" && ext != "db" {
+        return Err("selected file is not a SQLite database (.sqlite3 / .sqlite / .db)".to_string());
+    }
+
+    // Try to open the source file to confirm it is a valid (decryptable) Staff Kit DB
+    super::open_encrypted_connection(source)
+        .map_err(|_| {
+            "the selected database file could not be opened. Make sure it is a valid Staff Kit database.".to_string()
+        })?;
+
+    let db_path = super::resolve_database_path(app)?;
+
+    // Save a snapshot of current state before restore
+    let _ = create_history_snapshot(app, "before_restore");
+
+    // Checkpoint WAL before overwriting
+    let conn = open_runtime_connection(app)?;
+    conn.execute_batch("PRAGMA wal_checkpoint(FULL);")
+        .map_err(|err| format!("failed to checkpoint WAL before restore: {err}"))?;
+    drop(conn);
+
+    fs::copy(source, &db_path)
+        .map_err(|err| format!("failed to restore database from file: {err}"))?;
+
+    Ok(())
+}
+
 // ── Private helpers ───────────────────────────────────────────────────────────
 
 pub(super) fn read_backup_settings(

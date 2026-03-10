@@ -5,7 +5,7 @@ export type Theme = "dark" | "light"
 export type UiColumnSource = "core" | "dynamic" | "system"
 export type StaffGroupKey = "employee_list" | "onboarding" | "offboarding" | "internal_movement"
 export type SortDirection = "asc" | "desc"
-export type LocalAccountRole = "admin" | "user"
+export type LocalAccountRole = "super_admin" | "admin" | "user"
 
 export type UiColumnDefinition = {
     key: string
