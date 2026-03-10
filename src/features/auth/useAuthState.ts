@@ -46,6 +46,12 @@ export function useAuthState({
     const [newAccountRecoveryCode, setNewAccountRecoveryCode] = useState("")
     const [newAccountRole, setNewAccountRole] = useState<LocalAccountRole>("user")
 
+    // Inline edit form state
+    const [editingAccountId, setEditingAccountId] = useState<number | null>(null)
+    const [editDraftName, setEditDraftName] = useState("")
+    const [editDraftUsername, setEditDraftUsername] = useState("")
+    const [editDraftRole, setEditDraftRole] = useState<LocalAccountRole>("user")
+
     // Load accounts when db is ready
     useEffect(() => {
         if (!dbReady) return
@@ -196,24 +202,33 @@ export function useAuthState({
         }
     }
 
-    const handleRenameAccount = async (account: LocalAccountRecord, setGlobalError: (msg: string | null) => void, triggerReload: () => void) => {
-        const nextName = window.prompt("Rename account", account.displayName)
-        if (!nextName || nextName.trim().length === 0) return
-        const nextUsername = window.prompt("Set username", account.username)
-        if (!nextUsername || nextUsername.trim().length === 0) return
-        const roleInput = window.prompt("Set role (admin/user)", account.role)
-        if (!roleInput || roleInput.trim().length === 0) return
-        const nextRole: LocalAccountRole = roleInput.trim().toLowerCase() === "admin" ? "admin" : "user"
+    const handleStartEdit = (account: LocalAccountRecord) => {
+        setEditingAccountId(account.id)
+        setEditDraftName(account.displayName)
+        setEditDraftUsername(account.username)
+        setEditDraftRole(account.role === "admin" ? "admin" : "user")
+    }
+
+    const handleEditCancel = () => {
+        setEditingAccountId(null)
+    }
+
+    const handleEditSave = async (setGlobalError: (msg: string | null) => void, triggerReload: () => void) => {
+        if (editingAccountId === null) return
+        const name = editDraftName.trim()
+        const username = editDraftUsername.trim()
+        if (!name || !username) return
 
         try {
             setMutatingAccounts(true)
             setGlobalError(null)
             await staffApi.updateLocalAccount({
-                id: account.id,
-                displayName: nextName.trim(),
-                username: nextUsername.trim(),
-                role: nextRole,
+                id: editingAccountId,
+                displayName: name,
+                username,
+                role: editDraftRole,
             })
+            setEditingAccountId(null)
             triggerReload()
         } catch (error) {
             setGlobalError(getErrorMessage(error))
@@ -346,12 +361,22 @@ export function useAuthState({
         setNewAccountRecoveryCode,
         newAccountRole,
         setNewAccountRole,
+        // inline edit form
+        editingAccountId,
+        editDraftName,
+        setEditDraftName,
+        editDraftUsername,
+        setEditDraftUsername,
+        editDraftRole,
+        setEditDraftRole,
         // handlers
         handleLoginSubmit,
         handleForgotPasswordSubmit,
         handleLogout,
         handleActivateAccount,
-        handleRenameAccount,
+        handleStartEdit,
+        handleEditCancel,
+        handleEditSave,
         handleAdminResetPassword,
         handleDeleteAccount,
         handleCreateAccount,

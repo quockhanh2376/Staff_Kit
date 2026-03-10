@@ -148,9 +148,7 @@ export function SettingsView({
                                                     </button>
                                                     <button
                                                         className="icon-button text-xs"
-                                                        onClick={() =>
-                                                            void auth.handleRenameAccount(account, setGlobalError, triggerReload)
-                                                        }
+                                                        onClick={() => auth.handleStartEdit(account)}
                                                         type="button"
                                                         disabled={auth.isMutatingAccounts || auth.isLoadingAccounts}
                                                     >
@@ -190,6 +188,66 @@ export function SettingsView({
                                             <div className="mt-0.5 text-[11px] text-[var(--text-secondary)]">
                                                 Profile ID: {account.accountKey}
                                             </div>
+
+                                            {/* Inline edit panel */}
+                                            {auth.editingAccountId === account.id && (
+                                                <div className="mt-3 rounded-[8px] border border-[var(--primary)]/40 bg-[var(--primary)]/5 p-3">
+                                                    <div className="mb-2 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">Edit Account</div>
+                                                    <div className="grid gap-2 sm:grid-cols-2">
+                                                        <div>
+                                                            <label className="mb-1 block text-[11px] text-[var(--text-secondary)]">Display Name</label>
+                                                            <input
+                                                                className="form-input text-xs"
+                                                                value={auth.editDraftName}
+                                                                onChange={(e) => auth.setEditDraftName(e.target.value)}
+                                                                disabled={auth.isMutatingAccounts}
+                                                                autoFocus
+                                                            />
+                                                        </div>
+                                                        <div>
+                                                            <label className="mb-1 block text-[11px] text-[var(--text-secondary)]">Username</label>
+                                                            <input
+                                                                className="form-input text-xs"
+                                                                value={auth.editDraftUsername}
+                                                                onChange={(e) => auth.setEditDraftUsername(e.target.value)}
+                                                                disabled={auth.isMutatingAccounts}
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                    <div className="mt-2">
+                                                        <label className="mb-1 block text-[11px] text-[var(--text-secondary)]">Role</label>
+                                                        <select
+                                                            className="rounded-[8px] border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-xs"
+                                                            value={auth.editDraftRole}
+                                                            onChange={(e) =>
+                                                                auth.setEditDraftRole(e.target.value === "admin" ? "admin" : "user")
+                                                            }
+                                                            disabled={auth.isMutatingAccounts}
+                                                        >
+                                                            <option value="user">Standard User</option>
+                                                            <option value="admin">Admin</option>
+                                                        </select>
+                                                    </div>
+                                                    <div className="mt-3 flex gap-2">
+                                                        <button
+                                                            className="rounded-[8px] bg-[var(--primary)] px-3 py-1.5 text-xs font-semibold text-[#00131c] disabled:opacity-50"
+                                                            onClick={() => void auth.handleEditSave(setGlobalError, triggerReload)}
+                                                            type="button"
+                                                            disabled={auth.isMutatingAccounts || !auth.editDraftName.trim() || !auth.editDraftUsername.trim()}
+                                                        >
+                                                            {auth.isMutatingAccounts ? "Saving..." : "Save Changes"}
+                                                        </button>
+                                                        <button
+                                                            className="rounded-[8px] border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"
+                                                            onClick={auth.handleEditCancel}
+                                                            type="button"
+                                                            disabled={auth.isMutatingAccounts}
+                                                        >
+                                                            Cancel
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
                                     )
                                 })}
