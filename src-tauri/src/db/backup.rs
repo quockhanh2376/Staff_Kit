@@ -334,8 +334,11 @@ pub fn restore_history_snapshot(app: &AppHandle, filename: &str) -> Result<(), S
 }
 
 /// Restores the database from any arbitrary backup file chosen by the user.
-/// Saves the current state as "before_restore" before overwriting.
+/// Uses SQLite's Online Backup API to safely copy data while connections may be live.
 pub fn restore_database_from_file(app: &AppHandle, source_path: &str) -> Result<(), String> {
+    use rusqlite::backup::Backup;
+    use std::time::Duration;
+
     let source = Path::new(source_path);
 
     // Basic validation
@@ -350,24 +353,26 @@ pub fn restore_database_from_file(app: &AppHandle, source_path: &str) -> Result<
         return Err("selected file is not a SQLite database (.sqlite3 / .sqlite / .db)".to_string());
     }
 
-    // Try to open the source file to confirm it is a valid (decryptable) Staff Kit DB
-    super::open_encrypted_connection(source)
+    // Open and validate the source backup (confirm it is a valid Staff Kit DB)
+    let src_conn = super::open_encrypted_connection(source)
         .map_err(|_| {
             "the selected database file could not be opened. Make sure it is a valid Staff Kit database.".to_string()
         })?;
 
-    let db_path = super::resolve_database_path(app)?;
-
-    // Save a snapshot of current state before restore
+    // Save a snapshot of the current state before restore
     let _ = create_history_snapshot(app, "before_restore");
 
-    // Checkpoint WAL before overwriting
-    let conn = open_runtime_connection(app)?;
-    conn.execute_batch("PRAGMA wal_checkpoint(FULL);")
-        .map_err(|err| format!("failed to checkpoint WAL before restore: {err}"))?;
-    drop(conn);
+    // Open the active DB and fully checkpoint WAL so all pages are in the main file
+    let mut dst_conn = open_runtime_connection(app)?;
+    dst_conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+        .map_err(|err| format!("failed to checkpoint active database: {err}"))?;
 
-    fs::copy(source, &db_path)
+    // SQLite Online Backup API: stream every page from src → dst.
+    // This safely handles Windows file locking (os error 32) that fs::copy cannot.
+    let backup = Backup::new(&src_conn, &mut dst_conn)
+        .map_err(|err| format!("failed to initialize database restore: {err}"))?;
+    backup
+        .run_to_completion(5, Duration::from_millis(0), None)
         .map_err(|err| format!("failed to restore database from file: {err}"))?;
 
     Ok(())
