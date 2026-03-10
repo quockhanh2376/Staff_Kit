@@ -345,3 +345,54 @@ option {
   border-color: var(--primary);
   box-shadow: 0 0 0 2px color-mix(in oklab, var(--primary) 22%, transparent);
 }
+
+.column-pref-row {
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease,
+    opacity 140ms ease,
+    transform 140ms ease;
+}
+
+.column-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px dashed color-mix(in oklab, var(--border) 78%, transparent);
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--surface) 88%, transparent);
+  cursor: grab;
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+.column-drag-handle:hover {
+  border-color: color-mix(in oklab, var(--primary) 44%, var(--border) 56%);
+  background: color-mix(in oklab, var(--primary) 10%, var(--surface) 90%);
+}
+
+.column-drag-handle:active {
+  cursor: grabbing;
+}
+
+.column-drop-indicator {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  height: 0;
+  border-top: 2px solid color-mix(in oklab, var(--primary) 86%, white 14%);
+  pointer-events: none;
+  filter: drop-shadow(0 0 6px color-mix(in oklab, var(--primary) 30%, transparent));
+}
+
+.column-drop-indicator-top {
+  top: -1px;
+}
+
+.column-drop-indicator-bottom {
+  bottom: -1px;
+}

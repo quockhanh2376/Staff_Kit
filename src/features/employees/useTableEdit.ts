@@ -14,6 +14,7 @@ type UseTableEditOptions = {
 }
 
 export type TableEditState = ReturnType<typeof useTableEdit>
+const INACTIVITY_MS = 2 * 60 * 1000
 
 // ── Cell text helpers ─────────────────────────────────────────────────────────
 
@@ -75,7 +76,6 @@ export function useTableEdit({
     const [isMovingEmployees, setMovingEmployees] = useState(false)
 
     // ── Inactivity auto-exit ──────────────────────────────────────────────────────
-    const INACTIVITY_MS = 2 * 60 * 1000 // 2 minutes
     const inactivityTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
     const clearInactivityTimer = useCallback(() => {

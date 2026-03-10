@@ -1,5 +1,5 @@
-import { ArrowUpDown, ArrowUp, ArrowDown, LoaderCircle, MoreHorizontal, Plus } from "lucide-react"
-import { useState, useMemo, useRef, useEffect } from "react"
+import { ArrowDown, ArrowUp, ArrowUpDown, LoaderCircle, MoreHorizontal, Plus } from "lucide-react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import type { TeamState } from "./useTeamState"
 import type { TeamRecord } from "../../types/staff"
 
@@ -8,6 +8,50 @@ type SortDir = "asc" | "desc"
 
 type TeamViewProps = {
     teamState: TeamState
+}
+
+function SortIndicator({
+    activeKey,
+    colKey,
+    sortDir,
+}: {
+    activeKey: SortKey
+    colKey: SortKey
+    sortDir: SortDir
+}) {
+    if (activeKey !== colKey) return <ArrowUpDown size={11} className="opacity-40" />
+    return sortDir === "asc" ? <ArrowUp size={11} /> : <ArrowDown size={11} />
+}
+
+function TeamTableHeader({
+    sortKey,
+    sortDir,
+    onToggleSort,
+}: {
+    sortKey: SortKey
+    sortDir: SortDir
+    onToggleSort: (key: SortKey) => void
+}) {
+    return (
+        <div className="grid grid-cols-[2rem_1fr_5rem_auto] items-center gap-1 border-b-2 border-[var(--primary)]/40 bg-[var(--surface-hover)] px-2 py-2.5 text-[15px] font-bold uppercase tracking-[0.08em] text-[var(--primary)]">
+            <span className="text-center">#</span>
+            <button
+                type="button"
+                className="inline-flex items-center gap-1.5 hover:brightness-125"
+                onClick={() => onToggleSort("name")}
+            >
+                Team Name <SortIndicator activeKey={sortKey} colKey="name" sortDir={sortDir} />
+            </button>
+            <button
+                type="button"
+                className="inline-flex items-center gap-1.5 hover:brightness-125"
+                onClick={() => onToggleSort("memberCount")}
+            >
+                Members <SortIndicator activeKey={sortKey} colKey="memberCount" sortDir={sortDir} />
+            </button>
+            <span className="text-center">Action</span>
+        </div>
+    )
 }
 
 function ActionMenu({ t, teamState, flipUp }: { t: TeamRecord; teamState: TeamState; flipUp?: boolean }) {
@@ -42,14 +86,20 @@ function ActionMenu({ t, teamState, flipUp }: { t: TeamRecord; teamState: TeamSt
                     <button
                         type="button"
                         className="flex w-full items-center px-3 py-1.5 text-left text-sm text-[var(--text-primary)] hover:bg-[var(--surface-hover)]"
-                        onClick={() => { void teamState.handleRenameTeam(t); setOpen(false) }}
+                        onClick={() => {
+                            void teamState.handleRenameTeam(t)
+                            setOpen(false)
+                        }}
                     >
                         Rename
                     </button>
                     <button
                         type="button"
                         className="flex w-full items-center px-3 py-1.5 text-left text-sm text-[var(--error)] hover:bg-[var(--surface-hover)]"
-                        onClick={() => { void teamState.handleDeleteTeam(t); setOpen(false) }}
+                        onClick={() => {
+                            void teamState.handleDeleteTeam(t)
+                            setOpen(false)
+                        }}
                     >
                         Remove
                     </button>
@@ -76,28 +126,12 @@ export function TeamView({ teamState }: TeamViewProps) {
 
     const toggleSort = (key: SortKey) => {
         if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"))
-        else { setSortKey(key); setSortDir("asc") }
+        else {
+            setSortKey(key)
+            setSortDir("asc")
+        }
     }
 
-    const SortIcon = ({ colKey }: { colKey: SortKey }) => {
-        if (sortKey !== colKey) return <ArrowUpDown size={11} className="opacity-40" />
-        return sortDir === "asc" ? <ArrowUp size={11} /> : <ArrowDown size={11} />
-    }
-
-    const TableHeader = () => (
-        <div className="grid grid-cols-[2rem_1fr_5rem_auto] items-center gap-1 border-b-2 border-[var(--primary)]/40 bg-[var(--surface-hover)] px-2 py-2.5 text-[15px] font-bold uppercase tracking-[0.08em] text-[var(--primary)]">
-            <span className="text-center">#</span>
-            <button type="button" className="inline-flex items-center gap-1.5 hover:brightness-125" onClick={() => toggleSort("name")}>
-                Team Name <SortIcon colKey="name" />
-            </button>
-            <button type="button" className="inline-flex items-center gap-1.5 hover:brightness-125" onClick={() => toggleSort("memberCount")}>
-                Members <SortIcon colKey="memberCount" />
-            </button>
-            <span className="text-center">Action</span>
-        </div>
-    )
-
-    // Split sequentially: col1 = first third, col2 = middle, col3 = last third
     const total = sortedTeams.length
     const col1Size = Math.ceil(total / 3)
     const col2Size = Math.ceil((total - col1Size) / 2)
@@ -108,7 +142,6 @@ export function TeamView({ teamState }: TeamViewProps) {
     const renderRows = (items: TeamRecord[], startIndex: number) =>
         items.map((t, localIdx) => {
             const globalIndex = startIndex + localIdx
-            // Flip dropdown upward for last 3 rows in each column
             const flipUp = localIdx >= items.length - 3
             return (
                 <div
@@ -129,7 +162,6 @@ export function TeamView({ teamState }: TeamViewProps) {
 
     return (
         <section className="px-4 py-7 md:px-8">
-            {/* Page header */}
             <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                     <h2 className="text-[30px] font-bold">Teams</h2>
@@ -146,7 +178,9 @@ export function TeamView({ teamState }: TeamViewProps) {
                         placeholder="New team name"
                         value={team.newTeamName}
                         onChange={(event) => team.setNewTeamName(event.target.value)}
-                        onKeyDown={(event) => { if (event.key === "Enter") void team.handleCreateTeam() }}
+                        onKeyDown={(event) => {
+                            if (event.key === "Enter") void team.handleCreateTeam()
+                        }}
                     />
                     <button
                         className="inline-flex items-center gap-2 rounded-[8px] bg-[var(--primary)] px-4 py-2.5 font-semibold text-[#00131c] transition hover:brightness-110"
@@ -160,23 +194,19 @@ export function TeamView({ teamState }: TeamViewProps) {
                 </div>
             </div>
 
-            {/* 3-column table — sequential numbering down each column */}
             <div className="grid grid-cols-3 gap-x-3">
-                {/* Column 1: items 1 → col1Size */}
                 <div className="rounded-[10px] border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
-                    <TableHeader />
+                    <TeamTableHeader sortKey={sortKey} sortDir={sortDir} onToggleSort={toggleSort} />
                     <div>{renderRows(col1, 0)}</div>
                 </div>
 
-                {/* Column 2: items col1Size+1 → col1Size+col2Size */}
                 <div className="rounded-[10px] border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
-                    <TableHeader />
+                    <TeamTableHeader sortKey={sortKey} sortDir={sortDir} onToggleSort={toggleSort} />
                     <div>{renderRows(col2, col1Size)}</div>
                 </div>
 
-                {/* Column 3: remaining items */}
                 <div className="rounded-[10px] border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
-                    <TableHeader />
+                    <TeamTableHeader sortKey={sortKey} sortDir={sortDir} onToggleSort={toggleSort} />
                     <div>{renderRows(col3, col1Size + col2Size)}</div>
                 </div>
             </div>

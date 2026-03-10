@@ -106,7 +106,9 @@ export function useColumnState({
     const [newColumnTitle, setNewColumnTitle] = useState("")
     const [isColumnsDrawerOpen, setColumnsDrawerOpen] = useState(false)
     const [draggingColumnKey, setDraggingColumnKey] = useState<string | null>(null)
+    const [dropTarget, setDropTarget] = useState<{ key: string; position: "before" | "after" } | null>(null)
     const [activeResize, setActiveResize] = useState<ActiveResizeState | null>(null)
+    const [isAutoSavingColumnProfile, setAutoSavingColumnProfile] = useState(false)
 
     // Load columns when authenticated
     useEffect(() => {
@@ -266,6 +268,40 @@ export function useColumnState({
         ],
     )
 
+    useEffect(() => {
+        if (!isAuthenticated || !hasUnsavedColumnProfileChanges) {
+            setAutoSavingColumnProfile(false)
+            return
+        }
+
+        setAutoSavingColumnProfile(true)
+
+        const timer = window.setTimeout(() => {
+            localStorage.setItem(scopedColumnPrefsKey, JSON.stringify(columnPreferences))
+            localStorage.setItem(scopedColumnLabelOverridesKey, JSON.stringify(columnLabelOverrides))
+            localStorage.setItem(scopedColumnWidthsKey, JSON.stringify(columnWidths))
+            localStorage.setItem(scopedColumnPrefsVersionKey, COLUMN_PREFS_VERSION)
+            setSavedColumnPreferences(columnPreferences)
+            setSavedColumnLabelOverrides(columnLabelOverrides)
+            setSavedColumnWidths(columnWidths)
+            setAutoSavingColumnProfile(false)
+        }, 250)
+
+        return () => {
+            window.clearTimeout(timer)
+        }
+    }, [
+        columnLabelOverrides,
+        columnPreferences,
+        columnWidths,
+        hasUnsavedColumnProfileChanges,
+        isAuthenticated,
+        scopedColumnLabelOverridesKey,
+        scopedColumnPrefsKey,
+        scopedColumnPrefsVersionKey,
+        scopedColumnWidthsKey,
+    ])
+
     // Version-based prefs migration — runs AFTER configurableKeys is defined
     useEffect(() => {
         if (!isAuthenticated) return
@@ -330,7 +366,11 @@ export function useColumnState({
         })
     }
 
-    const reorderColumns = (sourceKey: string, targetKey: string) => {
+    const reorderColumns = (
+        sourceKey: string,
+        targetKey: string,
+        position: "before" | "after" = "before",
+    ) => {
         if (sourceKey === targetKey) return
         setColumnPreferences((prev) => {
             const reconciled = reconcileColumnPreferences(prev, configurableKeys)
@@ -338,35 +378,14 @@ export function useColumnState({
             const from = nextOrder.indexOf(sourceKey)
             const to = nextOrder.indexOf(targetKey)
             if (from === -1 || to === -1) return reconciled
+
             const [moved] = nextOrder.splice(from, 1)
-            nextOrder.splice(to, 0, moved)
+            const targetIndex = nextOrder.indexOf(targetKey)
+            if (targetIndex === -1) return reconciled
+            const insertionIndex = position === "after" ? targetIndex + 1 : targetIndex
+            nextOrder.splice(insertionIndex, 0, moved)
             return { ...reconciled, order: nextOrder }
         })
-    }
-
-    const moveColumnByOffset = (key: string, offset: -1 | 1) => {
-        setColumnPreferences((prev) => {
-            const reconciled = reconcileColumnPreferences(prev, configurableKeys)
-            const nextOrder = [...reconciled.order]
-            const from = nextOrder.indexOf(key)
-            if (from === -1) return reconciled
-            const to = Math.max(0, Math.min(nextOrder.length - 1, from + offset))
-            if (to === from) return reconciled
-            const [moved] = nextOrder.splice(from, 1)
-            nextOrder.splice(to, 0, moved)
-            return { ...reconciled, order: nextOrder }
-        })
-    }
-
-    const handleSaveColumnProfile = () => {
-        localStorage.setItem(scopedColumnPrefsKey, JSON.stringify(columnPreferences))
-        localStorage.setItem(scopedColumnLabelOverridesKey, JSON.stringify(columnLabelOverrides))
-        localStorage.setItem(scopedColumnWidthsKey, JSON.stringify(columnWidths))
-        localStorage.setItem(scopedColumnPrefsVersionKey, COLUMN_PREFS_VERSION)
-        setSavedColumnPreferences(columnPreferences)
-        setSavedColumnLabelOverrides(columnLabelOverrides)
-        setSavedColumnWidths(columnWidths)
-        setUndoColumnResetSnapshot(null)
     }
 
     const resetColumnPreferences = () => {
@@ -466,6 +485,9 @@ export function useColumnState({
         setSavedColumnLabelOverrides({})
         setSavedColumnWidths({})
         setColumnsDrawerOpen(false)
+        setDraggingColumnKey(null)
+        setDropTarget(null)
+        setAutoSavingColumnProfile(false)
     }, [])
 
     return {
@@ -485,7 +507,10 @@ export function useColumnState({
         setColumnsDrawerOpen,
         draggingColumnKey,
         setDraggingColumnKey,
+        dropTarget,
+        setDropTarget,
         activeResize,
+        isAutoSavingColumnProfile,
         // derived
         uiColumns,
         configurableColumns,
@@ -501,8 +526,6 @@ export function useColumnState({
         startColumnResize,
         toggleColumnVisibility,
         reorderColumns,
-        moveColumnByOffset,
-        handleSaveColumnProfile,
         resetColumnPreferences,
         undoResetColumnPreferences,
         handleRenameColumn,

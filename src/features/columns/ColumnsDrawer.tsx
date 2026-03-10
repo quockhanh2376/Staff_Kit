@@ -26,7 +26,7 @@ export function ColumnsDrawer({
         >
             <div className="space-y-4">
                 <p className="text-sm text-[var(--text-secondary)]">
-                    Toggle visibility and drag to reorder columns. New fields from imported Excel files will appear here automatically.
+                    Toggle visibility and drag the handle to reorder columns. Changes save automatically for this profile, and new imported fields will appear here by themselves.
                 </p>
                 <div className="rounded-[8px] border border-[var(--border)] bg-[var(--surface-hover)]/30 px-3 py-2 text-xs text-[var(--text-secondary)]">
                     Active profile: <span className="font-semibold text-[var(--text-primary)]">{activeAccountName}</span> ({activeUserScope})
@@ -69,50 +69,69 @@ export function ColumnsDrawer({
                         if (!column) return null
 
                         const visible = !col.effectiveColumnPreferences.hidden.includes(key)
-                        const currentIndex = col.effectiveColumnPreferences.order.indexOf(key)
-                        const isFirst = currentIndex <= 0
-                        const isLast = currentIndex === col.effectiveColumnPreferences.order.length - 1
+                        const isDragging = col.draggingColumnKey === key
+                        const dropBefore = col.dropTarget?.key === key && col.dropTarget.position === "before"
+                        const dropAfter = col.dropTarget?.key === key && col.dropTarget.position === "after"
 
                         return (
                             <div
                                 key={key}
-                                className="flex items-center gap-3 rounded-[8px] border border-[var(--border)] bg-[var(--surface-hover)]/35 px-3 py-2"
-                                draggable
-                                onDragStart={() => col.setDraggingColumnKey(key)}
-                                onDragOver={(event) => { event.preventDefault() }}
+                                className={`column-pref-row relative flex items-center gap-3 rounded-[8px] border px-3 py-2 ${
+                                    isDragging
+                                        ? "border-[var(--primary)]/45 bg-[var(--primary)]/10 opacity-75"
+                                        : "border-[var(--border)] bg-[var(--surface-hover)]/35"
+                                }`}
+                                onDragOver={(event) => {
+                                    if (!col.draggingColumnKey || col.draggingColumnKey === key) return
+                                    event.preventDefault()
+                                    const bounds = event.currentTarget.getBoundingClientRect()
+                                    const midpoint = bounds.top + bounds.height / 2
+                                    col.setDropTarget({
+                                        key,
+                                        position: event.clientY >= midpoint ? "after" : "before",
+                                    })
+                                }}
                                 onDrop={() => {
-                                    if (col.draggingColumnKey) {
-                                        col.reorderColumns(col.draggingColumnKey, key)
+                                    if (col.draggingColumnKey && col.dropTarget?.key === key) {
+                                        col.reorderColumns(
+                                            col.draggingColumnKey,
+                                            key,
+                                            col.dropTarget.position,
+                                        )
                                     }
                                     col.setDraggingColumnKey(null)
+                                    col.setDropTarget(null)
                                 }}
-                                onDragEnd={() => col.setDraggingColumnKey(null)}
+                                onDragEnd={() => {
+                                    col.setDraggingColumnKey(null)
+                                    col.setDropTarget(null)
+                                }}
                             >
-                                <GripVertical size={14} className="text-[var(--text-secondary)]" />
+                                {dropBefore && <span className="column-drop-indicator column-drop-indicator-top" />}
+                                {dropAfter && <span className="column-drop-indicator column-drop-indicator-bottom" />}
+
+                                <button
+                                    className="column-drag-handle"
+                                    type="button"
+                                    draggable
+                                    onDragStart={(event) => {
+                                        event.dataTransfer.effectAllowed = "move"
+                                        col.setDraggingColumnKey(key)
+                                        col.setDropTarget(null)
+                                    }}
+                                    onDragEnd={() => {
+                                        col.setDraggingColumnKey(null)
+                                        col.setDropTarget(null)
+                                    }}
+                                    title="Drag to reorder"
+                                    aria-label={`Drag to reorder ${column.label}`}
+                                >
+                                    <GripVertical size={14} className="text-[var(--text-secondary)]" />
+                                </button>
                                 <input type="checkbox" checked={visible} onChange={() => col.toggleColumnVisibility(key)} />
                                 <div className="flex-1">
                                     <div className="text-sm font-medium">{column.label}</div>
                                     <div className="text-[11px] uppercase tracking-[0.06em] text-[var(--text-secondary)]">{column.source}</div>
-                                </div>
-                                <div className="flex items-center gap-1">
-                                    <button
-                                        className="rounded-[6px] border border-[var(--border)] px-2 py-1 text-xs disabled:opacity-50"
-                                        onClick={() => col.moveColumnByOffset(key, -1)}
-                                        type="button"
-                                        disabled={isFirst}
-                                        title="Move up"
-                                    >
-                                        Up
-                                    </button>
-                                    <button
-                                        className="rounded-[6px] border border-[var(--border)] px-2 py-1 text-xs disabled:opacity-50"
-                                        onClick={() => col.moveColumnByOffset(key, 1)}
-                                        type="button"
-                                        disabled={isLast}
-                                        title="Move down"
-                                    >
-                                        Down
-                                    </button>
                                 </div>
                                 <button
                                     className="rounded-[6px] border border-[var(--border)] px-2 py-1 text-xs"
@@ -144,14 +163,6 @@ export function ColumnsDrawer({
 
                 <div className="flex flex-wrap items-center gap-2 border-t border-[var(--border)] pt-3">
                     <button
-                        className="rounded-[8px] bg-[var(--primary)] px-3 py-2 text-sm font-semibold text-[#00131c] disabled:opacity-50"
-                        onClick={col.handleSaveColumnProfile}
-                        type="button"
-                        disabled={!col.hasUnsavedColumnProfileChanges}
-                    >
-                        Save for {activeAccountName}
-                    </button>
-                    <button
                         className="rounded-[8px] border border-[var(--border)] px-3 py-2 text-sm font-medium"
                         onClick={col.resetColumnPreferences}
                         type="button"
@@ -168,7 +179,9 @@ export function ColumnsDrawer({
                         </button>
                     )}
                     <div className="ml-auto text-xs text-[var(--text-secondary)]">
-                        {col.hasUnsavedColumnProfileChanges ? "Unsaved changes" : "All changes saved"}
+                        {col.isAutoSavingColumnProfile
+                            ? "Saving changes..."
+                            : "Saved automatically for this profile"}
                     </div>
                 </div>
             </div>
