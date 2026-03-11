@@ -236,6 +236,7 @@ export function useTableEdit({
                     clientYearOfServices: drafts.clientYearOfServices ?? employee.clientYearOfServices ?? null,
                     computerName: drafts.computerName ?? employee.computerName ?? null,
                     notes: drafts.notes ?? employee.notes ?? null,
+                    staffGroup: employee.staffGroup,
                     // Merge dynamic field drafts (e.g. computer_2) into existing dynamicFields
                     dynamicFields: Object.keys(dynamicDrafts).length > 0
                         ? { ...(employee.dynamicFields ?? {}), ...dynamicDrafts }

@@ -86,23 +86,6 @@ function App() {
     [activeAccount],
   )
 
-  const scopedColumnPrefsKey = useMemo(
-    () => buildScopedStorageKey(COLUMN_PREFS_KEY, activeUserScope),
-    [activeUserScope],
-  )
-  const scopedColumnPrefsVersionKey = useMemo(
-    () => buildScopedStorageKey(COLUMN_PREFS_VERSION_KEY, activeUserScope),
-    [activeUserScope],
-  )
-  const scopedColumnLabelOverridesKey = useMemo(
-    () => buildScopedStorageKey(COLUMN_LABEL_OVERRIDES_KEY, activeUserScope),
-    [activeUserScope],
-  )
-  const scopedColumnWidthsKey = useMemo(
-    () => buildScopedStorageKey(COLUMN_WIDTHS_KEY, activeUserScope),
-    [activeUserScope],
-  )
-
   // Restore per-user theme preference on login / account switch
   const scopedThemeKey = buildScopedStorageKey(THEME_KEY, activeUserScope)
   useEffect(() => {
@@ -111,6 +94,74 @@ function App() {
   }, [scopedThemeKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Column state ─────────────────────────────────────────────────────────────
+
+  const employeeState = useEmployeeState({
+    dbReady,
+    isAuthenticated,
+    reloadToken,
+    setGlobalError,
+  })
+
+  const emp = employeeState
+
+  const selectedGroupLabel = useMemo(
+    () => STAFF_GROUP_BUTTONS.find((item) => item.key === emp.staffGroupFilter)?.label ?? "Employee list",
+    [emp.staffGroupFilter],
+  )
+
+  const legacyScopedColumnPrefsKey = useMemo(
+    () => buildScopedStorageKey(COLUMN_PREFS_KEY, activeUserScope),
+    [activeUserScope],
+  )
+  const legacyScopedColumnPrefsVersionKey = useMemo(
+    () => buildScopedStorageKey(COLUMN_PREFS_VERSION_KEY, activeUserScope),
+    [activeUserScope],
+  )
+  const legacyScopedColumnLabelOverridesKey = useMemo(
+    () => buildScopedStorageKey(COLUMN_LABEL_OVERRIDES_KEY, activeUserScope),
+    [activeUserScope],
+  )
+  const legacyScopedColumnWidthsKey = useMemo(
+    () => buildScopedStorageKey(COLUMN_WIDTHS_KEY, activeUserScope),
+    [activeUserScope],
+  )
+  const columnPrefsScope = useMemo(
+    () => `${activeUserScope}:${emp.staffGroupFilter}`,
+    [activeUserScope, emp.staffGroupFilter],
+  )
+  const scopedColumnPrefsKey = useMemo(
+    () => buildScopedStorageKey(COLUMN_PREFS_KEY, columnPrefsScope),
+    [columnPrefsScope],
+  )
+  const scopedColumnPrefsVersionKey = useMemo(
+    () => buildScopedStorageKey(COLUMN_PREFS_VERSION_KEY, columnPrefsScope),
+    [columnPrefsScope],
+  )
+  const scopedColumnLabelOverridesKey = useMemo(
+    () => buildScopedStorageKey(COLUMN_LABEL_OVERRIDES_KEY, columnPrefsScope),
+    [columnPrefsScope],
+  )
+  const scopedColumnWidthsKey = useMemo(
+    () => buildScopedStorageKey(COLUMN_WIDTHS_KEY, columnPrefsScope),
+    [columnPrefsScope],
+  )
+  const scopedColumnPrefsFallbackKeys = useMemo(
+    () => (emp.staffGroupFilter === "employee_list" ? [legacyScopedColumnPrefsKey] : []),
+    [emp.staffGroupFilter, legacyScopedColumnPrefsKey],
+  )
+  const scopedColumnPrefsVersionFallbackKeys = useMemo(
+    () => (emp.staffGroupFilter === "employee_list" ? [legacyScopedColumnPrefsVersionKey] : []),
+    [emp.staffGroupFilter, legacyScopedColumnPrefsVersionKey],
+  )
+  const scopedColumnLabelOverridesFallbackKeys = useMemo(
+    () => (emp.staffGroupFilter === "employee_list" ? [legacyScopedColumnLabelOverridesKey] : []),
+    [emp.staffGroupFilter, legacyScopedColumnLabelOverridesKey],
+  )
+  const scopedColumnWidthsFallbackKeys = useMemo(
+    () => (emp.staffGroupFilter === "employee_list" ? [legacyScopedColumnWidthsKey] : []),
+    [emp.staffGroupFilter, legacyScopedColumnWidthsKey],
+  )
+
   const col = useColumnState({
     dbReady,
     isAuthenticated,
@@ -119,17 +170,15 @@ function App() {
     scopedColumnPrefsVersionKey,
     scopedColumnLabelOverridesKey,
     scopedColumnWidthsKey,
+    scopedColumnPrefsFallbackKeys,
+    scopedColumnPrefsVersionFallbackKeys,
+    scopedColumnLabelOverridesFallbackKeys,
+    scopedColumnWidthsFallbackKeys,
     activeAccountName,
     setGlobalError,
   })
 
   // ── Employee state ───────────────────────────────────────────────────────────
-  const emp = useEmployeeState({
-    dbReady,
-    isAuthenticated,
-    reloadToken,
-    setGlobalError,
-  })
 
   // ── Table edit state ─────────────────────────────────────────────────────────
   const edit = useTableEdit({
@@ -205,10 +254,6 @@ function App() {
   }, [isAuthenticated, activeUserScope, scopedColumnPrefsKey, scopedColumnLabelOverridesKey, scopedColumnWidthsKey])
 
   // ── Derived employee labels ───────────────────────────────────────────────────
-  const selectedGroupLabel = useMemo(
-    () => STAFF_GROUP_BUTTONS.find((item) => item.key === emp.staffGroupFilter)?.label ?? "Employee list",
-    [emp.staffGroupFilter],
-  )
   const selectedGroupTotal = useMemo(
     () => getGroupCount(emp.employeeGroupCounts, emp.staffGroupFilter),
     [emp.employeeGroupCounts, emp.staffGroupFilter],
@@ -456,6 +501,7 @@ function App() {
         columnState={col}
         activeAccountName={activeAccountName}
         activeUserScope={activeUserScope}
+        activeTableLabel={selectedGroupLabel}
         triggerReload={triggerReload}
       />
 

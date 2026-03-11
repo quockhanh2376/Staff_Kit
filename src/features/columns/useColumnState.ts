@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
-import type { MouseEvent as ReactMouseEvent } from "react"
+import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react"
 import type { EmployeeColumnDefinition } from "../../types/staff"
 import type {
     UiColumnDefinition,
@@ -12,6 +12,7 @@ import { getErrorMessage } from "../../lib/utils"
 import {
     readColumnPreferences,
     readColumnLabelOverrides,
+    readRawStorageValue,
     readColumnWidths,
     serializeColumnPreferences,
     serializeStringMap,
@@ -60,6 +61,10 @@ type UseColumnStateOptions = {
     scopedColumnPrefsVersionKey: string
     scopedColumnLabelOverridesKey: string
     scopedColumnWidthsKey: string
+    scopedColumnPrefsFallbackKeys?: string[]
+    scopedColumnPrefsVersionFallbackKeys?: string[]
+    scopedColumnLabelOverridesFallbackKeys?: string[]
+    scopedColumnWidthsFallbackKeys?: string[]
     activeAccountName: string
     setGlobalError: (msg: string | null) => void
 }
@@ -74,6 +79,10 @@ export function useColumnState({
     scopedColumnPrefsVersionKey,
     scopedColumnLabelOverridesKey,
     scopedColumnWidthsKey,
+    scopedColumnPrefsFallbackKeys = [],
+    scopedColumnPrefsVersionFallbackKeys = [],
+    scopedColumnLabelOverridesFallbackKeys = [],
+    scopedColumnWidthsFallbackKeys = [],
     setGlobalError,
 }: UseColumnStateOptions) {
     const [columnDefinitions, setColumnDefinitions] = useState<EmployeeColumnDefinition[]>([])
@@ -81,22 +90,22 @@ export function useColumnState({
     const [isMutatingColumns, setMutatingColumns] = useState(false)
 
     const [columnPreferences, setColumnPreferences] = useState<ColumnPreferences>(() =>
-        readColumnPreferences(scopedColumnPrefsKey),
+        readColumnPreferences(scopedColumnPrefsKey, scopedColumnPrefsFallbackKeys),
     )
     const [columnLabelOverrides, setColumnLabelOverrides] = useState<Record<string, string>>(
-        () => readColumnLabelOverrides(scopedColumnLabelOverridesKey),
+        () => readColumnLabelOverrides(scopedColumnLabelOverridesKey, scopedColumnLabelOverridesFallbackKeys),
     )
     const [columnWidths, setColumnWidths] = useState<ColumnWidthMap>(() =>
-        readColumnWidths(scopedColumnWidthsKey),
+        readColumnWidths(scopedColumnWidthsKey, scopedColumnWidthsFallbackKeys),
     )
     const [savedColumnPreferences, setSavedColumnPreferences] = useState<ColumnPreferences>(() =>
-        readColumnPreferences(scopedColumnPrefsKey),
+        readColumnPreferences(scopedColumnPrefsKey, scopedColumnPrefsFallbackKeys),
     )
     const [savedColumnLabelOverrides, setSavedColumnLabelOverrides] = useState<Record<string, string>>(
-        () => readColumnLabelOverrides(scopedColumnLabelOverridesKey),
+        () => readColumnLabelOverrides(scopedColumnLabelOverridesKey, scopedColumnLabelOverridesFallbackKeys),
     )
     const [savedColumnWidths, setSavedColumnWidths] = useState<ColumnWidthMap>(() =>
-        readColumnWidths(scopedColumnWidthsKey),
+        readColumnWidths(scopedColumnWidthsKey, scopedColumnWidthsFallbackKeys),
     )
     const [undoColumnResetSnapshot, setUndoColumnResetSnapshot] = useState<{
         preferences: ColumnPreferences
@@ -141,9 +150,12 @@ export function useColumnState({
 
     // Reset column prefs on login
     const resetColumnPrefsOnAuth = useCallback(() => {
-        const nextPrefs = readColumnPreferences(scopedColumnPrefsKey)
-        const nextLabels = readColumnLabelOverrides(scopedColumnLabelOverridesKey)
-        const nextWidths = readColumnWidths(scopedColumnWidthsKey)
+        const nextPrefs = readColumnPreferences(scopedColumnPrefsKey, scopedColumnPrefsFallbackKeys)
+        const nextLabels = readColumnLabelOverrides(
+            scopedColumnLabelOverridesKey,
+            scopedColumnLabelOverridesFallbackKeys,
+        )
+        const nextWidths = readColumnWidths(scopedColumnWidthsKey, scopedColumnWidthsFallbackKeys)
         setColumnPreferences(nextPrefs)
         setColumnLabelOverrides(nextLabels)
         setColumnWidths(nextWidths)
@@ -151,7 +163,14 @@ export function useColumnState({
         setSavedColumnLabelOverrides(nextLabels)
         setSavedColumnWidths(nextWidths)
         setColumnSearchTerm("")
-    }, [scopedColumnLabelOverridesKey, scopedColumnPrefsKey, scopedColumnWidthsKey])
+    }, [
+        scopedColumnLabelOverridesFallbackKeys,
+        scopedColumnLabelOverridesKey,
+        scopedColumnPrefsFallbackKeys,
+        scopedColumnPrefsKey,
+        scopedColumnWidthsFallbackKeys,
+        scopedColumnWidthsKey,
+    ])
 
     // Column resize mouse tracking
     useEffect(() => {
@@ -308,7 +327,10 @@ export function useColumnState({
         if (columnDefinitions.length === 0) return
         if (configurableKeys.length === 0) return
 
-        const currentVersion = localStorage.getItem(scopedColumnPrefsVersionKey)
+        const currentVersion = readRawStorageValue(
+            scopedColumnPrefsVersionKey,
+            scopedColumnPrefsVersionFallbackKeys,
+        )
         if (currentVersion !== COLUMN_PREFS_VERSION) {
             const defaults = buildDefaultColumnPreferences(configurableKeys)
             localStorage.setItem(scopedColumnPrefsKey, JSON.stringify(defaults))
@@ -337,6 +359,7 @@ export function useColumnState({
         configurableKeys,
         scopedColumnLabelOverridesKey,
         scopedColumnPrefsKey,
+        scopedColumnPrefsVersionFallbackKeys,
         scopedColumnPrefsVersionKey,
         scopedColumnWidthsKey,
     ])
@@ -366,7 +389,7 @@ export function useColumnState({
         })
     }
 
-    const reorderColumns = (
+    const reorderColumns = useCallback((
         sourceKey: string,
         targetKey: string,
         position: "before" | "after" = "before",
@@ -386,7 +409,71 @@ export function useColumnState({
             nextOrder.splice(insertionIndex, 0, moved)
             return { ...reconciled, order: nextOrder }
         })
-    }
+    }, [configurableKeys])
+
+    const startColumnDrag = useCallback((
+        event: ReactPointerEvent<HTMLButtonElement>,
+        key: string,
+    ) => {
+        event.preventDefault()
+        event.stopPropagation()
+        setDraggingColumnKey(key)
+        setDropTarget(null)
+    }, [])
+
+    useEffect(() => {
+        if (!draggingColumnKey) return
+
+        document.body.classList.add("column-reorder-active")
+
+        const handlePointerMove = (event: PointerEvent) => {
+            const hovered = document.elementFromPoint(event.clientX, event.clientY)
+            const row = hovered instanceof Element
+                ? hovered.closest<HTMLElement>("[data-column-key]")
+                : null
+
+            if (!row) {
+                setDropTarget(null)
+                return
+            }
+
+            const targetKey = row.dataset.columnKey
+            if (!targetKey || targetKey === draggingColumnKey) {
+                setDropTarget(null)
+                return
+            }
+
+            const bounds = row.getBoundingClientRect()
+            const midpoint = bounds.top + bounds.height / 2
+            const position = event.clientY >= midpoint ? "after" : "before"
+
+            setDropTarget((current) => {
+                if (current?.key === targetKey && current.position === position) {
+                    return current
+                }
+                return { key: targetKey, position }
+            })
+        }
+
+        const finishDrag = () => {
+            if (dropTarget) {
+                reorderColumns(draggingColumnKey, dropTarget.key, dropTarget.position)
+            }
+            setDraggingColumnKey(null)
+            setDropTarget(null)
+        }
+
+        window.addEventListener("pointermove", handlePointerMove)
+        window.addEventListener("pointerup", finishDrag)
+        window.addEventListener("pointercancel", finishDrag)
+
+        return () => {
+            document.body.classList.remove("column-reorder-active")
+            window.removeEventListener("pointermove", handlePointerMove)
+            window.removeEventListener("pointerup", finishDrag)
+            window.removeEventListener("pointercancel", finishDrag)
+        }
+    }, [draggingColumnKey, dropTarget, reorderColumns])
 
     const resetColumnPreferences = () => {
         const firstConfirm = window.confirm("Reset column view to default for this profile?")
@@ -524,6 +611,7 @@ export function useColumnState({
         hasUnsavedColumnProfileChanges,
         // handlers
         startColumnResize,
+        startColumnDrag,
         toggleColumnVisibility,
         reorderColumns,
         resetColumnPreferences,

@@ -152,6 +152,7 @@ export type EmployeePayload = {
   clientYearOfServices?: string | null
   computerName?: string | null
   notes?: string | null
+  staffGroup?: string | null
   dynamicFields?: Record<string, string> | null
 }
 

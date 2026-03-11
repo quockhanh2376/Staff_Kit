@@ -254,15 +254,12 @@ pub fn update_employee(
     id: i64,
     payload: EmployeePayload,
 ) -> Result<EmployeeRecord, String> {
-    let raw_group = payload.staff_group.clone().unwrap_or_else(|| STAFF_GROUP_EMPLOYEE_LIST.to_string());
-    let target_group = normalize_staff_group(raw_group.as_str())
-        .ok_or_else(|| format!("invalid staff group: {raw_group}"))?;
-
     let mut conn = open_runtime_connection(app)?;
     let tx = conn
         .transaction()
         .map_err(|err| format!("failed to start update transaction: {err}"))?;
 
+    let requested_staff_group = payload.staff_group.clone();
     let normalized = NormalizedEmployeePayload::try_from(payload)?;
     let team_id = resolve_team_id_tx(&tx, normalized.team_name.as_deref())?;
 
@@ -280,6 +277,12 @@ pub fn update_employee(
             .map_err(|err| format!("failed to find employee: {err}"))?
             .ok_or_else(|| format!("employee '{}' was not found", normalized.employee_id))?
     };
+
+    let target_group = resolve_update_staff_group_tx(
+        &tx,
+        row_id,
+        requested_staff_group.as_deref(),
+    )?;
 
     tx.execute(
         r#"
@@ -322,7 +325,7 @@ pub fn update_employee(
             normalized.start_date.as_deref(),
             normalized.computer_name.as_deref(),
             normalized.notes.as_deref(),
-            target_group,
+            target_group.as_str(),
             row_id,
         ],
     )
@@ -332,6 +335,11 @@ pub fn update_employee(
         upsert_dynamic_field_definitions_for_map(&tx, &normalized.dynamic_fields)?;
         upsert_dynamic_fields_tx(&tx, row_id, &normalized.dynamic_fields)?;
     }
+    normalize_eml_security_tool_values_for_employee_tx(
+        &tx,
+        row_id,
+        normalized.team_name.as_deref(),
+    )?;
 
     tx.commit()
         .map_err(|err| format!("failed to commit update transaction: {err}"))?;
@@ -499,6 +507,11 @@ pub(crate) fn upsert_employee_from_payload(
             upsert_dynamic_field_definitions_for_map(tx, &normalized.dynamic_fields)?;
             upsert_dynamic_fields_tx(tx, id, &normalized.dynamic_fields)?;
         }
+        normalize_eml_security_tool_values_for_employee_tx(
+            tx,
+            id,
+            normalized.team_name.as_deref(),
+        )?;
 
         return Ok(UpsertAction::Updated);
     }
@@ -557,6 +570,11 @@ pub(crate) fn upsert_employee_from_payload(
         upsert_dynamic_field_definitions_for_map(tx, &normalized.dynamic_fields)?;
         upsert_dynamic_fields_tx(tx, inserted_id, &normalized.dynamic_fields)?;
     }
+    normalize_eml_security_tool_values_for_employee_tx(
+        tx,
+        inserted_id,
+        normalized.team_name.as_deref(),
+    )?;
 
     Ok(UpsertAction::Inserted)
 }
@@ -848,6 +866,64 @@ fn resolve_employee_sort_spec(
 fn normalize_optional_or_date(value: Option<String>) -> Option<String> {
     let normalized = normalize_optional_text(value)?;
     super::normalize_date_text(&normalized).or(Some(normalized))
+}
+
+fn resolve_update_staff_group_tx(
+    tx: &Transaction<'_>,
+    row_id: i64,
+    requested_staff_group: Option<&str>,
+) -> Result<String, String> {
+    if let Some(raw_group) = requested_staff_group.and_then(|value| normalize_optional_text(Some(value.to_string()))) {
+        let target_group = normalize_staff_group(raw_group.as_str())
+            .ok_or_else(|| format!("invalid staff group: {raw_group}"))?;
+        return Ok(target_group.to_string());
+    }
+
+    tx.query_row(
+        r#"
+        SELECT CASE
+          WHEN COALESCE(NULLIF(TRIM(staff_group), ''), 'employee_list') = 'internal_movent'
+          THEN 'internal_movement'
+          ELSE COALESCE(NULLIF(TRIM(staff_group), ''), 'employee_list')
+        END
+        FROM employees
+        WHERE id = ?
+        "#,
+        params![row_id],
+        |row| row.get::<_, String>(0),
+    )
+    .optional()
+    .map_err(|err| format!("failed to read current employee group: {err}"))?
+    .ok_or_else(|| format!("employee with id {row_id} was not found"))
+}
+
+fn normalize_eml_security_tool_values_for_employee_tx(
+    tx: &Transaction<'_>,
+    employee_id: i64,
+    team_name: Option<&str>,
+) -> Result<(), String> {
+    if !is_eml_team(team_name) {
+        return Ok(());
+    }
+
+    tx.execute(
+        r#"
+        UPDATE employee_dynamic_values
+        SET value = 'Yes',
+            updated_at = datetime('now')
+        WHERE employee_id = ?
+          AND lower(trim(COALESCE(value, ''))) = 'v'
+          AND replace(lower(field_key), '_', '') IN ('sentinelone', 'endpointagent')
+        "#,
+        params![employee_id],
+    )
+    .map_err(|err| format!("failed to normalize EML security tool values: {err}"))?;
+
+    Ok(())
+}
+
+fn is_eml_team(team_name: Option<&str>) -> bool {
+    matches!(team_name.map(normalize_header_key).as_deref(), Some("eml"))
 }
 
 fn build_fts_query(raw: &str) -> Option<String> {

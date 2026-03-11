@@ -6,6 +6,7 @@ type ColumnsDrawerProps = {
     columnState: ColumnState
     activeAccountName: string
     activeUserScope: string
+    activeTableLabel: string
     triggerReload: () => void
 }
 
@@ -13,6 +14,7 @@ export function ColumnsDrawer({
     columnState,
     activeAccountName,
     activeUserScope,
+    activeTableLabel,
     triggerReload,
 }: ColumnsDrawerProps) {
     const col = columnState
@@ -26,10 +28,15 @@ export function ColumnsDrawer({
         >
             <div className="space-y-4">
                 <p className="text-sm text-[var(--text-secondary)]">
-                    Toggle visibility and drag the handle to reorder columns. Changes save automatically for this profile, and new imported fields will appear here by themselves.
+                    Toggle visibility and drag the handle to reorder columns. Changes save automatically for this table profile, and new imported fields will appear here by themselves.
                 </p>
-                <div className="rounded-[8px] border border-[var(--border)] bg-[var(--surface-hover)]/30 px-3 py-2 text-xs text-[var(--text-secondary)]">
-                    Active profile: <span className="font-semibold text-[var(--text-primary)]">{activeAccountName}</span> ({activeUserScope})
+                <div className="space-y-1 rounded-[8px] border border-[var(--border)] bg-[var(--surface-hover)]/30 px-3 py-2 text-xs text-[var(--text-secondary)]">
+                    <div>
+                        Active profile: <span className="font-semibold text-[var(--text-primary)]">{activeAccountName}</span> ({activeUserScope})
+                    </div>
+                    <div>
+                        Current table: <span className="font-semibold text-[var(--text-primary)]">{activeTableLabel}</span>
+                    </div>
                 </div>
 
                 <div className="rounded-[8px] border border-[var(--border)] bg-[var(--surface-hover)]/30 p-3">
@@ -76,36 +83,12 @@ export function ColumnsDrawer({
                         return (
                             <div
                                 key={key}
+                                data-column-key={key}
                                 className={`column-pref-row relative flex items-center gap-3 rounded-[8px] border px-3 py-2 ${
                                     isDragging
                                         ? "border-[var(--primary)]/45 bg-[var(--primary)]/10 opacity-75"
                                         : "border-[var(--border)] bg-[var(--surface-hover)]/35"
                                 }`}
-                                onDragOver={(event) => {
-                                    if (!col.draggingColumnKey || col.draggingColumnKey === key) return
-                                    event.preventDefault()
-                                    const bounds = event.currentTarget.getBoundingClientRect()
-                                    const midpoint = bounds.top + bounds.height / 2
-                                    col.setDropTarget({
-                                        key,
-                                        position: event.clientY >= midpoint ? "after" : "before",
-                                    })
-                                }}
-                                onDrop={() => {
-                                    if (col.draggingColumnKey && col.dropTarget?.key === key) {
-                                        col.reorderColumns(
-                                            col.draggingColumnKey,
-                                            key,
-                                            col.dropTarget.position,
-                                        )
-                                    }
-                                    col.setDraggingColumnKey(null)
-                                    col.setDropTarget(null)
-                                }}
-                                onDragEnd={() => {
-                                    col.setDraggingColumnKey(null)
-                                    col.setDropTarget(null)
-                                }}
                             >
                                 {dropBefore && <span className="column-drop-indicator column-drop-indicator-top" />}
                                 {dropAfter && <span className="column-drop-indicator column-drop-indicator-bottom" />}
@@ -113,16 +96,7 @@ export function ColumnsDrawer({
                                 <button
                                     className="column-drag-handle"
                                     type="button"
-                                    draggable
-                                    onDragStart={(event) => {
-                                        event.dataTransfer.effectAllowed = "move"
-                                        col.setDraggingColumnKey(key)
-                                        col.setDropTarget(null)
-                                    }}
-                                    onDragEnd={() => {
-                                        col.setDraggingColumnKey(null)
-                                        col.setDropTarget(null)
-                                    }}
+                                    onPointerDown={(event) => col.startColumnDrag(event, key)}
                                     title="Drag to reorder"
                                     aria-label={`Drag to reorder ${column.label}`}
                                 >
@@ -181,7 +155,7 @@ export function ColumnsDrawer({
                     <div className="ml-auto text-xs text-[var(--text-secondary)]">
                         {col.isAutoSavingColumnProfile
                             ? "Saving changes..."
-                            : "Saved automatically for this profile"}
+                            : "Saved automatically for this table"}
                     </div>
                 </div>
             </div>

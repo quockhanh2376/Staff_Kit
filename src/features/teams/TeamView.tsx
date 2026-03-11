@@ -33,18 +33,18 @@ function TeamTableHeader({
     onToggleSort: (key: SortKey) => void
 }) {
     return (
-        <div className="grid grid-cols-[2rem_1fr_5rem_auto] items-center gap-1 border-b-2 border-[var(--primary)]/40 bg-[var(--surface-hover)] px-2 py-2.5 text-[15px] font-bold uppercase tracking-[0.08em] text-[var(--primary)]">
+        <div className="team-grid-header grid grid-cols-[2rem_1fr_5rem_auto] items-center gap-1 border-b-2 border-[var(--primary)]/40 bg-[var(--surface-hover)] px-2 py-2.5 font-bold uppercase tracking-[0.08em] text-[var(--primary)]">
             <span className="text-center">#</span>
             <button
                 type="button"
-                className="inline-flex items-center gap-1.5 hover:brightness-125"
+                className="team-grid-header-button inline-flex items-center gap-1.5 hover:brightness-125"
                 onClick={() => onToggleSort("name")}
             >
                 Team Name <SortIndicator activeKey={sortKey} colKey="name" sortDir={sortDir} />
             </button>
             <button
                 type="button"
-                className="inline-flex items-center gap-1.5 hover:brightness-125"
+                className="team-grid-header-button inline-flex items-center gap-1.5 hover:brightness-125"
                 onClick={() => onToggleSort("memberCount")}
             >
                 Members <SortIndicator activeKey={sortKey} colKey="memberCount" sortDir={sortDir} />
@@ -75,11 +75,11 @@ function ActionMenu({ t, teamState, flipUp }: { t: TeamRecord; teamState: TeamSt
         <div ref={ref} className="relative">
             <button
                 type="button"
-                className="icon-button flex items-center gap-1 py-0.5 text-[11px]"
+                className="team-grid-action-button icon-button flex items-center gap-1 py-0.5"
                 onClick={() => setOpen((v) => !v)}
                 title="Actions"
             >
-                <MoreHorizontal size={14} />
+                <MoreHorizontal size={15} />
             </button>
             {open && (
                 <div className={`${dropdownPos} min-w-[130px] rounded-[8px] border border-[var(--border)] bg-[var(--surface)] py-1 shadow-lg`}>
@@ -146,13 +146,13 @@ export function TeamView({ teamState }: TeamViewProps) {
             return (
                 <div
                     key={t.id}
-                    className="grid grid-cols-[2rem_1fr_5rem_auto] items-center gap-1 border-b border-[var(--border)] px-2 py-1 text-sm hover:bg-[var(--surface-hover)]"
+                    className="team-grid-row grid grid-cols-[2rem_1fr_5rem_auto] items-center gap-1 border-b border-[var(--border)] px-2 py-1 hover:bg-[var(--surface-hover)]"
                 >
-                    <span className="text-center text-[11px] text-[var(--text-secondary)]">{globalIndex + 1}</span>
-                    <span className="truncate font-medium text-[var(--text-primary)]" title={t.name}>
+                    <span className="team-grid-index text-center">{globalIndex + 1}</span>
+                    <span className="team-grid-name truncate font-medium" title={t.name}>
                         {t.name}
                     </span>
-                    <span className="text-center text-[var(--text-secondary)]">{t.memberCount ?? 0}</span>
+                    <span className="team-grid-count text-center">{t.memberCount ?? 0}</span>
                     <div className="flex justify-center">
                         <ActionMenu t={t} teamState={team} flipUp={flipUp} />
                     </div>

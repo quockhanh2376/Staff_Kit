@@ -17,18 +17,18 @@
 }
 
 .dark {
-  --bg: #070d0b;
-  --surface: #0e1a12;
-  --surface-hover: #142b1a;
-  --border: #1e3626;
-  --text-primary: #edfff3;
-  --text-secondary: #93c4a4;
+  --bg: #0f1115;
+  --surface: #171a20;
+  --surface-hover: #20242b;
+  --border: #2e343d;
+  --text-primary: #f3f4f6;
+  --text-secondary: #9ca3af;
   --primary: #22c55e;
   --success: #10b981;
   --error: #ef4444;
   --warning: #f59e0b;
-  --highlight-bg: rgba(34, 197, 94, 0.18);
-  --highlight-text: #86efac;
+  --highlight-bg: rgba(34, 197, 94, 0.14);
+  --highlight-text: #bbf7d0;
 }
 
 * {
@@ -54,6 +54,11 @@ body {
 
 body.column-resize-active {
   cursor: col-resize;
+  user-select: none;
+}
+
+body.column-reorder-active {
+  cursor: grabbing;
   user-select: none;
 }
 
@@ -284,6 +289,46 @@ option {
   color: var(--text-primary);
 }
 
+.team-grid-header {
+  font-size: 16.5px;
+}
+
+.team-grid-header-button {
+  color: inherit;
+}
+
+.team-grid-row {
+  font-size: 15.5px;
+}
+
+.team-grid-name {
+  color: var(--text-primary);
+}
+
+.team-grid-index,
+.team-grid-count {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.team-grid-action-button {
+  font-size: 12px;
+}
+
+.dark .team-grid-header {
+  color: color-mix(in oklab, var(--primary) 82%, white 18%);
+}
+
+.dark .team-grid-name {
+  color: color-mix(in oklab, var(--text-primary) 88%, white 12%);
+}
+
+.dark .team-grid-index,
+.dark .team-grid-count,
+.dark .team-grid-action-button {
+  color: color-mix(in oklab, var(--text-secondary) 76%, white 24%);
+}
+
 .table-head {
   background: color-mix(in oklab, var(--surface) 78%, var(--bg) 22%);
 }
@@ -364,6 +409,7 @@ option {
   border-radius: 8px;
   background: color-mix(in oklab, var(--surface) 88%, transparent);
   cursor: grab;
+  touch-action: none;
   transition:
     border-color 140ms ease,
     background-color 140ms ease,
@@ -376,6 +422,10 @@ option {
 }
 
 .column-drag-handle:active {
+  cursor: grabbing;
+}
+
+body.column-reorder-active .column-drag-handle {
   cursor: grabbing;
 }
 

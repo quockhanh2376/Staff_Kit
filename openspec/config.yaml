@@ -1,0 +1,35 @@
+schema: spec-driven
+context: |
+  Project: Staff Kit.
+  Current state: brownfield desktop app at e:\Staff_Kit using Tauri v2 + Rust + React + SQLite.
+  Target state: migrate to a new web app using Next.js 16 stable App Router, TypeScript strict, PostgreSQL 16, Prisma, NextAuth v5, Redis 7, Docker Compose, Nginx, Vitest, and Playwright.
+  Source of truth for migration planning: ConvertWEB.md and .agent/project-context.md.
+  Deployment target: self-managed Linux VPS on internal company network, with SSL if available.
+  Scale target: about 1,000 concurrent internal users.
+  Data rule: migrate all existing SQLite data to PostgreSQL before go-live; no silent data loss is acceptable.
+  Framework baseline: use Next.js 16 stable only, enable `typedRoutes: true`, use `proxy.ts` sparingly for minimal edge gating, and add `instrumentation.ts` plus `instrumentation-client.ts` in the initial web baseline.
+  Runtime baseline: Node.js 20.9+ in development, CI, Docker, and production.
+  Security baseline: Zod validation on every API route, role guards, secrets only in environment variables, PgBouncer in production, and defense in depth for auth.
+  Quality baseline: no any by default, no hidden coupling, modular feature boundaries, tests required for critical flows, and changes should optimize for maintainability, readability, and future scale.
+  CI baseline: run explicit `eslint`, `tsc --noEmit`, tests, and `next build`; do not rely on `next lint` or assume `next build` performs linting automatically.
+  UX baseline: default locale is English, UI/UX must support bilingual EN/VI, and all screens must support both light mode and dark mode.
+  Observability baseline: all important features/functions must emit structured logs that support debugging, audit, maintenance, and production support without leaking secrets or sensitive data.
+  Migration rule: unless explicitly requested otherwise, preserve desktop behavior as the functional reference while designing the web replacement.
+
+rules:
+  proposal:
+    - State the business goal, affected area, migration impact, and why the change belongs in the web migration roadmap.
+    - Call out scope boundaries and explicit non-goals when a proposal is large.
+    - For risky or cross-cutting changes, include rollback or fallback thinking.
+  specs:
+    - Write requirements in clear Given/When/Then scenarios where practical.
+    - Distinguish current desktop behavior from intended web behavior when that difference matters.
+    - Include localization, theme, role, and audit/logging expectations when they affect user-visible behavior or operations.
+  design:
+    - Reuse established patterns from ConvertWEB.md before inventing new architecture.
+    - Explain data flow, auth/authorization boundaries, persistence changes, Next.js runtime conventions, and operational concerns for the chosen design.
+    - Highlight maintainability, testability, observability, and scaling implications for non-trivial changes.
+  tasks:
+    - Break work into small, verifiable steps with tests or validation called out explicitly.
+    - Separate planning, backend, frontend, data migration, and deployment tasks when the change spans multiple layers.
+    - Do not mark implementation complete without updating tests, docs, and logging where required.

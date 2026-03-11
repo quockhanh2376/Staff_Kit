@@ -284,6 +284,7 @@ fn apply_migrations(conn: &Connection) -> Result<(), String> {
     ensure_local_account_columns(conn)?;
     auth::ensure_local_accounts_seed(conn)?;
     normalize_staff_group_values(conn)?;
+    normalize_eml_security_tool_values(conn)?;
     ensure_search_index(conn)?;
 
     Ok(())
@@ -386,6 +387,28 @@ fn normalize_staff_group_values(conn: &Connection) -> Result<(), String> {
         params![STAFF_GROUP_INTERNAL_MOVEMENT, "internal_movent"],
     )
     .map_err(|err| format!("failed to normalize legacy staff_group values: {err}"))?;
+
+    Ok(())
+}
+
+fn normalize_eml_security_tool_values(conn: &Connection) -> Result<(), String> {
+    conn.execute(
+        r#"
+        UPDATE employee_dynamic_values
+        SET value = 'Yes',
+            updated_at = datetime('now')
+        WHERE lower(trim(COALESCE(value, ''))) = 'v'
+          AND replace(lower(field_key), '_', '') IN ('sentinelone', 'endpointagent')
+          AND employee_id IN (
+            SELECT e.id
+            FROM employees e
+            INNER JOIN teams t ON t.id = e.team_id
+            WHERE lower(trim(COALESCE(t.name, ''))) = 'eml'
+          )
+        "#,
+        [],
+    )
+    .map_err(|err| format!("failed to normalize EML security tool values: {err}"))?;
 
     Ok(())
 }
