@@ -1,10 +1,20 @@
+import type { Route } from "next";
+import Link from "next/link";
+
 import { getPendingReviewPreview } from "@/lib/admin/admin.service";
 
 const formatDateTime = (value: Date) =>
   new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short" }).format(value);
 
-export default async function ReviewsPage() {
+type ReviewsPageProps = {
+  searchParams?: Promise<{
+    updated?: string;
+  }>;
+};
+
+export default async function ReviewsPage({ searchParams }: ReviewsPageProps) {
   const requests = await getPendingReviewPreview();
+  const resolvedSearchParams = searchParams ? await searchParams : undefined;
 
   return (
     <main className="rounded-[28px] border border-border bg-surface px-6 py-6 backdrop-blur">
@@ -23,6 +33,12 @@ export default async function ReviewsPage() {
           {requests.length} pending requests
         </div>
       </div>
+
+      {resolvedSearchParams?.updated ? (
+        <div className="mt-6 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+          Review completed for {resolvedSearchParams.updated}.
+        </div>
+      ) : null}
 
       <div className="mt-6 space-y-4">
         {requests.map((request) => (
@@ -46,6 +62,17 @@ export default async function ReviewsPage() {
                   {assetCode}
                 </span>
               ))}
+            </div>
+
+            <div className="mt-4">
+              <Link
+                href={
+                  `/reviews/${request.requestType.toLowerCase()}/${request.requestKey}` as Route
+                }
+                className="inline-flex rounded-full border border-border bg-surface px-4 py-2 text-sm text-foreground transition hover:border-accent hover:text-accent"
+              >
+                Review
+              </Link>
             </div>
           </div>
         ))}

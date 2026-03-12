@@ -28,6 +28,34 @@ import type {
   SubmitReturnRequestInput,
 } from "./workflows.schemas";
 
+export type ReviewRequestDetail = {
+  requestType: WorkflowRequestType;
+  requestKey: string;
+  status: "PENDING" | "APPROVED" | "REJECTED";
+  submittedAt: Date;
+  submittedNotes?: string | null;
+  submittedSnapshot: {
+    employeeId: string;
+    employeeName: string;
+    assetCodes: string[];
+    items: Array<{
+      assetCode: string;
+      assetName?: string | null;
+      assignmentEmployeeId?: string;
+      assignmentEmployeeName?: string;
+    }>;
+  };
+  reviewedDraft: {
+    employeeId: string;
+    assetCodes: string[];
+    notes?: string | null;
+  };
+  rules: {
+    canAddAssets: boolean;
+    canRemoveAssets: boolean;
+  };
+};
+
 function normalizeAssetCodes(assetCodes: string[]) {
   const normalized = assetCodes.map((code) => code.trim());
   const seen = new Set<string>();
@@ -839,6 +867,14 @@ export async function reviewPendingRequest(
   actor: ApiActor,
   input: ReviewPendingRequestInput,
 ) {
+  if (input.decision === "REJECTED" && !input.notes?.trim()) {
+    throw new ApiError(
+      400,
+      "review_notes_required",
+      "Review notes are required when rejecting a pending request.",
+    );
+  }
+
   if (input.requestType === "RECEIVE") {
     return input.decision === "APPROVED"
       ? approveReceiveRequest(actor, input.requestKey, input)
@@ -848,6 +884,91 @@ export async function reviewPendingRequest(
   return input.decision === "APPROVED"
     ? approveReturnRequest(actor, input.requestKey, input)
     : rejectReturnRequest(actor, input.requestKey, input);
+}
+
+export async function getReviewRequestDetail(
+  requestType: WorkflowRequestType,
+  requestKey: string,
+): Promise<ReviewRequestDetail> {
+  if (requestType === "RECEIVE") {
+    const request = await findReceiveRequestForReview(prisma, requestKey);
+
+    if (!request) {
+      throw new ApiError(404, "receive_request_not_found", "Receive request was not found.");
+    }
+
+    if (request.status !== "PENDING") {
+      throw new ApiError(409, "request_not_pending", "This request is no longer pending.");
+    }
+
+    const assetCodes = request.items.map((item) => item.assetCodeSnapshot);
+
+    return {
+      requestType,
+      requestKey: request.requestKey,
+      status: request.status,
+      submittedAt: request.submittedAt,
+      submittedNotes: request.notes,
+      submittedSnapshot: {
+        employeeId: request.employee.employeeId,
+        employeeName: request.employee.fullName,
+        assetCodes,
+        items: request.items.map((item) => ({
+          assetCode: item.assetCodeSnapshot,
+          assetName: item.assetNameSnapshot,
+        })),
+      },
+      reviewedDraft: {
+        employeeId: request.employee.employeeId,
+        assetCodes,
+        notes: undefined,
+      },
+      rules: {
+        canAddAssets: true,
+        canRemoveAssets: true,
+      },
+    };
+  }
+
+  const request = await findReturnRequestForReview(prisma, requestKey);
+
+  if (!request) {
+    throw new ApiError(404, "return_request_not_found", "Return request was not found.");
+  }
+
+  if (request.status !== "PENDING") {
+    throw new ApiError(409, "request_not_pending", "This request is no longer pending.");
+  }
+
+  const assetCodes = request.items.map((item) => item.assetCodeSnapshot);
+
+  return {
+    requestType,
+    requestKey: request.requestKey,
+    status: request.status,
+    submittedAt: request.submittedAt,
+    submittedNotes: request.notes,
+    submittedSnapshot: {
+      employeeId: request.employee.employeeId,
+      employeeName: request.employee.fullName,
+      assetCodes,
+      items: request.items.map((item) => ({
+        assetCode: item.assetCodeSnapshot,
+        assetName: item.assetNameSnapshot,
+        assignmentEmployeeId: item.assetAssignment.employee.employeeId,
+        assignmentEmployeeName: item.assetAssignment.employee.fullName,
+      })),
+    },
+    reviewedDraft: {
+      employeeId: request.employee.employeeId,
+      assetCodes,
+      notes: undefined,
+    },
+    rules: {
+      canAddAssets: false,
+      canRemoveAssets: true,
+    },
+  };
 }
 
 export async function getPendingRequests(filters: PendingRequestFiltersInput) {

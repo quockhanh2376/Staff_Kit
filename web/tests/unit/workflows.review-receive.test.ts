@@ -332,4 +332,19 @@ describe("reviewPendingRequest for receive requests", () => {
     expect(error).toBeInstanceOf(ApiError);
     expect((error as ApiError).code).toBe("duplicate_asset_codes");
   });
+
+  it("rejects a receive review when reject notes are missing", async () => {
+    const fixture = await createReceiveFixture();
+
+    const error = await reviewPendingRequest(fixture.actor, {
+      requestType: "RECEIVE",
+      requestKey: fixture.requestKey,
+      decision: "REJECTED",
+      reviewedEmployeeId: `EMP-R-${fixture.requestKey.replace("REQ-", "")}`,
+      reviewedAssetCodes: [`AST-S-${fixture.requestKey.replace("REQ-", "")}`],
+    } as never).catch((caughtError: unknown) => caughtError);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).code).toBe("review_notes_required");
+  });
 });
