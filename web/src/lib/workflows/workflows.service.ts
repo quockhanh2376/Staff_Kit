@@ -566,7 +566,98 @@ async function rejectReceiveRequest(
   });
 }
 
-async function approveReturnRequest(actor: ApiActor, requestKey: string, notes?: string) {
+async function resolveReturnReviewPayload(
+  tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+  request: NonNullable<Awaited<ReturnType<typeof findReturnRequestForReview>>>,
+  input: ReviewPendingRequestInput,
+) {
+  const submittedAssetCodes = request.items.map((item) => item.assetCodeSnapshot);
+  const reviewedEmployeeId = resolveReviewedEmployeeId(
+    request.employee.employeeId,
+    input.reviewedEmployeeId,
+  );
+  const reviewedAssetCodes = resolveReviewedAssetCodes(
+    submittedAssetCodes,
+    input.reviewedAssetCodes,
+  );
+
+  const reviewedEmployee = await findEmployeeByEmployeeId(tx, reviewedEmployeeId);
+
+  if (!reviewedEmployee) {
+    throw new ApiError(
+      404,
+      "review_employee_not_found",
+      `Employee ${reviewedEmployeeId} was not found.`,
+    );
+  }
+
+  if (reviewedAssetCodes.length === 0) {
+    throw new ApiError(
+      409,
+      "return_review_empty_asset_set",
+      "Return review must keep at least one asset.",
+    );
+  }
+
+  const submittedItemsByAssetCode = new Map(
+    request.items.map((item) => [item.assetCodeSnapshot, item]),
+  );
+  const addedAssetCodes = reviewedAssetCodes.filter((code) => !submittedItemsByAssetCode.has(code));
+
+  if (addedAssetCodes.length > 0) {
+    throw new ApiError(
+      409,
+      "return_review_asset_add_not_allowed",
+      "Return review cannot add new assets that were not submitted.",
+      {
+        assetCodes: addedAssetCodes,
+      },
+    );
+  }
+
+  const reviewedItems = reviewedAssetCodes.map((code) => {
+    const item = submittedItemsByAssetCode.get(code);
+
+    if (!item) {
+      throw new ApiError(
+        500,
+        "return_review_item_resolution_failed",
+        "Return review item lookup failed unexpectedly.",
+      );
+    }
+
+    return item;
+  });
+
+  const wrongEmployeeAssignments = reviewedItems.filter(
+    (item) => item.assetAssignment.employee.employeeId !== reviewedEmployee.employeeId,
+  );
+
+  if (wrongEmployeeAssignments.length > 0) {
+    throw new ApiError(
+      409,
+      "return_review_employee_conflict",
+      "Some reviewed assets are not assigned to the reviewed employee.",
+      {
+        assetCodes: wrongEmployeeAssignments.map((item) => item.assetCodeSnapshot),
+      },
+    );
+  }
+
+  return {
+    reviewedEmployee,
+    reviewedEmployeeId,
+    reviewedAssetCodes,
+    reviewedItems,
+    submittedAssetCodes,
+  };
+}
+
+async function approveReturnRequest(
+  actor: ApiActor,
+  requestKey: string,
+  input: ReviewPendingRequestInput,
+) {
   return prisma.$transaction(async (tx) => {
     const request = await findReturnRequestForReview(tx, requestKey);
 
@@ -575,8 +666,9 @@ async function approveReturnRequest(actor: ApiActor, requestKey: string, notes?:
     }
 
     ensurePendingRequestState(request.status, request.approvalReview?.id);
+    const reviewedPayload = await resolveReturnReviewPayload(tx, request, input);
 
-    const inactiveAssignments = request.items.filter(
+    const inactiveAssignments = reviewedPayload.reviewedItems.filter(
       (item) => item.assetAssignment.status !== "ACTIVE",
     );
 
@@ -591,7 +683,7 @@ async function approveReturnRequest(actor: ApiActor, requestKey: string, notes?:
       );
     }
 
-    for (const item of request.items) {
+    for (const item of reviewedPayload.reviewedItems) {
       await tx.assetAssignment.update({
         where: {
           id: item.assetAssignmentId,
@@ -619,7 +711,7 @@ async function approveReturnRequest(actor: ApiActor, requestKey: string, notes?:
         reviewerAccountId: actor.accountId,
         decision: "APPROVED",
         returnRequestId: request.id,
-        notes,
+        notes: input.notes,
       },
     });
 
@@ -653,7 +745,10 @@ async function approveReturnRequest(actor: ApiActor, requestKey: string, notes?:
       metadata: {
         decision: "APPROVED",
         requestType: "RETURN",
-        assetCodes: updatedRequest.items.map((item) => item.assetCodeSnapshot),
+        submittedEmployeeId: request.employee.employeeId,
+        reviewedEmployeeId: reviewedPayload.reviewedEmployee.employeeId,
+        submittedAssetCodes: reviewedPayload.submittedAssetCodes,
+        reviewedAssetCodes: reviewedPayload.reviewedAssetCodes,
       },
     });
 
@@ -667,7 +762,11 @@ async function approveReturnRequest(actor: ApiActor, requestKey: string, notes?:
   });
 }
 
-async function rejectReturnRequest(actor: ApiActor, requestKey: string, notes?: string) {
+async function rejectReturnRequest(
+  actor: ApiActor,
+  requestKey: string,
+  input: ReviewPendingRequestInput,
+) {
   return prisma.$transaction(async (tx) => {
     const request = await findReturnRequestForReview(tx, requestKey);
 
@@ -676,6 +775,7 @@ async function rejectReturnRequest(actor: ApiActor, requestKey: string, notes?: 
     }
 
     ensurePendingRequestState(request.status, request.approvalReview?.id);
+    const reviewedPayload = await resolveReturnReviewPayload(tx, request, input);
 
     const approvalReview = await tx.approvalReview.create({
       data: {
@@ -683,7 +783,7 @@ async function rejectReturnRequest(actor: ApiActor, requestKey: string, notes?: 
         reviewerAccountId: actor.accountId,
         decision: "REJECTED",
         returnRequestId: request.id,
-        notes,
+        notes: input.notes,
       },
     });
 
@@ -711,14 +811,17 @@ async function rejectReturnRequest(actor: ApiActor, requestKey: string, notes?: 
       entityId: updatedRequest.requestKey,
       entityLabel: updatedRequest.requestKey,
       result: "REJECTED",
-      reason: notes,
+      reason: input.notes,
       returnRequestId: updatedRequest.id,
       employeeId: updatedRequest.employeeId,
       approvalReviewId: approvalReview.id,
       metadata: {
         decision: "REJECTED",
         requestType: "RETURN",
-        assetCodes: updatedRequest.items.map((item) => item.assetCodeSnapshot),
+        submittedEmployeeId: request.employee.employeeId,
+        reviewedEmployeeId: reviewedPayload.reviewedEmployee.employeeId,
+        submittedAssetCodes: reviewedPayload.submittedAssetCodes,
+        reviewedAssetCodes: reviewedPayload.reviewedAssetCodes,
       },
     });
 
@@ -743,8 +846,8 @@ export async function reviewPendingRequest(
   }
 
   return input.decision === "APPROVED"
-    ? approveReturnRequest(actor, input.requestKey, input.notes)
-    : rejectReturnRequest(actor, input.requestKey, input.notes);
+    ? approveReturnRequest(actor, input.requestKey, input)
+    : rejectReturnRequest(actor, input.requestKey, input);
 }
 
 export async function getPendingRequests(filters: PendingRequestFiltersInput) {
