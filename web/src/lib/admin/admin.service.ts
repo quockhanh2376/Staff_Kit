@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { getAuditLogs } from "@/lib/audit/audit.service";
+import { getAssets } from "@/lib/assets/assets.service";
+import type { AssetListFiltersInput } from "@/lib/assets/assets.schemas";
 import { getPendingRequests } from "@/lib/workflows/workflows.service";
 
 export async function getDashboardSnapshot() {
@@ -107,6 +109,10 @@ export async function getAssetCatalogPreview() {
       },
     },
   });
+}
+
+export async function getAssetCatalogWorkstation(filters: AssetListFiltersInput) {
+  return getAssets(filters);
 }
 
 export async function getPendingReviewPreview() {

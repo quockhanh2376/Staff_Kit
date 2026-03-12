@@ -22,6 +22,8 @@ export type AssetWriteInput = {
   brand?: string;
   modelName?: string;
   notes?: string;
+  retiredAt?: Date;
+  disposedAt?: Date;
 };
 
 export type AssetUpdateData = Partial<Omit<AssetWriteInput, "assetCode">>;
@@ -163,6 +165,8 @@ export async function upsertAssetByCode(
       brand: data.brand,
       modelName: data.modelName,
       notes: data.notes,
+      retiredAt: data.retiredAt,
+      disposedAt: data.disposedAt,
     },
   });
 }

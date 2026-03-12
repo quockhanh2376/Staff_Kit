@@ -13,40 +13,77 @@ const trimmedOptionalText = z
   });
 
 const assetStatusSchema = z.enum(["IN_STOCK", "ASSIGNED", "RETIRED", "DISPOSED"]);
+const assetDateSchema = z.coerce.date().optional();
 
-export const assetCreateSchema = z.object({
-  assetCode: trimmedOptionalText,
-  name: trimmedRequiredText,
-  assetType: trimmedRequiredText,
-  status: assetStatusSchema.optional(),
-  recordedAt: z.coerce.date().optional(),
-  owningUnit: trimmedOptionalText,
-  managingUnit: trimmedOptionalText,
-  serialNumber: trimmedOptionalText,
-  brand: trimmedOptionalText,
-  modelName: trimmedOptionalText,
-  notes: trimmedOptionalText,
-});
+function validateAssetLifecycleDates(
+  value: {
+    status?: "IN_STOCK" | "ASSIGNED" | "RETIRED" | "DISPOSED";
+    retiredAt?: Date;
+    disposedAt?: Date;
+  },
+  ctx: z.RefinementCtx,
+) {
+  if (value.retiredAt && value.status !== "RETIRED") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["retiredAt"],
+      message: "retiredAt is only allowed when status is RETIRED.",
+    });
+  }
 
-export const assetUpdateSchema = z
+  if (value.disposedAt && value.status !== "DISPOSED") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["disposedAt"],
+      message: "disposedAt is only allowed when status is DISPOSED.",
+    });
+  }
+}
+
+export const assetCreateSchema = z
   .object({
-    name: trimmedRequiredText.optional(),
-    assetType: trimmedRequiredText.optional(),
+    assetCode: trimmedOptionalText,
+    name: trimmedRequiredText,
+    assetType: trimmedRequiredText,
     status: assetStatusSchema.optional(),
-    recordedAt: z.coerce.date().optional(),
+    recordedAt: assetDateSchema,
     owningUnit: trimmedOptionalText,
     managingUnit: trimmedOptionalText,
     serialNumber: trimmedOptionalText,
     brand: trimmedOptionalText,
     modelName: trimmedOptionalText,
     notes: trimmedOptionalText,
+    retiredAt: assetDateSchema,
+    disposedAt: assetDateSchema,
+  })
+  .superRefine(validateAssetLifecycleDates);
+
+export const assetUpdateSchema = z
+  .object({
+    name: trimmedRequiredText.optional(),
+    assetType: trimmedRequiredText.optional(),
+    status: assetStatusSchema.optional(),
+    recordedAt: assetDateSchema,
+    owningUnit: trimmedOptionalText,
+    managingUnit: trimmedOptionalText,
+    serialNumber: trimmedOptionalText,
+    brand: trimmedOptionalText,
+    modelName: trimmedOptionalText,
+    notes: trimmedOptionalText,
+    retiredAt: assetDateSchema,
+    disposedAt: assetDateSchema,
   })
   .refine((value) => Object.keys(value).length > 0, {
     message: "At least one field must be provided.",
-  });
+  })
+  .superRefine(validateAssetLifecycleDates);
+
+export const assetPreloadRowSchema = assetCreateSchema.safeExtend({
+  assetCode: trimmedRequiredText,
+});
 
 export const assetPreloadSchema = z.object({
-  assets: z.array(assetCreateSchema.extend({ assetCode: trimmedRequiredText })).min(1).max(500),
+  assets: z.array(assetPreloadRowSchema).min(1).max(500),
 });
 
 export const assetListFiltersSchema = z.object({
@@ -58,5 +95,6 @@ export const assetListFiltersSchema = z.object({
 
 export type AssetCreateInput = z.infer<typeof assetCreateSchema>;
 export type AssetUpdateInput = z.infer<typeof assetUpdateSchema>;
+export type AssetPreloadRowInput = z.infer<typeof assetPreloadRowSchema>;
 export type AssetPreloadInput = z.infer<typeof assetPreloadSchema>;
 export type AssetListFiltersInput = z.infer<typeof assetListFiltersSchema>;

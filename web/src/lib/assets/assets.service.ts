@@ -77,6 +77,8 @@ export async function createAssetRecord(
         brand: input.brand,
         modelName: input.modelName,
         notes: input.notes,
+        retiredAt: input.retiredAt,
+        disposedAt: input.disposedAt,
       });
 
       await writeAuditLog(tx, {
@@ -129,6 +131,8 @@ export async function preloadAssets(
         brand: asset.brand,
         modelName: asset.modelName,
         notes: asset.notes,
+        retiredAt: asset.retiredAt,
+        disposedAt: asset.disposedAt,
       });
     }
 
@@ -181,11 +185,15 @@ export async function updateAssetRecord(
           name: existingAsset.name,
           assetType: existingAsset.assetType,
           status: existingAsset.status,
+          retiredAt: existingAsset.retiredAt?.toISOString() ?? null,
+          disposedAt: existingAsset.disposedAt?.toISOString() ?? null,
         },
         after: {
           name: asset.name,
           assetType: asset.assetType,
           status: asset.status,
+          retiredAt: asset.retiredAt?.toISOString() ?? null,
+          disposedAt: asset.disposedAt?.toISOString() ?? null,
         },
       },
     });
