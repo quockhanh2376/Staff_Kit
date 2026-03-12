@@ -58,5 +58,7 @@ npm run check
 - baseline environment validation helpers
 - minimal `proxy.ts`, `instrumentation.ts`, and `instrumentation-client.ts`
 - `/api/health` for smoke checks
+- seeded dev data for employees, assets, requests, approval reviews, and audit logs
+- admin preview shell for dashboard, employees, assets, reviews, receive, return, and audit
 
 Business modules, auth, Prisma schema, and production hardening will be layered on top next.

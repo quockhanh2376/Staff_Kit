@@ -1,78 +1,80 @@
-import { auth } from "@/auth";
+import { getDashboardSnapshot } from "@/lib/admin/admin.service";
 
-const foundationItems = [
-  "Prisma schema and initial Postgres migration",
-  "Bootstrap SUPER_ADMIN seed account",
-  "NextAuth v5 credentials login with JWT session",
-  "Protected dashboard shell with server-side guards",
-] as const;
+const formatDateTime = (value: Date | null) =>
+  value ? new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short" }).format(value) : "No expiry";
 
 export default async function DashboardPage() {
-  const session = await auth();
+  const snapshot = await getDashboardSnapshot();
+  const statCards = [
+    { label: "Employees", value: snapshot.employeeCount, tone: "text-foreground" },
+    { label: "Assets", value: snapshot.assetCount, tone: "text-foreground" },
+    { label: "Assigned", value: snapshot.assignedAssetCount, tone: "text-accent" },
+    { label: "Pending Reviews", value: snapshot.pendingReceiveCount + snapshot.pendingReturnCount, tone: "text-accent" },
+  ] as const;
 
   return (
-    <main className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+    <main className="space-y-6">
       <section className="rounded-[28px] border border-border bg-surface px-6 py-6 backdrop-blur">
         <div className="space-y-3">
           <p className="text-sm font-medium uppercase tracking-[0.22em] text-accent">
-            Phase 1
+            Admin overview
           </p>
           <h1 className="text-4xl font-semibold tracking-tight">
-            Auth foundation is live.
+            Seeded workspace ready for real flow testing.
           </h1>
-          <p className="max-w-3xl text-base leading-7 text-muted">
-            The web workspace now has a real PostgreSQL-backed account model,
-            seeded bootstrap access, and a protected shell ready for the next
-            features: employee CRUD, asset modules, and approval workflows.
+          <p className="max-w-4xl text-base leading-7 text-muted">
+            The web app now has sample employees, assets, receive and return sessions,
+            pending requests, reviewed requests, and audit logs. Use this shell to verify
+            business flows before building deeper forms and CRUD screens.
           </p>
         </div>
 
-        <div className="mt-8 grid gap-4 sm:grid-cols-2">
-          {foundationItems.map((item) => (
-            <div
-              key={item}
-              className="rounded-3xl border border-border bg-surface-strong px-5 py-4"
-            >
-              <p className="text-sm font-medium text-foreground">{item}</p>
+        <div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {statCards.map((item) => (
+            <div key={item.label} className="rounded-3xl border border-border bg-surface-strong px-5 py-5">
+              <p className="text-xs uppercase tracking-[0.22em] text-muted">{item.label}</p>
+              <p className={`mt-3 text-3xl font-semibold ${item.tone}`}>{item.value}</p>
             </div>
           ))}
         </div>
       </section>
 
-      <section className="rounded-[28px] border border-border bg-surface px-6 py-6 backdrop-blur">
-        <h2 className="text-2xl font-semibold">Session snapshot</h2>
-        <div className="mt-5 space-y-3 text-sm">
-          <div className="rounded-3xl border border-border bg-surface-strong px-5 py-4">
-            <p className="text-xs uppercase tracking-[0.22em] text-muted">
-              Display name
-            </p>
-            <p className="mt-2 text-lg font-semibold text-foreground">
-              {session?.user?.name ?? "Unknown"}
-            </p>
+      <section className="grid gap-6 xl:grid-cols-2">
+        <div className="rounded-[28px] border border-border bg-surface px-6 py-6 backdrop-blur">
+          <div className="flex items-center justify-between">
+            <h2 className="text-2xl font-semibold">Active Receive Sessions</h2>
+            <span className="rounded-full border border-border bg-surface-strong px-3 py-1 text-xs font-medium text-muted">
+              {snapshot.activeReceiveSessions.length} live
+            </span>
           </div>
-          <div className="rounded-3xl border border-border bg-surface-strong px-5 py-4">
-            <p className="text-xs uppercase tracking-[0.22em] text-muted">
-              Username
-            </p>
-            <p className="mt-2 text-lg font-semibold text-foreground">
-              {session?.user?.username ?? "Unknown"}
-            </p>
+
+          <div className="mt-5 space-y-3 text-sm">
+            {snapshot.activeReceiveSessions.map((session) => (
+              <div key={session.id} className="rounded-3xl border border-border bg-surface-strong px-5 py-4">
+                <p className="text-xs uppercase tracking-[0.22em] text-muted">QR token</p>
+                <p className="mt-2 font-mono text-sm text-foreground">{session.qrToken}</p>
+                <p className="mt-3 text-sm text-muted">Expires: {formatDateTime(session.expiresAt)}</p>
+              </div>
+            ))}
           </div>
-          <div className="rounded-3xl border border-border bg-surface-strong px-5 py-4">
-            <p className="text-xs uppercase tracking-[0.22em] text-muted">
-              Role
-            </p>
-            <p className="mt-2 text-lg font-semibold text-foreground">
-              {session?.user?.role ?? "Unknown"}
-            </p>
+        </div>
+
+        <div className="rounded-[28px] border border-border bg-surface px-6 py-6 backdrop-blur">
+          <div className="flex items-center justify-between">
+            <h2 className="text-2xl font-semibold">Active Return Sessions</h2>
+            <span className="rounded-full border border-border bg-surface-strong px-3 py-1 text-xs font-medium text-muted">
+              {snapshot.activeReturnSessions.length} live
+            </span>
           </div>
-          <div className="rounded-3xl border border-border bg-surface-strong px-5 py-4">
-            <p className="text-xs uppercase tracking-[0.22em] text-muted">
-              Force password reset
-            </p>
-            <p className="mt-2 text-lg font-semibold text-foreground">
-              {session?.user?.forcePasswordReset ? "Yes" : "No"}
-            </p>
+
+          <div className="mt-5 space-y-3 text-sm">
+            {snapshot.activeReturnSessions.map((session) => (
+              <div key={session.id} className="rounded-3xl border border-border bg-surface-strong px-5 py-4">
+                <p className="text-xs uppercase tracking-[0.22em] text-muted">QR token</p>
+                <p className="mt-2 font-mono text-sm text-foreground">{session.qrToken}</p>
+                <p className="mt-3 text-sm text-muted">Expires: {formatDateTime(session.expiresAt)}</p>
+              </div>
+            ))}
           </div>
         </div>
       </section>
