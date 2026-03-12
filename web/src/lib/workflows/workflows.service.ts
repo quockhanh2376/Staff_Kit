@@ -71,6 +71,20 @@ function ensurePendingRequestState(
   }
 }
 
+function resolveReviewedEmployeeId(
+  submittedEmployeeId: string,
+  reviewedEmployeeId?: string,
+) {
+  return reviewedEmployeeId?.trim() || submittedEmployeeId;
+}
+
+function resolveReviewedAssetCodes(
+  submittedAssetCodes: string[],
+  reviewedAssetCodes?: string[],
+) {
+  return normalizeAssetCodes(reviewedAssetCodes ?? submittedAssetCodes);
+}
+
 export async function createReceiveSession(
   actor: ApiActor,
   input: CreateSessionInput,
@@ -291,7 +305,60 @@ export async function submitReturnRequest(input: SubmitReturnRequestInput) {
   });
 }
 
-async function approveReceiveRequest(actor: ApiActor, requestKey: string, notes?: string) {
+async function resolveReceiveReviewPayload(
+  tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+  request: NonNullable<Awaited<ReturnType<typeof findReceiveRequestForReview>>>,
+  input: ReviewPendingRequestInput,
+) {
+  const submittedAssetCodes = request.items.map((item) => item.assetCodeSnapshot);
+  const reviewedEmployeeId = resolveReviewedEmployeeId(
+    request.employee.employeeId,
+    input.reviewedEmployeeId,
+  );
+  const reviewedAssetCodes = resolveReviewedAssetCodes(
+    submittedAssetCodes,
+    input.reviewedAssetCodes,
+  );
+
+  const reviewedEmployee = await findEmployeeByEmployeeId(tx, reviewedEmployeeId);
+
+  if (!reviewedEmployee) {
+    throw new ApiError(
+      404,
+      "review_employee_not_found",
+      `Employee ${reviewedEmployeeId} was not found.`,
+    );
+  }
+
+  const reviewedAssets = await findAssetsByAssetCodes(tx, reviewedAssetCodes);
+  const reviewedAssetMap = new Map(reviewedAssets.map((asset) => [asset.assetCode, asset]));
+  const missingCodes = reviewedAssetCodes.filter((code) => !reviewedAssetMap.has(code));
+
+  if (missingCodes.length > 0) {
+    throw new ApiError(
+      400,
+      "unknown_reviewed_asset_codes",
+      "Some reviewed asset codes do not exist.",
+      {
+        missingCodes,
+      },
+    );
+  }
+
+  return {
+    reviewedEmployee,
+    reviewedEmployeeId,
+    reviewedAssetCodes,
+    reviewedAssets,
+    submittedAssetCodes,
+  };
+}
+
+async function approveReceiveRequest(
+  actor: ApiActor,
+  requestKey: string,
+  input: ReviewPendingRequestInput,
+) {
   return prisma.$transaction(async (tx) => {
     const request = await findReceiveRequestForReview(tx, requestKey);
 
@@ -301,7 +368,8 @@ async function approveReceiveRequest(actor: ApiActor, requestKey: string, notes?
 
     ensurePendingRequestState(request.status, request.approvalReview?.id);
 
-    const assetIds = request.items.map((item) => item.assetId);
+    const reviewedPayload = await resolveReceiveReviewPayload(tx, request, input);
+    const assetIds = reviewedPayload.reviewedAssets.map((asset) => asset.id);
     const conflictingAssets = await tx.asset.findMany({
       where: {
         id: {
@@ -341,20 +409,26 @@ async function approveReceiveRequest(actor: ApiActor, requestKey: string, notes?
       );
     }
 
-    for (const item of request.items) {
+    const requestItemsByAssetCode = new Map(
+      request.items.map((item) => [item.assetCodeSnapshot, item]),
+    );
+
+    for (const asset of reviewedPayload.reviewedAssets) {
+      const receiveRequestItem = requestItemsByAssetCode.get(asset.assetCode);
+
       await tx.assetAssignment.create({
         data: {
-          assetId: item.assetId,
-          employeeId: request.employeeId,
+          assetId: asset.id,
+          employeeId: reviewedPayload.reviewedEmployee.id,
           status: "ACTIVE",
-          receiveRequestItemId: item.id,
+          receiveRequestItemId: receiveRequestItem?.id,
           assignedAt: new Date(),
         },
       });
 
       await tx.asset.update({
         where: {
-          id: item.assetId,
+          id: asset.id,
         },
         data: {
           status: "ASSIGNED",
@@ -368,7 +442,7 @@ async function approveReceiveRequest(actor: ApiActor, requestKey: string, notes?
         reviewerAccountId: actor.accountId,
         decision: "APPROVED",
         receiveRequestId: request.id,
-        notes,
+        notes: input.notes,
       },
     });
 
@@ -402,7 +476,10 @@ async function approveReceiveRequest(actor: ApiActor, requestKey: string, notes?
       metadata: {
         decision: "APPROVED",
         requestType: "RECEIVE",
-        assetCodes: updatedRequest.items.map((item) => item.assetCodeSnapshot),
+        submittedEmployeeId: request.employee.employeeId,
+        reviewedEmployeeId: reviewedPayload.reviewedEmployee.employeeId,
+        submittedAssetCodes: reviewedPayload.submittedAssetCodes,
+        reviewedAssetCodes: reviewedPayload.reviewedAssetCodes,
       },
     });
 
@@ -416,7 +493,11 @@ async function approveReceiveRequest(actor: ApiActor, requestKey: string, notes?
   });
 }
 
-async function rejectReceiveRequest(actor: ApiActor, requestKey: string, notes?: string) {
+async function rejectReceiveRequest(
+  actor: ApiActor,
+  requestKey: string,
+  input: ReviewPendingRequestInput,
+) {
   return prisma.$transaction(async (tx) => {
     const request = await findReceiveRequestForReview(tx, requestKey);
 
@@ -425,6 +506,7 @@ async function rejectReceiveRequest(actor: ApiActor, requestKey: string, notes?:
     }
 
     ensurePendingRequestState(request.status, request.approvalReview?.id);
+    const reviewedPayload = await resolveReceiveReviewPayload(tx, request, input);
 
     const approvalReview = await tx.approvalReview.create({
       data: {
@@ -432,7 +514,7 @@ async function rejectReceiveRequest(actor: ApiActor, requestKey: string, notes?:
         reviewerAccountId: actor.accountId,
         decision: "REJECTED",
         receiveRequestId: request.id,
-        notes,
+        notes: input.notes,
       },
     });
 
@@ -460,14 +542,17 @@ async function rejectReceiveRequest(actor: ApiActor, requestKey: string, notes?:
       entityId: updatedRequest.requestKey,
       entityLabel: updatedRequest.requestKey,
       result: "REJECTED",
-      reason: notes,
+      reason: input.notes,
       receiveRequestId: updatedRequest.id,
       employeeId: updatedRequest.employeeId,
       approvalReviewId: approvalReview.id,
       metadata: {
         decision: "REJECTED",
         requestType: "RECEIVE",
-        assetCodes: updatedRequest.items.map((item) => item.assetCodeSnapshot),
+        submittedEmployeeId: request.employee.employeeId,
+        reviewedEmployeeId: reviewedPayload.reviewedEmployee.employeeId,
+        submittedAssetCodes: reviewedPayload.submittedAssetCodes,
+        reviewedAssetCodes: reviewedPayload.reviewedAssetCodes,
       },
     });
 
@@ -653,8 +738,8 @@ export async function reviewPendingRequest(
 ) {
   if (input.requestType === "RECEIVE") {
     return input.decision === "APPROVED"
-      ? approveReceiveRequest(actor, input.requestKey, input.notes)
-      : rejectReceiveRequest(actor, input.requestKey, input.notes);
+      ? approveReceiveRequest(actor, input.requestKey, input)
+      : rejectReceiveRequest(actor, input.requestKey, input);
   }
 
   return input.decision === "APPROVED"

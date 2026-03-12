@@ -36,6 +36,8 @@ export const reviewPendingRequestSchema = z.object({
   requestKey: trimmedRequiredText,
   decision: z.enum(["APPROVED", "REJECTED"]),
   notes: trimmedOptionalText,
+  reviewedEmployeeId: trimmedOptionalText,
+  reviewedAssetCodes: z.array(trimmedRequiredText).min(1).max(50).optional(),
 });
 
 export const pendingRequestFiltersSchema = z.object({
