@@ -9,6 +9,7 @@ export default defineConfig([
   globalIgnores([
     'dist',
     'src-tauri/target/**',
+    '.worktrees/**',
     '.agent/**',
     '.opencode/**',
     'bmad_method_ref/**',
