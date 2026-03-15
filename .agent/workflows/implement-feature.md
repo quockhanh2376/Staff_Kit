@@ -1,58 +1,44 @@
 ---
-description: Full-cycle feature implementation for Staff Kit web app — research, implement, test, commit
+description: Full-cycle feature implementation for the Staff Kit desktop app — research, implement, test, verify
 ---
 
 # /implement-feature workflow
 
-Use this workflow to implement any new feature for the Staff Kit web app.
-Follows the ConvertWEB.md phase plan.
+Use this workflow to implement any new feature for the native Staff Kit desktop app.
 
 ## Steps
 
 1. **Read context**
-   - Read `ConvertWEB.md` to understand phase and requirements
-   - Read relevant skill files (`nextjs-fullstack`, `security-web`, `code-quality`, etc.)
-   - Read existing code in the area you're changing
+   - Read `Note.md` for business rules and current implementation state
+   - Read `README.md` and `QUALITY.md` for runtime and quality expectations
+   - Read the existing code in the feature area before editing
 
-2. **Create tech spec** (for feature-level work)
-   - Brief spec: what endpoints, what DB changes, what UI changes
-   - Identify Zod schemas needed
-   - Identify role guards needed
+2. **Define touch points**
+   - Frontend files under `src/`
+   - Tauri/Rust files under `src-tauri/src/`
+   - Shared types/constants used by both layers
 
-3. **Database first**
-   - Update `prisma/schema.prisma` if needed
-   - Run `npx prisma migrate dev --name feature_name`
-   - Run `npx prisma generate`
+3. **Implement backend changes first when needed**
+   - Update Rust database or command code in `src-tauri/src/`
+   - Preserve parameterized SQL and existing command naming patterns
+   - Keep IPC contracts stable unless the task explicitly changes them
 
-4. **API routes**
-   - Create route handler in `src/app/api/[feature]/route.ts`
-   - Add Zod validation + role guard + error handling (per `nextjs-fullstack` skill)
-   - Write unit tests before moving to frontend: `tests/unit/api/[feature].test.ts`
+4. **Implement frontend changes**
+   - Update `src/services/staff-api.ts` only when the Tauri command contract changes
+   - Update feature hooks, views, and UI components in `src/`
+   - Preserve desktop behavior and existing feature boundaries where practical
 
-// turbo
-5. **Run unit tests**
+5. **Verify data and role rules**
+   - Respect `EE.ID` as the unique merge key
+   - Keep admin-only actions protected
+   - Keep import, edit, move, and reset flows explicit and auditable
+
+6. **Run checks**
    ```bash
-   npx vitest run tests/unit/api/[feature].test.ts
+   npm run check:quality
    ```
 
-6. **Frontend**
-   - Update `src/services/api-client.ts` with new methods
-   - Create/update React components and hooks
-   - Use React Query for data fetching
-
-7. **E2E tests**
-   - Add Playwright spec in `tests/e2e/[feature].spec.ts`
-   - Run: `npx playwright test [feature].spec.ts`
-
-// turbo
-8. **Type check + lint**
-   ```bash
-   npx tsc --noEmit && npm run lint
-   ```
-
-9. **Commit**
-   - `feat(scope): description` per code-quality skill conventions
-   - Push to GitHub
-
-10. **Update ConvertWEB.md**
-    - Mark completed tasks with `[x]` in the relevant Phase section
+7. **Finish cleanly**
+   - Review the diff for regressions
+   - Update docs only if source-of-truth behavior changed
+   - Keep the desktop repo free of unrelated web-planning artifacts
