@@ -37,6 +37,7 @@ pub mod team;
 // ── Re-exports (all public types bubble up to `db::`) ─────────────────────────
 pub use auth::*;
 pub use backup::*;
+pub use asset::*;
 pub use borrow::*;
 pub use column::*;
 pub use employee::*;

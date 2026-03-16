@@ -4,7 +4,11 @@ import type {
   BackupRunResult,
   BackupSettings,
   BackupSettingsUpdateInput,
+  BorrowLanSettings,
+  BorrowLanSettingsUpdateInput,
   SnapshotInfo,
+  AssetRecord,
+  AssetSeedItemInput,
   EmployeeColumnDefinition,
   EmployeeGroupCounts,
   EmployeeColumnUpsertInput,
@@ -24,6 +28,8 @@ import type {
   ImportExcelInput,
   ImportReport,
   ImportPreviewResult,
+  BorrowRequestRecord,
+  BorrowRequestRejectInput,
   TeamRecord,
   TeamUpsertInput,
 } from "../types/staff"
@@ -85,6 +91,45 @@ export const staffApi = {
 
   restoreDatabaseFromFile: (sourcePath: string) =>
     call<void>("restore_database_from_file", { sourcePath }),
+
+  getBorrowLanSettings: () => call<BorrowLanSettings>("get_borrow_lan_settings"),
+
+  updateBorrowLanSettings: (payload: BorrowLanSettingsUpdateInput) =>
+    call<BorrowLanSettings>("update_borrow_lan_settings", {
+      payload: {
+        host: payload.host,
+        port: payload.port,
+      },
+    }),
+
+  upsertAssets: (payload: AssetSeedItemInput[]) =>
+    call<AssetRecord[]>("upsert_assets", {
+      payload: payload.map((item) => ({
+        assetCode: item.assetCode,
+        assetType: item.assetType,
+        displayName: item.displayName,
+        model: item.model ?? null,
+        serialNumber: item.serialNumber ?? null,
+        notes: item.notes ?? null,
+      })),
+    }),
+
+  listPendingBorrowRequests: () =>
+    call<BorrowRequestRecord[]>("list_pending_borrow_requests"),
+
+  getBorrowRequestDetail: (requestId: number) =>
+    call<BorrowRequestRecord>("get_borrow_request_detail", { requestId }),
+
+  approveBorrowRequest: (requestId: number) =>
+    call<BorrowRequestRecord>("approve_borrow_request", { requestId }),
+
+  rejectBorrowRequest: (payload: BorrowRequestRejectInput) =>
+    call<BorrowRequestRecord>("reject_borrow_request", {
+      payload: {
+        requestId: payload.requestId,
+        note: payload.note,
+      },
+    }),
 
   listEmployees: (filters: EmployeeQueryInput) =>
     call<EmployeeListResponse>("list_employees", {

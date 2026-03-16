@@ -31,6 +31,60 @@ export type BackupSettingsUpdateInput = {
   autoBackupEnabled: boolean
 }
 
+export type BorrowLanSettings = {
+  host: string
+  port: number
+  borrowUrl: string
+}
+
+export type BorrowLanSettingsUpdateInput = {
+  host: string
+  port: number
+}
+
+export type AssetSeedItemInput = {
+  assetCode: string
+  assetType: string
+  displayName: string
+  model?: string | null
+  serialNumber?: string | null
+  notes?: string | null
+}
+
+export type AssetRecord = {
+  id: number
+  assetCode: string
+  assetType: string
+  displayName: string
+  model: string | null
+  serialNumber: string | null
+  notes: string | null
+  status: string
+}
+
+export type BorrowRequestSubmitInput = {
+  submittedEmployeeId: string
+  submittedFullName: string
+  assetCodes: string[]
+  submitSourceIp?: string | null
+}
+
+export type BorrowRequestRecord = {
+  id: number
+  requestKey: string
+  submittedEmployeeId: string
+  submittedFullName: string
+  status: string
+  assetCodes: string[]
+  submittedAt: string
+  decisionNote: string | null
+}
+
+export type BorrowRequestRejectInput = {
+  requestId: number
+  note: string
+}
+
 export type EmployeeRecord = {
   id: number
   employeeId: string

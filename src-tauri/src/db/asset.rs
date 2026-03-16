@@ -1,7 +1,8 @@
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
+use tauri::AppHandle;
 
-use super::{humanize_sqlite_error, normalize_optional_text, require_text};
+use super::{humanize_sqlite_error, normalize_optional_text, open_runtime_connection, require_text};
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -188,6 +189,14 @@ pub(crate) fn upsert_assets_conn(
         .map_err(|err| format!("failed to commit asset upsert transaction: {err}"))?;
 
     Ok(records)
+}
+
+pub fn upsert_assets(
+    app: &AppHandle,
+    assets: Vec<AssetUpsertInput>,
+) -> Result<Vec<AssetRecord>, String> {
+    let mut conn = open_runtime_connection(app)?;
+    upsert_assets_conn(&mut conn, assets)
 }
 
 #[cfg(test)]

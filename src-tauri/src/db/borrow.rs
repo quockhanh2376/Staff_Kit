@@ -4,14 +4,36 @@ use rand::{distributions::Alphanumeric, Rng};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tauri::AppHandle;
 
-use super::{asset, audit, humanize_sqlite_error, require_text};
+use super::auth;
+use super::schema::{BORROW_LAN_HOST_SETTING_KEY, BORROW_LAN_PORT_SETTING_KEY};
+use super::{
+    asset, audit, get_setting_value, humanize_sqlite_error, open_runtime_connection, require_text,
+    set_setting_value,
+};
 
 const REQUEST_STATUS_PENDING: &str = "pending";
 const REQUEST_STATUS_APPROVED: &str = "approved";
 const REQUEST_STATUS_REJECTED: &str = "rejected";
 const ASSET_STATUS_IN_STOCK: &str = "in_stock";
 const ASSET_STATUS_BORROWED: &str = "borrowed";
+const DEFAULT_BORROW_LAN_PORT: u16 = 8787;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BorrowLanSettings {
+    pub host: String,
+    pub port: u16,
+    pub borrow_url: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BorrowLanSettingsUpdateInput {
+    pub host: String,
+    pub port: u16,
+}
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,10 +57,105 @@ pub struct BorrowRequestRecord {
     pub decision_note: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BorrowRequestRejectInput {
+    pub request_id: i64,
+    pub note: String,
+}
+
 #[derive(Debug, Clone)]
 struct BorrowRequestItemRecord {
     asset_id: i64,
     asset_code_snapshot: String,
+}
+
+pub fn get_borrow_lan_settings(app: &AppHandle) -> Result<BorrowLanSettings, String> {
+    let conn = open_runtime_connection(app)?;
+    read_borrow_lan_settings(&conn)
+}
+
+pub fn update_borrow_lan_settings(
+    app: &AppHandle,
+    payload: BorrowLanSettingsUpdateInput,
+) -> Result<BorrowLanSettings, String> {
+    let conn = open_runtime_connection(app)?;
+    let host = require_text(payload.host, "host")?;
+    if payload.port == 0 {
+        return Err("port must be between 1 and 65535".to_string());
+    }
+
+    set_setting_value(&conn, BORROW_LAN_HOST_SETTING_KEY, Some(host.as_str()))?;
+    let port_text = payload.port.to_string();
+    set_setting_value(
+        &conn,
+        BORROW_LAN_PORT_SETTING_KEY,
+        Some(port_text.as_str()),
+    )?;
+
+    let payload_json = json!({
+        "host": host,
+        "port": payload.port,
+    })
+    .to_string();
+
+    let actor_ref = auth::get_active_local_account_id(&conn)?
+        .map(|id| id.to_string())
+        .unwrap_or_default();
+    audit::insert_audit_log_conn(
+        &conn,
+        "borrow_lan.update_settings",
+        "local_account",
+        if actor_ref.is_empty() {
+            None
+        } else {
+            Some(actor_ref.as_str())
+        },
+        "borrow_lan",
+        "config",
+        Some(payload_json.as_str()),
+    )?;
+
+    read_borrow_lan_settings(&conn)
+}
+
+pub fn submit_borrow_request(
+    app: &AppHandle,
+    input: BorrowRequestSubmitInput,
+) -> Result<BorrowRequestRecord, String> {
+    let mut conn = open_runtime_connection(app)?;
+    submit_borrow_request_conn(&mut conn, input)
+}
+
+pub fn list_pending_borrow_requests(app: &AppHandle) -> Result<Vec<BorrowRequestRecord>, String> {
+    let conn = open_runtime_connection(app)?;
+    list_pending_borrow_requests_conn(&conn)
+}
+
+pub fn get_borrow_request_detail(
+    app: &AppHandle,
+    request_id: i64,
+) -> Result<BorrowRequestRecord, String> {
+    let conn = open_runtime_connection(app)?;
+    load_borrow_request_detail_conn(&conn, request_id)
+}
+
+pub fn approve_borrow_request(
+    app: &AppHandle,
+    request_id: i64,
+) -> Result<BorrowRequestRecord, String> {
+    let mut conn = open_runtime_connection(app)?;
+    let reviewer_account_id = require_active_admin_account_id(&conn)?;
+    approve_borrow_request_conn(&mut conn, request_id, reviewer_account_id)
+}
+
+pub fn reject_borrow_request(
+    app: &AppHandle,
+    payload: BorrowRequestRejectInput,
+) -> Result<BorrowRequestRecord, String> {
+    let mut conn = open_runtime_connection(app)?;
+    let reviewer_account_id = require_active_admin_account_id(&conn)?;
+    reject_borrow_request_conn(&mut conn, payload.request_id, reviewer_account_id, payload.note)
 }
 
 pub(crate) fn submit_borrow_request_conn(
@@ -346,6 +463,56 @@ fn normalize_asset_codes(asset_codes: Vec<String>) -> Result<Vec<String>, String
     }
 
     Ok(normalized_codes)
+}
+
+fn read_borrow_lan_settings(conn: &Connection) -> Result<BorrowLanSettings, String> {
+    let host = get_setting_value(conn, BORROW_LAN_HOST_SETTING_KEY)?
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(default_borrow_lan_host);
+    let port = get_setting_value(conn, BORROW_LAN_PORT_SETTING_KEY)?
+        .and_then(|value| value.trim().parse::<u16>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_BORROW_LAN_PORT);
+
+    Ok(BorrowLanSettings {
+        borrow_url: build_borrow_lan_url(host.as_str(), port),
+        host,
+        port,
+    })
+}
+
+fn default_borrow_lan_host() -> String {
+    std::env::var("COMPUTERNAME")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "127.0.0.1".to_string())
+}
+
+fn build_borrow_lan_url(host: &str, port: u16) -> String {
+    format!("http://{host}:{port}/borrow")
+}
+
+fn require_active_admin_account_id(conn: &Connection) -> Result<i64, String> {
+    let account_id = auth::get_active_local_account_id(conn)?
+        .ok_or_else(|| "an active local account is required".to_string())?;
+
+    let role: String = conn
+        .query_row(
+            "SELECT role FROM app_local_accounts WHERE id = ?",
+            params![account_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|err| format!("failed to load active local account role: {err}"))?
+        .ok_or_else(|| format!("local account with id {account_id} was not found"))?;
+
+    if !role.eq_ignore_ascii_case("admin") && !role.eq_ignore_ascii_case("super_admin") {
+        return Err("active local account must be admin to review borrow requests".to_string());
+    }
+
+    Ok(account_id)
 }
 
 fn load_employee_row_id_by_business_id_tx(

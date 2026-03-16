@@ -236,32 +236,75 @@ fn create_history_snapshot_cmd(
 }
 
 #[tauri::command]
-fn restore_history_snapshot(
-    app: tauri::AppHandle,
-    filename: String,
-) -> Result<(), String> {
+fn restore_history_snapshot(app: tauri::AppHandle, filename: String) -> Result<(), String> {
     db::restore_history_snapshot(&app, &filename)
 }
 
 #[tauri::command]
-fn move_database_to(
-    app: tauri::AppHandle,
-    target_folder: String,
-) -> Result<String, String> {
+fn move_database_to(app: tauri::AppHandle, target_folder: String) -> Result<String, String> {
     db::move_database_to(&app, &target_folder)
 }
 
 #[tauri::command]
-fn restore_database_from_file(
-    app: tauri::AppHandle,
-    source_path: String,
-) -> Result<(), String> {
+fn restore_database_from_file(app: tauri::AppHandle, source_path: String) -> Result<(), String> {
     db::restore_database_from_file(&app, &source_path)
 }
 
 #[tauri::command]
 fn get_db_custom_path(app: tauri::AppHandle) -> Result<Option<String>, String> {
     db::get_db_custom_path(&app)
+}
+
+#[tauri::command]
+fn get_borrow_lan_settings(app: tauri::AppHandle) -> Result<db::BorrowLanSettings, String> {
+    db::get_borrow_lan_settings(&app)
+}
+
+#[tauri::command]
+fn update_borrow_lan_settings(
+    app: tauri::AppHandle,
+    payload: db::BorrowLanSettingsUpdateInput,
+) -> Result<db::BorrowLanSettings, String> {
+    db::update_borrow_lan_settings(&app, payload)
+}
+
+#[tauri::command]
+fn upsert_assets(
+    app: tauri::AppHandle,
+    payload: Vec<db::AssetUpsertInput>,
+) -> Result<Vec<db::AssetRecord>, String> {
+    db::upsert_assets(&app, payload)
+}
+
+#[tauri::command]
+fn list_pending_borrow_requests(
+    app: tauri::AppHandle,
+) -> Result<Vec<db::BorrowRequestRecord>, String> {
+    db::list_pending_borrow_requests(&app)
+}
+
+#[tauri::command]
+fn get_borrow_request_detail(
+    app: tauri::AppHandle,
+    request_id: i64,
+) -> Result<db::BorrowRequestRecord, String> {
+    db::get_borrow_request_detail(&app, request_id)
+}
+
+#[tauri::command]
+fn approve_borrow_request(
+    app: tauri::AppHandle,
+    request_id: i64,
+) -> Result<db::BorrowRequestRecord, String> {
+    db::approve_borrow_request(&app, request_id)
+}
+
+#[tauri::command]
+fn reject_borrow_request(
+    app: tauri::AppHandle,
+    payload: db::BorrowRequestRejectInput,
+) -> Result<db::BorrowRequestRecord, String> {
+    db::reject_borrow_request(&app, payload)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -291,6 +334,13 @@ pub fn run() {
             move_database_to,
             get_db_custom_path,
             restore_database_from_file,
+            get_borrow_lan_settings,
+            update_borrow_lan_settings,
+            upsert_assets,
+            list_pending_borrow_requests,
+            get_borrow_request_detail,
+            approve_borrow_request,
+            reject_borrow_request,
             list_employees,
             search_employees,
             list_employee_group_counts,
