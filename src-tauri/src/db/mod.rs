@@ -681,3 +681,38 @@ fn normalize_header_key(value: &str) -> String {
         .flat_map(|ch| ch.to_lowercase())
         .collect::<String>()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn table_exists(conn: &Connection, table_name: &str) -> bool {
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?)",
+            params![table_name],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|exists| exists > 0)
+        .unwrap_or(false)
+    }
+
+    #[test]
+    fn apply_migrations_creates_borrow_flow_tables() {
+        let conn = Connection::open_in_memory().expect("open in-memory sqlite database");
+        configure_connection(&conn).expect("configure sqlite pragmas");
+        apply_migrations(&conn).expect("apply database migrations");
+
+        for table_name in [
+            "assets",
+            "borrow_requests",
+            "borrow_request_items",
+            "asset_loans",
+            "audit_logs",
+        ] {
+            assert!(
+                table_exists(&conn, table_name),
+                "expected table '{table_name}' to exist after migrations",
+            );
+        }
+    }
+}

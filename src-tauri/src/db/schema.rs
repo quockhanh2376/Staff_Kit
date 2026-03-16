@@ -35,6 +35,10 @@ pub(super) const DEFAULT_ADMIN_SEED_SETTING_KEY: &str = "default_admin_seed_v1";
 pub(super) const BACKUP_DIRECTORY_SETTING_KEY: &str = "backup_directory_path";
 pub(super) const AUTO_BACKUP_ENABLED_SETTING_KEY: &str = "backup_auto_enabled_v1";
 pub(super) const AUTO_BACKUP_LAST_DATE_SETTING_KEY: &str = "backup_auto_last_date_v1";
+#[allow(dead_code)]
+pub(super) const BORROW_LAN_HOST_SETTING_KEY: &str = "borrow_lan_host_v1";
+#[allow(dead_code)]
+pub(super) const BORROW_LAN_PORT_SETTING_KEY: &str = "borrow_lan_port_v1";
 
 // ── Backup ────────────────────────────────────────────────────────────────────
 pub(super) const AUTO_BACKUP_RETENTION_FILES: usize = 7;
@@ -199,6 +203,63 @@ CREATE TABLE IF NOT EXISTS app_settings (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS assets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  asset_code TEXT NOT NULL UNIQUE,
+  asset_type TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  model TEXT,
+  serial_number TEXT,
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'in_stock',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS borrow_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  request_key TEXT NOT NULL UNIQUE,
+  employee_id_fk INTEGER NOT NULL REFERENCES employees(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+  submitted_employee_id TEXT NOT NULL,
+  submitted_full_name TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  submit_source_ip TEXT,
+  decision_note TEXT,
+  decided_by_account_id INTEGER REFERENCES app_local_accounts(id) ON UPDATE CASCADE ON DELETE SET NULL,
+  submitted_at TEXT NOT NULL DEFAULT (datetime('now')),
+  decided_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS borrow_request_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  borrow_request_id INTEGER NOT NULL REFERENCES borrow_requests(id) ON DELETE CASCADE,
+  asset_id INTEGER NOT NULL REFERENCES assets(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+  asset_code_snapshot TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(borrow_request_id, asset_id)
+);
+
+CREATE TABLE IF NOT EXISTS asset_loans (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  asset_id INTEGER NOT NULL REFERENCES assets(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+  employee_id_fk INTEGER NOT NULL REFERENCES employees(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+  borrow_request_id INTEGER NOT NULL REFERENCES borrow_requests(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+  approved_by_account_id INTEGER REFERENCES app_local_accounts(id) ON UPDATE CASCADE ON DELETE SET NULL,
+  borrowed_at TEXT NOT NULL DEFAULT (datetime('now')),
+  returned_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_type TEXT NOT NULL,
+  actor_type TEXT NOT NULL,
+  actor_ref TEXT,
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  payload_json TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_employees_team_id ON employees(team_id);
 CREATE INDEX IF NOT EXISTS idx_employees_full_name ON employees(full_name);
 CREATE INDEX IF NOT EXISTS idx_employees_asw_start_date ON employees(asw_start_date);
@@ -207,6 +268,17 @@ CREATE INDEX IF NOT EXISTS idx_dynamic_values_employee_id ON employee_dynamic_va
 CREATE INDEX IF NOT EXISTS idx_dynamic_values_field_key ON employee_dynamic_values(field_key);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_local_accounts_display_name_unique
   ON app_local_accounts(display_name COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_assets_status ON assets(status);
+CREATE INDEX IF NOT EXISTS idx_borrow_requests_status_submitted_at
+  ON borrow_requests(status, submitted_at);
+CREATE INDEX IF NOT EXISTS idx_borrow_request_items_request_id
+  ON borrow_request_items(borrow_request_id);
+CREATE INDEX IF NOT EXISTS idx_asset_loans_employee_active
+  ON asset_loans(employee_id_fk, returned_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_loans_asset_active_unique
+  ON asset_loans(asset_id) WHERE returned_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_audit_logs_entity
+  ON audit_logs(entity_type, entity_id, created_at);
 "#;
 
 // ── FTS virtual table ─────────────────────────────────────────────────────────
