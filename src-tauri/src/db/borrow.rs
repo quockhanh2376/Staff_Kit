@@ -119,14 +119,6 @@ pub fn update_borrow_lan_settings(
     read_borrow_lan_settings(&conn)
 }
 
-pub fn submit_borrow_request(
-    app: &AppHandle,
-    input: BorrowRequestSubmitInput,
-) -> Result<BorrowRequestRecord, String> {
-    let mut conn = open_runtime_connection(app)?;
-    submit_borrow_request_conn(&mut conn, input)
-}
-
 pub fn list_pending_borrow_requests(app: &AppHandle) -> Result<Vec<BorrowRequestRecord>, String> {
     let conn = open_runtime_connection(app)?;
     list_pending_borrow_requests_conn(&conn)

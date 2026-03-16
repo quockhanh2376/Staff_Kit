@@ -24,3 +24,6 @@ chrono = { version = "0.4", features = ["serde"] }
 tauri-plugin-dialog = "2"
 argon2 = "0.5"
 rand = "0.8"
+axum = "0.8"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"] }
+tower = { version = "0.5", features = ["util"] }

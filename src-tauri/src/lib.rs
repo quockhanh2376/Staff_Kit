@@ -1,4 +1,6 @@
 mod db;
+mod lan_assets;
+mod lan_server;
 use tauri::Manager;
 
 #[tauri::command]
@@ -312,6 +314,9 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            if let Err(error) = lan_server::start(app.handle().clone()) {
+                eprintln!("failed to start Staff Kit LAN borrow server: {error}");
+            }
             // Show the main window after WebView2 has finished initializing.
             // We set visible:false in tauri.conf.json to avoid the black flash
             // that appears before the first frame is rendered.

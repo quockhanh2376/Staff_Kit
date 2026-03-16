@@ -23,8 +23,8 @@ use tauri::{AppHandle, Manager};
 use schema::*;
 
 // ── Sub-modules ───────────────────────────────────────────────────────────────
-mod asset;
-mod audit;
+pub(crate) mod asset;
+pub(crate) mod audit;
 pub mod auth;
 pub mod backup;
 pub mod borrow;
@@ -188,7 +188,7 @@ pub(crate) fn resolve_database_path(app: &AppHandle) -> Result<PathBuf, String> 
     Ok(data_dir)
 }
 
-fn configure_connection(conn: &Connection) -> Result<(), String> {
+pub(crate) fn configure_connection(conn: &Connection) -> Result<(), String> {
     conn.busy_timeout(Duration::from_secs(5))
         .map_err(|err| format!("failed to set sqlite busy timeout: {err}"))?;
 
@@ -287,7 +287,7 @@ fn sqlite_version(conn: &Connection) -> Result<String, String> {
         .map_err(|err| format!("failed to query sqlite version: {err}"))
 }
 
-fn apply_migrations(conn: &Connection) -> Result<(), String> {
+pub(crate) fn apply_migrations(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(BASE_SCHEMA_SQL)
         .map_err(|err| format!("failed to initialize schema: {err}"))?;
 
