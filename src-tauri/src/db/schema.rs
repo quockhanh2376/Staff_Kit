@@ -25,8 +25,7 @@ pub(super) const DEFAULT_NEW_LOCAL_ACCOUNT_PASSWORD: &str = "Welcome!";
 /// AES-256 encryption key applied to every SQLite connection via PRAGMA key.
 /// This is an app-level key stored in the binary — not a user password.
 /// Changing this value requires migrating all existing databases.
-pub(super) const APP_DB_ENCRYPTION_KEY: &str =
-    "SK-AES256-staffkit-2026-io.staffkit.app";
+pub(super) const APP_DB_ENCRYPTION_KEY: &str = "SK-AES256-staffkit-2026-io.staffkit.app";
 pub(super) const DB_ENCRYPTION_MIGRATION_SETTING_KEY: &str = "db_encrypted_v1";
 
 // ── Settings keys ─────────────────────────────────────────────────────────────
