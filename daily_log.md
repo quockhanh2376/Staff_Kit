@@ -41,6 +41,49 @@ Refocus `Staff_Kit` as a native desktop-only application and fully separate it f
 - Keep docs and internal workflows desktop-only
 - Avoid reintroducing `AssetDesk-Pro` web planning into this repo
 
+# Daily Log - 2026-03-21
+
+## Objective
+Stabilize Rust verification for the `codex/asset-import-wizard` worktree so feature work can continue with reproducible `cargo check` and `cargo test` results instead of long native-build timeouts.
+
+## Work Completed
+- Re-investigated the earlier `openssl-sys` timeout and confirmed the problem was not a Rust-source deadlock.
+- Verified the worktree was compiling into its own isolated `src-tauri/target`, which forced repeated cold builds of the native `sqlcipher` and OpenSSL stack.
+- Fixed real compile issues in `src-tauri/src/db/asset_import.rs` that surfaced once the native build completed:
+  - generic error formatting for `calamine`
+  - transaction borrow lifetime before `tx.commit()`
+  - moved-value handling in field mapping resolution
+- Replaced the temporary worktree-only Cargo target config with a portable wrapper script:
+  - `scripts/run-with-shared-cargo-target.mjs`
+- Updated package scripts so Rust verification reuses the shared Cargo target:
+  - `check:tauri`
+  - `test:tauri`
+- Kept `tauri`, `tauri:dev`, and `tauri:build` on their stable existing commands.
+
+## Root Cause Confirmed
+- The earlier verification issue came from two combined factors:
+  - worktree-local Cargo target directories caused very expensive native rebuilds
+  - `asset_import.rs` still had compile errors that were previously hidden by long native build times
+
+## Validation
+- Ran `cargo check --manifest-path src-tauri/Cargo.toml`
+- Ran `cargo test --manifest-path src-tauri/Cargo.toml`
+- Ran `npm run check:quality`
+- Ran `npm run test:tauri`
+- Result: passed
+  - Rust `cargo check`: passed
+  - Rust `cargo test`: passed
+  - Rust tests: `19 passed, 0 failed`
+  - Frontend lint/typecheck/build: passed
+  - Tauri quality verification: passed
+
+## Git History Added
+- `dbef0fb` - `fix: stabilize rust verification for asset import`
+- `853629e` - `build: share cargo target in worktree scripts`
+
+## Current State
+The `codex/asset-import-wizard` branch now has stable and repeatable Rust verification, and the branch is ready for the next Asset Import Wizard implementation chunk without carrying unresolved build uncertainty.
+
 # Daily Log - 2026-03-16
 
 ## Objective
