@@ -9,12 +9,13 @@
     "build": "tsc -b ; vite build",
     "lint": "eslint .",
     "check:frontend": "npm run lint; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; npm run typecheck; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; npm run build",
-    "check:tauri": "cargo check --manifest-path src-tauri/Cargo.toml",
+    "check:tauri": "node ./scripts/run-with-shared-cargo-target.mjs cargo check --manifest-path src-tauri/Cargo.toml",
     "check:quality": "npm run check:frontend; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; npm run check:tauri",
     "preview": "vite preview",
     "tauri": "tauri.cmd",
     "tauri:dev": "tauri.cmd dev",
-    "tauri:build": "tauri.cmd build"
+    "tauri:build": "tauri.cmd build",
+    "test:tauri": "node ./scripts/run-with-shared-cargo-target.mjs cargo test --manifest-path src-tauri/Cargo.toml"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.1",
