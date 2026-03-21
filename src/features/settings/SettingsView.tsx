@@ -1,7 +1,8 @@
-import { LoaderCircle, Upload } from "lucide-react"
+import { FileSpreadsheet, LoaderCircle, PlusCircle, Upload } from "lucide-react"
 import type { AuthState } from "../auth/useAuthState"
 import type { SettingsState } from "./useSettingsState"
 import type { ImportState } from "../import/useImportState"
+import type { AssetImportState } from "../assets/useAssetImportState"
 import type { StaffGroupKey } from "../../types/app"
 import { STAFF_GROUP_BUTTONS, DEFAULT_NEW_ACCOUNT_PASSWORD } from "../../lib/constants"
 import { getGroupCount } from "../../lib/utils"
@@ -10,6 +11,7 @@ type SettingsViewProps = {
     auth: AuthState
     settings: SettingsState
     importState: ImportState
+    assetImport: AssetImportState
     employeeGroupCounts: {
         employeeList: number
         onboarding: number
@@ -25,6 +27,7 @@ export function SettingsView({
     auth,
     settings,
     importState,
+    assetImport,
     employeeGroupCounts,
     dbStatus,
     setGlobalError,
@@ -330,9 +333,9 @@ export function SettingsView({
 
 
                 <div className="rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-4 text-sm text-[var(--text-secondary)]">
-                    <div className="text-sm font-semibold text-[var(--text-primary)]">Borrow LAN &amp; Asset Seed</div>
+                    <div className="text-sm font-semibold text-[var(--text-primary)]">Borrow LAN &amp; Asset Import</div>
                     <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                        Configure the fixed LAN URL for the employee QR flow, then seed asset items before mobile borrow testing.
+                        Configure the fixed LAN URL for the employee QR flow, then stage CSV or Excel asset batches before IT reviews and imports valid rows.
                     </p>
 
                     <div className="mt-4 grid gap-4 md:grid-cols-2">
@@ -375,6 +378,65 @@ export function SettingsView({
                         </div>
 
                         <div className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/25 p-3">
+                            <div className="mb-2 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
+                                Asset Import Wizard
+                            </div>
+                            <p className="text-[11px] text-[var(--text-secondary)]">
+                                Start the staged desktop flow for CSV/Excel asset imports, or add one asset manually when
+                                IT just needs a quick fix.
+                            </p>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                                <button
+                                    className="inline-flex items-center gap-2 rounded-[8px] bg-[var(--primary)] px-3 py-2 text-xs font-semibold text-[#00131c] disabled:opacity-50"
+                                    onClick={assetImport.openImportWizard}
+                                    type="button"
+                                    disabled={!auth.isAdminAccount}
+                                >
+                                    <FileSpreadsheet size={14} />
+                                    Import Assets
+                                </button>
+                                <button
+                                    className="inline-flex items-center gap-2 rounded-[8px] border border-[var(--border)] px-3 py-2 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)] disabled:opacity-50"
+                                    onClick={assetImport.openManualAssetPanel}
+                                    type="button"
+                                    disabled={!auth.isAdminAccount}
+                                >
+                                    <PlusCircle size={14} />
+                                    Add Asset Manually
+                                </button>
+                            </div>
+                            <div className="mt-3 rounded-[8px] border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs text-[var(--text-primary)]">
+                                {assetImport.batchSummaries.length === 0
+                                    ? "No staged asset batches yet."
+                                    : `${assetImport.batchSummaries.length} staged batch(es) available for review.`}
+                            </div>
+                            {assetImport.activeBatchSummary && (
+                                <div className="mt-3 rounded-[8px] border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
+                                    <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
+                                        Active Asset Batch
+                                    </div>
+                                    <div className="mt-2 text-xs text-[var(--text-primary)]">
+                                        {assetImport.activeBatchSummary.batchKey} Â· {assetImport.activeBatchSummary.sourceFileName}
+                                    </div>
+                                    <div className="mt-1 text-[11px] text-[var(--text-secondary)]">
+                                        Valid {assetImport.activeBatchSummary.validRows} Â· Errors {assetImport.activeBatchSummary.errorRows} Â· Imported {assetImport.activeBatchSummary.importedRows}
+                                    </div>
+                                    <button
+                                        className="mt-3 rounded-[8px] border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)]"
+                                        onClick={() => {
+                                            const batch = assetImport.activeBatchSummary
+                                            if (!batch) return
+                                            void assetImport.openBatchDetail(batch.id)
+                                        }}
+                                        type="button"
+                                    >
+                                        Resume Review
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="hidden rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/25 p-3">
                             <div className="mb-2 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
                                 Asset Seed Utility
                             </div>

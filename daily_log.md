@@ -84,6 +84,49 @@ Stabilize Rust verification for the `codex/asset-import-wizard` worktree so feat
 ## Current State
 The `codex/asset-import-wizard` branch now has stable and repeatable Rust verification, and the branch is ready for the next Asset Import Wizard implementation chunk without carrying unresolved build uncertainty.
 
+## Next Checklist Locked
+- Replace the temporary Settings asset-seed entry path with `Import Assets` and `Add Asset Manually`.
+- Add a dedicated `useAssetImportState` hook for file pick, file inspection, batch staging, mapping, review state, inline row actions, and manual add.
+- Add the first desktop skeleton of `AssetImportWizard` with:
+  - `Choose File`
+  - `Map Columns`
+  - `Review Batch`
+  - existing staged batch list
+  - manual add panel
+- Keep the first UI slice focused on structure and state wiring, then finish richer row-review UX in the next chunk.
+
+# Daily Log - 2026-03-21
+
+## Objective
+Move the Asset Import Wizard checklist from NotebookLM into the actual desktop implementation on `codex/asset-import-wizard`.
+
+## Work Completed
+- Wired `useAssetImportState` into the app shell so the asset import flow can open from Settings and share app-level reload/error handling.
+- Added `AssetImportWizard` drawer skeleton with:
+  - `Choose File`
+  - `Map Columns`
+  - `Review Batch`
+  - staged batch list
+  - quick manual add panel
+- Added new Settings entry points for:
+  - `Import Assets`
+  - `Add Asset Manually`
+- Added active-batch resume support from Settings so IT can jump back into the current staged batch.
+- Hid the old `Asset Seed Utility` path from the Settings screen so the staged import flow is now the primary desktop entry point.
+
+## Validation
+- Ran `npm run lint`
+- Ran `npm run typecheck`
+- Ran `npm run check:quality`
+- Result: passed
+  - ESLint: passed
+  - TypeScript typecheck: passed
+  - Vite production build: passed
+  - Tauri `cargo check`: passed
+
+## Current State
+Chunk 3 now has its first usable UI skeleton in place. The next pass should focus on tightening the review grid behavior, visual error feedback, and manual smoke testing with a real CSV or Excel file.
+
 # Daily Log - 2026-03-16
 
 ## Objective
