@@ -221,7 +221,6 @@ struct ParsedAssetImportSource {
 #[derive(Debug, Clone)]
 struct AssetImportRowState {
     id: i64,
-    batch_id: i64,
     status: String,
     asset_code: Option<String>,
     asset_type: Option<String>,
@@ -719,15 +718,16 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
                 row.get::<_, Option<String>>(6)?,
             ))
         })
-        .map_err(|err| format!("failed to query valid asset import rows: {err}"))?;
+        .map_err(|err| format!("failed to query valid asset import rows: {err}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("failed to read valid asset import rows: {err}"))?;
+
+    drop(stmt);
 
     let mut imported_row_ids = Vec::new();
     let mut imported_asset_codes = Vec::new();
 
-    for row in rows {
-        let (row_id, asset_code, asset_type, display_name, model, serial_number, notes) =
-            row.map_err(|err| format!("failed to read valid asset import row: {err}"))?;
-
+    for (row_id, asset_code, asset_type, display_name, model, serial_number, notes) in rows {
         let record = asset::create_asset_tx(
             &tx,
             &AssetUpsertInput {
@@ -1050,7 +1050,7 @@ where
 
         let range = workbook
             .worksheet_range(sheet_name)
-            .map_err(|err| format!("failed to load sheet '{sheet_name}': {err}"))?;
+            .map_err(|err| format!("failed to load sheet '{sheet_name}': {err:?}"))?;
         let (header_row_index, headers, _) = detect_excel_header_row(&range)?;
         return Ok((sheet_name.to_string(), header_row_index, headers));
     }
@@ -1180,9 +1180,11 @@ fn resolve_mapping(
     mapping_override: Option<AssetImportFieldMapping>,
 ) -> Result<AssetImportResolvedMapping, String> {
     let detected = detect_field_mapping(headers);
-    let merged = mapping_override
-        .map(|override_mapping| merge_field_mapping(detected, override_mapping))
-        .unwrap_or(detected);
+    let merged = if let Some(override_mapping) = mapping_override {
+        merge_field_mapping(detected, override_mapping)
+    } else {
+        detected
+    };
 
     let Some(missing_required) = mapping_missing_required_fields(&merged) else {
         let header_indices = headers
@@ -1539,7 +1541,7 @@ fn load_batch_row_states_tx(
     let mut stmt = tx
         .prepare(
             r#"
-            SELECT id, batch_id, status, asset_code, asset_type, display_name
+            SELECT id, status, asset_code, asset_type, display_name
             FROM asset_import_rows
             WHERE batch_id = ?
             ORDER BY row_number ASC, id ASC
@@ -1550,11 +1552,10 @@ fn load_batch_row_states_tx(
         .query_map(params![batch_id], |row| {
             Ok(AssetImportRowState {
                 id: row.get(0)?,
-                batch_id: row.get(1)?,
-                status: row.get(2)?,
-                asset_code: row.get(3)?,
-                asset_type: row.get(4)?,
-                display_name: row.get(5)?,
+                status: row.get(1)?,
+                asset_code: row.get(2)?,
+                asset_type: row.get(3)?,
+                display_name: row.get(4)?,
             })
         })
         .map_err(|err| format!("failed to query staged asset rows: {err}"))?;
