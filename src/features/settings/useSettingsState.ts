@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react"
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog"
 import { staffApi } from "../../services/staff-api"
-import type { BackupSettings, SnapshotInfo } from "../../types/staff"
+import type { AssetRecord, AssetSeedItemInput, BackupSettings, BorrowLanSettings, SnapshotInfo } from "../../types/staff"
 import { getErrorMessage } from "../../lib/utils"
 
 type UseSettingsStateOptions = {
@@ -41,6 +41,19 @@ export function useSettingsState({
     const [dbPathMessage, setDbPathMessage] = useState("")
     const [dbMovePending, setDbMovePending] = useState(false)
 
+    // Borrow LAN settings
+    const [borrowLanSettings, setBorrowLanSettings] = useState<BorrowLanSettings | null>(null)
+    const [borrowLanHostInput, setBorrowLanHostInput] = useState("")
+    const [borrowLanPortInput, setBorrowLanPortInput] = useState("8787")
+    const [borrowLanMessage, setBorrowLanMessage] = useState("")
+    const [isSavingBorrowLanSettings, setSavingBorrowLanSettings] = useState(false)
+
+    // Asset seed utility
+    const [assetSeedText, setAssetSeedText] = useState("")
+    const [seededAssets, setSeededAssets] = useState<AssetRecord[]>([])
+    const [assetSeedMessage, setAssetSeedMessage] = useState("")
+    const [isSeedingAssets, setSeedingAssets] = useState(false)
+
     // Load backup settings + current DB custom path
     useEffect(() => {
         if (!dbReady || !isAuthenticated) return
@@ -49,15 +62,19 @@ export function useSettingsState({
 
         void (async () => {
             try {
-                const [settings, customPath] = await Promise.all([
+                const [backupSettings, customPathValue, lanSettings] = await Promise.all([
                     staffApi.getBackupSettings(),
                     staffApi.getDbCustomPath(),
+                    staffApi.getBorrowLanSettings(),
                 ])
                 if (!disposed) {
-                    setBackupSettings(settings)
-                    setBackupDirectoryInput(settings?.backupDirectoryPath ?? "")
-                    setBackupAutoEnabled(settings?.autoBackupEnabled ?? false)
-                    setDbCustomPathInput(customPath ?? "")
+                    setBackupSettings(backupSettings)
+                    setBackupDirectoryInput(backupSettings?.backupDirectoryPath ?? "")
+                    setBackupAutoEnabled(backupSettings?.autoBackupEnabled ?? false)
+                    setBorrowLanSettings(lanSettings)
+                    setBorrowLanHostInput(lanSettings.host)
+                    setBorrowLanPortInput(String(lanSettings.port))
+                    setDbCustomPathInput(customPathValue ?? "")
                 }
             } catch (error) {
                 if (!disposed) setGlobalError(getErrorMessage(error))
@@ -243,6 +260,59 @@ export function useSettingsState({
         }
     }
 
+    const handleSaveBorrowLanSettings = async () => {
+        const host = borrowLanHostInput.trim()
+        const port = Number.parseInt(borrowLanPortInput.trim(), 10)
+        if (!host) {
+            setBorrowLanMessage("LAN host is required.")
+            return
+        }
+        if (!Number.isInteger(port) || port < 1 || port > 65535) {
+            setBorrowLanMessage("LAN port must be between 1 and 65535.")
+            return
+        }
+
+        try {
+            setSavingBorrowLanSettings(true)
+            setBorrowLanMessage("")
+            const updated = await staffApi.updateBorrowLanSettings({ host, port })
+            setBorrowLanSettings(updated)
+            setBorrowLanHostInput(updated.host)
+            setBorrowLanPortInput(String(updated.port))
+            setBorrowLanMessage("Borrow LAN settings saved.")
+        } catch (error) {
+            setBorrowLanMessage(getErrorMessage(error))
+        } finally {
+            setSavingBorrowLanSettings(false)
+        }
+    }
+
+    const handleSeedAssets = async () => {
+        try {
+            const items = assetSeedText
+                .split(/\r?\n/)
+                .map((line) => line.trim())
+                .filter(Boolean)
+                .map(parseAssetSeedLine)
+
+            if (items.length === 0) {
+                setAssetSeedMessage("Add at least one asset line before seeding.")
+                return
+            }
+
+            setSeedingAssets(true)
+            setAssetSeedMessage("")
+            const result = await staffApi.upsertAssets(items)
+            setSeededAssets(result)
+            setAssetSeedMessage(`Seeded ${result.length} asset(s).`)
+            triggerReload()
+        } catch (error) {
+            setAssetSeedMessage(getErrorMessage(error))
+        } finally {
+            setSeedingAssets(false)
+        }
+    }
+
     return {
         backupSettings,
         backupDirectoryInput,
@@ -272,5 +342,37 @@ export function useSettingsState({
         handleMoveDatabase,
         handleMoveDatabaseCancel,
         handleRestoreFromFile,
+        // Borrow LAN
+        borrowLanSettings,
+        borrowLanHostInput,
+        setBorrowLanHostInput,
+        borrowLanPortInput,
+        setBorrowLanPortInput,
+        borrowLanMessage,
+        isSavingBorrowLanSettings,
+        handleSaveBorrowLanSettings,
+        // Asset seed
+        assetSeedText,
+        setAssetSeedText,
+        seededAssets,
+        assetSeedMessage,
+        isSeedingAssets,
+        handleSeedAssets,
+    }
+}
+
+function parseAssetSeedLine(line: string): AssetSeedItemInput {
+    const parts = line.split("|").map((part) => part.trim())
+    if (parts.length < 3) {
+        throw new Error("Each asset line must include assetCode|assetType|displayName.")
+    }
+
+    return {
+        assetCode: parts[0],
+        assetType: parts[1],
+        displayName: parts[2],
+        model: parts[3] || null,
+        serialNumber: parts[4] || null,
+        notes: parts[5] || null,
     }
 }

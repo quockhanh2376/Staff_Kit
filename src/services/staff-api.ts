@@ -4,7 +4,20 @@ import type {
   BackupRunResult,
   BackupSettings,
   BackupSettingsUpdateInput,
+  BorrowLanSettings,
+  BorrowLanSettingsUpdateInput,
   SnapshotInfo,
+  AssetImportBatchCreateInput,
+  AssetImportBatchDetail,
+  AssetImportBatchSummary,
+  AssetImportCommitResult,
+  AssetImportFileInspection,
+  AssetImportInspectInput,
+  AssetImportRowRecord,
+  AssetImportRowSkipInput,
+  AssetImportRowUpdateInput,
+  AssetRecord,
+  AssetSeedItemInput,
   EmployeeColumnDefinition,
   EmployeeGroupCounts,
   EmployeeColumnUpsertInput,
@@ -24,6 +37,8 @@ import type {
   ImportExcelInput,
   ImportReport,
   ImportPreviewResult,
+  BorrowRequestRecord,
+  BorrowRequestRejectInput,
   TeamRecord,
   TeamUpsertInput,
 } from "../types/staff"
@@ -85,6 +100,103 @@ export const staffApi = {
 
   restoreDatabaseFromFile: (sourcePath: string) =>
     call<void>("restore_database_from_file", { sourcePath }),
+
+  getBorrowLanSettings: () => call<BorrowLanSettings>("get_borrow_lan_settings"),
+
+  updateBorrowLanSettings: (payload: BorrowLanSettingsUpdateInput) =>
+    call<BorrowLanSettings>("update_borrow_lan_settings", {
+      payload: {
+        host: payload.host,
+        port: payload.port,
+      },
+    }),
+
+  inspectAssetImportFile: (payload: AssetImportInspectInput) =>
+    call<AssetImportFileInspection>("inspect_asset_import_file", {
+      payload: {
+        filePath: payload.filePath,
+        sheetName: payload.sheetName ?? null,
+      },
+    }),
+
+  createAssetImportBatch: (payload: AssetImportBatchCreateInput) =>
+    call<AssetImportBatchDetail>("create_asset_import_batch", {
+      payload: {
+        filePath: payload.filePath,
+        sheetName: payload.sheetName ?? null,
+        mapping: payload.mapping ?? null,
+      },
+    }),
+
+  listAssetImportBatches: () =>
+    call<AssetImportBatchSummary[]>("list_asset_import_batches"),
+
+  getAssetImportBatchDetail: (batchId: number) =>
+    call<AssetImportBatchDetail>("get_asset_import_batch_detail", { batchId }),
+
+  updateAssetImportRow: (payload: AssetImportRowUpdateInput) =>
+    call<AssetImportRowRecord>("update_asset_import_row", {
+      payload: {
+        rowId: payload.rowId,
+        fieldKey: payload.fieldKey,
+        value: payload.value ?? null,
+      },
+    }),
+
+  setAssetImportRowSkipped: (payload: AssetImportRowSkipInput) =>
+    call<AssetImportRowRecord>("set_asset_import_row_skipped", {
+      payload: {
+        rowId: payload.rowId,
+        skipped: payload.skipped,
+      },
+    }),
+
+  importAssetImportBatchValidRows: (batchId: number) =>
+    call<AssetImportCommitResult>("import_asset_import_batch_valid_rows", { batchId }),
+
+  deleteAssetImportBatch: (batchId: number) =>
+    call<boolean>("delete_asset_import_batch", { batchId }),
+
+  createAssetManually: (payload: AssetSeedItemInput) =>
+    call<AssetRecord>("create_asset_manually", {
+      payload: {
+        assetCode: payload.assetCode,
+        assetType: payload.assetType,
+        displayName: payload.displayName,
+        model: payload.model ?? null,
+        serialNumber: payload.serialNumber ?? null,
+        notes: payload.notes ?? null,
+      },
+    }),
+
+  upsertAssets: (payload: AssetSeedItemInput[]) =>
+    call<AssetRecord[]>("upsert_assets", {
+      payload: payload.map((item) => ({
+        assetCode: item.assetCode,
+        assetType: item.assetType,
+        displayName: item.displayName,
+        model: item.model ?? null,
+        serialNumber: item.serialNumber ?? null,
+        notes: item.notes ?? null,
+      })),
+    }),
+
+  listPendingBorrowRequests: () =>
+    call<BorrowRequestRecord[]>("list_pending_borrow_requests"),
+
+  getBorrowRequestDetail: (requestId: number) =>
+    call<BorrowRequestRecord>("get_borrow_request_detail", { requestId }),
+
+  approveBorrowRequest: (requestId: number) =>
+    call<BorrowRequestRecord>("approve_borrow_request", { requestId }),
+
+  rejectBorrowRequest: (payload: BorrowRequestRejectInput) =>
+    call<BorrowRequestRecord>("reject_borrow_request", {
+      payload: {
+        requestId: payload.requestId,
+        note: payload.note,
+      },
+    }),
 
   listEmployees: (filters: EmployeeQueryInput) =>
     call<EmployeeListResponse>("list_employees", {

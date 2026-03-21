@@ -1,4 +1,6 @@
 mod db;
+mod lan_assets;
+mod lan_server;
 use tauri::Manager;
 
 #[tauri::command]
@@ -236,26 +238,17 @@ fn create_history_snapshot_cmd(
 }
 
 #[tauri::command]
-fn restore_history_snapshot(
-    app: tauri::AppHandle,
-    filename: String,
-) -> Result<(), String> {
+fn restore_history_snapshot(app: tauri::AppHandle, filename: String) -> Result<(), String> {
     db::restore_history_snapshot(&app, &filename)
 }
 
 #[tauri::command]
-fn move_database_to(
-    app: tauri::AppHandle,
-    target_folder: String,
-) -> Result<String, String> {
+fn move_database_to(app: tauri::AppHandle, target_folder: String) -> Result<String, String> {
     db::move_database_to(&app, &target_folder)
 }
 
 #[tauri::command]
-fn restore_database_from_file(
-    app: tauri::AppHandle,
-    source_path: String,
-) -> Result<(), String> {
+fn restore_database_from_file(app: tauri::AppHandle, source_path: String) -> Result<(), String> {
     db::restore_database_from_file(&app, &source_path)
 }
 
@@ -264,11 +257,133 @@ fn get_db_custom_path(app: tauri::AppHandle) -> Result<Option<String>, String> {
     db::get_db_custom_path(&app)
 }
 
+#[tauri::command]
+fn get_borrow_lan_settings(app: tauri::AppHandle) -> Result<db::BorrowLanSettings, String> {
+    db::get_borrow_lan_settings(&app)
+}
+
+#[tauri::command]
+fn update_borrow_lan_settings(
+    app: tauri::AppHandle,
+    payload: db::BorrowLanSettingsUpdateInput,
+) -> Result<db::BorrowLanSettings, String> {
+    db::update_borrow_lan_settings(&app, payload)
+}
+
+#[tauri::command]
+fn inspect_asset_import_file(
+    payload: db::AssetImportInspectInput,
+) -> Result<db::AssetImportFileInspection, String> {
+    db::inspect_asset_import_file(payload)
+}
+
+#[tauri::command]
+fn create_asset_import_batch(
+    app: tauri::AppHandle,
+    payload: db::AssetImportBatchCreateInput,
+) -> Result<db::AssetImportBatchDetail, String> {
+    db::create_asset_import_batch(&app, payload)
+}
+
+#[tauri::command]
+fn list_asset_import_batches(
+    app: tauri::AppHandle,
+) -> Result<Vec<db::AssetImportBatchSummary>, String> {
+    db::list_asset_import_batches(&app)
+}
+
+#[tauri::command]
+fn get_asset_import_batch_detail(
+    app: tauri::AppHandle,
+    batch_id: i64,
+) -> Result<db::AssetImportBatchDetail, String> {
+    db::get_asset_import_batch_detail(&app, batch_id)
+}
+
+#[tauri::command]
+fn update_asset_import_row(
+    app: tauri::AppHandle,
+    payload: db::AssetImportRowUpdateInput,
+) -> Result<db::AssetImportRowRecord, String> {
+    db::update_asset_import_row(&app, payload)
+}
+
+#[tauri::command]
+fn set_asset_import_row_skipped(
+    app: tauri::AppHandle,
+    payload: db::AssetImportRowSkipInput,
+) -> Result<db::AssetImportRowRecord, String> {
+    db::set_asset_import_row_skipped(&app, payload)
+}
+
+#[tauri::command]
+fn import_asset_import_batch_valid_rows(
+    app: tauri::AppHandle,
+    batch_id: i64,
+) -> Result<db::AssetImportCommitResult, String> {
+    db::import_asset_import_batch_valid_rows(&app, batch_id)
+}
+
+#[tauri::command]
+fn delete_asset_import_batch(app: tauri::AppHandle, batch_id: i64) -> Result<bool, String> {
+    db::delete_asset_import_batch(&app, batch_id)
+}
+
+#[tauri::command]
+fn create_asset_manually(
+    app: tauri::AppHandle,
+    payload: db::AssetUpsertInput,
+) -> Result<db::AssetRecord, String> {
+    db::create_asset_manually(&app, payload)
+}
+
+#[tauri::command]
+fn upsert_assets(
+    app: tauri::AppHandle,
+    payload: Vec<db::AssetUpsertInput>,
+) -> Result<Vec<db::AssetRecord>, String> {
+    db::upsert_assets(&app, payload)
+}
+
+#[tauri::command]
+fn list_pending_borrow_requests(
+    app: tauri::AppHandle,
+) -> Result<Vec<db::BorrowRequestRecord>, String> {
+    db::list_pending_borrow_requests(&app)
+}
+
+#[tauri::command]
+fn get_borrow_request_detail(
+    app: tauri::AppHandle,
+    request_id: i64,
+) -> Result<db::BorrowRequestRecord, String> {
+    db::get_borrow_request_detail(&app, request_id)
+}
+
+#[tauri::command]
+fn approve_borrow_request(
+    app: tauri::AppHandle,
+    request_id: i64,
+) -> Result<db::BorrowRequestRecord, String> {
+    db::approve_borrow_request(&app, request_id)
+}
+
+#[tauri::command]
+fn reject_borrow_request(
+    app: tauri::AppHandle,
+    payload: db::BorrowRequestRejectInput,
+) -> Result<db::BorrowRequestRecord, String> {
+    db::reject_borrow_request(&app, payload)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            if let Err(error) = lan_server::start(app.handle().clone()) {
+                eprintln!("failed to start Staff Kit LAN borrow server: {error}");
+            }
             // Show the main window after WebView2 has finished initializing.
             // We set visible:false in tauri.conf.json to avoid the black flash
             // that appears before the first frame is rendered.
@@ -291,6 +406,22 @@ pub fn run() {
             move_database_to,
             get_db_custom_path,
             restore_database_from_file,
+            get_borrow_lan_settings,
+            update_borrow_lan_settings,
+            inspect_asset_import_file,
+            create_asset_import_batch,
+            list_asset_import_batches,
+            get_asset_import_batch_detail,
+            update_asset_import_row,
+            set_asset_import_row_skipped,
+            import_asset_import_batch_valid_rows,
+            delete_asset_import_batch,
+            create_asset_manually,
+            upsert_assets,
+            list_pending_borrow_requests,
+            get_borrow_request_detail,
+            approve_borrow_request,
+            reject_borrow_request,
             list_employees,
             search_employees,
             list_employee_group_counts,

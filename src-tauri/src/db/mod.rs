@@ -23,17 +23,24 @@ use tauri::{AppHandle, Manager};
 use schema::*;
 
 // ── Sub-modules ───────────────────────────────────────────────────────────────
-mod schema;
+pub(crate) mod asset;
+pub(crate) mod asset_import;
+pub(crate) mod audit;
 pub mod auth;
 pub mod backup;
+pub mod borrow;
 pub mod column;
 pub mod employee;
 pub mod import;
+mod schema;
 pub mod team;
 
 // ── Re-exports (all public types bubble up to `db::`) ─────────────────────────
+pub use asset::*;
+pub use asset_import::*;
 pub use auth::*;
 pub use backup::*;
+pub use borrow::*;
 pub use column::*;
 pub use employee::*;
 pub use import::*;
@@ -134,8 +141,8 @@ pub(crate) fn open_runtime_connection(app: &AppHandle) -> Result<Connection, Str
 /// Open a connection and apply the AES-256 SQLCipher key.
 /// All reads/writes go through this — the DB file stays encrypted at rest.
 pub(crate) fn open_encrypted_connection(path: &std::path::Path) -> Result<Connection, String> {
-    let conn = Connection::open(path)
-        .map_err(|err| format!("failed to open sqlite database: {err}"))?;
+    let conn =
+        Connection::open(path).map_err(|err| format!("failed to open sqlite database: {err}"))?;
     // Apply encryption key FIRST, before any other PRAGMA
     conn.execute_batch(&format!("PRAGMA key = '{APP_DB_ENCRYPTION_KEY}';"))
         .map_err(|err| format!("failed to apply database encryption key: {err}"))?;
@@ -183,7 +190,7 @@ pub(crate) fn resolve_database_path(app: &AppHandle) -> Result<PathBuf, String> 
     Ok(data_dir)
 }
 
-fn configure_connection(conn: &Connection) -> Result<(), String> {
+pub(crate) fn configure_connection(conn: &Connection) -> Result<(), String> {
     conn.busy_timeout(Duration::from_secs(5))
         .map_err(|err| format!("failed to set sqlite busy timeout: {err}"))?;
 
@@ -220,15 +227,16 @@ fn migrate_to_encrypted(db_path: &std::path::Path) -> Result<(), String> {
     let is_already_encrypted = {
         match Connection::open(db_path) {
             Ok(test_conn) => {
-                let key_result = test_conn.execute_batch(
-                    &format!("PRAGMA key = '{APP_DB_ENCRYPTION_KEY}';"),
-                );
+                let key_result =
+                    test_conn.execute_batch(&format!("PRAGMA key = '{APP_DB_ENCRYPTION_KEY}';"));
                 if key_result.is_err() {
                     false
                 } else {
                     // Try a simple query to verify key is correct
                     test_conn
-                        .query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get::<_, i64>(0))
+                        .query_row("SELECT count(*) FROM sqlite_master", [], |r| {
+                            r.get::<_, i64>(0)
+                        })
                         .is_ok()
                 }
             }
@@ -238,7 +246,10 @@ fn migrate_to_encrypted(db_path: &std::path::Path) -> Result<(), String> {
 
     if is_already_encrypted {
         // Mark migration as done
-        let _ = fs::write(&sidecar_path, format!("{{\"{DB_ENCRYPTION_MIGRATION_SETTING_KEY}\": true}}"));
+        let _ = fs::write(
+            &sidecar_path,
+            format!("{{\"{DB_ENCRYPTION_MIGRATION_SETTING_KEY}\": true}}"),
+        );
         return Ok(());
     }
 
@@ -265,7 +276,10 @@ fn migrate_to_encrypted(db_path: &std::path::Path) -> Result<(), String> {
         .map_err(|err| format!("failed to replace database with encrypted version: {err}"))?;
 
     // Mark migration done
-    let _ = fs::write(&sidecar_path, format!("{{\"{DB_ENCRYPTION_MIGRATION_SETTING_KEY}\": true}}"));
+    let _ = fs::write(
+        &sidecar_path,
+        format!("{{\"{DB_ENCRYPTION_MIGRATION_SETTING_KEY}\": true}}"),
+    );
 
     Ok(())
 }
@@ -275,7 +289,7 @@ fn sqlite_version(conn: &Connection) -> Result<String, String> {
         .map_err(|err| format!("failed to query sqlite version: {err}"))
 }
 
-fn apply_migrations(conn: &Connection) -> Result<(), String> {
+pub(crate) fn apply_migrations(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(BASE_SCHEMA_SQL)
         .map_err(|err| format!("failed to initialize schema: {err}"))?;
 
@@ -351,7 +365,8 @@ fn ensure_local_account_columns(conn: &Connection) -> Result<(), String> {
 
     let mut existing = Vec::new();
     for row in rows {
-        existing.push(row.map_err(|err| format!("failed to read local account column info: {err}"))?);
+        existing
+            .push(row.map_err(|err| format!("failed to read local account column info: {err}"))?);
     }
 
     let additional_columns = [
@@ -532,6 +547,9 @@ pub(crate) fn humanize_sqlite_error(err: rusqlite::Error) -> String {
             if message.contains("teams.name") {
                 return "team name already exists".to_string();
             }
+            if message.contains("assets.asset_code") {
+                return "assetCode already exists".to_string();
+            }
             message
         }
         other => other.to_string(),
@@ -616,7 +634,9 @@ pub(crate) fn normalize_dynamic_key(value: &str) -> String {
     output.trim_matches('_').to_string()
 }
 
-pub(crate) fn normalize_dynamic_fields(input: Option<HashMap<String, String>>) -> HashMap<String, String> {
+pub(crate) fn normalize_dynamic_fields(
+    input: Option<HashMap<String, String>>,
+) -> HashMap<String, String> {
     let mut fields = HashMap::new();
     let Some(items) = input else {
         return fields;
@@ -680,4 +700,41 @@ fn normalize_header_key(value: &str) -> String {
         .filter(|ch| ch.is_alphanumeric())
         .flat_map(|ch| ch.to_lowercase())
         .collect::<String>()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn table_exists(conn: &Connection, table_name: &str) -> bool {
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?)",
+            params![table_name],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|exists| exists > 0)
+        .unwrap_or(false)
+    }
+
+    #[test]
+    fn apply_migrations_creates_borrow_flow_tables() {
+        let conn = Connection::open_in_memory().expect("open in-memory sqlite database");
+        configure_connection(&conn).expect("configure sqlite pragmas");
+        apply_migrations(&conn).expect("apply database migrations");
+
+        for table_name in [
+            "assets",
+            "asset_import_batches",
+            "asset_import_rows",
+            "borrow_requests",
+            "borrow_request_items",
+            "asset_loans",
+            "audit_logs",
+        ] {
+            assert!(
+                table_exists(&conn, table_name),
+                "expected table '{table_name}' to exist after migrations",
+            );
+        }
+    }
 }
