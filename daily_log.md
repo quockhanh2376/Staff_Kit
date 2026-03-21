@@ -127,6 +127,32 @@ Move the Asset Import Wizard checklist from NotebookLM into the actual desktop i
 ## Current State
 Chunk 3 now has its first usable UI skeleton in place. The next pass should focus on tightening the review grid behavior, visual error feedback, and manual smoke testing with a real CSV or Excel file.
 
+## Preparation Checklist Before Coding Next
+- Re-baseline the current branch from a generic staged asset import prototype into a mode-aware import design with `quantity` and `serialized` as separate business flows.
+- Add category master requirements into the next implementation slice:
+  - `tracking_mode`
+  - `prefix_code`
+  - `qr_required`
+  - `is_active`
+- Decide whether the current `assets` table becomes the serialized asset store or remains a temporary compatibility layer for borrow `2.0.1`.
+- Align the wizard input model with the NotebookLM templates:
+  - quantity: `item_name, category, brand, model, quantity, warehouse, note`
+  - serialized: `category, asset_name, brand, model, serial_number, warehouse, note`
+- Treat the current staged review flow as the desktop equivalent of `preview`, and treat `Import Valid Rows` as the equivalent of `confirm`.
+- Keep the next coding slice focused on P0 only:
+  - category mode split
+  - serialized asset-code generation
+  - mode-aware preview/review flow
+  - batch history for IT traceability
+  - borrow alignment for `in_stock` assets
+- Explicitly defer phase-2 scope:
+  - two-QR comparison
+  - physical QR verification logs
+  - full return and repair lifecycle
+  - bulk QR printing
+  - advanced duplicate heuristics
+- No runtime code changed in this preparation step. This checklist was captured from NotebookLM review so the next coding pass starts from the correct business model.
+
 # Daily Log - 2026-03-16
 
 ## Objective
