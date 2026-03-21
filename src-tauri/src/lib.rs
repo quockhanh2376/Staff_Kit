@@ -271,6 +271,73 @@ fn update_borrow_lan_settings(
 }
 
 #[tauri::command]
+fn inspect_asset_import_file(
+    payload: db::AssetImportInspectInput,
+) -> Result<db::AssetImportFileInspection, String> {
+    db::inspect_asset_import_file(payload)
+}
+
+#[tauri::command]
+fn create_asset_import_batch(
+    app: tauri::AppHandle,
+    payload: db::AssetImportBatchCreateInput,
+) -> Result<db::AssetImportBatchDetail, String> {
+    db::create_asset_import_batch(&app, payload)
+}
+
+#[tauri::command]
+fn list_asset_import_batches(
+    app: tauri::AppHandle,
+) -> Result<Vec<db::AssetImportBatchSummary>, String> {
+    db::list_asset_import_batches(&app)
+}
+
+#[tauri::command]
+fn get_asset_import_batch_detail(
+    app: tauri::AppHandle,
+    batch_id: i64,
+) -> Result<db::AssetImportBatchDetail, String> {
+    db::get_asset_import_batch_detail(&app, batch_id)
+}
+
+#[tauri::command]
+fn update_asset_import_row(
+    app: tauri::AppHandle,
+    payload: db::AssetImportRowUpdateInput,
+) -> Result<db::AssetImportRowRecord, String> {
+    db::update_asset_import_row(&app, payload)
+}
+
+#[tauri::command]
+fn set_asset_import_row_skipped(
+    app: tauri::AppHandle,
+    payload: db::AssetImportRowSkipInput,
+) -> Result<db::AssetImportRowRecord, String> {
+    db::set_asset_import_row_skipped(&app, payload)
+}
+
+#[tauri::command]
+fn import_asset_import_batch_valid_rows(
+    app: tauri::AppHandle,
+    batch_id: i64,
+) -> Result<db::AssetImportCommitResult, String> {
+    db::import_asset_import_batch_valid_rows(&app, batch_id)
+}
+
+#[tauri::command]
+fn delete_asset_import_batch(app: tauri::AppHandle, batch_id: i64) -> Result<bool, String> {
+    db::delete_asset_import_batch(&app, batch_id)
+}
+
+#[tauri::command]
+fn create_asset_manually(
+    app: tauri::AppHandle,
+    payload: db::AssetUpsertInput,
+) -> Result<db::AssetRecord, String> {
+    db::create_asset_manually(&app, payload)
+}
+
+#[tauri::command]
 fn upsert_assets(
     app: tauri::AppHandle,
     payload: Vec<db::AssetUpsertInput>,
@@ -341,6 +408,15 @@ pub fn run() {
             restore_database_from_file,
             get_borrow_lan_settings,
             update_borrow_lan_settings,
+            inspect_asset_import_file,
+            create_asset_import_batch,
+            list_asset_import_batches,
+            get_asset_import_batch_detail,
+            update_asset_import_row,
+            set_asset_import_row_skipped,
+            import_asset_import_batch_valid_rows,
+            delete_asset_import_batch,
+            create_asset_manually,
             upsert_assets,
             list_pending_borrow_requests,
             get_borrow_request_detail,

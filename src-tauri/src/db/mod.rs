@@ -24,6 +24,7 @@ use schema::*;
 
 // ── Sub-modules ───────────────────────────────────────────────────────────────
 pub(crate) mod asset;
+pub(crate) mod asset_import;
 pub(crate) mod audit;
 pub mod auth;
 pub mod backup;
@@ -35,9 +36,10 @@ mod schema;
 pub mod team;
 
 // ── Re-exports (all public types bubble up to `db::`) ─────────────────────────
+pub use asset::*;
+pub use asset_import::*;
 pub use auth::*;
 pub use backup::*;
-pub use asset::*;
 pub use borrow::*;
 pub use column::*;
 pub use employee::*;
@@ -545,6 +547,9 @@ pub(crate) fn humanize_sqlite_error(err: rusqlite::Error) -> String {
             if message.contains("teams.name") {
                 return "team name already exists".to_string();
             }
+            if message.contains("assets.asset_code") {
+                return "assetCode already exists".to_string();
+            }
             message
         }
         other => other.to_string(),
@@ -719,6 +724,8 @@ mod tests {
 
         for table_name in [
             "assets",
+            "asset_import_batches",
+            "asset_import_rows",
             "borrow_requests",
             "borrow_request_items",
             "asset_loans",

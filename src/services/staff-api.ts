@@ -7,6 +7,15 @@ import type {
   BorrowLanSettings,
   BorrowLanSettingsUpdateInput,
   SnapshotInfo,
+  AssetImportBatchCreateInput,
+  AssetImportBatchDetail,
+  AssetImportBatchSummary,
+  AssetImportCommitResult,
+  AssetImportFileInspection,
+  AssetImportInspectInput,
+  AssetImportRowRecord,
+  AssetImportRowSkipInput,
+  AssetImportRowUpdateInput,
   AssetRecord,
   AssetSeedItemInput,
   EmployeeColumnDefinition,
@@ -99,6 +108,64 @@ export const staffApi = {
       payload: {
         host: payload.host,
         port: payload.port,
+      },
+    }),
+
+  inspectAssetImportFile: (payload: AssetImportInspectInput) =>
+    call<AssetImportFileInspection>("inspect_asset_import_file", {
+      payload: {
+        filePath: payload.filePath,
+        sheetName: payload.sheetName ?? null,
+      },
+    }),
+
+  createAssetImportBatch: (payload: AssetImportBatchCreateInput) =>
+    call<AssetImportBatchDetail>("create_asset_import_batch", {
+      payload: {
+        filePath: payload.filePath,
+        sheetName: payload.sheetName ?? null,
+        mapping: payload.mapping ?? null,
+      },
+    }),
+
+  listAssetImportBatches: () =>
+    call<AssetImportBatchSummary[]>("list_asset_import_batches"),
+
+  getAssetImportBatchDetail: (batchId: number) =>
+    call<AssetImportBatchDetail>("get_asset_import_batch_detail", { batchId }),
+
+  updateAssetImportRow: (payload: AssetImportRowUpdateInput) =>
+    call<AssetImportRowRecord>("update_asset_import_row", {
+      payload: {
+        rowId: payload.rowId,
+        fieldKey: payload.fieldKey,
+        value: payload.value ?? null,
+      },
+    }),
+
+  setAssetImportRowSkipped: (payload: AssetImportRowSkipInput) =>
+    call<AssetImportRowRecord>("set_asset_import_row_skipped", {
+      payload: {
+        rowId: payload.rowId,
+        skipped: payload.skipped,
+      },
+    }),
+
+  importAssetImportBatchValidRows: (batchId: number) =>
+    call<AssetImportCommitResult>("import_asset_import_batch_valid_rows", { batchId }),
+
+  deleteAssetImportBatch: (batchId: number) =>
+    call<boolean>("delete_asset_import_batch", { batchId }),
+
+  createAssetManually: (payload: AssetSeedItemInput) =>
+    call<AssetRecord>("create_asset_manually", {
+      payload: {
+        assetCode: payload.assetCode,
+        assetType: payload.assetType,
+        displayName: payload.displayName,
+        model: payload.model ?? null,
+        serialNumber: payload.serialNumber ?? null,
+        notes: payload.notes ?? null,
       },
     }),
 

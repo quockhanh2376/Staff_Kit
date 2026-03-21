@@ -62,6 +62,105 @@ export type AssetRecord = {
   status: string
 }
 
+export type AssetImportFieldMapping = {
+  assetCode?: string | null
+  assetType?: string | null
+  displayName?: string | null
+  model?: string | null
+  serialNumber?: string | null
+  notes?: string | null
+}
+
+export type AssetImportInspectInput = {
+  filePath: string
+  sheetName?: string | null
+}
+
+export type AssetImportFileInspection = {
+  fileName: string
+  fileType: string
+  selectedSheetName: string | null
+  availableSheets: string[]
+  headerRow: number
+  headers: string[]
+  mapping: AssetImportFieldMapping
+  requiresManualMapping: boolean
+}
+
+export type AssetImportBatchCreateInput = {
+  filePath: string
+  sheetName?: string | null
+  mapping?: AssetImportFieldMapping | null
+}
+
+export type AssetImportBatchSummary = {
+  id: number
+  batchKey: string
+  sourceFileName: string
+  sourceFilePath: string
+  sourceFileType: string
+  sheetName: string | null
+  headerRow: number
+  status: string
+  totalRows: number
+  validRows: number
+  errorRows: number
+  importedRows: number
+  skippedRows: number
+  createdAt: string
+  updatedAt: string
+}
+
+export type AssetImportRawValue = {
+  header: string
+  value: string
+}
+
+export type AssetImportRowRecord = {
+  id: number
+  batchId: number
+  rowNumber: number
+  rawValues: AssetImportRawValue[]
+  assetCode: string | null
+  assetType: string | null
+  displayName: string | null
+  model: string | null
+  serialNumber: string | null
+  notes: string | null
+  validationErrors: string[]
+  status: string
+  isEdited: boolean
+  editedFields: string[]
+  importedAssetId: number | null
+}
+
+export type AssetImportBatchDetail = {
+  summary: AssetImportBatchSummary
+  headers: string[]
+  mapping: AssetImportFieldMapping
+  rows: AssetImportRowRecord[]
+}
+
+export type AssetImportRowUpdateInput = {
+  rowId: number
+  fieldKey: "assetCode" | "assetType" | "displayName" | "model" | "serialNumber" | "notes"
+  value?: string | null
+}
+
+export type AssetImportRowSkipInput = {
+  rowId: number
+  skipped: boolean
+}
+
+export type AssetImportCommitResult = {
+  batchId: number
+  importedRowIds: number[]
+  importedAssetCodes: string[]
+  importedCount: number
+  remainingErrorRows: number
+  batchStatus: string
+}
+
 export type BorrowRequestSubmitInput = {
   submittedEmployeeId: string
   submittedFullName: string

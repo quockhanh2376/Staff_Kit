@@ -2,7 +2,9 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
-use super::{humanize_sqlite_error, normalize_optional_text, open_runtime_connection, require_text};
+use super::{
+    humanize_sqlite_error, normalize_optional_text, open_runtime_connection, require_text,
+};
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -90,6 +92,121 @@ pub(crate) fn set_asset_status_tx(
     }
 
     Ok(())
+}
+
+fn insert_asset_stmt(
+    executor: &Connection,
+    asset_code: &str,
+    asset_type: &str,
+    display_name: &str,
+    model: Option<&str>,
+    serial_number: Option<&str>,
+    notes: Option<&str>,
+) -> Result<i64, String> {
+    executor
+        .execute(
+            r#"
+            INSERT INTO assets(
+              asset_code,
+              asset_type,
+              display_name,
+              model,
+              serial_number,
+              notes,
+              status,
+              created_at,
+              updated_at
+            )
+            VALUES(?, ?, ?, ?, ?, ?, 'in_stock', datetime('now'), datetime('now'))
+            "#,
+            params![
+                asset_code,
+                asset_type,
+                display_name,
+                model,
+                serial_number,
+                notes
+            ],
+        )
+        .map_err(humanize_sqlite_error)?;
+
+    Ok(executor.last_insert_rowid())
+}
+
+fn load_asset_record_by_id_conn(
+    executor: &Connection,
+    asset_id: i64,
+) -> Result<AssetRecord, String> {
+    executor
+        .query_row(
+            r#"
+            SELECT
+              id,
+              asset_code,
+              asset_type,
+              display_name,
+              model,
+              serial_number,
+              notes,
+              status
+            FROM assets
+            WHERE id = ?
+            "#,
+            params![asset_id],
+            |row| {
+                Ok(AssetRecord {
+                    id: row.get(0)?,
+                    asset_code: row.get(1)?,
+                    asset_type: row.get(2)?,
+                    display_name: row.get(3)?,
+                    model: row.get(4)?,
+                    serial_number: row.get(5)?,
+                    notes: row.get(6)?,
+                    status: row.get(7)?,
+                })
+            },
+        )
+        .map_err(|err| format!("failed to load asset with id {asset_id}: {err}"))
+}
+
+pub(crate) fn create_asset_tx(
+    tx: &Transaction<'_>,
+    input: &AssetUpsertInput,
+) -> Result<AssetRecord, String> {
+    let asset_code = require_text(input.asset_code.clone(), "assetCode")?.to_uppercase();
+    let asset_type = require_text(input.asset_type.clone(), "assetType")?;
+    let display_name = require_text(input.display_name.clone(), "displayName")?;
+    let model = normalize_optional_text(input.model.clone());
+    let serial_number = normalize_optional_text(input.serial_number.clone());
+    let notes = normalize_optional_text(input.notes.clone());
+
+    let asset_id = insert_asset_stmt(
+        tx,
+        asset_code.as_str(),
+        asset_type.as_str(),
+        display_name.as_str(),
+        model.as_deref(),
+        serial_number.as_deref(),
+        notes.as_deref(),
+    )?;
+
+    load_asset_record_by_id_conn(tx, asset_id)
+}
+
+pub(crate) fn create_asset_conn(
+    conn: &mut Connection,
+    input: AssetUpsertInput,
+) -> Result<AssetRecord, String> {
+    let tx = conn
+        .transaction()
+        .map_err(|err| format!("failed to start asset create transaction: {err}"))?;
+
+    let record = create_asset_tx(&tx, &input)?;
+
+    tx.commit()
+        .map_err(|err| format!("failed to commit asset create transaction: {err}"))?;
+
+    Ok(record)
 }
 
 pub(crate) fn upsert_assets_conn(

@@ -27,3 +27,4 @@ rand = "0.8"
 axum = "0.8"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"] }
 tower = { version = "0.5", features = ["util"] }
+csv = "1.4"

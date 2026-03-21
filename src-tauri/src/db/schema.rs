@@ -215,6 +215,47 @@ CREATE TABLE IF NOT EXISTS assets (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS asset_import_batches (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  batch_key TEXT NOT NULL UNIQUE,
+  source_file_name TEXT NOT NULL,
+  source_file_path TEXT NOT NULL,
+  source_file_type TEXT NOT NULL,
+  sheet_name TEXT,
+  header_row INTEGER NOT NULL DEFAULT 1,
+  headers_json TEXT NOT NULL,
+  mapping_json TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending_review',
+  total_rows INTEGER NOT NULL DEFAULT 0,
+  valid_rows INTEGER NOT NULL DEFAULT 0,
+  error_rows INTEGER NOT NULL DEFAULT 0,
+  imported_rows INTEGER NOT NULL DEFAULT 0,
+  skipped_rows INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS asset_import_rows (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  batch_id INTEGER NOT NULL REFERENCES asset_import_batches(id) ON DELETE CASCADE,
+  row_number INTEGER NOT NULL,
+  raw_row_json TEXT NOT NULL,
+  asset_code TEXT,
+  asset_type TEXT,
+  display_name TEXT,
+  model TEXT,
+  serial_number TEXT,
+  notes TEXT,
+  validation_errors_json TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'valid',
+  edited INTEGER NOT NULL DEFAULT 0,
+  edited_fields_json TEXT NOT NULL DEFAULT '[]',
+  imported_asset_id INTEGER REFERENCES assets(id) ON UPDATE CASCADE ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(batch_id, row_number)
+);
+
 CREATE TABLE IF NOT EXISTS borrow_requests (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   request_key TEXT NOT NULL UNIQUE,
@@ -268,6 +309,10 @@ CREATE INDEX IF NOT EXISTS idx_dynamic_values_field_key ON employee_dynamic_valu
 CREATE UNIQUE INDEX IF NOT EXISTS idx_local_accounts_display_name_unique
   ON app_local_accounts(display_name COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_assets_status ON assets(status);
+CREATE INDEX IF NOT EXISTS idx_asset_import_batches_status_created_at
+  ON asset_import_batches(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_asset_import_rows_batch_status
+  ON asset_import_rows(batch_id, status, row_number);
 CREATE INDEX IF NOT EXISTS idx_borrow_requests_status_submitted_at
   ON borrow_requests(status, submitted_at);
 CREATE INDEX IF NOT EXISTS idx_borrow_request_items_request_id
