@@ -407,7 +407,7 @@ function ReviewBatchStep({ assetImport }: AssetImportWizardProps) {
                                             <td key={`${row.id}-${fieldKey}`} className="px-2 py-2 align-top">
                                                 <input
                                                     className="form-input min-w-[130px] text-xs"
-                                                    defaultValue={getAssetImportRowFieldValue(
+                                                    value={getAssetImportRowFieldValue(
                                                         row,
                                                         fieldKey,
                                                         assetImport.mappingDraft,
@@ -417,14 +417,8 @@ function ReviewBatchStep({ assetImport }: AssetImportWizardProps) {
                                                         assetImport.isUpdatingRow === row.id ||
                                                         !isAssetImportFieldEditable(fieldKey)
                                                     }
-                                                    onBlur={(event) => {
+                                                    onChange={(event) => {
                                                         const nextValue = event.target.value
-                                                        const currentValue = getAssetImportRowFieldValue(
-                                                            row,
-                                                            fieldKey,
-                                                            assetImport.mappingDraft,
-                                                        )
-                                                        if (currentValue === nextValue) return
                                                         void assetImport.handleUpdateRowField(row.id, fieldKey, nextValue)
                                                     }}
                                                 />

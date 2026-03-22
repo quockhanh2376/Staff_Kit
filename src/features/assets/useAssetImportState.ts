@@ -159,6 +159,7 @@ export function useAssetImportState({
         setActiveBatchDetail(null)
         setSelectedRowId(null)
         setReviewFilter("all")
+        setSelectedImportMode(DEFAULT_ASSET_IMPORT_MODE)
     }, [])
 
     const openImportWizard = useCallback(() => {
@@ -167,6 +168,7 @@ export function useAssetImportState({
         setStatusMessage("")
         if (!activeBatchDetail) {
             setCurrentStep("choose_file")
+            setSelectedImportMode(DEFAULT_ASSET_IMPORT_MODE)
         }
         void loadBatchSummaries()
     }, [activeBatchDetail, loadBatchSummaries])
