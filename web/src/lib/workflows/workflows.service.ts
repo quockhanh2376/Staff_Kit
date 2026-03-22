@@ -10,6 +10,7 @@ import {
   createReceiveSessionRecord,
   createReturnRequestRecord,
   createReturnSessionRecord,
+  findActiveReceiveSession,
   findActiveAssignmentsByAssetCodes,
   findActiveReceiveSessionByQrToken,
   findActiveReturnSessionByQrToken,
@@ -118,6 +119,17 @@ export async function createReceiveSession(
   input: CreateSessionInput,
 ) {
   return prisma.$transaction(async (tx) => {
+    const now = new Date();
+    const activeSession = await findActiveReceiveSession(tx, now);
+
+    if (activeSession) {
+      throw new ApiError(
+        409,
+        "receive_session_already_active",
+        "An active receive session already exists.",
+      );
+    }
+
     const session = await createReceiveSessionRecord(tx, {
       createdByAccountId: actor.accountId,
       expiresAt: input.expiresAt,

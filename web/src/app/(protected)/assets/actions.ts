@@ -49,6 +49,20 @@ function normalizeFormValue(value: FormDataEntryValue | null) {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+/**
+ * For date fields that must be explicitly clearable.
+ * Returns `null` (not `undefined`) when blank, so Prisma writes NULL to the
+ * column instead of silently skipping the field.
+ */
+function normalizeFormDate(value: FormDataEntryValue | null): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 function readAssetFormInput(formData: FormData) {
   return {
     assetCode: normalizeFormValue(formData.get("assetCode")),
@@ -62,8 +76,8 @@ function readAssetFormInput(formData: FormData) {
     brand: normalizeFormValue(formData.get("brand")),
     modelName: normalizeFormValue(formData.get("modelName")),
     notes: normalizeFormValue(formData.get("notes")),
-    retiredAt: normalizeFormValue(formData.get("retiredAt")),
-    disposedAt: normalizeFormValue(formData.get("disposedAt")),
+    retiredAt: normalizeFormDate(formData.get("retiredAt")),
+    disposedAt: normalizeFormDate(formData.get("disposedAt")),
   };
 }
 

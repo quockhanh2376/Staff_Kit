@@ -55,6 +55,27 @@ export async function createReturnSessionRecord(
   });
 }
 
+export async function findActiveReceiveSession(
+  db: WorkflowRepositoryClient,
+  now: Date,
+) {
+  return db.receiveSession.findFirst({
+    where: {
+      status: "ACTIVE",
+      OR: [
+        {
+          expiresAt: null,
+        },
+        {
+          expiresAt: {
+            gt: now,
+          },
+        },
+      ],
+    },
+  });
+}
+
 export async function findActiveReceiveSessionByQrToken(
   db: WorkflowRepositoryClient,
   qrToken: string,
