@@ -63,6 +63,7 @@ export type AssetRecord = {
 }
 
 export type AssetTrackingMode = "serialized" | "quantity"
+export type AssetImportMode = AssetTrackingMode
 
 export type AssetCategoryRecord = {
   id: number
@@ -100,6 +101,7 @@ export type AssetImportFileInspection = {
 }
 
 export type AssetImportBatchCreateInput = {
+  importType: AssetImportMode
   filePath: string
   sheetName?: string | null
   mapping?: AssetImportFieldMapping | null
@@ -108,6 +110,7 @@ export type AssetImportBatchCreateInput = {
 export type AssetImportBatchSummary = {
   id: number
   batchKey: string
+  importType: AssetImportMode
   sourceFileName: string
   sourceFilePath: string
   sourceFileType: string

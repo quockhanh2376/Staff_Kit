@@ -469,6 +469,26 @@ fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|err| format!("failed to ensure asset indexes: {err}"))?;
 
+    let mut batch_stmt = conn
+        .prepare("PRAGMA table_info(asset_import_batches)")
+        .map_err(|err| format!("failed to inspect asset_import_batches table: {err}"))?;
+    let existing_batch_columns = batch_stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|err| format!("failed to read asset_import_batches columns: {err}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("failed to collect asset_import_batches columns: {err}"))?;
+
+    if !existing_batch_columns
+        .iter()
+        .any(|column_name| column_name == "import_type")
+    {
+        conn.execute(
+            "ALTER TABLE asset_import_batches ADD COLUMN import_type TEXT NOT NULL DEFAULT 'serialized'",
+            [],
+        )
+        .map_err(|err| format!("failed to add asset_import_batches.import_type column: {err}"))?;
+    }
+
     for (category_code, category_name, tracking_mode, prefix_code, qr_required) in [
         ("laptop", "Laptop", "serialized", Some("ASWVNLAP"), 1_i64),
         ("monitor", "Monitor", "serialized", Some("ASWVNMON"), 1_i64),

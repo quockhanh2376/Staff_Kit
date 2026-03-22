@@ -21,6 +21,31 @@ const ROW_STATUS_ERROR: &str = "error";
 const ROW_STATUS_IMPORTED: &str = "imported";
 const ROW_STATUS_SKIPPED: &str = "skipped";
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AssetImportMode {
+    #[default]
+    Serialized,
+    Quantity,
+}
+
+impl AssetImportMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Serialized => "serialized",
+            Self::Quantity => "quantity",
+        }
+    }
+
+    fn parse(value: &str) -> Result<Self, String> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "serialized" => Ok(Self::Serialized),
+            "quantity" => Ok(Self::Quantity),
+            other => Err(format!("unsupported asset import mode '{other}'")),
+        }
+    }
+}
+
 const ASSET_CODE_ALIASES: &[&str] = &[
     "assetcode",
     "code",
@@ -89,6 +114,8 @@ pub struct AssetImportFileInspection {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetImportBatchCreateInput {
+    #[serde(default)]
+    pub import_type: AssetImportMode,
     pub file_path: String,
     pub sheet_name: Option<String>,
     pub mapping: Option<AssetImportFieldMapping>,
@@ -96,6 +123,7 @@ pub struct AssetImportBatchCreateInput {
 
 #[derive(Debug, Clone)]
 pub struct AssetImportBatchSeedInput {
+    pub import_type: AssetImportMode,
     pub source_file_name: String,
     pub source_file_path: String,
     pub source_file_type: String,
@@ -123,6 +151,7 @@ pub struct AssetImportRowSeedInput {
 pub struct AssetImportBatchSummary {
     pub id: i64,
     pub batch_key: String,
+    pub import_type: AssetImportMode,
     pub source_file_name: String,
     pub source_file_path: String,
     pub source_file_type: String,
@@ -269,6 +298,7 @@ pub fn create_asset_import_batch(
     create_asset_import_batch_seed_conn(
         &mut conn,
         AssetImportBatchSeedInput {
+            import_type: payload.import_type,
             source_file_name: parsed.source_file_name,
             source_file_path: parsed.source_file_path,
             source_file_type: parsed.source_file_type,
@@ -372,6 +402,7 @@ pub(crate) fn create_asset_import_batch_seed_conn(
         r#"
         INSERT INTO asset_import_batches(
           batch_key,
+          import_type,
           source_file_name,
           source_file_path,
           source_file_type,
@@ -383,10 +414,11 @@ pub(crate) fn create_asset_import_batch_seed_conn(
           created_at,
           updated_at
         )
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
         "#,
         params![
             batch_key.as_str(),
+            input.import_type.as_str(),
             input.source_file_name.as_str(),
             input.source_file_path.as_str(),
             input.source_file_type.as_str(),
@@ -443,6 +475,7 @@ pub(crate) fn create_asset_import_batch_seed_conn(
 
     let payload_json = json!({
         "batchKey": batch_key,
+        "importType": input.import_type.as_str(),
         "sourceFileName": input.source_file_name,
         "sourceFileType": input.source_file_type,
         "sheetName": input.sheet_name,
@@ -475,6 +508,7 @@ pub(crate) fn list_asset_import_batches_conn(
             SELECT
               id,
               batch_key,
+              import_type,
               source_file_name,
               source_file_path,
               source_file_type,
@@ -516,6 +550,7 @@ pub(crate) fn load_asset_import_batch_detail_conn(
             SELECT
               id,
               batch_key,
+              import_type,
               source_file_name,
               source_file_path,
               source_file_type,
@@ -538,8 +573,8 @@ pub(crate) fn load_asset_import_batch_detail_conn(
             |row| {
                 Ok((
                     map_batch_summary(row)?,
-                    row.get::<_, String>(15)?,
                     row.get::<_, String>(16)?,
+                    row.get::<_, String>(17)?,
                 ))
             },
         )
@@ -1641,6 +1676,7 @@ fn load_batch_summary_tx(
         SELECT
           id,
           batch_key,
+          import_type,
           source_file_name,
           source_file_path,
           source_file_type,
@@ -1669,19 +1705,30 @@ fn map_batch_summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<AssetImportBat
     Ok(AssetImportBatchSummary {
         id: row.get(0)?,
         batch_key: row.get(1)?,
-        source_file_name: row.get(2)?,
-        source_file_path: row.get(3)?,
-        source_file_type: row.get(4)?,
-        sheet_name: row.get(5)?,
-        header_row: row.get(6)?,
-        status: row.get(7)?,
-        total_rows: row.get(8)?,
-        valid_rows: row.get(9)?,
-        error_rows: row.get(10)?,
-        imported_rows: row.get(11)?,
-        skipped_rows: row.get(12)?,
-        created_at: row.get(13)?,
-        updated_at: row.get(14)?,
+        import_type: parse_asset_import_mode_sql(row.get(2)?)?,
+        source_file_name: row.get(3)?,
+        source_file_path: row.get(4)?,
+        source_file_type: row.get(5)?,
+        sheet_name: row.get(6)?,
+        header_row: row.get(7)?,
+        status: row.get(8)?,
+        total_rows: row.get(9)?,
+        valid_rows: row.get(10)?,
+        error_rows: row.get(11)?,
+        imported_rows: row.get(12)?,
+        skipped_rows: row.get(13)?,
+        created_at: row.get(14)?,
+        updated_at: row.get(15)?,
+    })
+}
+
+fn parse_asset_import_mode_sql(value: String) -> rusqlite::Result<AssetImportMode> {
+    AssetImportMode::parse(value.as_str()).map_err(|err| {
+        rusqlite::Error::FromSqlConversionFailure(
+            0,
+            Type::Text,
+            Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, err)),
+        )
     })
 }
 
@@ -1813,7 +1860,7 @@ mod tests {
     use super::{
         create_asset_import_batch_seed_conn, import_asset_import_batch_valid_rows_conn,
         load_asset_import_batch_detail_conn, AssetImportBatchSeedInput, AssetImportFieldMapping,
-        AssetImportRawValue, AssetImportRowSeedInput,
+        AssetImportMode, AssetImportRawValue, AssetImportRowSeedInput,
     };
 
     fn open_test_connection() -> Connection {
@@ -1907,8 +1954,12 @@ mod tests {
         }
     }
 
-    fn sample_batch(rows: Vec<AssetImportRowSeedInput>) -> AssetImportBatchSeedInput {
+    fn sample_batch(
+        import_type: AssetImportMode,
+        rows: Vec<AssetImportRowSeedInput>,
+    ) -> AssetImportBatchSeedInput {
         AssetImportBatchSeedInput {
+            import_type,
             source_file_name: "assets.csv".to_string(),
             source_file_path: "C:\\temp\\assets.csv".to_string(),
             source_file_type: "csv".to_string(),
@@ -1926,7 +1977,7 @@ mod tests {
 
         let batch = create_asset_import_batch_seed_conn(
             &mut conn,
-            sample_batch(vec![
+            sample_batch(AssetImportMode::Serialized, vec![
                 row(2, "asset-001", "Laptop", "Dell Latitude 7440"),
                 row(3, "ASSET-001", "Laptop", "Dell Latitude 7450"),
             ]),
@@ -1949,7 +2000,7 @@ mod tests {
 
         let batch = create_asset_import_batch_seed_conn(
             &mut conn,
-            sample_batch(vec![row(
+            sample_batch(AssetImportMode::Serialized, vec![row(
                 2,
                 "asset-existing",
                 "Laptop",
@@ -1975,7 +2026,10 @@ mod tests {
 
             let batch = create_asset_import_batch_seed_conn(
                 &mut conn,
-                sample_batch(vec![row(2, "ASSET-001", "Laptop", "Dell Latitude 7440")]),
+                sample_batch(
+                    AssetImportMode::Quantity,
+                    vec![row(2, "ASSET-001", "Laptop", "Dell Latitude 7440")],
+                ),
             )
             .expect("create asset import batch");
 
@@ -1989,6 +2043,7 @@ mod tests {
             .expect("reload asset import batch");
 
         assert_eq!(reloaded.summary.id, batch_id);
+        assert_eq!(reloaded.summary.import_type, AssetImportMode::Quantity);
         assert_eq!(reloaded.summary.total_rows, 1);
         assert_eq!(reloaded.rows.len(), 1);
         assert_eq!(reloaded.rows[0].asset_code.as_deref(), Some("ASSET-001"));
@@ -2003,7 +2058,7 @@ mod tests {
 
         let batch = create_asset_import_batch_seed_conn(
             &mut conn,
-            sample_batch(vec![
+            sample_batch(AssetImportMode::Serialized, vec![
                 row(2, "ASSET-001", "Laptop", "Dell Latitude 7440"),
                 row(3, "ASSET-EXISTING", "Laptop", "Dell Latitude Existing"),
             ]),

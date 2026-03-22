@@ -247,6 +247,7 @@ CREATE TABLE IF NOT EXISTS stock_items (
 CREATE TABLE IF NOT EXISTS asset_import_batches (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   batch_key TEXT NOT NULL UNIQUE,
+  import_type TEXT NOT NULL DEFAULT 'serialized',
   source_file_name TEXT NOT NULL,
   source_file_path TEXT NOT NULL,
   source_file_type TEXT NOT NULL,

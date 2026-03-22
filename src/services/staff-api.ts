@@ -123,6 +123,7 @@ export const staffApi = {
   createAssetImportBatch: (payload: AssetImportBatchCreateInput) =>
     call<AssetImportBatchDetail>("create_asset_import_batch", {
       payload: {
+        importType: payload.importType,
         filePath: payload.filePath,
         sheetName: payload.sheetName ?? null,
         mapping: payload.mapping ?? null,

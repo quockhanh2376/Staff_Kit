@@ -2,10 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog"
 import { staffApi } from "../../services/staff-api"
 import type {
+    AssetCategoryRecord,
     AssetImportBatchDetail,
     AssetImportBatchSummary,
     AssetImportFieldMapping,
     AssetImportFileInspection,
+    AssetImportMode,
     AssetImportRowRecord,
     AssetRecord,
     AssetSeedItemInput,
@@ -52,6 +54,8 @@ const EMPTY_MANUAL_ASSET_FORM: ManualAssetForm = {
     notes: "",
 }
 
+const DEFAULT_ASSET_IMPORT_MODE: AssetImportMode = "serialized"
+
 export type AssetImportState = ReturnType<typeof useAssetImportState>
 
 export function useAssetImportState({
@@ -65,6 +69,7 @@ export function useAssetImportState({
     const [panelMode, setPanelMode] = useState<AssetImportPanelMode>("import")
     const [currentStep, setCurrentStep] = useState<AssetImportStep>("choose_file")
     const [isLoadingBatches, setLoadingBatches] = useState(false)
+    const [isLoadingCategories, setLoadingCategories] = useState(false)
     const [isInspectingFile, setInspectingFile] = useState(false)
     const [isCreatingBatch, setCreatingBatch] = useState(false)
     const [isRefreshingBatch, setRefreshingBatch] = useState(false)
@@ -73,11 +78,14 @@ export function useAssetImportState({
     const [isDeletingBatch, setDeletingBatch] = useState(false)
     const [isCreatingManualAsset, setCreatingManualAsset] = useState(false)
     const [statusMessage, setStatusMessage] = useState("")
+    const [assetCategories, setAssetCategories] = useState<AssetCategoryRecord[]>([])
     const [batchSummaries, setBatchSummaries] = useState<AssetImportBatchSummary[]>([])
     const [activeBatchDetail, setActiveBatchDetail] = useState<AssetImportBatchDetail | null>(null)
     const [selectedRowId, setSelectedRowId] = useState<number | null>(null)
     const [reviewFilter, setReviewFilter] = useState<AssetImportReviewFilter>("all")
     const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null)
+    const [selectedImportMode, setSelectedImportMode] =
+        useState<AssetImportMode>(DEFAULT_ASSET_IMPORT_MODE)
     const [inspection, setInspection] = useState<AssetImportFileInspection | null>(null)
     const [selectedSheetName, setSelectedSheetName] = useState<string | null>(null)
     const [mappingDraft, setMappingDraft] = useState<AssetImportFieldMapping>({})
@@ -99,10 +107,29 @@ export function useAssetImportState({
         }
     }, [dbReady, isAuthenticated, setGlobalError])
 
+    const loadAssetCategories = useCallback(async () => {
+        if (!dbReady || !isAuthenticated) return
+
+        try {
+            setLoadingCategories(true)
+            const categories = await staffApi.listAssetCategories()
+            setAssetCategories(categories)
+        } catch (error) {
+            setGlobalError(getErrorMessage(error))
+        } finally {
+            setLoadingCategories(false)
+        }
+    }, [dbReady, isAuthenticated, setGlobalError])
+
     useEffect(() => {
         if (!dbReady || !isAuthenticated) return
         void loadBatchSummaries()
     }, [dbReady, isAuthenticated, loadBatchSummaries, reloadToken])
+
+    useEffect(() => {
+        if (!dbReady || !isAuthenticated) return
+        void loadAssetCategories()
+    }, [dbReady, isAuthenticated, loadAssetCategories, reloadToken])
 
     useEffect(() => {
         if (activeBatchDetail?.rows.length && !activeBatchDetail.rows.some((row) => row.id === selectedRowId)) {
@@ -218,6 +245,7 @@ export function useAssetImportState({
             setRefreshingBatch(true)
             const detail = await staffApi.getAssetImportBatchDetail(activeBatchDetail.summary.id)
             setActiveBatchDetail(detail)
+            setSelectedImportMode(detail.summary.importType)
         } catch (error) {
             setGlobalError(getErrorMessage(error))
         } finally {
@@ -235,6 +263,7 @@ export function useAssetImportState({
             setCreatingBatch(true)
             setStatusMessage("")
             const detail = await staffApi.createAssetImportBatch({
+                importType: selectedImportMode,
                 filePath: selectedFilePath,
                 sheetName: selectedSheetName ?? undefined,
                 mapping: inspection?.requiresManualMapping ? mappingDraft : undefined,
@@ -255,6 +284,7 @@ export function useAssetImportState({
         inspection?.requiresManualMapping,
         loadBatchSummaries,
         mappingDraft,
+        selectedImportMode,
         selectedFilePath,
         selectedSheetName,
         setGlobalError,
@@ -266,6 +296,7 @@ export function useAssetImportState({
                 setRefreshingBatch(true)
                 const detail = await staffApi.getAssetImportBatchDetail(batchId)
                 setActiveBatchDetail(detail)
+                setSelectedImportMode(detail.summary.importType)
                 setSelectedRowId(detail.rows[0]?.id ?? null)
                 setCurrentStep("review_batch")
                 setPanelMode("import")
@@ -431,6 +462,7 @@ export function useAssetImportState({
         panelMode,
         currentStep,
         isLoadingBatches,
+        isLoadingCategories,
         isInspectingFile,
         isCreatingBatch,
         isRefreshingBatch,
@@ -439,6 +471,7 @@ export function useAssetImportState({
         isDeletingBatch,
         isCreatingManualAsset,
         statusMessage,
+        assetCategories,
         batchSummaries,
         activeBatchDetail,
         activeBatchSummary,
@@ -447,6 +480,7 @@ export function useAssetImportState({
         reviewFilter,
         filteredRows,
         selectedFilePath,
+        selectedImportMode,
         inspection,
         selectedSheetName,
         mappingDraft,
@@ -468,6 +502,7 @@ export function useAssetImportState({
         handleDeleteActiveBatch,
         setSelectedRowId,
         setReviewFilter,
+        setSelectedImportMode,
         setCurrentStep,
         resetImportComposer,
         handleManualAssetFieldChange,
