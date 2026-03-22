@@ -180,13 +180,8 @@ export async function createReturnSession(
 }
 
 export async function submitReceiveRequest(input: SubmitReceiveRequestInput) {
-  const now = new Date();
+  // Pre-flight validation outside tx (fast rejection before acquiring connection)
   const assetCodes = normalizeAssetCodes(input.assetCodes);
-  const session = await findActiveReceiveSessionByQrToken(prisma, input.qrToken, now);
-
-  if (!session) {
-    throw new ApiError(404, "receive_session_not_found", "Receive session is invalid or expired.");
-  }
 
   const employee = await findEmployeeByEmployeeId(prisma, input.employeeId);
 
@@ -218,6 +213,18 @@ export async function submitReceiveRequest(input: SubmitReceiveRequestInput) {
   }
 
   return prisma.$transaction(async (tx) => {
+    // P1 fix: re-validate session inside the transaction so the check is
+    // atomic — concurrent submits serialise here and at most one can proceed.
+    const session = await findActiveReceiveSession(tx, new Date());
+
+    if (!session) {
+      throw new ApiError(
+        403,
+        "workflow_session_inactive",
+        "This QR link is no longer active. Please ask IT to refresh it.",
+      );
+    }
+
     const request = await createReceiveRequestRecord(tx, {
       sessionId: session.id,
       employeeId: employee.id,
