@@ -1,3 +1,55 @@
+# Daily Log - 2026-03-22
+
+## Objective
+Re-baseline the `codex/asset-import-wizard` branch against the NotebookLM business source of truth, then land the first implementation slice without breaking borrow `2.0.1`.
+
+## Work Completed
+- Re-read these NotebookLM sources and compared them against the current branch direction:
+  - `business_rules_master_spec_st_adp.md`
+  - `Staff_Kit-All-Docs.md`
+  - `staff_kit_asset_import_summary.md`
+  - canonical `DAILY_LOG.md`
+- Wrote an updated execution plan for the current feature branch:
+  - `docs/superpowers/plans/2026-03-22-asset-import-rebaseline-execution.md`
+- Chose the compatibility boundary for this phase:
+  - keep `assets` as the serialized asset store for borrow `2.0.1`
+  - add explicit category and quantity-stock structures instead of forcing quantity items into `assets`
+- Implemented Chunk 1 of the rebaseline:
+  - added `asset_categories`
+  - added `stock_items`
+  - seeded default category master records with tracking mode and prefix rules
+  - exposed `list_asset_categories` through Tauri + TypeScript bridge
+  - aligned borrow approval result from `borrowed` to `assigned`
+  - kept borrow search behavior limited to serialized `in_stock` assets
+- Cleaned up accidental Rust formatting-only noise from unrelated files before commit so the feature diff stayed focused.
+
+## Validation
+- Wrote failing Rust tests first for:
+  - category/stock schema presence
+  - seeded category master rules
+  - borrow approval status alignment
+- Re-ran those targeted tests after implementation and confirmed they passed.
+- Ran `npm run typecheck`
+- Ran `npm run check:quality`
+- Ran `npm run test:tauri`
+- Result: passed
+  - TypeScript typecheck: passed
+  - Frontend lint/build + Tauri `cargo check`: passed
+  - Rust tests: `20 passed, 0 failed`
+
+## Git History Added
+- `559abc0` - `docs: add asset import rebaseline execution plan`
+- `9e914af` - `feat: rebaseline asset model for import wizard`
+
+## Current State
+The `codex/asset-import-wizard` branch now has the first business-aligned asset model rebaseline in place. The branch is clean, pushed, and ready for the next slice: turning the generic import wizard into a mode-aware `quantity` vs `serialized` preview flow.
+
+## Next Suggested Focus
+- Start Chunk 2: mode-aware preview flow in `useAssetImportState` and `AssetImportWizard`
+- Add import-type choice and mode-specific required columns
+- Keep all preview/review data reading from SQLite staging rows only
+- Continue deferring return flow, QR comparison, maintenance lifecycle, and bulk QR printing
+
 # Daily Log - 2026-03-15
 
 ## Objective
