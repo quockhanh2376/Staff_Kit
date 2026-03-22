@@ -22,6 +22,7 @@ import { useTableEdit } from "./features/employees/useTableEdit"
 import { useImportState } from "./features/import/useImportState"
 import { useTeamState } from "./features/teams/useTeamState"
 import { useBorrowState } from "./features/borrow/useBorrowState"
+import { useAssetImportState } from "./features/assets/useAssetImportState"
 import { useSettingsState } from "./features/settings/useSettingsState"
 
 // Feature views
@@ -31,6 +32,7 @@ import { ColumnsDrawer } from "./features/columns/ColumnsDrawer"
 import { ImportDrawer } from "./features/import/ImportDrawer"
 import { TeamView } from "./features/teams/TeamView"
 import { BorrowAdminView } from "./features/borrow/BorrowAdminView"
+import { AssetImportWizard } from "./features/assets/AssetImportWizard"
 import { SettingsView } from "./features/settings/SettingsView"
 
 function App() {
@@ -222,6 +224,14 @@ function App() {
     isAdminAccount: auth.isAdminAccount,
     reloadToken,
     borrowLanSettings: settings.borrowLanSettings,
+    setGlobalError,
+    triggerReload,
+  })
+
+  const assetImport = useAssetImportState({
+    dbReady,
+    isAuthenticated,
+    reloadToken,
     setGlobalError,
     triggerReload,
   })
@@ -485,6 +495,7 @@ function App() {
             <SettingsView
               auth={auth}
               settings={settings}
+              assetImport={assetImport}
               importState={imp}
               employeeGroupCounts={emp.employeeGroupCounts}
               dbStatus={dbStatus}
@@ -543,6 +554,7 @@ function App() {
       />
 
       <ImportDrawer importState={imp} />
+      <AssetImportWizard assetImport={assetImport} />
     </div>
   )
 }

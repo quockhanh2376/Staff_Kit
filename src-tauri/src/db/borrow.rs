@@ -17,7 +17,7 @@ const REQUEST_STATUS_PENDING: &str = "pending";
 const REQUEST_STATUS_APPROVED: &str = "approved";
 const REQUEST_STATUS_REJECTED: &str = "rejected";
 const ASSET_STATUS_IN_STOCK: &str = "in_stock";
-const ASSET_STATUS_BORROWED: &str = "borrowed";
+const ASSET_STATUS_ASSIGNED: &str = "assigned";
 const DEFAULT_BORROW_LAN_PORT: u16 = 8787;
 
 #[derive(Debug, Clone, Serialize)]
@@ -87,11 +87,7 @@ pub fn update_borrow_lan_settings(
 
     set_setting_value(&conn, BORROW_LAN_HOST_SETTING_KEY, Some(host.as_str()))?;
     let port_text = payload.port.to_string();
-    set_setting_value(
-        &conn,
-        BORROW_LAN_PORT_SETTING_KEY,
-        Some(port_text.as_str()),
-    )?;
+    set_setting_value(&conn, BORROW_LAN_PORT_SETTING_KEY, Some(port_text.as_str()))?;
 
     let payload_json = json!({
         "host": host,
@@ -147,7 +143,12 @@ pub fn reject_borrow_request(
 ) -> Result<BorrowRequestRecord, String> {
     let mut conn = open_runtime_connection(app)?;
     let reviewer_account_id = require_active_admin_account_id(&conn)?;
-    reject_borrow_request_conn(&mut conn, payload.request_id, reviewer_account_id, payload.note)
+    reject_borrow_request_conn(
+        &mut conn,
+        payload.request_id,
+        reviewer_account_id,
+        payload.note,
+    )
 }
 
 pub(crate) fn submit_borrow_request_conn(
@@ -288,7 +289,7 @@ pub(crate) fn approve_borrow_request_conn(
     }
 
     for item in &request_items {
-        asset::set_asset_status_tx(&tx, item.asset_id, ASSET_STATUS_BORROWED)?;
+        asset::set_asset_status_tx(&tx, item.asset_id, ASSET_STATUS_ASSIGNED)?;
         tx.execute(
             r#"
             INSERT INTO asset_loans(
@@ -825,7 +826,7 @@ mod tests {
 
         assert_eq!(approved.status, "approved");
         assert_eq!(request_status(&conn, request.id), "approved");
-        assert_eq!(asset_status(&conn, asset_id), "borrowed");
+        assert_eq!(asset_status(&conn, asset_id), "assigned");
         assert_eq!(active_loan_count(&conn, asset_id), 1);
 
         let loan_employee_id: i64 = conn

@@ -1,3 +1,55 @@
+# Daily Log - 2026-03-22
+
+## Objective
+Re-baseline the `codex/asset-import-wizard` branch against the NotebookLM business source of truth, then land the first implementation slice without breaking borrow `2.0.1`.
+
+## Work Completed
+- Re-read these NotebookLM sources and compared them against the current branch direction:
+  - `business_rules_master_spec_st_adp.md`
+  - `Staff_Kit-All-Docs.md`
+  - `staff_kit_asset_import_summary.md`
+  - canonical `DAILY_LOG.md`
+- Wrote an updated execution plan for the current feature branch:
+  - `docs/superpowers/plans/2026-03-22-asset-import-rebaseline-execution.md`
+- Chose the compatibility boundary for this phase:
+  - keep `assets` as the serialized asset store for borrow `2.0.1`
+  - add explicit category and quantity-stock structures instead of forcing quantity items into `assets`
+- Implemented Chunk 1 of the rebaseline:
+  - added `asset_categories`
+  - added `stock_items`
+  - seeded default category master records with tracking mode and prefix rules
+  - exposed `list_asset_categories` through Tauri + TypeScript bridge
+  - aligned borrow approval result from `borrowed` to `assigned`
+  - kept borrow search behavior limited to serialized `in_stock` assets
+- Cleaned up accidental Rust formatting-only noise from unrelated files before commit so the feature diff stayed focused.
+
+## Validation
+- Wrote failing Rust tests first for:
+  - category/stock schema presence
+  - seeded category master rules
+  - borrow approval status alignment
+- Re-ran those targeted tests after implementation and confirmed they passed.
+- Ran `npm run typecheck`
+- Ran `npm run check:quality`
+- Ran `npm run test:tauri`
+- Result: passed
+  - TypeScript typecheck: passed
+  - Frontend lint/build + Tauri `cargo check`: passed
+  - Rust tests: `20 passed, 0 failed`
+
+## Git History Added
+- `559abc0` - `docs: add asset import rebaseline execution plan`
+- `9e914af` - `feat: rebaseline asset model for import wizard`
+
+## Current State
+The `codex/asset-import-wizard` branch now has the first business-aligned asset model rebaseline in place. The branch is clean, pushed, and ready for the next slice: turning the generic import wizard into a mode-aware `quantity` vs `serialized` preview flow.
+
+## Next Suggested Focus
+- Start Chunk 2: mode-aware preview flow in `useAssetImportState` and `AssetImportWizard`
+- Add import-type choice and mode-specific required columns
+- Keep all preview/review data reading from SQLite staging rows only
+- Continue deferring return flow, QR comparison, maintenance lifecycle, and bulk QR printing
+
 # Daily Log - 2026-03-15
 
 ## Objective
@@ -83,6 +135,75 @@ Stabilize Rust verification for the `codex/asset-import-wizard` worktree so feat
 
 ## Current State
 The `codex/asset-import-wizard` branch now has stable and repeatable Rust verification, and the branch is ready for the next Asset Import Wizard implementation chunk without carrying unresolved build uncertainty.
+
+## Next Checklist Locked
+- Replace the temporary Settings asset-seed entry path with `Import Assets` and `Add Asset Manually`.
+- Add a dedicated `useAssetImportState` hook for file pick, file inspection, batch staging, mapping, review state, inline row actions, and manual add.
+- Add the first desktop skeleton of `AssetImportWizard` with:
+  - `Choose File`
+  - `Map Columns`
+  - `Review Batch`
+  - existing staged batch list
+  - manual add panel
+- Keep the first UI slice focused on structure and state wiring, then finish richer row-review UX in the next chunk.
+
+# Daily Log - 2026-03-21
+
+## Objective
+Move the Asset Import Wizard checklist from NotebookLM into the actual desktop implementation on `codex/asset-import-wizard`.
+
+## Work Completed
+- Wired `useAssetImportState` into the app shell so the asset import flow can open from Settings and share app-level reload/error handling.
+- Added `AssetImportWizard` drawer skeleton with:
+  - `Choose File`
+  - `Map Columns`
+  - `Review Batch`
+  - staged batch list
+  - quick manual add panel
+- Added new Settings entry points for:
+  - `Import Assets`
+  - `Add Asset Manually`
+- Added active-batch resume support from Settings so IT can jump back into the current staged batch.
+- Hid the old `Asset Seed Utility` path from the Settings screen so the staged import flow is now the primary desktop entry point.
+
+## Validation
+- Ran `npm run lint`
+- Ran `npm run typecheck`
+- Ran `npm run check:quality`
+- Result: passed
+  - ESLint: passed
+  - TypeScript typecheck: passed
+  - Vite production build: passed
+  - Tauri `cargo check`: passed
+
+## Current State
+Chunk 3 now has its first usable UI skeleton in place. The next pass should focus on tightening the review grid behavior, visual error feedback, and manual smoke testing with a real CSV or Excel file.
+
+## Preparation Checklist Before Coding Next
+- Re-baseline the current branch from a generic staged asset import prototype into a mode-aware import design with `quantity` and `serialized` as separate business flows.
+- Add category master requirements into the next implementation slice:
+  - `tracking_mode`
+  - `prefix_code`
+  - `qr_required`
+  - `is_active`
+- Decide whether the current `assets` table becomes the serialized asset store or remains a temporary compatibility layer for borrow `2.0.1`.
+- Align the wizard input model with the NotebookLM templates:
+  - quantity: `item_name, category, brand, model, quantity, warehouse, note`
+  - serialized: `category, asset_name, brand, model, serial_number, warehouse, note`
+- Treat the current staged review flow as the desktop equivalent of `preview`, and treat `Import Valid Rows` as the equivalent of `confirm`.
+- Keep the next coding slice focused on P0 only:
+  - category mode split
+  - serialized asset-code generation
+  - mode-aware preview/review flow
+  - batch history for IT traceability
+  - borrow alignment for `in_stock` assets
+- Explicitly defer phase-2 scope:
+  - two-QR comparison
+  - physical QR verification logs
+  - full return and repair lifecycle
+  - bulk QR printing
+  - advanced duplicate heuristics
+- No runtime code changed in this preparation step. This checklist was captured from NotebookLM review so the next coding pass starts from the correct business model.
 
 # Daily Log - 2026-03-16
 

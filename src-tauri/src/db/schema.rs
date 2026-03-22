@@ -202,15 +202,44 @@ CREATE TABLE IF NOT EXISTS app_settings (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS asset_categories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  category_code TEXT NOT NULL UNIQUE,
+  category_name TEXT NOT NULL,
+  tracking_mode TEXT NOT NULL,
+  prefix_code TEXT,
+  qr_required INTEGER NOT NULL DEFAULT 0,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS assets (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   asset_code TEXT NOT NULL UNIQUE,
+  category_id INTEGER REFERENCES asset_categories(id) ON UPDATE CASCADE ON DELETE SET NULL,
   asset_type TEXT NOT NULL,
   display_name TEXT NOT NULL,
+  brand TEXT,
   model TEXT,
   serial_number TEXT,
+  warehouse TEXT,
   notes TEXT,
   status TEXT NOT NULL DEFAULT 'in_stock',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS stock_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  category_id INTEGER NOT NULL REFERENCES asset_categories(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+  item_name TEXT NOT NULL,
+  brand TEXT,
+  model TEXT,
+  warehouse TEXT,
+  quantity_on_hand INTEGER NOT NULL DEFAULT 0,
+  assigned_quantity INTEGER NOT NULL DEFAULT 0,
+  note TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -218,6 +247,7 @@ CREATE TABLE IF NOT EXISTS assets (
 CREATE TABLE IF NOT EXISTS asset_import_batches (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   batch_key TEXT NOT NULL UNIQUE,
+  import_type TEXT NOT NULL DEFAULT 'serialized',
   source_file_name TEXT NOT NULL,
   source_file_path TEXT NOT NULL,
   source_file_type TEXT NOT NULL,
@@ -308,7 +338,11 @@ CREATE INDEX IF NOT EXISTS idx_dynamic_values_employee_id ON employee_dynamic_va
 CREATE INDEX IF NOT EXISTS idx_dynamic_values_field_key ON employee_dynamic_values(field_key);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_local_accounts_display_name_unique
   ON app_local_accounts(display_name COLLATE NOCASE);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_categories_code_unique
+  ON asset_categories(category_code COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_assets_status ON assets(status);
+CREATE INDEX IF NOT EXISTS idx_assets_category_id ON assets(category_id);
+CREATE INDEX IF NOT EXISTS idx_stock_items_category_id ON stock_items(category_id);
 CREATE INDEX IF NOT EXISTS idx_asset_import_batches_status_created_at
   ON asset_import_batches(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_asset_import_rows_batch_status

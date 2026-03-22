@@ -6,6 +6,7 @@ import type {
   BackupSettingsUpdateInput,
   BorrowLanSettings,
   BorrowLanSettingsUpdateInput,
+  AssetCategoryRecord,
   SnapshotInfo,
   AssetImportBatchCreateInput,
   AssetImportBatchDetail,
@@ -122,6 +123,7 @@ export const staffApi = {
   createAssetImportBatch: (payload: AssetImportBatchCreateInput) =>
     call<AssetImportBatchDetail>("create_asset_import_batch", {
       payload: {
+        importType: payload.importType,
         filePath: payload.filePath,
         sheetName: payload.sheetName ?? null,
         mapping: payload.mapping ?? null,
@@ -180,6 +182,8 @@ export const staffApi = {
         notes: item.notes ?? null,
       })),
     }),
+
+  listAssetCategories: () => call<AssetCategoryRecord[]>("list_asset_categories"),
 
   listPendingBorrowRequests: () =>
     call<BorrowRequestRecord[]>("list_pending_borrow_requests"),
