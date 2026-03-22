@@ -80,8 +80,12 @@ async fn search_assets(
     Query(query): Query<AssetSearchQuery>,
 ) -> Result<Json<Vec<db::AssetRecord>>, (StatusCode, Json<ApiErrorPayload>)> {
     let conn = (state.db_factory)().map_err(internal_api_error)?;
-    let items = db::asset::search_in_stock_assets_conn(&conn, query.q.as_deref(), query.limit.unwrap_or(12))
-        .map_err(internal_api_error)?;
+    let items = db::asset::search_in_stock_assets_conn(
+        &conn,
+        query.q.as_deref(),
+        query.limit.unwrap_or(12),
+    )
+    .map_err(internal_api_error)?;
     Ok(Json(items))
 }
 
@@ -124,10 +128,7 @@ struct LanServerTestHarness {
 #[cfg(test)]
 impl LanServerTestHarness {
     fn new() -> Self {
-        let file_name = format!(
-            "staff-kit-lan-server-{}.sqlite3",
-            rand::random::<u64>()
-        );
+        let file_name = format!("staff-kit-lan-server-{}.sqlite3", rand::random::<u64>());
         let db_path = std::env::temp_dir().join(file_name);
 
         let conn = Connection::open(&db_path).expect("open test sqlite file");
@@ -155,11 +156,11 @@ impl LanServerTestHarness {
         conn.execute(
             r#"
             INSERT INTO assets(asset_code, asset_type, display_name, status, created_at, updated_at)
-            VALUES('ASSET-002', 'Laptop', 'Dell Latitude Old', 'borrowed', datetime('now'), datetime('now'))
+            VALUES('ASSET-002', 'Laptop', 'Dell Latitude Old', 'assigned', datetime('now'), datetime('now'))
             "#,
             [],
         )
-        .expect("seed borrowed asset");
+        .expect("seed assigned asset");
 
         drop(conn);
 

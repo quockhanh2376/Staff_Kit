@@ -296,6 +296,7 @@ pub(crate) fn apply_migrations(conn: &Connection) -> Result<(), String> {
     ensure_employee_columns(conn)?;
     ensure_team_columns(conn)?;
     ensure_local_account_columns(conn)?;
+    ensure_asset_model_tables(conn)?;
     auth::ensure_local_accounts_seed(conn)?;
     normalize_staff_group_values(conn)?;
     normalize_eml_security_tool_values(conn)?;
@@ -392,6 +393,121 @@ fn ensure_local_account_columns(conn: &Connection) -> Result<(), String> {
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_local_accounts_username_unique ON app_local_accounts(username COLLATE NOCASE);",
     )
     .map_err(|err| format!("failed to ensure username unique index: {err}"))?;
+
+    Ok(())
+}
+
+fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS asset_categories (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          category_code TEXT NOT NULL UNIQUE,
+          category_name TEXT NOT NULL,
+          tracking_mode TEXT NOT NULL,
+          prefix_code TEXT,
+          qr_required INTEGER NOT NULL DEFAULT 0,
+          is_active INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS stock_items (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          category_id INTEGER NOT NULL REFERENCES asset_categories(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+          item_name TEXT NOT NULL,
+          brand TEXT,
+          model TEXT,
+          warehouse TEXT,
+          quantity_on_hand INTEGER NOT NULL DEFAULT 0,
+          assigned_quantity INTEGER NOT NULL DEFAULT 0,
+          note TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_categories_code_unique
+          ON asset_categories(category_code COLLATE NOCASE);
+        CREATE INDEX IF NOT EXISTS idx_stock_items_category_id ON stock_items(category_id);
+        "#,
+    )
+    .map_err(|err| format!("failed to ensure asset category and stock tables: {err}"))?;
+
+    let mut stmt = conn
+        .prepare("PRAGMA table_info(assets)")
+        .map_err(|err| format!("failed to inspect assets table: {err}"))?;
+    let existing = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|err| format!("failed to read assets table columns: {err}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("failed to collect assets table columns: {err}"))?;
+
+    for (column_name, column_type) in [
+        (
+            "category_id",
+            "INTEGER REFERENCES asset_categories(id) ON UPDATE CASCADE ON DELETE SET NULL",
+        ),
+        ("brand", "TEXT"),
+        ("warehouse", "TEXT"),
+    ] {
+        if existing.iter().any(|name| name == column_name) {
+            continue;
+        }
+
+        conn.execute(
+            &format!("ALTER TABLE assets ADD COLUMN {column_name} {column_type}"),
+            [],
+        )
+        .map_err(|err| format!("failed to add assets.{column_name} column: {err}"))?;
+    }
+
+    conn.execute_batch(
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_assets_status ON assets(status);
+        CREATE INDEX IF NOT EXISTS idx_assets_category_id ON assets(category_id);
+        "#,
+    )
+    .map_err(|err| format!("failed to ensure asset indexes: {err}"))?;
+
+    for (category_code, category_name, tracking_mode, prefix_code, qr_required) in [
+        ("laptop", "Laptop", "serialized", Some("ASWVNLAP"), 1_i64),
+        ("monitor", "Monitor", "serialized", Some("ASWVNMON"), 1_i64),
+        ("mouse", "Mouse", "quantity", None, 0_i64),
+        ("keyboard", "Keyboard", "quantity", None, 0_i64),
+        ("headset", "Headset", "quantity", None, 0_i64),
+        ("usb_type_c_hub", "USB Type-C Hub", "quantity", None, 0_i64),
+    ] {
+        conn.execute(
+            r#"
+            INSERT INTO asset_categories(
+              category_code,
+              category_name,
+              tracking_mode,
+              prefix_code,
+              qr_required,
+              is_active,
+              created_at,
+              updated_at
+            )
+            VALUES(?, ?, ?, ?, ?, 1, datetime('now'), datetime('now'))
+            ON CONFLICT(category_code) DO UPDATE SET
+              category_name = excluded.category_name,
+              tracking_mode = excluded.tracking_mode,
+              prefix_code = excluded.prefix_code,
+              qr_required = excluded.qr_required,
+              is_active = 1,
+              updated_at = datetime('now')
+            "#,
+            params![
+                category_code,
+                category_name,
+                tracking_mode,
+                prefix_code,
+                qr_required,
+            ],
+        )
+        .map_err(|err| format!("failed to seed asset category '{category_code}': {err}"))?;
+    }
 
     Ok(())
 }
@@ -723,7 +839,9 @@ mod tests {
         apply_migrations(&conn).expect("apply database migrations");
 
         for table_name in [
+            "asset_categories",
             "assets",
+            "stock_items",
             "asset_import_batches",
             "asset_import_rows",
             "borrow_requests",

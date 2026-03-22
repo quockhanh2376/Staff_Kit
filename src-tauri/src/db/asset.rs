@@ -30,6 +30,18 @@ pub struct AssetRecord {
     pub status: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetCategoryRecord {
+    pub id: i64,
+    pub category_code: String,
+    pub category_name: String,
+    pub tracking_mode: String,
+    pub prefix_code: Option<String>,
+    pub qr_required: bool,
+    pub is_active: bool,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct AssetLookupRecord {
     pub id: i64,
@@ -389,6 +401,56 @@ pub fn upsert_assets(
     upsert_assets_conn(&mut conn, assets)
 }
 
+pub fn list_asset_categories(app: &AppHandle) -> Result<Vec<AssetCategoryRecord>, String> {
+    let conn = open_runtime_connection(app)?;
+    list_asset_categories_conn(&conn)
+}
+
+pub(crate) fn list_asset_categories_conn(
+    conn: &Connection,
+) -> Result<Vec<AssetCategoryRecord>, String> {
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT
+              id,
+              category_code,
+              category_name,
+              tracking_mode,
+              prefix_code,
+              qr_required,
+              is_active
+            FROM asset_categories
+            ORDER BY
+              CASE tracking_mode WHEN 'serialized' THEN 0 ELSE 1 END,
+              category_name COLLATE NOCASE,
+              id
+            "#,
+        )
+        .map_err(|err| format!("failed to prepare asset category query: {err}"))?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(AssetCategoryRecord {
+                id: row.get(0)?,
+                category_code: row.get(1)?,
+                category_name: row.get(2)?,
+                tracking_mode: row.get(3)?,
+                prefix_code: row.get(4)?,
+                qr_required: row.get::<_, i64>(5)? > 0,
+                is_active: row.get::<_, i64>(6)? > 0,
+            })
+        })
+        .map_err(|err| format!("failed to query asset categories: {err}"))?;
+
+    let mut categories = Vec::new();
+    for row in rows {
+        categories.push(row.map_err(|err| format!("failed to read asset category row: {err}"))?);
+    }
+
+    Ok(categories)
+}
+
 #[cfg(test)]
 mod tests {
     use rusqlite::{params, Connection};
@@ -444,7 +506,7 @@ mod tests {
         .expect("insert initial asset");
 
         conn.execute(
-            "UPDATE assets SET status = 'borrowed', updated_at = datetime('now') WHERE id = ?",
+            "UPDATE assets SET status = 'assigned', updated_at = datetime('now') WHERE id = ?",
             params![inserted[0].id],
         )
         .expect("mark asset borrowed");
@@ -466,6 +528,34 @@ mod tests {
         assert_eq!(updated[0].asset_code, "ASSET-001");
         assert_eq!(updated[0].display_name, "Dell Latitude 7450");
         assert_eq!(updated[0].model.as_deref(), Some("7450"));
-        assert_eq!(updated[0].status, "borrowed");
+        assert_eq!(updated[0].status, "assigned");
+    }
+
+    #[test]
+    fn seeded_asset_categories_include_tracking_mode_and_prefix_rules() {
+        let conn = open_test_connection();
+
+        let categories = list_asset_categories_conn(&conn).expect("list seeded asset categories");
+
+        assert!(
+            categories.iter().any(|category| {
+                category.category_code == "laptop"
+                    && category.tracking_mode == "serialized"
+                    && category.prefix_code.as_deref() == Some("ASWVNLAP")
+                    && category.qr_required
+                    && category.is_active
+            }),
+            "expected seeded laptop serialized category with prefix"
+        );
+        assert!(
+            categories.iter().any(|category| {
+                category.category_code == "mouse"
+                    && category.tracking_mode == "quantity"
+                    && category.prefix_code.is_none()
+                    && !category.qr_required
+                    && category.is_active
+            }),
+            "expected seeded mouse quantity category"
+        );
     }
 }

@@ -6,6 +6,7 @@ import type {
   BackupSettingsUpdateInput,
   BorrowLanSettings,
   BorrowLanSettingsUpdateInput,
+  AssetCategoryRecord,
   SnapshotInfo,
   AssetImportBatchCreateInput,
   AssetImportBatchDetail,
@@ -180,6 +181,8 @@ export const staffApi = {
         notes: item.notes ?? null,
       })),
     }),
+
+  listAssetCategories: () => call<AssetCategoryRecord[]>("list_asset_categories"),
 
   listPendingBorrowRequests: () =>
     call<BorrowRequestRecord[]>("list_pending_borrow_requests"),

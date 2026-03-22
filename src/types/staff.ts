@@ -62,6 +62,18 @@ export type AssetRecord = {
   status: string
 }
 
+export type AssetTrackingMode = "serialized" | "quantity"
+
+export type AssetCategoryRecord = {
+  id: number
+  categoryCode: string
+  categoryName: string
+  trackingMode: AssetTrackingMode
+  prefixCode: string | null
+  qrRequired: boolean
+  isActive: boolean
+}
+
 export type AssetImportFieldMapping = {
   assetCode?: string | null
   assetType?: string | null

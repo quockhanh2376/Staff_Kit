@@ -346,6 +346,11 @@ fn upsert_assets(
 }
 
 #[tauri::command]
+fn list_asset_categories(app: tauri::AppHandle) -> Result<Vec<db::AssetCategoryRecord>, String> {
+    db::list_asset_categories(&app)
+}
+
+#[tauri::command]
 fn list_pending_borrow_requests(
     app: tauri::AppHandle,
 ) -> Result<Vec<db::BorrowRequestRecord>, String> {
@@ -418,6 +423,7 @@ pub fn run() {
             delete_asset_import_batch,
             create_asset_manually,
             upsert_assets,
+            list_asset_categories,
             list_pending_borrow_requests,
             get_borrow_request_detail,
             approve_borrow_request,
