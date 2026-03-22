@@ -5,7 +5,6 @@ import type {
     AssetCategoryRecord,
     AssetImportBatchDetail,
     AssetImportBatchSummary,
-    AssetImportFieldMapping,
     AssetImportFileInspection,
     AssetImportMode,
     AssetImportRowRecord,
@@ -13,6 +12,18 @@ import type {
     AssetSeedItemInput,
 } from "../../types/staff"
 import { getErrorMessage } from "../../lib/utils"
+import {
+    canStageAssetImportMode,
+    convertBackendMappingToWizardMapping,
+    detectAssetImportWizardMapping,
+    getAssetImportStageBlockReason,
+    getRequiredAssetImportMappingKeys,
+    mergeAssetImportWizardMappings,
+    toBackendAssetImportMapping,
+    toBackendRowFieldKey,
+    type AssetImportWizardFieldKey,
+    type AssetImportWizardMapping,
+} from "./assetImportModeConfig"
 
 type UseAssetImportStateOptions = {
     dbReady: boolean
@@ -33,17 +44,6 @@ type ManualAssetForm = {
     serialNumber: string
     notes: string
 }
-
-const REQUIRED_MAPPING_KEYS = ["assetCode", "assetType", "displayName"] as const
-const OPTIONAL_MAPPING_KEYS = ["model", "serialNumber", "notes"] as const
-const EDITABLE_ROW_FIELD_KEYS = [
-    "assetCode",
-    "assetType",
-    "displayName",
-    "model",
-    "serialNumber",
-    "notes",
-] as const
 
 const EMPTY_MANUAL_ASSET_FORM: ManualAssetForm = {
     assetCode: "",
@@ -88,7 +88,7 @@ export function useAssetImportState({
         useState<AssetImportMode>(DEFAULT_ASSET_IMPORT_MODE)
     const [inspection, setInspection] = useState<AssetImportFileInspection | null>(null)
     const [selectedSheetName, setSelectedSheetName] = useState<string | null>(null)
-    const [mappingDraft, setMappingDraft] = useState<AssetImportFieldMapping>({})
+    const [mappingDraft, setMappingDraft] = useState<AssetImportWizardMapping>({})
     const [manualAssetForm, setManualAssetForm] = useState<ManualAssetForm>(EMPTY_MANUAL_ASSET_FORM)
     const [manualAssetResult, setManualAssetResult] = useState<AssetRecord | null>(null)
     const [manualAssetMessage, setManualAssetMessage] = useState("")
@@ -137,6 +137,18 @@ export function useAssetImportState({
         }
     }, [activeBatchDetail, selectedRowId])
 
+    useEffect(() => {
+        if (activeBatchDetail) {
+            return
+        }
+
+        if (!inspection) {
+            return
+        }
+
+        setMappingDraft(detectAssetImportWizardMapping(inspection.headers, selectedImportMode))
+    }, [activeBatchDetail, inspection, selectedImportMode])
+
     const resetImportComposer = useCallback(() => {
         setCurrentStep("choose_file")
         setStatusMessage("")
@@ -184,7 +196,12 @@ export function useAssetImportState({
                 setSelectedFilePath(filePath)
                 setInspection(nextInspection)
                 setSelectedSheetName(nextInspection.selectedSheetName)
-                setMappingDraft(nextInspection.mapping)
+                setMappingDraft(
+                    detectAssetImportWizardMapping(
+                        nextInspection.headers,
+                        selectedImportMode,
+                    ),
+                )
                 setCurrentStep("choose_file")
                 setActiveBatchDetail(null)
                 setSelectedRowId(null)
@@ -194,7 +211,7 @@ export function useAssetImportState({
                 setInspectingFile(false)
             }
         },
-        [setGlobalError],
+        [selectedImportMode, setGlobalError],
     )
 
     const handlePickImportFile = useCallback(async () => {
@@ -229,7 +246,7 @@ export function useAssetImportState({
     )
 
     const updateMappingField = useCallback(
-        (fieldKey: keyof AssetImportFieldMapping, header: string | null) => {
+        (fieldKey: AssetImportWizardFieldKey, header: string | null) => {
             setMappingDraft((prev) => ({
                 ...prev,
                 [fieldKey]: header || null,
@@ -246,6 +263,21 @@ export function useAssetImportState({
             const detail = await staffApi.getAssetImportBatchDetail(activeBatchDetail.summary.id)
             setActiveBatchDetail(detail)
             setSelectedImportMode(detail.summary.importType)
+            setMappingDraft((prev) =>
+                mergeAssetImportWizardMappings(
+                    detectAssetImportWizardMapping(
+                        detail.headers,
+                        detail.summary.importType,
+                    ),
+                    mergeAssetImportWizardMappings(
+                        prev,
+                        convertBackendMappingToWizardMapping(
+                            detail.summary.importType,
+                            detail.mapping,
+                        ),
+                    ),
+                ),
+            )
         } catch (error) {
             setGlobalError(getErrorMessage(error))
         } finally {
@@ -259,6 +291,21 @@ export function useAssetImportState({
             return
         }
 
+        if (!inspection) {
+            setStatusMessage("Inspect a file before staging a batch.")
+            return
+        }
+
+        const stageBlockReason = getAssetImportStageBlockReason(
+            selectedImportMode,
+            inspection.headers,
+            mappingDraft,
+        )
+        if (stageBlockReason) {
+            setStatusMessage(stageBlockReason)
+            return
+        }
+
         try {
             setCreatingBatch(true)
             setStatusMessage("")
@@ -266,7 +313,12 @@ export function useAssetImportState({
                 importType: selectedImportMode,
                 filePath: selectedFilePath,
                 sheetName: selectedSheetName ?? undefined,
-                mapping: inspection?.requiresManualMapping ? mappingDraft : undefined,
+                mapping:
+                    toBackendAssetImportMapping(
+                        selectedImportMode,
+                        mappingDraft,
+                        inspection.headers,
+                    ) ?? undefined,
             })
 
             setActiveBatchDetail(detail)
@@ -281,10 +333,10 @@ export function useAssetImportState({
             setCreatingBatch(false)
         }
     }, [
-        inspection?.requiresManualMapping,
         loadBatchSummaries,
         mappingDraft,
         selectedImportMode,
+        inspection,
         selectedFilePath,
         selectedSheetName,
         setGlobalError,
@@ -297,6 +349,18 @@ export function useAssetImportState({
                 const detail = await staffApi.getAssetImportBatchDetail(batchId)
                 setActiveBatchDetail(detail)
                 setSelectedImportMode(detail.summary.importType)
+                setMappingDraft(
+                    mergeAssetImportWizardMappings(
+                        detectAssetImportWizardMapping(
+                            detail.headers,
+                            detail.summary.importType,
+                        ),
+                        convertBackendMappingToWizardMapping(
+                            detail.summary.importType,
+                            detail.mapping,
+                        ),
+                    ),
+                )
                 setSelectedRowId(detail.rows[0]?.id ?? null)
                 setCurrentStep("review_batch")
                 setPanelMode("import")
@@ -314,14 +378,20 @@ export function useAssetImportState({
     const handleUpdateRowField = useCallback(
         async (
             rowId: number,
-            fieldKey: (typeof EDITABLE_ROW_FIELD_KEYS)[number],
+            fieldKey: AssetImportWizardFieldKey,
             value: string,
         ) => {
+            const backendFieldKey = toBackendRowFieldKey(fieldKey)
+            if (!backendFieldKey) {
+                setStatusMessage("This column becomes editable in the next import runtime slice.")
+                return
+            }
+
             try {
                 setUpdatingRow(rowId)
                 await staffApi.updateAssetImportRow({
                     rowId,
-                    fieldKey,
+                    fieldKey: backendFieldKey,
                     value,
                 })
                 await refreshActiveBatch()
@@ -450,12 +520,17 @@ export function useAssetImportState({
         }
     }, [activeBatchDetail, reviewFilter])
 
+    const currentImportMode = activeBatchDetail?.summary.importType ?? selectedImportMode
+
     const selectedRow = useMemo(
         () => activeBatchDetail?.rows.find((row) => row.id === selectedRowId) ?? null,
         [activeBatchDetail, selectedRowId],
     )
 
     const activeBatchSummary = activeBatchDetail?.summary ?? null
+    const canStageCurrentMode = inspection
+        ? canStageAssetImportMode(currentImportMode, inspection.headers, mappingDraft)
+        : false
 
     return {
         isWizardOpen,
@@ -480,7 +555,9 @@ export function useAssetImportState({
         reviewFilter,
         filteredRows,
         selectedFilePath,
+        currentImportMode,
         selectedImportMode,
+        canStageCurrentMode,
         inspection,
         selectedSheetName,
         mappingDraft,
@@ -515,10 +592,11 @@ function normalizeOptionalField(value: string): string | null {
     return next.length > 0 ? next : null
 }
 
-export function hasRequiredAssetImportMapping(mapping: AssetImportFieldMapping): boolean {
-    return REQUIRED_MAPPING_KEYS.every((fieldKey) => Boolean(mapping[fieldKey]))
+export function hasRequiredAssetImportMapping(
+    mapping: AssetImportWizardMapping,
+    mode: AssetImportMode,
+): boolean {
+    return getRequiredAssetImportMappingKeys(mode).every((fieldKey) =>
+        Boolean(mapping[fieldKey]),
+    )
 }
-
-export const assetImportRequiredMappingKeys = REQUIRED_MAPPING_KEYS
-export const assetImportOptionalMappingKeys = OPTIONAL_MAPPING_KEYS
-export const assetImportEditableRowFieldKeys = EDITABLE_ROW_FIELD_KEYS
