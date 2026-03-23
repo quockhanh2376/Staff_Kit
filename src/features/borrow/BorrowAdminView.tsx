@@ -45,29 +45,27 @@ export function BorrowAdminView({ auth, borrow }: BorrowAdminViewProps) {
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.4fr),360px]">
         <div className="rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-4">
           <div className="text-sm font-semibold text-[var(--text-primary)]">LAN QR Flow</div>
-          <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr),280px] xl:items-start">
-            <div className="order-2 space-y-4 xl:order-1">
-              <p className="text-xs leading-5 text-[var(--text-secondary)]">
-                Keep Staff Kit open. The local LAN server is available while the app is running. If you changed the port, restart the app before testing the new QR URL.
-              </p>
+          <p className="mt-1 text-xs text-[var(--text-secondary)]">
+            Keep Staff Kit open. The local LAN server is available while the app is running. If you changed the port, restart the app before testing the new QR URL.
+          </p>
 
-              <div className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/25 p-3">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
-                  Borrow URL
-                </div>
-                <div className="mt-2 break-all rounded-[8px] border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text-primary)]">
-                  {borrowUrl || "Set host and port in Settings first."}
-                </div>
-                <div className="mt-3 flex items-start gap-2 rounded-[8px] border border-[var(--primary)]/30 bg-[var(--primary)]/8 px-3 py-2 text-xs text-[var(--text-primary)]">
-                  <Smartphone size={14} className="mt-0.5 shrink-0 text-[var(--primary)]" />
-                  <span>
-                    Phone and ST machine must stay on the same Wi-Fi/LAN. The employee form is intentionally narrow and public inside the local network only.
-                  </span>
-                </div>
+          <div className="mt-4 grid gap-4 md:grid-cols-[minmax(0,1fr),220px]">
+            <div className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/25 p-3">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
+                Borrow URL
+              </div>
+              <div className="mt-2 break-all rounded-[8px] border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text-primary)]">
+                {borrowUrl || "Set host and port in Settings first."}
+              </div>
+              <div className="mt-3 flex items-start gap-2 rounded-[8px] border border-[var(--primary)]/30 bg-[var(--primary)]/8 px-3 py-2 text-xs text-[var(--text-primary)]">
+                <Smartphone size={14} className="mt-0.5 shrink-0 text-[var(--primary)]" />
+                <span>
+                  Phone and ST machine must stay on the same Wi-Fi/LAN. The employee form is intentionally narrow and public inside the local network only.
+                </span>
               </div>
             </div>
 
-            <div className="order-1 rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/25 p-3 xl:order-2 xl:self-start">
+            <div className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/25 p-3">
               <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
                 QR Preview
               </div>

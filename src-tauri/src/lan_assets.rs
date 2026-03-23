@@ -14,8 +14,8 @@ pub(crate) fn borrow_page_html() -> &'static str {
         --border: rgba(255, 255, 255, 0.12);
         --text: #f3f4f6;
         --muted: #a7b0c0;
-        --accent: #10b981;
-        --accent-text: #052e16;
+        --accent: #ffd84d;
+        --accent-text: #312600;
         --success: #45d483;
       }
 
@@ -81,11 +81,6 @@ pub(crate) fn borrow_page_html() -> &'static str {
         background: var(--accent);
         color: var(--accent-text);
         font-weight: 700;
-        transition: background-color 160ms ease;
-      }
-
-      button:hover {
-        background: #059669;
       }
 
       .helper {
@@ -282,27 +277,4 @@ pub(crate) fn borrow_page_html() -> &'static str {
     </script>
   </body>
 </html>"#
-}
-
-#[cfg(test)]
-mod tests {
-    use super::borrow_page_html;
-
-    #[test]
-    fn borrow_page_uses_green_submit_button_theme() {
-        let html = borrow_page_html();
-
-        assert!(
-            html.contains("--accent: #10b981;"),
-            "expected borrow page accent to use the app green action color"
-        );
-        assert!(
-            html.contains("button:hover {\n        background: #059669;"),
-            "expected borrow page button hover state to darken the green accent"
-        );
-        assert!(
-            html.contains("--accent-text: #052e16;"),
-            "expected borrow page button text to stay dark for readability"
-        );
-    }
 }

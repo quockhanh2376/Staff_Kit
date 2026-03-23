@@ -344,6 +344,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_local_accounts_display_name_unique
 CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_categories_code_unique
   ON asset_categories(category_code COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_assets_status ON assets(status);
+CREATE INDEX IF NOT EXISTS idx_assets_category_id ON assets(category_id);
 CREATE INDEX IF NOT EXISTS idx_stock_items_category_id ON stock_items(category_id);
 CREATE INDEX IF NOT EXISTS idx_asset_import_batches_status_created_at
   ON asset_import_batches(status, created_at DESC);
