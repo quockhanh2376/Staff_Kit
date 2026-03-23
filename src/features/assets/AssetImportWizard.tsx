@@ -1,29 +1,23 @@
 import { AlertCircle, FileSpreadsheet, PlusCircle, RefreshCw, Trash2, Upload } from "lucide-react"
 import { Drawer } from "../../components/Drawer"
 import { formatDate } from "../../lib/utils"
-import type { AssetImportFieldMapping } from "../../types/staff"
 import {
-    assetImportEditableRowFieldKeys,
-    assetImportOptionalMappingKeys,
-    assetImportRequiredMappingKeys,
     hasRequiredAssetImportMapping,
     type AssetImportState,
 } from "./useAssetImportState"
+import {
+    getAssetImportFieldLabel,
+    getAssetImportMappingKeys,
+    getAssetImportModeLabel,
+    getAssetImportReviewFieldKeys,
+    getAssetImportRowFieldValue,
+    getRequiredAssetImportMappingKeys,
+    isAssetImportFieldEditable,
+} from "./assetImportModeConfig"
 
 type AssetImportWizardProps = {
     assetImport: AssetImportState
 }
-
-const FIELD_LABELS: Record<keyof AssetImportFieldMapping, string> = {
-    assetCode: "Asset Code",
-    assetType: "Asset Type",
-    displayName: "Display Name",
-    model: "Model",
-    serialNumber: "Serial Number",
-    notes: "Notes",
-}
-
-const REQUIRED_FIELD_KEY_SET = new Set<string>(assetImportRequiredMappingKeys)
 
 export function AssetImportWizard({ assetImport }: AssetImportWizardProps) {
     return (
@@ -78,6 +72,9 @@ function ImportPanel({ assetImport }: AssetImportWizardProps) {
                             <div className="mt-2 text-xs text-[var(--text-secondary)]">
                                 {detail.summary.batchKey} | {detail.summary.sourceFileName}
                             </div>
+                            <div className="mt-2 text-[11px] text-[var(--text-secondary)]">
+                                {getAssetImportModeLabel(detail.summary.importType)}
+                            </div>
                             <div className="mt-3 grid gap-3 sm:grid-cols-2">
                                 <Stat label="Valid" value={String(detail.summary.validRows)} />
                                 <Stat label="Errors" value={String(detail.summary.errorRows)} />
@@ -94,6 +91,11 @@ function ImportPanel({ assetImport }: AssetImportWizardProps) {
 
 function ChooseFileStep({ assetImport }: AssetImportWizardProps) {
     const inspection = assetImport.inspection
+    const stageBlockReason = inspection
+        ? !assetImport.canStageCurrentMode
+            ? "Map all required columns before staging a batch."
+            : null
+        : null
 
     return (
         <div className="rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-5">
@@ -102,8 +104,41 @@ function ChooseFileStep({ assetImport }: AssetImportWizardProps) {
                 Choose File
             </div>
             <p className="mt-2 text-sm text-[var(--text-secondary)]">
-                Pick a `csv`, `xlsx`, or `xls` file, then inspect headers before staging.
+                Pick a `csv`, `xlsx`, or `xls` file, choose the import mode, then inspect headers before mapping.
             </p>
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+                {[
+                    {
+                        mode: "serialized" as const,
+                        description:
+                            "One asset per row. Category, asset name, serial number, warehouse, and note.",
+                    },
+                    {
+                        mode: "quantity" as const,
+                        description:
+                            "Stock-style import. Item name, category, quantity, warehouse, and note.",
+                    },
+                ].map((option) => (
+                    <button
+                        key={option.mode}
+                        className={`rounded-[12px] border p-3 text-left transition ${
+                            assetImport.currentImportMode === option.mode
+                                ? "border-[var(--primary)]/45 bg-[var(--primary)]/10"
+                                : "border-[var(--border)] bg-[var(--surface-hover)]/20 hover:bg-[var(--surface-hover)]"
+                        }`}
+                        onClick={() => assetImport.setSelectedImportMode(option.mode)}
+                        type="button"
+                        disabled={Boolean(assetImport.activeBatchDetail)}
+                    >
+                        <div className="text-sm font-semibold text-[var(--text-primary)]">
+                            {getAssetImportModeLabel(option.mode)}
+                        </div>
+                        <div className="mt-1 text-xs text-[var(--text-secondary)]">
+                            {option.description}
+                        </div>
+                    </button>
+                ))}
+            </div>
             <div className="mt-4 flex flex-wrap gap-3">
                 <button
                     className="rounded-[8px] bg-[var(--primary)] px-3 py-2 text-sm font-semibold text-[#00131c] disabled:opacity-50"
@@ -116,21 +151,11 @@ function ChooseFileStep({ assetImport }: AssetImportWizardProps) {
                 {inspection && (
                     <button
                         className="rounded-[8px] border border-[var(--border)] px-3 py-2 text-sm font-medium text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)] disabled:opacity-50"
-                        onClick={() => {
-                            if (inspection.requiresManualMapping) {
-                                assetImport.setCurrentStep("map_columns")
-                                return
-                            }
-                            void assetImport.handleStageBatch()
-                        }}
+                        onClick={() => assetImport.setCurrentStep("map_columns")}
                         type="button"
-                        disabled={assetImport.isCreatingBatch}
+                        disabled={assetImport.isCreatingBatch || assetImport.isInspectingFile}
                     >
-                        {inspection.requiresManualMapping
-                            ? "Continue to Mapping"
-                            : assetImport.isCreatingBatch
-                              ? "Staging..."
-                              : "Stage Batch"}
+                        Continue to Mapping
                     </button>
                 )}
             </div>
@@ -145,11 +170,13 @@ function ChooseFileStep({ assetImport }: AssetImportWizardProps) {
                         <InfoCard label="File" value={inspection.fileName} />
                         <InfoCard label="Type" value={inspection.fileType.toUpperCase()} />
                         <InfoCard label="Header Row" value={String(inspection.headerRow)} />
-                        <InfoCard
-                            label="Mapping Status"
-                            value={inspection.requiresManualMapping ? "Needs manual mapping" : "Ready to stage"}
-                        />
+                        <InfoCard label="Import Mode" value={getAssetImportModeLabel(assetImport.currentImportMode)} />
                     </div>
+                    {stageBlockReason && (
+                        <div className="rounded-[8px] border border-amber-400/35 bg-amber-400/10 px-3 py-2 text-xs text-amber-100">
+                            {stageBlockReason}
+                        </div>
+                    )}
                     {inspection.availableSheets.length > 1 && (
                         <div>
                             <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
@@ -192,20 +219,26 @@ function MapColumnsStep({ assetImport }: AssetImportWizardProps) {
         return null
     }
 
-    const mappingKeys = [...assetImportRequiredMappingKeys, ...assetImportOptionalMappingKeys]
+    const mappingKeys = getAssetImportMappingKeys(assetImport.currentImportMode)
+    const requiredFieldKeySet = new Set<string>(
+        getRequiredAssetImportMappingKeys(assetImport.currentImportMode),
+    )
+    const stageBlockReason = !assetImport.canStageCurrentMode
+        ? "Map all required columns before staging a batch."
+        : null
 
     return (
         <div className="rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-5">
             <div className="text-sm font-semibold text-[var(--text-primary)]">Map Columns</div>
             <p className="mt-2 text-sm text-[var(--text-secondary)]">
-                Required fields must be mapped before staging a batch.
+                Required fields change with the selected mode. Once mapped, the batch stages into SQLite for review before any official import happens.
             </p>
             <div className="mt-4 grid gap-4 md:grid-cols-2">
                 {mappingKeys.map((fieldKey) => (
                     <div key={fieldKey}>
                         <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
-                            {FIELD_LABELS[fieldKey]}
-                            {REQUIRED_FIELD_KEY_SET.has(fieldKey) ? " *" : ""}
+                            {getAssetImportFieldLabel(fieldKey)}
+                            {requiredFieldKeySet.has(fieldKey) ? " *" : ""}
                         </label>
                         <select
                             className="form-input"
@@ -224,6 +257,11 @@ function MapColumnsStep({ assetImport }: AssetImportWizardProps) {
                     </div>
                 ))}
             </div>
+            {stageBlockReason && (
+                <div className="mt-4 rounded-[8px] border border-amber-400/35 bg-amber-400/10 px-3 py-2 text-xs text-amber-100">
+                    {stageBlockReason}
+                </div>
+            )}
             <div className="mt-4 flex gap-3 border-t border-[var(--border)] pt-4">
                 <button
                     className="rounded-[8px] border border-[var(--border)] px-3 py-2 text-sm font-medium text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)]"
@@ -236,7 +274,14 @@ function MapColumnsStep({ assetImport }: AssetImportWizardProps) {
                     className="rounded-[8px] bg-[var(--primary)] px-3 py-2 text-sm font-semibold text-[#00131c] disabled:opacity-50"
                     onClick={() => void assetImport.handleStageBatch()}
                     type="button"
-                    disabled={!hasRequiredAssetImportMapping(assetImport.mappingDraft) || assetImport.isCreatingBatch}
+                    disabled={
+                        !hasRequiredAssetImportMapping(
+                            assetImport.mappingDraft,
+                            assetImport.currentImportMode,
+                        ) ||
+                        assetImport.isCreatingBatch ||
+                        !assetImport.canStageCurrentMode
+                    }
                 >
                     {assetImport.isCreatingBatch ? "Staging..." : "Stage Batch"}
                 </button>
@@ -252,6 +297,8 @@ function ReviewBatchStep({ assetImport }: AssetImportWizardProps) {
         return null
     }
 
+    const reviewFieldKeys = getAssetImportReviewFieldKeys(assetImport.currentImportMode)
+
     return (
         <div className="space-y-5">
             <div className="rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-5">
@@ -260,6 +307,9 @@ function ReviewBatchStep({ assetImport }: AssetImportWizardProps) {
                         <div className="text-sm font-semibold text-[var(--text-primary)]">Review Batch</div>
                         <div className="mt-1 text-xs text-[var(--text-secondary)]">
                             {detail.summary.batchKey} | {formatDate(detail.summary.updatedAt)}
+                        </div>
+                        <div className="mt-2 inline-flex rounded-[999px] border border-[var(--border)] px-2.5 py-1 text-[10px] uppercase tracking-[0.08em] text-[var(--text-secondary)]">
+                            {getAssetImportModeLabel(assetImport.currentImportMode)}
                         </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -278,7 +328,7 @@ function ReviewBatchStep({ assetImport }: AssetImportWizardProps) {
                             className="rounded-[8px] bg-[var(--primary)] px-3 py-2 text-xs font-semibold text-[#00131c] disabled:opacity-50"
                             onClick={() => void assetImport.handleImportValidRows()}
                             type="button"
-                            disabled={assetImport.isImportingRows || detail.summary.validRows === 0}
+                            disabled={assetImport.isImportingRows || !assetImport.canImportCurrentBatch}
                         >
                             {assetImport.isImportingRows ? "Importing..." : `Import Valid (${detail.summary.validRows})`}
                         </button>
@@ -315,6 +365,11 @@ function ReviewBatchStep({ assetImport }: AssetImportWizardProps) {
                         </button>
                     ))}
                 </div>
+                {assetImport.importBlockReason && (
+                    <div className="mt-4 rounded-[8px] border border-amber-400/35 bg-amber-400/10 px-3 py-2 text-xs text-amber-100">
+                        {assetImport.importBlockReason}
+                    </div>
+                )}
             </div>
 
             <div className="grid gap-5 xl:grid-cols-[1.55fr_0.85fr]">
@@ -328,8 +383,10 @@ function ReviewBatchStep({ assetImport }: AssetImportWizardProps) {
                                 <tr>
                                     <th className="px-3 py-2">Row</th>
                                     <th className="px-3 py-2">Status</th>
-                                    {assetImportEditableRowFieldKeys.map((fieldKey) => (
-                                        <th key={fieldKey} className="px-3 py-2">{FIELD_LABELS[fieldKey]}</th>
+                                    {reviewFieldKeys.map((fieldKey) => (
+                                        <th key={fieldKey} className="px-3 py-2">
+                                            {getAssetImportFieldLabel(fieldKey)}
+                                        </th>
                                     ))}
                                     <th className="px-3 py-2">Action</th>
                                 </tr>
@@ -347,15 +404,22 @@ function ReviewBatchStep({ assetImport }: AssetImportWizardProps) {
                                                 {row.status}
                                             </span>
                                         </td>
-                                        {assetImportEditableRowFieldKeys.map((fieldKey) => (
+                                        {reviewFieldKeys.map((fieldKey) => (
                                             <td key={`${row.id}-${fieldKey}`} className="px-2 py-2 align-top">
                                                 <input
                                                     className="form-input min-w-[130px] text-xs"
-                                                    defaultValue={row[fieldKey] ?? ""}
-                                                    disabled={row.status === "imported" || assetImport.isUpdatingRow === row.id}
-                                                    onBlur={(event) => {
+                                                    value={getAssetImportRowFieldValue(
+                                                        row,
+                                                        fieldKey,
+                                                        assetImport.mappingDraft,
+                                                    )}
+                                                    disabled={
+                                                        row.status === "imported" ||
+                                                        assetImport.isUpdatingRow === row.id ||
+                                                        !isAssetImportFieldEditable(fieldKey)
+                                                    }
+                                                    onChange={(event) => {
                                                         const nextValue = event.target.value
-                                                        if ((row[fieldKey] ?? "") === nextValue) return
                                                         void assetImport.handleUpdateRowField(row.id, fieldKey, nextValue)
                                                     }}
                                                 />
@@ -452,6 +516,9 @@ function ExistingBatchPanel({ assetImport }: AssetImportWizardProps) {
                             <div className="text-sm font-semibold text-[var(--text-primary)]">{summary.batchKey}</div>
                             <div className="mt-1 text-xs text-[var(--text-secondary)]">{summary.sourceFileName}</div>
                             <div className="mt-2 text-[11px] text-[var(--text-secondary)]">
+                                {getAssetImportModeLabel(summary.importType)}
+                            </div>
+                            <div className="mt-2 text-[11px] text-[var(--text-secondary)]">
                                 Valid {summary.validRows} | Errors {summary.errorRows} | Imported {summary.importedRows}
                             </div>
                         </button>
@@ -463,6 +530,51 @@ function ExistingBatchPanel({ assetImport }: AssetImportWizardProps) {
 }
 
 function ManualAssetPanel({ assetImport }: AssetImportWizardProps) {
+    const manualFields = [
+        {
+            key: "assetCode",
+            label: "Asset Code",
+            value: assetImport.manualAssetForm.assetCode,
+            targetKey: "assetCode" as const,
+            required: true,
+        },
+        {
+            key: "category",
+            label: getAssetImportFieldLabel("category"),
+            value: assetImport.manualAssetForm.assetType,
+            targetKey: "assetType" as const,
+            required: true,
+        },
+        {
+            key: "assetName",
+            label: getAssetImportFieldLabel("assetName"),
+            value: assetImport.manualAssetForm.displayName,
+            targetKey: "displayName" as const,
+            required: true,
+        },
+        {
+            key: "model",
+            label: getAssetImportFieldLabel("model"),
+            value: assetImport.manualAssetForm.model,
+            targetKey: "model" as const,
+            required: false,
+        },
+        {
+            key: "serialNumber",
+            label: getAssetImportFieldLabel("serialNumber"),
+            value: assetImport.manualAssetForm.serialNumber,
+            targetKey: "serialNumber" as const,
+            required: false,
+        },
+        {
+            key: "note",
+            label: getAssetImportFieldLabel("note"),
+            value: assetImport.manualAssetForm.notes,
+            targetKey: "notes" as const,
+            required: false,
+        },
+    ] as const
+
     return (
         <div className="rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-5">
             <div className="flex items-center gap-2 text-sm font-semibold text-[var(--text-primary)]">
@@ -470,22 +582,22 @@ function ManualAssetPanel({ assetImport }: AssetImportWizardProps) {
                 Quick Manual Add
             </div>
             <p className="mt-2 text-sm text-[var(--text-secondary)]">
-                Use this path for one-off assets or rows that are not worth pushing through batch review.
+                Serialized-only fallback for one-off assets or rows that are not worth pushing through batch review.
             </p>
             <div className="mt-4 grid gap-4 md:grid-cols-2">
-                {assetImportEditableRowFieldKeys.map((fieldKey) => (
-                    <div key={fieldKey}>
+                {manualFields.map((field) => (
+                    <div key={field.key}>
                         <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
-                            {FIELD_LABELS[fieldKey]}
-                            {REQUIRED_FIELD_KEY_SET.has(fieldKey) ? " *" : ""}
+                            {field.label}
+                            {field.required ? " *" : ""}
                         </label>
                         <input
                             className="form-input"
-                            value={assetImport.manualAssetForm[fieldKey] ?? ""}
+                            value={field.value}
                             onChange={(event) =>
-                                assetImport.handleManualAssetFieldChange(fieldKey, event.target.value)
+                                assetImport.handleManualAssetFieldChange(field.targetKey, event.target.value)
                             }
-                            placeholder={FIELD_LABELS[fieldKey]}
+                            placeholder={field.label}
                         />
                     </div>
                 ))}

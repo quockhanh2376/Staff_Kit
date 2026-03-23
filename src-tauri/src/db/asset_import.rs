@@ -71,6 +71,9 @@ const DISPLAY_NAME_ALIASES: &[&str] = &[
 ];
 const MODEL_ALIASES: &[&str] = &["model", "modelnumber", "modelno"];
 const SERIAL_NUMBER_ALIASES: &[&str] = &["serialnumber", "serial", "serialno", "serialnum", "sn"];
+const BRAND_ALIASES: &[&str] = &["brand", "maker", "vendor", "nhanhieu", "nhanhieu"];
+const QUANTITY_ALIASES: &[&str] = &["quantity", "qty", "soluong", "solg"];
+const WAREHOUSE_ALIASES: &[&str] = &["warehouse", "location", "stocklocation", "kho"];
 const NOTES_ALIASES: &[&str] = &["notes", "note", "remark", "remarks", "ghichu"];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -86,8 +89,11 @@ pub struct AssetImportFieldMapping {
     pub asset_code: Option<String>,
     pub asset_type: Option<String>,
     pub display_name: Option<String>,
+    pub brand: Option<String>,
     pub model: Option<String>,
     pub serial_number: Option<String>,
+    pub quantity: Option<String>,
+    pub warehouse: Option<String>,
     pub notes: Option<String>,
 }
 
@@ -141,8 +147,11 @@ pub struct AssetImportRowSeedInput {
     pub asset_code: Option<String>,
     pub asset_type: Option<String>,
     pub display_name: Option<String>,
+    pub brand: Option<String>,
     pub model: Option<String>,
     pub serial_number: Option<String>,
+    pub quantity: Option<String>,
+    pub warehouse: Option<String>,
     pub notes: Option<String>,
 }
 
@@ -177,8 +186,11 @@ pub struct AssetImportRowRecord {
     pub asset_code: Option<String>,
     pub asset_type: Option<String>,
     pub display_name: Option<String>,
+    pub brand: Option<String>,
     pub model: Option<String>,
     pub serial_number: Option<String>,
+    pub quantity: Option<String>,
+    pub warehouse: Option<String>,
     pub notes: Option<String>,
     pub validation_errors: Vec<String>,
     pub status: String,
@@ -226,11 +238,14 @@ pub struct AssetImportCommitResult {
 #[derive(Debug, Clone)]
 struct AssetImportResolvedMapping {
     mapping: AssetImportFieldMapping,
-    asset_code_index: usize,
+    asset_code_index: Option<usize>,
     asset_type_index: usize,
     display_name_index: usize,
+    brand_index: Option<usize>,
     model_index: Option<usize>,
     serial_number_index: Option<usize>,
+    quantity_index: Option<usize>,
+    warehouse_index: Option<usize>,
     notes_index: Option<usize>,
 }
 
@@ -251,9 +266,11 @@ struct ParsedAssetImportSource {
 struct AssetImportRowState {
     id: i64,
     status: String,
+    import_type: AssetImportMode,
     asset_code: Option<String>,
     asset_type: Option<String>,
     display_name: Option<String>,
+    quantity: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -277,8 +294,9 @@ pub fn inspect_asset_import_file(
         available_sheets: inspection.available_sheets,
         header_row: inspection.header_row,
         headers: inspection.headers,
-        requires_manual_mapping: mapping_missing_required_fields(&inspection.auto_mapping)
-            .is_some(),
+        requires_manual_mapping:
+            mapping_missing_required_fields(AssetImportMode::Serialized, &inspection.auto_mapping)
+                .is_some(),
         mapping: inspection.auto_mapping,
     })
 }
@@ -290,6 +308,7 @@ pub fn create_asset_import_batch(
     let file_path = resolve_import_file_path(payload.file_path)?;
     let parsed = parse_asset_import_source(
         file_path.as_path(),
+        payload.import_type,
         payload.sheet_name.as_deref(),
         payload.mapping,
     )?;
@@ -393,6 +412,7 @@ pub(crate) fn create_asset_import_batch_seed_conn(
     }
 
     let actor_ref = active_actor_ref(conn)?;
+    let total_rows = input.rows.len() as i64;
     let tx = conn
         .transaction()
         .map_err(|err| format!("failed to start asset import batch transaction: {err}"))?;
@@ -443,8 +463,11 @@ pub(crate) fn create_asset_import_batch_seed_conn(
               asset_code,
               asset_type,
               display_name,
+              brand,
               model,
               serial_number,
+              quantity,
+              warehouse,
               notes,
               validation_errors_json,
               status,
@@ -453,7 +476,7 @@ pub(crate) fn create_asset_import_batch_seed_conn(
               created_at,
               updated_at
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, 0, '[]', datetime('now'), datetime('now'))
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, 0, '[]', datetime('now'), datetime('now'))
             "#,
             params![
                 batch_id,
@@ -462,8 +485,11 @@ pub(crate) fn create_asset_import_batch_seed_conn(
                 normalize_asset_code(row.asset_code),
                 normalize_optional_asset_text(row.asset_type),
                 normalize_optional_asset_text(row.display_name),
+                normalize_optional_asset_text(row.brand),
                 normalize_optional_asset_text(row.model),
                 normalize_optional_asset_text(row.serial_number),
+                normalize_optional_quantity_text(row.quantity),
+                normalize_optional_asset_text(row.warehouse),
                 normalize_optional_asset_text(row.notes),
                 ROW_STATUS_VALID,
             ],
@@ -479,7 +505,7 @@ pub(crate) fn create_asset_import_batch_seed_conn(
         "sourceFileName": input.source_file_name,
         "sourceFileType": input.source_file_type,
         "sheetName": input.sheet_name,
-        "totalRows": input.headers.len(),
+        "totalRows": total_rows,
     })
     .to_string();
 
@@ -617,6 +643,7 @@ pub(crate) fn update_asset_import_row_conn(
 
     let normalized_value = match field_key.as_str() {
         "assetCode" => normalize_asset_code(payload.value),
+        "quantity" => normalize_optional_quantity_text(payload.value),
         _ => normalize_optional_asset_text(payload.value),
     };
 
@@ -624,8 +651,11 @@ pub(crate) fn update_asset_import_row_conn(
         "assetCode" => "asset_code",
         "assetType" => "asset_type",
         "displayName" => "display_name",
+        "brand" => "brand",
         "model" => "model",
         "serialNumber" => "serial_number",
+        "quantity" => "quantity",
+        "warehouse" => "warehouse",
         "notes" => "notes",
         _ => return Err("unsupported asset import field".to_string()),
     };
@@ -722,6 +752,13 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
         .map_err(|err| format!("failed to start asset import commit transaction: {err}"))?;
 
     revalidate_batch_tx(&tx, batch_id)?;
+    let summary = load_batch_summary_tx(&tx, batch_id)?;
+
+    if summary.import_type == AssetImportMode::Quantity {
+        return Err(
+            "Quantity batch commit into stock lands in the next slice. Review is supported now, but official stock writes stay blocked.".to_string(),
+        );
+    }
 
     let mut stmt = tx
         .prepare(
@@ -758,6 +795,15 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
         .map_err(|err| format!("failed to read valid asset import rows: {err}"))?;
 
     drop(stmt);
+
+    if rows
+        .iter()
+        .any(|(_, asset_code, _, _, _, _, _)| asset_code.as_deref().is_none())
+    {
+        return Err(
+            "Serialized asset code generation lands in the next slice. Review can proceed, but import stays blocked until codes are assigned.".to_string(),
+        );
+    }
 
     let mut imported_row_ids = Vec::new();
     let mut imported_asset_codes = Vec::new();
@@ -875,6 +921,7 @@ fn active_actor_ref(conn: &Connection) -> Result<Option<String>, String> {
 
 fn parse_asset_import_source(
     path: &Path,
+    import_type: AssetImportMode,
     requested_sheet_name: Option<&str>,
     mapping_override: Option<AssetImportFieldMapping>,
 ) -> Result<ParsedAssetImportSource, String> {
@@ -886,11 +933,12 @@ fn parse_asset_import_source(
     let source_file_type = import_file_type(path)?;
 
     match source_file_type.as_str() {
-        "csv" => parse_csv_source(path, source_file_name, mapping_override),
+        "csv" => parse_csv_source(path, source_file_name, import_type, mapping_override),
         "xlsx" | "xls" | "xlsm" => parse_excel_source(
             path,
             source_file_name,
             source_file_type,
+            import_type,
             requested_sheet_name,
             mapping_override,
         ),
@@ -969,6 +1017,7 @@ fn inspect_asset_import_source(
 fn parse_csv_source(
     path: &Path,
     source_file_name: String,
+    import_type: AssetImportMode,
     mapping_override: Option<AssetImportFieldMapping>,
 ) -> Result<ParsedAssetImportSource, String> {
     let mut reader = ReaderBuilder::new()
@@ -987,7 +1036,7 @@ fn parse_csv_source(
         return Err("csv file does not contain a header row".to_string());
     }
 
-    let resolved_mapping = resolve_mapping(&headers, mapping_override.clone())?;
+    let resolved_mapping = resolve_mapping(&headers, import_type, mapping_override.clone())?;
     let mut rows = Vec::new();
 
     for (index, record) in reader.records().enumerate() {
@@ -1021,6 +1070,7 @@ fn parse_excel_source(
     path: &Path,
     source_file_name: String,
     source_file_type: String,
+    import_type: AssetImportMode,
     requested_sheet_name: Option<&str>,
     mapping_override: Option<AssetImportFieldMapping>,
 ) -> Result<ParsedAssetImportSource, String> {
@@ -1035,7 +1085,7 @@ fn parse_excel_source(
     let (sheet_name, header_row_index, headers) =
         select_excel_header_row(&mut workbook, requested_sheet_name, &available_sheets)?;
 
-    let resolved_mapping = resolve_mapping(&headers, mapping_override.clone())?;
+    let resolved_mapping = resolve_mapping(&headers, import_type, mapping_override.clone())?;
     let range = workbook
         .worksheet_range(&sheet_name)
         .map_err(|err| format!("failed to load sheet '{sheet_name}': {err}"))?;
@@ -1187,14 +1237,25 @@ fn build_row_seed_from_raw_values(
 ) -> AssetImportRowSeedInput {
     AssetImportRowSeedInput {
         row_number,
-        asset_code: mapped_value(&raw_values, mapping.asset_code_index),
+        asset_code: mapping
+            .asset_code_index
+            .and_then(|index| mapped_value(&raw_values, index)),
         asset_type: mapped_value(&raw_values, mapping.asset_type_index),
         display_name: mapped_value(&raw_values, mapping.display_name_index),
+        brand: mapping
+            .brand_index
+            .and_then(|index| mapped_value(&raw_values, index)),
         model: mapping
             .model_index
             .and_then(|index| mapped_value(&raw_values, index)),
         serial_number: mapping
             .serial_number_index
+            .and_then(|index| mapped_value(&raw_values, index)),
+        quantity: mapping
+            .quantity_index
+            .and_then(|index| mapped_quantity_value(&raw_values, index)),
+        warehouse: mapping
+            .warehouse_index
             .and_then(|index| mapped_value(&raw_values, index)),
         notes: mapping
             .notes_index
@@ -1210,8 +1271,16 @@ fn mapped_value(raw_values: &[AssetImportRawValue], index: usize) -> Option<Stri
         .and_then(|value| normalize_optional_asset_text(Some(value)))
 }
 
+fn mapped_quantity_value(raw_values: &[AssetImportRawValue], index: usize) -> Option<String> {
+    raw_values
+        .get(index)
+        .map(|item| item.value.clone())
+        .and_then(|value| normalize_optional_quantity_text(Some(value)))
+}
+
 fn resolve_mapping(
     headers: &[String],
+    import_type: AssetImportMode,
     mapping_override: Option<AssetImportFieldMapping>,
 ) -> Result<AssetImportResolvedMapping, String> {
     let detected = detect_field_mapping(headers);
@@ -1221,7 +1290,7 @@ fn resolve_mapping(
         detected
     };
 
-    let Some(missing_required) = mapping_missing_required_fields(&merged) else {
+    let Some(missing_required) = mapping_missing_required_fields(import_type, &merged) else {
         let header_indices = headers
             .iter()
             .enumerate()
@@ -1229,16 +1298,28 @@ fn resolve_mapping(
             .collect::<HashMap<_, _>>();
 
         return Ok(AssetImportResolvedMapping {
-            asset_code_index: resolve_header_index(&header_indices, merged.asset_code.as_deref())?,
+            asset_code_index: resolve_optional_header_index(
+                &header_indices,
+                merged.asset_code.as_deref(),
+            ),
             asset_type_index: resolve_header_index(&header_indices, merged.asset_type.as_deref())?,
             display_name_index: resolve_header_index(
                 &header_indices,
                 merged.display_name.as_deref(),
             )?,
+            brand_index: resolve_optional_header_index(&header_indices, merged.brand.as_deref()),
             model_index: resolve_optional_header_index(&header_indices, merged.model.as_deref()),
             serial_number_index: resolve_optional_header_index(
                 &header_indices,
                 merged.serial_number.as_deref(),
+            ),
+            quantity_index: resolve_optional_header_index(
+                &header_indices,
+                merged.quantity.as_deref(),
+            ),
+            warehouse_index: resolve_optional_header_index(
+                &header_indices,
+                merged.warehouse.as_deref(),
             ),
             notes_index: resolve_optional_header_index(&header_indices, merged.notes.as_deref()),
             mapping: merged,
@@ -1289,12 +1370,24 @@ fn detect_field_mapping(headers: &[String]) -> AssetImportFieldMapping {
             mapping.display_name = Some(header.clone());
             continue;
         }
+        if mapping.brand.is_none() && BRAND_ALIASES.contains(&normalized.as_str()) {
+            mapping.brand = Some(header.clone());
+            continue;
+        }
         if mapping.model.is_none() && MODEL_ALIASES.contains(&normalized.as_str()) {
             mapping.model = Some(header.clone());
             continue;
         }
         if mapping.serial_number.is_none() && SERIAL_NUMBER_ALIASES.contains(&normalized.as_str()) {
             mapping.serial_number = Some(header.clone());
+            continue;
+        }
+        if mapping.quantity.is_none() && QUANTITY_ALIASES.contains(&normalized.as_str()) {
+            mapping.quantity = Some(header.clone());
+            continue;
+        }
+        if mapping.warehouse.is_none() && WAREHOUSE_ALIASES.contains(&normalized.as_str()) {
+            mapping.warehouse = Some(header.clone());
             continue;
         }
         if mapping.notes.is_none() && NOTES_ALIASES.contains(&normalized.as_str()) {
@@ -1314,9 +1407,12 @@ fn merge_field_mapping(
         asset_type: normalized_mapping_choice(override_mapping.asset_type).or(detected.asset_type),
         display_name: normalized_mapping_choice(override_mapping.display_name)
             .or(detected.display_name),
+        brand: normalized_mapping_choice(override_mapping.brand).or(detected.brand),
         model: normalized_mapping_choice(override_mapping.model).or(detected.model),
         serial_number: normalized_mapping_choice(override_mapping.serial_number)
             .or(detected.serial_number),
+        quantity: normalized_mapping_choice(override_mapping.quantity).or(detected.quantity),
+        warehouse: normalized_mapping_choice(override_mapping.warehouse).or(detected.warehouse),
         notes: normalized_mapping_choice(override_mapping.notes).or(detected.notes),
     }
 }
@@ -1327,16 +1423,19 @@ fn normalized_mapping_choice(value: Option<String>) -> Option<String> {
         .filter(|item| !item.is_empty())
 }
 
-fn mapping_missing_required_fields(mapping: &AssetImportFieldMapping) -> Option<Vec<&'static str>> {
+fn mapping_missing_required_fields(
+    import_type: AssetImportMode,
+    mapping: &AssetImportFieldMapping,
+) -> Option<Vec<&'static str>> {
     let mut missing = Vec::new();
-    if mapping.asset_code.is_none() {
-        missing.push("assetCode");
-    }
     if mapping.asset_type.is_none() {
         missing.push("assetType");
     }
     if mapping.display_name.is_none() {
         missing.push("displayName");
+    }
+    if matches!(import_type, AssetImportMode::Quantity) && mapping.quantity.is_none() {
+        missing.push("quantity");
     }
     if missing.is_empty() {
         None
@@ -1347,7 +1446,6 @@ fn mapping_missing_required_fields(mapping: &AssetImportFieldMapping) -> Option<
 
 fn mapping_score(mapping: &AssetImportFieldMapping) -> i64 {
     let required_matches = [
-        mapping.asset_code.as_ref(),
         mapping.asset_type.as_ref(),
         mapping.display_name.as_ref(),
     ]
@@ -1355,8 +1453,12 @@ fn mapping_score(mapping: &AssetImportFieldMapping) -> i64 {
     .flatten()
     .count() as i64;
     let optional_matches = [
+        mapping.asset_code.as_ref(),
+        mapping.brand.as_ref(),
         mapping.model.as_ref(),
         mapping.serial_number.as_ref(),
+        mapping.quantity.as_ref(),
+        mapping.warehouse.as_ref(),
         mapping.notes.as_ref(),
     ]
     .into_iter()
@@ -1399,9 +1501,28 @@ fn normalize_optional_asset_text(value: Option<String>) -> Option<String> {
     normalize_optional_text(value)
 }
 
+fn normalize_optional_quantity_text(value: Option<String>) -> Option<String> {
+    value.and_then(|raw| {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
 fn normalize_import_field_key(value: &str) -> Result<String, String> {
     match value.trim() {
-        "assetCode" | "assetType" | "displayName" | "model" | "serialNumber" | "notes" => {
+        "assetCode"
+        | "assetType"
+        | "displayName"
+        | "brand"
+        | "model"
+        | "serialNumber"
+        | "quantity"
+        | "warehouse"
+        | "notes" => {
             Ok(value.trim().to_string())
         }
         _ => Err(format!("unsupported asset import field '{value}'")),
@@ -1534,14 +1655,20 @@ fn validate_staged_row(
     existing_asset_codes: &HashSet<String>,
 ) -> Vec<String> {
     let mut errors = Vec::new();
-    if row.asset_code.is_none() {
-        errors.push("assetCode is required".to_string());
-    }
     if row.asset_type.is_none() {
         errors.push("assetType is required".to_string());
     }
     if row.display_name.is_none() {
         errors.push("displayName is required".to_string());
+    }
+    if row.import_type == AssetImportMode::Quantity {
+        match row.quantity.as_deref() {
+            None => errors.push("quantity is required".to_string()),
+            Some(value) => match value.parse::<i64>() {
+                Ok(parsed) if parsed > 0 => {}
+                _ => errors.push("quantity must be a positive integer".to_string()),
+            },
+        }
     }
     if let Some(asset_code) = row.asset_code.as_deref() {
         if duplicate_asset_codes.contains(asset_code) {
@@ -1576,10 +1703,11 @@ fn load_batch_row_states_tx(
     let mut stmt = tx
         .prepare(
             r#"
-            SELECT id, status, asset_code, asset_type, display_name
-            FROM asset_import_rows
-            WHERE batch_id = ?
-            ORDER BY row_number ASC, id ASC
+            SELECT r.id, r.status, b.import_type, r.asset_code, r.asset_type, r.display_name, r.quantity
+            FROM asset_import_rows r
+            INNER JOIN asset_import_batches b ON b.id = r.batch_id
+            WHERE r.batch_id = ?
+            ORDER BY r.row_number ASC, r.id ASC
             "#,
         )
         .map_err(|err| format!("failed to prepare staged asset row query: {err}"))?;
@@ -1588,9 +1716,11 @@ fn load_batch_row_states_tx(
             Ok(AssetImportRowState {
                 id: row.get(0)?,
                 status: row.get(1)?,
-                asset_code: row.get(2)?,
-                asset_type: row.get(3)?,
-                display_name: row.get(4)?,
+                import_type: parse_asset_import_mode_sql(row.get(2)?)?,
+                asset_code: row.get(3)?,
+                asset_type: row.get(4)?,
+                display_name: row.get(5)?,
+                quantity: row.get(6)?,
             })
         })
         .map_err(|err| format!("failed to query staged asset rows: {err}"))?;
@@ -1740,8 +1870,8 @@ fn load_asset_import_rows_for_batch(
         .prepare(
             r#"
             SELECT
-              id, batch_id, row_number, raw_row_json, asset_code, asset_type, display_name, model,
-              serial_number, notes, validation_errors_json, status, edited, edited_fields_json, imported_asset_id
+              id, batch_id, row_number, raw_row_json, asset_code, asset_type, display_name, brand, model,
+              serial_number, quantity, warehouse, notes, validation_errors_json, status, edited, edited_fields_json, imported_asset_id
             FROM asset_import_rows
             WHERE batch_id = ?
             ORDER BY row_number ASC, id ASC
@@ -1766,8 +1896,8 @@ fn load_asset_import_row_record_conn(
     conn.query_row(
         r#"
         SELECT
-          id, batch_id, row_number, raw_row_json, asset_code, asset_type, display_name, model,
-          serial_number, notes, validation_errors_json, status, edited, edited_fields_json, imported_asset_id
+          id, batch_id, row_number, raw_row_json, asset_code, asset_type, display_name, brand, model,
+          serial_number, quantity, warehouse, notes, validation_errors_json, status, edited, edited_fields_json, imported_asset_id
         FROM asset_import_rows
         WHERE id = ?
         "#,
@@ -1788,14 +1918,17 @@ fn map_asset_import_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AssetImport
         asset_code: row.get(4)?,
         asset_type: row.get(5)?,
         display_name: row.get(6)?,
-        model: row.get(7)?,
-        serial_number: row.get(8)?,
-        notes: row.get(9)?,
-        validation_errors: from_json_row(Some(row.get(10)?))?,
-        status: row.get(11)?,
-        is_edited: row.get::<_, i64>(12)? > 0,
-        edited_fields: from_json_row(Some(row.get(13)?))?,
-        imported_asset_id: row.get(14)?,
+        brand: row.get(7)?,
+        model: row.get(8)?,
+        serial_number: row.get(9)?,
+        quantity: row.get(10)?,
+        warehouse: row.get(11)?,
+        notes: row.get(12)?,
+        validation_errors: from_json_row(Some(row.get(13)?))?,
+        status: row.get(14)?,
+        is_edited: row.get::<_, i64>(15)? > 0,
+        edited_fields: from_json_row(Some(row.get(16)?))?,
+        imported_asset_id: row.get(17)?,
     })
 }
 
@@ -1859,8 +1992,9 @@ mod tests {
 
     use super::{
         create_asset_import_batch_seed_conn, import_asset_import_batch_valid_rows_conn,
-        load_asset_import_batch_detail_conn, AssetImportBatchSeedInput, AssetImportFieldMapping,
-        AssetImportMode, AssetImportRawValue, AssetImportRowSeedInput,
+        load_asset_import_batch_detail_conn, update_asset_import_row_conn,
+        AssetImportBatchSeedInput, AssetImportFieldMapping, AssetImportMode,
+        AssetImportRawValue, AssetImportRowSeedInput, AssetImportRowUpdateInput,
     };
 
     fn open_test_connection() -> Connection {
@@ -1894,8 +2028,11 @@ mod tests {
             asset_code: Some("Asset Code".to_string()),
             asset_type: Some("Asset Type".to_string()),
             display_name: Some("Display Name".to_string()),
+            brand: Some("Brand".to_string()),
             model: Some("Model".to_string()),
             serial_number: Some("Serial Number".to_string()),
+            quantity: Some("Quantity".to_string()),
+            warehouse: Some("Warehouse".to_string()),
             notes: Some("Notes".to_string()),
         }
     }
@@ -1905,8 +2042,11 @@ mod tests {
             "Asset Code".to_string(),
             "Asset Type".to_string(),
             "Display Name".to_string(),
+            "Brand".to_string(),
             "Model".to_string(),
             "Serial Number".to_string(),
+            "Quantity".to_string(),
+            "Warehouse".to_string(),
             "Notes".to_string(),
         ]
     }
@@ -1933,12 +2073,20 @@ mod tests {
                     value: display_name.to_string(),
                 },
                 AssetImportRawValue {
+                    header: "Brand".to_string(),
+                    value: "Dell".to_string(),
+                },
+                AssetImportRawValue {
                     header: "Model".to_string(),
                     value: "7440".to_string(),
                 },
                 AssetImportRawValue {
                     header: "Serial Number".to_string(),
                     value: format!("SN-{row_number:03}"),
+                },
+                AssetImportRawValue {
+                    header: "Warehouse".to_string(),
+                    value: "HCM".to_string(),
                 },
                 AssetImportRawValue {
                     header: "Notes".to_string(),
@@ -1948,8 +2096,106 @@ mod tests {
             asset_code: Some(asset_code.to_string()),
             asset_type: Some(asset_type.to_string()),
             display_name: Some(display_name.to_string()),
+            brand: Some("Dell".to_string()),
             model: Some("7440".to_string()),
             serial_number: Some(format!("SN-{row_number:03}")),
+            quantity: None,
+            warehouse: Some("HCM".to_string()),
+            notes: Some("Initial import".to_string()),
+        }
+    }
+
+    fn row_without_asset_code(
+        row_number: i64,
+        asset_type: &str,
+        display_name: &str,
+    ) -> AssetImportRowSeedInput {
+        AssetImportRowSeedInput {
+            row_number,
+            raw_values: vec![
+                AssetImportRawValue {
+                    header: "Asset Type".to_string(),
+                    value: asset_type.to_string(),
+                },
+                AssetImportRawValue {
+                    header: "Display Name".to_string(),
+                    value: display_name.to_string(),
+                },
+                AssetImportRawValue {
+                    header: "Brand".to_string(),
+                    value: "Dell".to_string(),
+                },
+                AssetImportRawValue {
+                    header: "Model".to_string(),
+                    value: "7440".to_string(),
+                },
+                AssetImportRawValue {
+                    header: "Serial Number".to_string(),
+                    value: format!("SN-{row_number:03}"),
+                },
+                AssetImportRawValue {
+                    header: "Warehouse".to_string(),
+                    value: "HCM".to_string(),
+                },
+                AssetImportRawValue {
+                    header: "Notes".to_string(),
+                    value: "Initial import".to_string(),
+                },
+            ],
+            asset_code: None,
+            asset_type: Some(asset_type.to_string()),
+            display_name: Some(display_name.to_string()),
+            brand: Some("Dell".to_string()),
+            model: Some("7440".to_string()),
+            serial_number: Some(format!("SN-{row_number:03}")),
+            quantity: None,
+            warehouse: Some("HCM".to_string()),
+            notes: Some("Initial import".to_string()),
+        }
+    }
+
+    fn quantity_row_without_asset_code(
+        row_number: i64,
+        asset_type: &str,
+        display_name: &str,
+        quantity: &str,
+    ) -> AssetImportRowSeedInput {
+        AssetImportRowSeedInput {
+            row_number,
+            raw_values: vec![
+                AssetImportRawValue {
+                    header: "Asset Type".to_string(),
+                    value: asset_type.to_string(),
+                },
+                AssetImportRawValue {
+                    header: "Display Name".to_string(),
+                    value: display_name.to_string(),
+                },
+                AssetImportRawValue {
+                    header: "Brand".to_string(),
+                    value: "Logitech".to_string(),
+                },
+                AssetImportRawValue {
+                    header: "Quantity".to_string(),
+                    value: quantity.to_string(),
+                },
+                AssetImportRawValue {
+                    header: "Warehouse".to_string(),
+                    value: "HCM".to_string(),
+                },
+                AssetImportRawValue {
+                    header: "Notes".to_string(),
+                    value: "Initial import".to_string(),
+                },
+            ],
+            asset_code: None,
+            asset_type: Some(asset_type.to_string()),
+            display_name: Some(display_name.to_string()),
+            brand: Some("Logitech".to_string()),
+            model: None,
+            serial_number: None,
+            quantity: Some(quantity.to_string()),
+            warehouse: Some("HCM".to_string()),
             notes: Some("Initial import".to_string()),
         }
     }
@@ -2016,6 +2262,127 @@ mod tests {
     }
 
     #[test]
+    fn create_batch_allows_serialized_rows_without_asset_code_during_staging() {
+        let mut conn = open_test_connection();
+
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            sample_batch(
+                AssetImportMode::Serialized,
+                vec![row_without_asset_code(2, "Laptop", "Dell Latitude 7440")],
+            ),
+        )
+        .expect("create serialized asset import batch without asset code");
+
+        assert_eq!(batch.summary.total_rows, 1);
+        assert_eq!(batch.summary.valid_rows, 1);
+        assert_eq!(batch.summary.error_rows, 0);
+        assert_eq!(batch.rows[0].status, "valid");
+        assert_eq!(batch.rows[0].asset_code, None);
+    }
+
+    #[test]
+    fn create_batch_allows_quantity_rows_without_asset_code_during_staging() {
+        let mut conn = open_test_connection();
+
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            sample_batch(
+                AssetImportMode::Quantity,
+                vec![quantity_row_without_asset_code(
+                    2,
+                    "Mouse",
+                    "Logitech M650",
+                    "10",
+                )],
+            ),
+        )
+        .expect("create quantity asset import batch without asset code");
+
+        assert_eq!(batch.summary.total_rows, 1);
+        assert_eq!(batch.summary.valid_rows, 1);
+        assert_eq!(batch.summary.error_rows, 0);
+        assert_eq!(batch.rows[0].status, "valid");
+        assert_eq!(batch.rows[0].asset_code, None);
+    }
+
+    #[test]
+    fn create_batch_persists_mode_specific_review_fields() {
+        let mut conn = open_test_connection();
+
+        let serialized_batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            sample_batch(
+                AssetImportMode::Serialized,
+                vec![row_without_asset_code(2, "Laptop", "Dell Latitude 7440")],
+            ),
+        )
+        .expect("create serialized batch for review fields");
+        assert_eq!(serialized_batch.rows[0].brand.as_deref(), Some("Dell"));
+        assert_eq!(serialized_batch.rows[0].warehouse.as_deref(), Some("HCM"));
+        assert_eq!(serialized_batch.rows[0].quantity, None);
+
+        let quantity_batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            sample_batch(
+                AssetImportMode::Quantity,
+                vec![quantity_row_without_asset_code(
+                    3,
+                    "Mouse",
+                    "Logitech M650",
+                    "10",
+                )],
+            ),
+        )
+        .expect("create quantity batch for review fields");
+        assert_eq!(quantity_batch.rows[0].brand.as_deref(), Some("Logitech"));
+        assert_eq!(quantity_batch.rows[0].warehouse.as_deref(), Some("HCM"));
+        assert_eq!(quantity_batch.rows[0].quantity.as_deref(), Some("10"));
+    }
+
+    #[test]
+    fn quantity_rows_revalidate_after_inline_quantity_fix() {
+        let mut conn = open_test_connection();
+
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            sample_batch(
+                AssetImportMode::Quantity,
+                vec![quantity_row_without_asset_code(
+                    2,
+                    "Mouse",
+                    "Logitech M650",
+                    "0",
+                )],
+            ),
+        )
+        .expect("create quantity batch with invalid quantity");
+
+        assert_eq!(batch.summary.valid_rows, 0);
+        assert_eq!(batch.summary.error_rows, 1);
+        assert!(
+            batch.rows[0]
+                .validation_errors
+                .iter()
+                .any(|item| item == "quantity must be a positive integer")
+        );
+
+        let updated = update_asset_import_row_conn(
+            &mut conn,
+            AssetImportRowUpdateInput {
+                row_id: batch.rows[0].id,
+                field_key: "quantity".to_string(),
+                value: Some("5".to_string()),
+            },
+        )
+        .expect("fix quantity inline");
+
+        assert_eq!(updated.quantity.as_deref(), Some("5"));
+        assert_eq!(updated.status, "valid");
+        assert!(updated.validation_errors.is_empty());
+    }
+
+    #[test]
     fn persisted_batch_detail_can_be_reloaded_from_sqlite_after_reopen() {
         let db_path = temp_db_path("asset-import-batch-reload");
 
@@ -2047,8 +2414,53 @@ mod tests {
         assert_eq!(reloaded.summary.total_rows, 1);
         assert_eq!(reloaded.rows.len(), 1);
         assert_eq!(reloaded.rows[0].asset_code.as_deref(), Some("ASSET-001"));
+        assert_eq!(reloaded.rows[0].brand.as_deref(), Some("Dell"));
+        assert_eq!(reloaded.rows[0].warehouse.as_deref(), Some("HCM"));
 
         let _ = fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn import_valid_rows_rejects_quantity_batches_until_stock_commit_slice() {
+        let mut conn = open_test_connection();
+
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            sample_batch(
+                AssetImportMode::Quantity,
+                vec![quantity_row_without_asset_code(
+                    2,
+                    "Mouse",
+                    "Logitech M650",
+                    "10",
+                )],
+            ),
+        )
+        .expect("create quantity batch");
+
+        let error = import_asset_import_batch_valid_rows_conn(&mut conn, batch.summary.id)
+            .expect_err("quantity batch import should stay blocked");
+
+        assert!(error.contains("Quantity batch commit into stock lands in the next slice"));
+    }
+
+    #[test]
+    fn import_valid_rows_rejects_serialized_batches_without_asset_codes_until_generation_slice() {
+        let mut conn = open_test_connection();
+
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            sample_batch(
+                AssetImportMode::Serialized,
+                vec![row_without_asset_code(2, "Laptop", "Dell Latitude 7440")],
+            ),
+        )
+        .expect("create serialized batch without asset code");
+
+        let error = import_asset_import_batch_valid_rows_conn(&mut conn, batch.summary.id)
+            .expect_err("serialized batch import should stay blocked until codes exist");
+
+        assert!(error.contains("Serialized asset code generation lands in the next slice"));
     }
 
     #[test]

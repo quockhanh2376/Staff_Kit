@@ -79,8 +79,11 @@ export type AssetImportFieldMapping = {
   assetCode?: string | null
   assetType?: string | null
   displayName?: string | null
+  brand?: string | null
   model?: string | null
   serialNumber?: string | null
+  quantity?: string | null
+  warehouse?: string | null
   notes?: string | null
 }
 
@@ -139,8 +142,11 @@ export type AssetImportRowRecord = {
   assetCode: string | null
   assetType: string | null
   displayName: string | null
+  brand: string | null
   model: string | null
   serialNumber: string | null
+  quantity: string | null
+  warehouse: string | null
   notes: string | null
   validationErrors: string[]
   status: string
@@ -158,7 +164,16 @@ export type AssetImportBatchDetail = {
 
 export type AssetImportRowUpdateInput = {
   rowId: number
-  fieldKey: "assetCode" | "assetType" | "displayName" | "model" | "serialNumber" | "notes"
+  fieldKey:
+    | "assetCode"
+    | "assetType"
+    | "displayName"
+    | "brand"
+    | "model"
+    | "serialNumber"
+    | "quantity"
+    | "warehouse"
+    | "notes"
   value?: string | null
 }
 
