@@ -434,12 +434,6 @@ export function useAssetImportState({
             )
             return
         }
-        if (activeBatchDetail.rows.some((row) => row.status === "valid" && !row.assetCode)) {
-            setStatusMessage(
-                "Serialized rows can stage without asset codes now. Import stays blocked until the code-generation slice lands.",
-            )
-            return
-        }
 
         try {
             setImportingRows(true)
@@ -548,9 +542,7 @@ export function useAssetImportState({
     const importBlockReason =
         activeBatchDetail?.summary.importType === "quantity"
             ? "Quantity batch commit into stock lands in the next slice."
-            : activeBatchDetail?.rows.some((row) => row.status === "valid" && !row.assetCode)
-              ? "Serialized batch review is ready, but import still waits for generated asset codes."
-              : null
+            : null
     const canImportCurrentBatch =
         Boolean(activeBatchDetail?.summary.validRows) && !importBlockReason
 

@@ -873,6 +873,27 @@ mod tests {
         .unwrap_or(false)
     }
 
+    fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> bool {
+        let pragma = format!("PRAGMA table_info({table_name})");
+        conn.prepare(&pragma)
+            .and_then(|mut stmt| {
+                stmt.query_map([], |row| row.get::<_, String>(1))
+                    .and_then(|rows| rows.collect::<Result<Vec<_>, _>>())
+            })
+            .map(|columns| columns.iter().any(|existing| existing == column_name))
+            .unwrap_or(false)
+    }
+
+    fn index_exists(conn: &Connection, index_name: &str) -> bool {
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?)",
+            params![index_name],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|exists| exists > 0)
+        .unwrap_or(false)
+    }
+
     #[test]
     fn apply_migrations_creates_borrow_flow_tables() {
         let conn = Connection::open_in_memory().expect("open in-memory sqlite database");
@@ -895,5 +916,48 @@ mod tests {
                 "expected table '{table_name}' to exist after migrations",
             );
         }
+    }
+
+    #[test]
+    fn apply_migrations_upgrades_existing_assets_table_before_creating_category_index() {
+        let conn = Connection::open_in_memory().expect("open in-memory sqlite database");
+        configure_connection(&conn).expect("configure sqlite pragmas");
+
+        conn.execute_batch(
+            r#"
+            CREATE TABLE assets (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              asset_code TEXT NOT NULL UNIQUE,
+              asset_type TEXT NOT NULL,
+              display_name TEXT NOT NULL,
+              model TEXT,
+              serial_number TEXT,
+              notes TEXT,
+              status TEXT NOT NULL DEFAULT 'in_stock',
+              created_at TEXT NOT NULL DEFAULT (datetime('now')),
+              updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            "#,
+        )
+        .expect("create legacy assets table");
+
+        apply_migrations(&conn).expect("apply migrations to legacy assets table");
+
+        assert!(
+            column_exists(&conn, "assets", "category_id"),
+            "expected assets.category_id to be added for legacy databases"
+        );
+        assert!(
+            column_exists(&conn, "assets", "brand"),
+            "expected assets.brand to be added for legacy databases"
+        );
+        assert!(
+            column_exists(&conn, "assets", "warehouse"),
+            "expected assets.warehouse to be added for legacy databases"
+        );
+        assert!(
+            index_exists(&conn, "idx_assets_category_id"),
+            "expected idx_assets_category_id to exist after migration"
+        );
     }
 }
