@@ -273,6 +273,7 @@ struct AssetImportRowState {
     asset_code: Option<String>,
     asset_type: Option<String>,
     display_name: Option<String>,
+    serial_number: Option<String>,
     quantity: Option<String>,
 }
 
@@ -490,7 +491,7 @@ pub(crate) fn create_asset_import_batch_seed_conn(
                 normalize_optional_asset_text(row.display_name),
                 normalize_optional_asset_text(row.brand),
                 normalize_optional_asset_text(row.model),
-                normalize_optional_asset_text(row.serial_number),
+                normalize_serial_number(row.serial_number),
                 normalize_optional_quantity_text(row.quantity),
                 normalize_optional_asset_text(row.warehouse),
                 normalize_optional_asset_text(row.notes),
@@ -646,6 +647,7 @@ pub(crate) fn update_asset_import_row_conn(
 
     let normalized_value = match field_key.as_str() {
         "assetCode" => normalize_asset_code(payload.value),
+        "serialNumber" => normalize_serial_number(payload.value),
         "quantity" => normalize_optional_quantity_text(payload.value),
         _ => normalize_optional_asset_text(payload.value),
     };
@@ -1528,6 +1530,10 @@ fn normalize_optional_asset_text(value: Option<String>) -> Option<String> {
     normalize_optional_text(value)
 }
 
+fn normalize_serial_number(value: Option<String>) -> Option<String> {
+    normalize_optional_text(value).map(|item| item.to_uppercase())
+}
+
 fn normalize_optional_quantity_text(value: Option<String>) -> Option<String> {
     value.and_then(|raw| {
         let trimmed = raw.trim();
@@ -1623,10 +1629,12 @@ fn generate_batch_key_tx(tx: &Transaction<'_>) -> Result<String, String> {
 fn revalidate_batch_tx(tx: &Transaction<'_>, batch_id: i64) -> Result<(), String> {
     let rows = load_batch_row_states_tx(tx, batch_id)?;
     let existing_asset_codes = load_existing_asset_codes_tx(tx)?;
+    let existing_serial_numbers = load_existing_serial_numbers_tx(tx)?;
     let serialized_categories = load_active_category_keys_by_mode_tx(tx, "serialized")?;
     let quantity_categories = load_active_category_keys_by_mode_tx(tx, "quantity")?;
 
     let mut duplicate_counts: HashMap<String, usize> = HashMap::new();
+    let mut duplicate_serial_counts: HashMap<String, usize> = HashMap::new();
     for row in rows
         .iter()
         .filter(|item| item.status != ROW_STATUS_IMPORTED && item.status != ROW_STATUS_SKIPPED)
@@ -1634,11 +1642,22 @@ fn revalidate_batch_tx(tx: &Transaction<'_>, batch_id: i64) -> Result<(), String
         if let Some(asset_code) = row.asset_code.as_deref() {
             *duplicate_counts.entry(asset_code.to_string()).or_default() += 1;
         }
+        if row.import_type == AssetImportMode::Serialized {
+            if let Some(serial_number) = row.serial_number.as_deref() {
+                *duplicate_serial_counts
+                    .entry(serial_number.to_string())
+                    .or_default() += 1;
+            }
+        }
     }
 
     let duplicate_asset_codes = duplicate_counts
         .into_iter()
         .filter_map(|(asset_code, count)| if count > 1 { Some(asset_code) } else { None })
+        .collect::<HashSet<_>>();
+    let duplicate_serial_numbers = duplicate_serial_counts
+        .into_iter()
+        .filter_map(|(serial_number, count)| if count > 1 { Some(serial_number) } else { None })
         .collect::<HashSet<_>>();
 
     for row in &rows {
@@ -1655,6 +1674,8 @@ fn revalidate_batch_tx(tx: &Transaction<'_>, batch_id: i64) -> Result<(), String
             row,
             &duplicate_asset_codes,
             &existing_asset_codes,
+            &duplicate_serial_numbers,
+            &existing_serial_numbers,
             &serialized_categories,
             &quantity_categories,
         );
@@ -1687,6 +1708,8 @@ fn validate_staged_row(
     row: &AssetImportRowState,
     duplicate_asset_codes: &HashSet<String>,
     existing_asset_codes: &HashSet<String>,
+    duplicate_serial_numbers: &HashSet<String>,
+    existing_serial_numbers: &HashSet<String>,
     serialized_categories: &HashSet<String>,
     quantity_categories: &HashSet<String>,
 ) -> Vec<String> {
@@ -1727,6 +1750,16 @@ fn validate_staged_row(
         }
         if existing_asset_codes.contains(asset_code) {
             errors.push("assetCode already exists in assets".to_string());
+        }
+    }
+    if row.import_type == AssetImportMode::Serialized {
+        if let Some(serial_number) = row.serial_number.as_deref() {
+            if duplicate_serial_numbers.contains(serial_number) {
+                errors.push("serialNumber is duplicated in this batch".to_string());
+            }
+            if existing_serial_numbers.contains(serial_number) {
+                errors.push("serialNumber already exists in assets".to_string());
+            }
         }
     }
     errors
@@ -1776,6 +1809,24 @@ fn load_existing_asset_codes_tx(tx: &Transaction<'_>) -> Result<HashSet<String>,
     Ok(items)
 }
 
+fn load_existing_serial_numbers_tx(tx: &Transaction<'_>) -> Result<HashSet<String>, String> {
+    let mut stmt = tx
+        .prepare("SELECT serial_number FROM assets WHERE serial_number IS NOT NULL")
+        .map_err(|err| format!("failed to prepare asset serial lookup query: {err}"))?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|err| format!("failed to query existing asset serial numbers: {err}"))?;
+
+    let mut items = HashSet::new();
+    for row in rows {
+        items.insert(
+            row.map_err(|err| format!("failed to read existing asset serial number row: {err}"))?
+                .to_uppercase(),
+        );
+    }
+    Ok(items)
+}
+
 fn load_batch_row_states_tx(
     tx: &Transaction<'_>,
     batch_id: i64,
@@ -1784,6 +1835,7 @@ fn load_batch_row_states_tx(
         .prepare(
             r#"
             SELECT r.id, r.status, b.import_type, r.asset_code, r.asset_type, r.display_name, r.quantity
+                 , r.serial_number
             FROM asset_import_rows r
             INNER JOIN asset_import_batches b ON b.id = r.batch_id
             WHERE r.batch_id = ?
@@ -1801,6 +1853,7 @@ fn load_batch_row_states_tx(
                 asset_type: row.get(4)?,
                 display_name: row.get(5)?,
                 quantity: row.get(6)?,
+                serial_number: row.get(7)?,
             })
         })
         .map_err(|err| format!("failed to query staged asset rows: {err}"))?;
@@ -2342,6 +2395,70 @@ mod tests {
     }
 
     #[test]
+    fn create_batch_marks_duplicate_serial_numbers_inside_same_serialized_batch_as_errors() {
+        let mut conn = open_test_connection();
+
+        let mut first = row_without_asset_code(2, "Laptop", "Dell Latitude 7440");
+        first.serial_number = Some("sn-001".to_string());
+
+        let mut second = row_without_asset_code(3, "Laptop", "Dell Latitude 7450");
+        second.serial_number = Some("SN-001".to_string());
+
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            sample_batch(AssetImportMode::Serialized, vec![first, second]),
+        )
+        .expect("create asset import batch");
+
+        assert_eq!(batch.summary.valid_rows, 0);
+        assert_eq!(batch.summary.error_rows, 2);
+        assert!(
+            batch.rows.iter().all(|item| item.serial_number.as_deref() == Some("SN-001")),
+            "serialized serial numbers should be normalized to uppercase during staging"
+        );
+        assert!(
+            batch.rows.iter().all(|item| {
+                item.validation_errors
+                    .iter()
+                    .any(|error| error == "serialNumber is duplicated in this batch")
+            }),
+            "duplicate serial numbers should keep all serialized rows in error state"
+        );
+    }
+
+    #[test]
+    fn create_batch_marks_duplicate_serial_numbers_against_existing_assets_as_error() {
+        let mut conn = open_test_connection();
+        conn.execute(
+            r#"
+            INSERT INTO assets(asset_code, asset_type, display_name, serial_number, status, created_at, updated_at)
+            VALUES('ASSET-EXISTING', 'Laptop', 'Dell Latitude', 'sn-existing', 'in_stock', datetime('now'), datetime('now'))
+            "#,
+            [],
+        )
+        .expect("insert existing serialized asset");
+
+        let mut staged = row_without_asset_code(2, "Laptop", "Dell Latitude 7440");
+        staged.serial_number = Some("SN-EXISTING".to_string());
+
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            sample_batch(AssetImportMode::Serialized, vec![staged]),
+        )
+        .expect("create asset import batch");
+
+        assert_eq!(batch.summary.valid_rows, 0);
+        assert_eq!(batch.summary.error_rows, 1);
+        assert_eq!(batch.rows[0].serial_number.as_deref(), Some("SN-EXISTING"));
+        assert!(
+            batch.rows[0]
+                .validation_errors
+                .iter()
+                .any(|error| error == "serialNumber already exists in assets")
+        );
+    }
+
+    #[test]
     fn create_batch_allows_serialized_rows_without_asset_code_during_staging() {
         let mut conn = open_test_connection();
 
@@ -2511,6 +2628,32 @@ mod tests {
         assert_eq!(updated.quantity.as_deref(), Some("5"));
         assert_eq!(updated.status, "valid");
         assert!(updated.validation_errors.is_empty());
+    }
+
+    #[test]
+    fn serialized_rows_normalize_serial_number_to_uppercase_on_inline_edit() {
+        let mut conn = open_test_connection();
+
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            sample_batch(
+                AssetImportMode::Serialized,
+                vec![row_without_asset_code(2, "Laptop", "Dell Latitude 7440")],
+            ),
+        )
+        .expect("create serialized batch");
+
+        let updated = update_asset_import_row_conn(
+            &mut conn,
+            AssetImportRowUpdateInput {
+                row_id: batch.rows[0].id,
+                field_key: "serialNumber".to_string(),
+                value: Some("sn-inline-001".to_string()),
+            },
+        )
+        .expect("update serial number inline");
+
+        assert_eq!(updated.serial_number.as_deref(), Some("SN-INLINE-001"));
     }
 
     #[test]
