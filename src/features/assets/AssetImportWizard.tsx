@@ -92,11 +92,9 @@ function ImportPanel({ assetImport }: AssetImportWizardProps) {
 function ChooseFileStep({ assetImport }: AssetImportWizardProps) {
     const inspection = assetImport.inspection
     const stageBlockReason = inspection
-        ? assetImport.currentImportMode === "quantity"
-            ? "Quantity batch staging lands in the next slice. This pass wires mode-specific mapping and review state."
-            : !assetImport.canStageCurrentMode
-              ? "Serialized staging still depends on the next backend slice for auto-generated asset codes, unless the file already includes a legacy Asset Code column."
-              : null
+        ? !assetImport.canStageCurrentMode
+            ? "Map all required columns before staging a batch."
+            : null
         : null
 
     return (
@@ -225,17 +223,15 @@ function MapColumnsStep({ assetImport }: AssetImportWizardProps) {
     const requiredFieldKeySet = new Set<string>(
         getRequiredAssetImportMappingKeys(assetImport.currentImportMode),
     )
-    const stageBlockReason = assetImport.currentImportMode === "quantity"
-        ? "Quantity batch staging lands in the next runtime slice. This step still locks the approved column mapping now."
-        : !assetImport.canStageCurrentMode
-          ? "This serialized file can map columns now, but staging still needs either a legacy Asset Code column or the next backend slice for auto-generated codes."
-          : null
+    const stageBlockReason = !assetImport.canStageCurrentMode
+        ? "Map all required columns before staging a batch."
+        : null
 
     return (
         <div className="rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-5">
             <div className="text-sm font-semibold text-[var(--text-primary)]">Map Columns</div>
             <p className="mt-2 text-sm text-[var(--text-secondary)]">
-                Required fields change with the selected mode. This slice keeps mapping and review state aligned before the runtime import logic lands.
+                Required fields change with the selected mode. Once mapped, the batch stages into SQLite for review before any official import happens.
             </p>
             <div className="mt-4 grid gap-4 md:grid-cols-2">
                 {mappingKeys.map((fieldKey) => (
@@ -332,7 +328,7 @@ function ReviewBatchStep({ assetImport }: AssetImportWizardProps) {
                             className="rounded-[8px] bg-[var(--primary)] px-3 py-2 text-xs font-semibold text-[#00131c] disabled:opacity-50"
                             onClick={() => void assetImport.handleImportValidRows()}
                             type="button"
-                            disabled={assetImport.isImportingRows || detail.summary.validRows === 0}
+                            disabled={assetImport.isImportingRows || !assetImport.canImportCurrentBatch}
                         >
                             {assetImport.isImportingRows ? "Importing..." : `Import Valid (${detail.summary.validRows})`}
                         </button>
@@ -369,6 +365,11 @@ function ReviewBatchStep({ assetImport }: AssetImportWizardProps) {
                         </button>
                     ))}
                 </div>
+                {assetImport.importBlockReason && (
+                    <div className="mt-4 rounded-[8px] border border-amber-400/35 bg-amber-400/10 px-3 py-2 text-xs text-amber-100">
+                        {assetImport.importBlockReason}
+                    </div>
+                )}
             </div>
 
             <div className="grid gap-5 xl:grid-cols-[1.55fr_0.85fr]">

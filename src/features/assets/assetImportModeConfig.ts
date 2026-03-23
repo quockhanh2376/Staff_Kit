@@ -55,8 +55,11 @@ const EDITABLE_FIELD_KEYS = new Set<AssetImportWizardFieldKey>([
     "category",
     "assetName",
     "itemName",
+    "brand",
     "model",
     "serialNumber",
+    "quantity",
+    "warehouse",
     "note",
 ])
 
@@ -88,16 +91,6 @@ const FIELD_ALIASES: Record<AssetImportWizardFieldKey, string[]> = {
     warehouse: ["warehouse", "location", "stock location", "kho"],
     note: ["note", "notes", "remark", "remarks", "ghi chu", "ghichu"],
 }
-
-const LEGACY_ASSET_CODE_ALIASES = [
-    "assetcode",
-    "asset code",
-    "code",
-    "asset id",
-    "assetid",
-    "asset number",
-    "assetnumber",
-]
 
 export function getAssetImportModeLabel(mode: AssetImportMode): string {
     return MODE_LABELS[mode]
@@ -183,7 +176,10 @@ export function convertBackendMappingToWizardMapping(
         return {
             itemName: mapping.displayName ?? null,
             category: mapping.assetType ?? null,
+            brand: mapping.brand ?? null,
             model: mapping.model ?? null,
+            quantity: mapping.quantity ?? null,
+            warehouse: mapping.warehouse ?? null,
             note: mapping.notes ?? null,
         }
     }
@@ -191,8 +187,10 @@ export function convertBackendMappingToWizardMapping(
     return {
         category: mapping.assetType ?? null,
         assetName: mapping.displayName ?? null,
+        brand: mapping.brand ?? null,
         model: mapping.model ?? null,
         serialNumber: mapping.serialNumber ?? null,
+        warehouse: mapping.warehouse ?? null,
         note: mapping.notes ?? null,
     }
 }
@@ -202,21 +200,27 @@ export function toBackendAssetImportMapping(
     mapping: AssetImportWizardMapping,
     headers: string[],
 ): AssetImportFieldMapping | null {
-    if (mode !== "serialized") {
-        return null
-    }
+    void headers
 
-    const legacyAssetCodeHeader = detectLegacyAssetCodeHeader(headers)
-    if (!legacyAssetCodeHeader) {
-        return null
+    if (mode === "quantity") {
+        return {
+            assetType: mapping.category ?? null,
+            displayName: mapping.itemName ?? null,
+            brand: mapping.brand ?? null,
+            model: mapping.model ?? null,
+            quantity: mapping.quantity ?? null,
+            warehouse: mapping.warehouse ?? null,
+            notes: mapping.note ?? null,
+        }
     }
 
     return {
-        assetCode: legacyAssetCodeHeader,
         assetType: mapping.category ?? null,
         displayName: mapping.assetName ?? null,
+        brand: mapping.brand ?? null,
         model: mapping.model ?? null,
         serialNumber: mapping.serialNumber ?? null,
+        warehouse: mapping.warehouse ?? null,
         notes: mapping.note ?? null,
     }
 }
@@ -226,15 +230,8 @@ export function canStageAssetImportMode(
     headers: string[],
     mapping: AssetImportWizardMapping,
 ): boolean {
-    if (!hasRequiredAssetImportMapping(mapping, mode)) {
-        return false
-    }
-
-    if (mode === "quantity") {
-        return false
-    }
-
-    return detectLegacyAssetCodeHeader(headers) !== null
+    void headers
+    return hasRequiredAssetImportMapping(mapping, mode)
 }
 
 export function getAssetImportStageBlockReason(
@@ -242,16 +239,9 @@ export function getAssetImportStageBlockReason(
     headers: string[],
     mapping: AssetImportWizardMapping,
 ): string | null {
+    void headers
     if (!hasRequiredAssetImportMapping(mapping, mode)) {
         return "Map all required columns before staging a batch."
-    }
-
-    if (mode === "quantity") {
-        return "Quantity batch staging lands in the next slice. This pass wires mode-aware wizard state only."
-    }
-
-    if (!detectLegacyAssetCodeHeader(headers)) {
-        return "Serialized staging still needs the next backend slice for auto-generated asset codes. Legacy files with an Asset Code column can still stage now."
     }
 
     return null
@@ -268,16 +258,18 @@ export function getAssetImportRowFieldValue(
         case "assetName":
         case "itemName":
             return row.displayName ?? findRawValue(row.rawValues, mapping[fieldKey])
+        case "brand":
+            return row.brand ?? findRawValue(row.rawValues, mapping.brand)
         case "model":
             return row.model ?? ""
         case "serialNumber":
             return row.serialNumber ?? ""
+        case "quantity":
+            return row.quantity ?? findRawValue(row.rawValues, mapping.quantity)
+        case "warehouse":
+            return row.warehouse ?? findRawValue(row.rawValues, mapping.warehouse)
         case "note":
             return row.notes ?? findRawValue(row.rawValues, mapping.note)
-        case "brand":
-        case "quantity":
-        case "warehouse":
-            return findRawValue(row.rawValues, mapping[fieldKey])
         default:
             return ""
     }
@@ -285,32 +277,37 @@ export function getAssetImportRowFieldValue(
 
 export function toBackendRowFieldKey(
     fieldKey: AssetImportWizardFieldKey,
-): "assetType" | "displayName" | "model" | "serialNumber" | "notes" | null {
+):
+    | "assetType"
+    | "displayName"
+    | "brand"
+    | "model"
+    | "serialNumber"
+    | "quantity"
+    | "warehouse"
+    | "notes"
+    | null {
     switch (fieldKey) {
         case "category":
             return "assetType"
         case "assetName":
         case "itemName":
             return "displayName"
+        case "brand":
+            return "brand"
         case "model":
             return "model"
         case "serialNumber":
             return "serialNumber"
+        case "quantity":
+            return "quantity"
+        case "warehouse":
+            return "warehouse"
         case "note":
             return "notes"
         default:
             return null
     }
-}
-
-function detectLegacyAssetCodeHeader(headers: string[]): string | null {
-    const matched = headers.find((header) => {
-        const normalizedHeader = normalizeHeader(header)
-        return LEGACY_ASSET_CODE_ALIASES.some(
-            (alias) => normalizeHeader(alias) === normalizedHeader,
-        )
-    })
-    return matched ?? null
 }
 
 function findRawValue(

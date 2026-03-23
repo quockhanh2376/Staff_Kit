@@ -428,6 +428,18 @@ export function useAssetImportState({
 
     const handleImportValidRows = useCallback(async () => {
         if (!activeBatchDetail) return
+        if (activeBatchDetail.summary.importType === "quantity") {
+            setStatusMessage(
+                "Quantity batch commit into stock lands in the next slice. Review is supported now, but official stock writes stay blocked.",
+            )
+            return
+        }
+        if (activeBatchDetail.rows.some((row) => row.status === "valid" && !row.assetCode)) {
+            setStatusMessage(
+                "Serialized rows can stage without asset codes now. Import stays blocked until the code-generation slice lands.",
+            )
+            return
+        }
 
         try {
             setImportingRows(true)
@@ -533,6 +545,14 @@ export function useAssetImportState({
     const canStageCurrentMode = inspection
         ? canStageAssetImportMode(currentImportMode, inspection.headers, mappingDraft)
         : false
+    const importBlockReason =
+        activeBatchDetail?.summary.importType === "quantity"
+            ? "Quantity batch commit into stock lands in the next slice."
+            : activeBatchDetail?.rows.some((row) => row.status === "valid" && !row.assetCode)
+              ? "Serialized batch review is ready, but import still waits for generated asset codes."
+              : null
+    const canImportCurrentBatch =
+        Boolean(activeBatchDetail?.summary.validRows) && !importBlockReason
 
     return {
         isWizardOpen,
@@ -556,6 +576,8 @@ export function useAssetImportState({
         selectedRow,
         reviewFilter,
         filteredRows,
+        importBlockReason,
+        canImportCurrentBatch,
         selectedFilePath,
         currentImportMode,
         selectedImportMode,

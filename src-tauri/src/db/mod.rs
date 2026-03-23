@@ -489,6 +489,27 @@ fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
         .map_err(|err| format!("failed to add asset_import_batches.import_type column: {err}"))?;
     }
 
+    let mut row_stmt = conn
+        .prepare("PRAGMA table_info(asset_import_rows)")
+        .map_err(|err| format!("failed to inspect asset_import_rows table: {err}"))?;
+    let existing_row_columns = row_stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|err| format!("failed to read asset_import_rows columns: {err}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("failed to collect asset_import_rows columns: {err}"))?;
+
+    for (column_name, column_type) in [("brand", "TEXT"), ("quantity", "TEXT"), ("warehouse", "TEXT")] {
+        if existing_row_columns.iter().any(|name| name == column_name) {
+            continue;
+        }
+
+        conn.execute(
+            &format!("ALTER TABLE asset_import_rows ADD COLUMN {column_name} {column_type}"),
+            [],
+        )
+        .map_err(|err| format!("failed to add asset_import_rows.{column_name} column: {err}"))?;
+    }
+
     for (category_code, category_name, tracking_mode, prefix_code, qr_required) in [
         ("laptop", "Laptop", "serialized", Some("ASWVNLAP"), 1_i64),
         ("monitor", "Monitor", "serialized", Some("ASWVNMON"), 1_i64),
