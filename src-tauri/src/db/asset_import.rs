@@ -12,7 +12,10 @@ use serde_json::json;
 use tauri::AppHandle;
 
 use super::asset::{self, AssetRecord, AssetUpsertInput};
-use super::{audit, auth, humanize_sqlite_error, normalize_optional_text, open_runtime_connection};
+use super::{
+    audit, auth, humanize_sqlite_error, normalize_optional_text, open_runtime_connection,
+    require_text,
+};
 
 const BATCH_STATUS_PENDING_REVIEW: &str = "pending_review";
 const BATCH_STATUS_COMPLETED: &str = "completed";
@@ -768,8 +771,10 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
               asset_code,
               asset_type,
               display_name,
+              brand,
               model,
               serial_number,
+              warehouse,
               notes
             FROM asset_import_rows
             WHERE batch_id = ? AND status = ?
@@ -788,6 +793,8 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
                 row.get::<_, Option<String>>(4)?,
                 row.get::<_, Option<String>>(5)?,
                 row.get::<_, Option<String>>(6)?,
+                row.get::<_, Option<String>>(7)?,
+                row.get::<_, Option<String>>(8)?,
             ))
         })
         .map_err(|err| format!("failed to query valid asset import rows: {err}"))?
@@ -796,27 +803,46 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
 
     drop(stmt);
 
-    if rows
-        .iter()
-        .any(|(_, asset_code, _, _, _, _, _)| asset_code.as_deref().is_none())
-    {
-        return Err(
-            "Serialized asset code generation lands in the next slice. Review can proceed, but import stays blocked until codes are assigned.".to_string(),
-        );
-    }
-
     let mut imported_row_ids = Vec::new();
     let mut imported_asset_codes = Vec::new();
 
-    for (row_id, asset_code, asset_type, display_name, model, serial_number, notes) in rows {
+    for (row_id, asset_code, asset_type, display_name, brand, model, serial_number, warehouse, notes) in rows {
+        let category_value = require_text(asset_type.unwrap_or_default(), "assetType")?;
+        let category = asset::find_active_asset_category_by_name_or_code_tx(
+            &tx,
+            category_value.as_str(),
+            "serialized",
+        )?
+        .ok_or_else(|| {
+            format!(
+                "serialized category '{}' was not found or is inactive",
+                category_value
+            )
+        })?;
+        let asset_code = match asset_code {
+            Some(existing) => existing,
+            None => {
+                let prefix = category.prefix_code.clone().ok_or_else(|| {
+                    format!(
+                        "serialized category '{}' is missing prefix_code",
+                        category.category_name
+                    )
+                })?;
+                asset::generate_next_asset_code_for_prefix_tx(&tx, prefix.as_str())?
+            }
+        };
+
         let record = asset::create_asset_tx(
             &tx,
             &AssetUpsertInput {
-                asset_code: asset_code.unwrap_or_default(),
-                asset_type: asset_type.unwrap_or_default(),
+                asset_code,
+                asset_type: category.category_name.clone(),
                 display_name: display_name.unwrap_or_default(),
+                category_id: Some(category.id),
+                brand,
                 model,
                 serial_number,
+                warehouse,
                 notes,
             },
         )?;
@@ -825,13 +851,14 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
             r#"
             UPDATE asset_import_rows
             SET
+              asset_code = ?,
               status = ?,
               imported_asset_id = ?,
               validation_errors_json = '[]',
               updated_at = datetime('now')
             WHERE id = ?
             "#,
-            params![ROW_STATUS_IMPORTED, record.id, row_id],
+            params![record.asset_code.as_str(), ROW_STATUS_IMPORTED, record.id, row_id],
         )
         .map_err(humanize_sqlite_error)?;
 
@@ -1596,6 +1623,8 @@ fn generate_batch_key_tx(tx: &Transaction<'_>) -> Result<String, String> {
 fn revalidate_batch_tx(tx: &Transaction<'_>, batch_id: i64) -> Result<(), String> {
     let rows = load_batch_row_states_tx(tx, batch_id)?;
     let existing_asset_codes = load_existing_asset_codes_tx(tx)?;
+    let serialized_categories = load_active_category_keys_by_mode_tx(tx, "serialized")?;
+    let quantity_categories = load_active_category_keys_by_mode_tx(tx, "quantity")?;
 
     let mut duplicate_counts: HashMap<String, usize> = HashMap::new();
     for row in rows
@@ -1622,8 +1651,13 @@ fn revalidate_batch_tx(tx: &Transaction<'_>, batch_id: i64) -> Result<(), String
             continue;
         }
 
-        let validation_errors =
-            validate_staged_row(row, &duplicate_asset_codes, &existing_asset_codes);
+        let validation_errors = validate_staged_row(
+            row,
+            &duplicate_asset_codes,
+            &existing_asset_codes,
+            &serialized_categories,
+            &quantity_categories,
+        );
         let next_status = if row.status == ROW_STATUS_SKIPPED {
             ROW_STATUS_SKIPPED
         } else if validation_errors.is_empty() {
@@ -1653,6 +1687,8 @@ fn validate_staged_row(
     row: &AssetImportRowState,
     duplicate_asset_codes: &HashSet<String>,
     existing_asset_codes: &HashSet<String>,
+    serialized_categories: &HashSet<String>,
+    quantity_categories: &HashSet<String>,
 ) -> Vec<String> {
     let mut errors = Vec::new();
     if row.asset_type.is_none() {
@@ -1660,6 +1696,21 @@ fn validate_staged_row(
     }
     if row.display_name.is_none() {
         errors.push("displayName is required".to_string());
+    }
+    if let Some(asset_type) = row.asset_type.as_deref() {
+        let normalized = normalize_header_key(asset_type);
+        match row.import_type {
+            AssetImportMode::Serialized => {
+                if !serialized_categories.contains(normalized.as_str()) {
+                    errors.push("assetType is not an active serialized category".to_string());
+                }
+            }
+            AssetImportMode::Quantity => {
+                if !quantity_categories.contains(normalized.as_str()) {
+                    errors.push("assetType is not an active quantity category".to_string());
+                }
+            }
+        }
     }
     if row.import_type == AssetImportMode::Quantity {
         match row.quantity.as_deref() {
@@ -1679,6 +1730,35 @@ fn validate_staged_row(
         }
     }
     errors
+}
+
+fn load_active_category_keys_by_mode_tx(
+    tx: &Transaction<'_>,
+    tracking_mode: &str,
+) -> Result<HashSet<String>, String> {
+    let mut stmt = tx
+        .prepare(
+            r#"
+            SELECT category_code, category_name
+            FROM asset_categories
+            WHERE is_active = 1 AND tracking_mode = ?
+            "#,
+        )
+        .map_err(|err| format!("failed to prepare active asset category query: {err}"))?;
+    let rows = stmt
+        .query_map(params![tracking_mode], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|err| format!("failed to query active asset categories for mode '{tracking_mode}': {err}"))?;
+
+    let mut items = HashSet::new();
+    for row in rows {
+        let (category_code, category_name) = row
+            .map_err(|err| format!("failed to read asset category row for mode '{tracking_mode}': {err}"))?;
+        items.insert(normalize_header_key(category_code.as_str()));
+        items.insert(normalize_header_key(category_name.as_str()));
+    }
+    Ok(items)
 }
 
 fn load_existing_asset_codes_tx(tx: &Transaction<'_>) -> Result<HashSet<String>, String> {
@@ -2341,6 +2421,57 @@ mod tests {
     }
 
     #[test]
+    fn create_batch_marks_unknown_serialized_category_as_error() {
+        let mut conn = open_test_connection();
+
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            sample_batch(
+                AssetImportMode::Serialized,
+                vec![row_without_asset_code(2, "Unknown Category", "Dell Latitude 7440")],
+            ),
+        )
+        .expect("create serialized batch with unknown category");
+
+        assert_eq!(batch.summary.valid_rows, 0);
+        assert_eq!(batch.summary.error_rows, 1);
+        assert!(
+            batch.rows[0]
+                .validation_errors
+                .iter()
+                .any(|item| item == "assetType is not an active serialized category")
+        );
+    }
+
+    #[test]
+    fn create_batch_marks_unknown_quantity_category_as_error() {
+        let mut conn = open_test_connection();
+
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            sample_batch(
+                AssetImportMode::Quantity,
+                vec![quantity_row_without_asset_code(
+                    2,
+                    "Unknown Category",
+                    "Logitech M650",
+                    "10",
+                )],
+            ),
+        )
+        .expect("create quantity batch with unknown category");
+
+        assert_eq!(batch.summary.valid_rows, 0);
+        assert_eq!(batch.summary.error_rows, 1);
+        assert!(
+            batch.rows[0]
+                .validation_errors
+                .iter()
+                .any(|item| item == "assetType is not an active quantity category")
+        );
+    }
+
+    #[test]
     fn quantity_rows_revalidate_after_inline_quantity_fix() {
         let mut conn = open_test_connection();
 
@@ -2445,7 +2576,7 @@ mod tests {
     }
 
     #[test]
-    fn import_valid_rows_rejects_serialized_batches_without_asset_codes_until_generation_slice() {
+    fn import_valid_rows_generates_serialized_asset_codes_from_category_prefix() {
         let mut conn = open_test_connection();
 
         let batch = create_asset_import_batch_seed_conn(
@@ -2457,10 +2588,38 @@ mod tests {
         )
         .expect("create serialized batch without asset code");
 
-        let error = import_asset_import_batch_valid_rows_conn(&mut conn, batch.summary.id)
-            .expect_err("serialized batch import should stay blocked until codes exist");
+        let result = import_asset_import_batch_valid_rows_conn(&mut conn, batch.summary.id)
+            .expect("import serialized rows with generated asset code");
 
-        assert!(error.contains("Serialized asset code generation lands in the next slice"));
+        assert_eq!(result.imported_count, 1);
+        assert_eq!(result.imported_asset_codes, vec!["ASWVNLAP0001".to_string()]);
+
+        let batch_after = load_asset_import_batch_detail_conn(&conn, batch.summary.id)
+            .expect("reload serialized batch after import");
+        assert_eq!(batch_after.summary.imported_rows, 1);
+        assert_eq!(batch_after.rows[0].asset_code.as_deref(), Some("ASWVNLAP0001"));
+        assert_eq!(batch_after.rows[0].status, "imported");
+    }
+
+    #[test]
+    fn import_valid_rows_increments_serialized_asset_code_sequence_per_prefix() {
+        let mut conn = open_test_connection();
+        seed_asset(&conn, "ASWVNLAP0007");
+
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            sample_batch(
+                AssetImportMode::Serialized,
+                vec![row_without_asset_code(2, "Laptop", "Dell Latitude 7440")],
+            ),
+        )
+        .expect("create serialized batch without asset code");
+
+        let result = import_asset_import_batch_valid_rows_conn(&mut conn, batch.summary.id)
+            .expect("import serialized rows with incremented asset code");
+
+        assert_eq!(result.imported_count, 1);
+        assert_eq!(result.imported_asset_codes, vec!["ASWVNLAP0008".to_string()]);
     }
 
     #[test]
