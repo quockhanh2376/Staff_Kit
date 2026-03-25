@@ -759,113 +759,218 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
     revalidate_batch_tx(&tx, batch_id)?;
     let summary = load_batch_summary_tx(&tx, batch_id)?;
 
-    if summary.import_type == AssetImportMode::Quantity {
-        return Err(
-            "Quantity batch commit into stock lands in the next slice. Review is supported now, but official stock writes stay blocked.".to_string(),
-        );
-    }
-
-    let mut stmt = tx
-        .prepare(
-            r#"
-            SELECT
-              id,
-              asset_code,
-              asset_type,
-              display_name,
-              brand,
-              model,
-              serial_number,
-              warehouse,
-              notes
-            FROM asset_import_rows
-            WHERE batch_id = ? AND status = ?
-            ORDER BY row_number ASC, id ASC
-            "#,
-        )
-        .map_err(|err| format!("failed to prepare valid asset import row query: {err}"))?;
-
-    let rows = stmt
-        .query_map(params![batch_id, ROW_STATUS_VALID], |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, Option<String>>(1)?,
-                row.get::<_, Option<String>>(2)?,
-                row.get::<_, Option<String>>(3)?,
-                row.get::<_, Option<String>>(4)?,
-                row.get::<_, Option<String>>(5)?,
-                row.get::<_, Option<String>>(6)?,
-                row.get::<_, Option<String>>(7)?,
-                row.get::<_, Option<String>>(8)?,
-            ))
-        })
-        .map_err(|err| format!("failed to query valid asset import rows: {err}"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|err| format!("failed to read valid asset import rows: {err}"))?;
-
-    drop(stmt);
-
     let mut imported_row_ids = Vec::new();
     let mut imported_asset_codes = Vec::new();
 
-    for (row_id, asset_code, asset_type, display_name, brand, model, serial_number, warehouse, notes) in rows {
-        let category_value = require_text(asset_type.unwrap_or_default(), "assetType")?;
-        let category = asset::find_active_asset_category_by_name_or_code_tx(
-            &tx,
-            category_value.as_str(),
-            "serialized",
-        )?
-        .ok_or_else(|| {
-            format!(
-                "serialized category '{}' was not found or is inactive",
-                category_value
-            )
-        })?;
-        let asset_code = match asset_code {
-            Some(existing) => existing,
-            None => {
-                let prefix = category.prefix_code.clone().ok_or_else(|| {
+    match summary.import_type {
+        AssetImportMode::Quantity => {
+            let mut stmt = tx
+                .prepare(
+                    r#"
+                    SELECT
+                      id,
+                      asset_type,
+                      display_name,
+                      brand,
+                      model,
+                      quantity,
+                      warehouse,
+                      notes
+                    FROM asset_import_rows
+                    WHERE batch_id = ? AND status = ?
+                    ORDER BY row_number ASC, id ASC
+                    "#,
+                )
+                .map_err(|err| format!("failed to prepare valid quantity import row query: {err}"))?;
+
+            let rows = stmt
+                .query_map(params![batch_id, ROW_STATUS_VALID], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                        row.get::<_, Option<String>>(6)?,
+                        row.get::<_, Option<String>>(7)?,
+                    ))
+                })
+                .map_err(|err| format!("failed to query valid quantity import rows: {err}"))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|err| format!("failed to read valid quantity import rows: {err}"))?;
+
+            drop(stmt);
+
+            for (row_id, asset_type, display_name, brand, model, quantity, warehouse, notes) in rows {
+                let category_value = require_text(asset_type.unwrap_or_default(), "assetType")?;
+                let category = asset::find_active_asset_category_by_name_or_code_tx(
+                    &tx,
+                    category_value.as_str(),
+                    "quantity",
+                )?
+                .ok_or_else(|| {
                     format!(
-                        "serialized category '{}' is missing prefix_code",
-                        category.category_name
+                        "quantity category '{}' was not found or is inactive",
+                        category_value
                     )
                 })?;
-                asset::generate_next_asset_code_for_prefix_tx(&tx, prefix.as_str())?
+                let item_name = require_text(display_name.unwrap_or_default(), "displayName")?;
+                let quantity_on_hand = quantity
+                    .ok_or_else(|| format!("quantity is required for row {row_id}"))?
+                    .parse::<i64>()
+                    .map_err(|err| format!("failed to parse quantity for row {row_id}: {err}"))?;
+
+                if quantity_on_hand <= 0 {
+                    return Err(format!("quantity must be a positive integer for row {row_id}"));
+                }
+
+                tx.execute(
+                    r#"
+                    INSERT INTO stock_items(
+                      category_id,
+                      item_name,
+                      brand,
+                      model,
+                      warehouse,
+                      quantity_on_hand,
+                      assigned_quantity,
+                      note,
+                      created_at,
+                      updated_at
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, 0, ?, datetime('now'), datetime('now'))
+                    "#,
+                    params![
+                        category.id,
+                        item_name.as_str(),
+                        brand.as_deref(),
+                        model.as_deref(),
+                        warehouse.as_deref(),
+                        quantity_on_hand,
+                        notes.as_deref(),
+                    ],
+                )
+                .map_err(humanize_sqlite_error)?;
+
+                tx.execute(
+                    r#"
+                    UPDATE asset_import_rows
+                    SET
+                      status = ?,
+                      imported_asset_id = NULL,
+                      validation_errors_json = '[]',
+                      updated_at = datetime('now')
+                    WHERE id = ?
+                    "#,
+                    params![ROW_STATUS_IMPORTED, row_id],
+                )
+                .map_err(humanize_sqlite_error)?;
+
+                imported_row_ids.push(row_id);
             }
-        };
+        }
+        AssetImportMode::Serialized => {
+            let mut stmt = tx
+                .prepare(
+                    r#"
+                    SELECT
+                      id,
+                      asset_code,
+                      asset_type,
+                      display_name,
+                      brand,
+                      model,
+                      serial_number,
+                      warehouse,
+                      notes
+                    FROM asset_import_rows
+                    WHERE batch_id = ? AND status = ?
+                    ORDER BY row_number ASC, id ASC
+                    "#,
+                )
+                .map_err(|err| format!("failed to prepare valid asset import row query: {err}"))?;
 
-        let record = asset::create_asset_tx(
-            &tx,
-            &AssetUpsertInput {
-                asset_code,
-                asset_type: category.category_name.clone(),
-                display_name: display_name.unwrap_or_default(),
-                category_id: Some(category.id),
-                brand,
-                model,
-                serial_number,
-                warehouse,
-                notes,
-            },
-        )?;
+            let rows = stmt
+                .query_map(params![batch_id, ROW_STATUS_VALID], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                        row.get::<_, Option<String>>(6)?,
+                        row.get::<_, Option<String>>(7)?,
+                        row.get::<_, Option<String>>(8)?,
+                    ))
+                })
+                .map_err(|err| format!("failed to query valid asset import rows: {err}"))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|err| format!("failed to read valid asset import rows: {err}"))?;
 
-        tx.execute(
-            r#"
-            UPDATE asset_import_rows
-            SET
-              asset_code = ?,
-              status = ?,
-              imported_asset_id = ?,
-              validation_errors_json = '[]',
-              updated_at = datetime('now')
-            WHERE id = ?
-            "#,
-            params![record.asset_code.as_str(), ROW_STATUS_IMPORTED, record.id, row_id],
-        )
-        .map_err(humanize_sqlite_error)?;
+            drop(stmt);
 
-        imported_row_ids.push(row_id);
-        imported_asset_codes.push(record.asset_code);
+            for (row_id, asset_code, asset_type, display_name, brand, model, serial_number, warehouse, notes) in rows {
+                let category_value = require_text(asset_type.unwrap_or_default(), "assetType")?;
+                let category = asset::find_active_asset_category_by_name_or_code_tx(
+                    &tx,
+                    category_value.as_str(),
+                    "serialized",
+                )?
+                .ok_or_else(|| {
+                    format!(
+                        "serialized category '{}' was not found or is inactive",
+                        category_value
+                    )
+                })?;
+                let asset_code = match asset_code {
+                    Some(existing) => existing,
+                    None => {
+                        let prefix = category.prefix_code.clone().ok_or_else(|| {
+                            format!(
+                                "serialized category '{}' is missing prefix_code",
+                                category.category_name
+                            )
+                        })?;
+                        asset::generate_next_asset_code_for_prefix_tx(&tx, prefix.as_str())?
+                    }
+                };
+
+                let record = asset::create_asset_tx(
+                    &tx,
+                    &AssetUpsertInput {
+                        asset_code,
+                        asset_type: category.category_name.clone(),
+                        display_name: display_name.unwrap_or_default(),
+                        category_id: Some(category.id),
+                        brand,
+                        model,
+                        serial_number,
+                        warehouse,
+                        notes,
+                    },
+                )?;
+
+                tx.execute(
+                    r#"
+                    UPDATE asset_import_rows
+                    SET
+                      asset_code = ?,
+                      status = ?,
+                      imported_asset_id = ?,
+                      validation_errors_json = '[]',
+                      updated_at = datetime('now')
+                    WHERE id = ?
+                    "#,
+                    params![record.asset_code.as_str(), ROW_STATUS_IMPORTED, record.id, row_id],
+                )
+                .map_err(humanize_sqlite_error)?;
+
+                imported_row_ids.push(row_id);
+                imported_asset_codes.push(record.asset_code);
+            }
+        }
     }
 
     revalidate_batch_tx(&tx, batch_id)?;
@@ -2125,9 +2230,11 @@ mod tests {
 
     use super::{
         create_asset_import_batch_seed_conn, import_asset_import_batch_valid_rows_conn,
-        load_asset_import_batch_detail_conn, update_asset_import_row_conn,
+        load_asset_import_batch_detail_conn, parse_asset_import_source,
+        set_asset_import_row_skipped_conn, update_asset_import_row_conn,
         AssetImportBatchSeedInput, AssetImportFieldMapping, AssetImportMode,
-        AssetImportRawValue, AssetImportRowSeedInput, AssetImportRowUpdateInput,
+        AssetImportRawValue, AssetImportRowSeedInput, AssetImportRowSkipInput,
+        AssetImportRowUpdateInput,
     };
 
     fn open_test_connection() -> Connection {
@@ -2143,6 +2250,14 @@ mod tests {
             .expect("system clock should be after unix epoch")
             .as_nanos();
         std::env::temp_dir().join(format!("staff-kit-{test_name}-{unique}.sqlite3"))
+    }
+
+    fn temp_csv_path(test_name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("staff-kit-{test_name}-{unique}.csv"))
     }
 
     fn seed_asset(conn: &Connection, asset_code: &str) {
@@ -2695,7 +2810,7 @@ mod tests {
     }
 
     #[test]
-    fn import_valid_rows_rejects_quantity_batches_until_stock_commit_slice() {
+    fn import_valid_rows_commits_quantity_batch_into_stock_items() {
         let mut conn = open_test_connection();
 
         let batch = create_asset_import_batch_seed_conn(
@@ -2712,10 +2827,301 @@ mod tests {
         )
         .expect("create quantity batch");
 
-        let error = import_asset_import_batch_valid_rows_conn(&mut conn, batch.summary.id)
-            .expect_err("quantity batch import should stay blocked");
+        let result = import_asset_import_batch_valid_rows_conn(&mut conn, batch.summary.id)
+            .expect("import quantity rows into stock_items");
 
-        assert!(error.contains("Quantity batch commit into stock lands in the next slice"));
+        assert_eq!(result.imported_count, 1);
+        assert_eq!(result.imported_row_ids.len(), 1);
+        assert!(result.imported_asset_codes.is_empty());
+        assert_eq!(result.remaining_error_rows, 0);
+        assert_eq!(result.batch_status, "completed");
+
+        let stock_item: (
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            i64,
+            i64,
+            Option<String>,
+        ) = conn
+            .query_row(
+                r#"
+                SELECT
+                  si.item_name,
+                  ac.category_name,
+                  si.brand,
+                  si.model,
+                  si.warehouse,
+                  si.quantity_on_hand,
+                  si.assigned_quantity,
+                  si.note
+                FROM stock_items si
+                INNER JOIN asset_categories ac ON ac.id = si.category_id
+                WHERE ac.category_code = 'mouse'
+                "#,
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                    ))
+                },
+            )
+            .expect("load imported stock item");
+        assert_eq!(stock_item.0, "Logitech M650");
+        assert_eq!(stock_item.1, "Mouse");
+        assert_eq!(stock_item.2.as_deref(), Some("Logitech"));
+        assert_eq!(stock_item.3, None);
+        assert_eq!(stock_item.4.as_deref(), Some("HCM"));
+        assert_eq!(stock_item.5, 10);
+        assert_eq!(stock_item.6, 0);
+        assert_eq!(stock_item.7.as_deref(), Some("Initial import"));
+
+        let batch_after = load_asset_import_batch_detail_conn(&conn, batch.summary.id)
+            .expect("reload quantity batch after import");
+        assert_eq!(batch_after.summary.imported_rows, 1);
+        assert_eq!(batch_after.summary.error_rows, 0);
+        assert_eq!(batch_after.summary.status, "completed");
+        assert_eq!(batch_after.rows[0].status, "imported");
+        assert!(batch_after.rows[0].validation_errors.is_empty());
+        assert_eq!(batch_after.rows[0].imported_asset_id, None);
+    }
+
+    #[test]
+    fn import_valid_rows_commits_only_valid_quantity_rows_and_keeps_errors_staged() {
+        let mut conn = open_test_connection();
+
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            sample_batch(
+                AssetImportMode::Quantity,
+                vec![
+                    quantity_row_without_asset_code(2, "Mouse", "Logitech M650", "10"),
+                    quantity_row_without_asset_code(3, "Mouse", "Logitech M650", "0"),
+                ],
+            ),
+        )
+        .expect("create mixed quantity batch");
+
+        assert_eq!(batch.summary.valid_rows, 1);
+        assert_eq!(batch.summary.error_rows, 1);
+
+        let result = import_asset_import_batch_valid_rows_conn(&mut conn, batch.summary.id)
+            .expect("import valid quantity rows");
+
+        assert_eq!(result.imported_count, 1);
+        assert_eq!(result.imported_row_ids.len(), 1);
+        assert!(result.imported_asset_codes.is_empty());
+        assert_eq!(result.remaining_error_rows, 1);
+        assert_eq!(result.batch_status, "pending_review");
+
+        let stock_item_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM stock_items", [], |row| row.get(0))
+            .expect("count stock items");
+        assert_eq!(stock_item_count, 1);
+
+        let batch_after = load_asset_import_batch_detail_conn(&conn, batch.summary.id)
+            .expect("reload mixed quantity batch after import");
+        assert_eq!(batch_after.summary.imported_rows, 1);
+        assert_eq!(batch_after.summary.error_rows, 1);
+        assert_eq!(batch_after.summary.status, "pending_review");
+        assert_eq!(
+            batch_after
+                .rows
+                .iter()
+                .filter(|item| item.status == "imported")
+                .count(),
+            1
+        );
+        assert_eq!(
+            batch_after
+                .rows
+                .iter()
+                .filter(|item| item.status == "error")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn partially_imported_quantity_batch_can_be_reopened_with_imported_and_error_rows() {
+        let db_path = temp_db_path("asset-import-quantity-partial-reopen");
+
+        let batch_id = {
+            let mut conn = Connection::open(&db_path).expect("open sqlite file");
+            configure_connection(&conn).expect("configure sqlite pragmas");
+            apply_migrations(&conn).expect("apply migrations");
+
+            let batch = create_asset_import_batch_seed_conn(
+                &mut conn,
+                sample_batch(
+                    AssetImportMode::Quantity,
+                    vec![
+                        quantity_row_without_asset_code(2, "Mouse", "Logitech M650", "10"),
+                        quantity_row_without_asset_code(3, "Mouse", "Logitech M650", "0"),
+                    ],
+                ),
+            )
+            .expect("create mixed quantity batch");
+
+            let result = import_asset_import_batch_valid_rows_conn(&mut conn, batch.summary.id)
+                .expect("import only valid quantity rows");
+            assert_eq!(result.imported_count, 1);
+
+            batch.summary.id
+        };
+
+        let conn = Connection::open(&db_path).expect("reopen sqlite file");
+        configure_connection(&conn).expect("configure sqlite pragmas");
+        apply_migrations(&conn).expect("apply migrations");
+
+        let reloaded = load_asset_import_batch_detail_conn(&conn, batch_id)
+            .expect("reload partially imported quantity batch");
+        assert_eq!(reloaded.summary.import_type, AssetImportMode::Quantity);
+        assert_eq!(reloaded.summary.imported_rows, 1);
+        assert_eq!(reloaded.summary.error_rows, 1);
+        assert_eq!(reloaded.summary.status, "pending_review");
+        assert_eq!(
+            reloaded
+                .rows
+                .iter()
+                .filter(|item| item.status == "imported")
+                .count(),
+            1
+        );
+        assert_eq!(
+            reloaded
+                .rows
+                .iter()
+                .filter(|item| item.status == "error")
+                .count(),
+            1
+        );
+
+        let stock_item_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM stock_items", [], |row| row.get(0))
+            .expect("count stock items after reopen");
+        assert_eq!(stock_item_count, 1);
+
+        let _ = fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn quantity_csv_file_can_stage_and_commit_into_stock_items() {
+        let csv_path = temp_csv_path("asset-import-quantity-smoke");
+        fs::write(
+            &csv_path,
+            concat!(
+                "Asset Type,Display Name,Brand,Quantity,Warehouse,Notes\n",
+                "Mouse,Logitech M650,Logitech,8,HCM,CSV smoke\n",
+            ),
+        )
+        .expect("write quantity csv fixture");
+
+        let parsed = parse_asset_import_source(csv_path.as_path(), AssetImportMode::Quantity, None, None)
+            .expect("parse quantity csv source");
+        assert_eq!(parsed.source_file_type, "csv");
+        assert_eq!(parsed.rows.len(), 1);
+        assert_eq!(parsed.auto_mapping.quantity.as_deref(), Some("Quantity"));
+
+        let mut conn = open_test_connection();
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            AssetImportBatchSeedInput {
+                import_type: AssetImportMode::Quantity,
+                source_file_name: parsed.source_file_name,
+                source_file_path: parsed.source_file_path,
+                source_file_type: parsed.source_file_type,
+                sheet_name: parsed.sheet_name,
+                header_row: parsed.header_row,
+                headers: parsed.headers,
+                mapping: parsed.auto_mapping,
+                rows: parsed.rows,
+            },
+        )
+        .expect("create quantity batch from csv");
+        assert_eq!(batch.summary.valid_rows, 1);
+
+        let result = import_asset_import_batch_valid_rows_conn(&mut conn, batch.summary.id)
+            .expect("import quantity csv rows");
+        assert_eq!(result.imported_count, 1);
+
+        let stock_item: (String, i64, Option<String>) = conn
+            .query_row(
+                "SELECT item_name, quantity_on_hand, note FROM stock_items",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("load stock item imported from csv");
+        assert_eq!(stock_item.0, "Logitech M650");
+        assert_eq!(stock_item.1, 8);
+        assert_eq!(stock_item.2.as_deref(), Some("CSV smoke"));
+
+        let _ = fs::remove_file(csv_path);
+    }
+
+    #[test]
+    fn partially_imported_quantity_batch_keeps_imported_rows_read_only_after_reopen() {
+        let db_path = temp_db_path("asset-import-quantity-read-only-reopen");
+
+        let imported_row_id = {
+            let mut conn = Connection::open(&db_path).expect("open sqlite file");
+            configure_connection(&conn).expect("configure sqlite pragmas");
+            apply_migrations(&conn).expect("apply migrations");
+
+            let batch = create_asset_import_batch_seed_conn(
+                &mut conn,
+                sample_batch(
+                    AssetImportMode::Quantity,
+                    vec![
+                        quantity_row_without_asset_code(2, "Mouse", "Logitech M650", "10"),
+                        quantity_row_without_asset_code(3, "Mouse", "Logitech M650", "0"),
+                    ],
+                ),
+            )
+            .expect("create mixed quantity batch");
+
+            let result = import_asset_import_batch_valid_rows_conn(&mut conn, batch.summary.id)
+                .expect("import only valid quantity rows");
+            assert_eq!(result.imported_row_ids.len(), 1);
+
+            result.imported_row_ids[0]
+        };
+
+        let mut conn = Connection::open(&db_path).expect("reopen sqlite file");
+        configure_connection(&conn).expect("configure sqlite pragmas");
+        apply_migrations(&conn).expect("apply migrations");
+
+        let update_error = update_asset_import_row_conn(
+            &mut conn,
+            AssetImportRowUpdateInput {
+                row_id: imported_row_id,
+                field_key: "quantity".to_string(),
+                value: Some("12".to_string()),
+            },
+        )
+        .expect_err("imported row should stay read-only after reopen");
+        assert_eq!(update_error, "imported rows are read-only");
+
+        let skip_error = set_asset_import_row_skipped_conn(
+            &mut conn,
+            AssetImportRowSkipInput {
+                row_id: imported_row_id,
+                skipped: true,
+            },
+        )
+        .expect_err("imported row skip should stay read-only after reopen");
+        assert_eq!(skip_error, "imported rows are read-only");
+
+        let _ = fs::remove_file(db_path);
     }
 
     #[test]

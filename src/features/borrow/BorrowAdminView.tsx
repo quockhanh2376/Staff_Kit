@@ -45,8 +45,8 @@ export function BorrowAdminView({ auth, borrow }: BorrowAdminViewProps) {
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.4fr),360px]">
         <div className="rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-4">
           <div className="text-sm font-semibold text-[var(--text-primary)]">LAN QR Flow</div>
-          <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr),280px] xl:items-start">
-            <div className="order-2 space-y-4 xl:order-1">
+          <div className="mt-4 flex flex-col gap-4 lg:flex-row lg:items-start">
+            <div className="order-2 space-y-4 lg:order-1 lg:flex-1">
               <p className="text-xs leading-5 text-[var(--text-secondary)]">
                 Keep Staff Kit open. The local LAN server is available while the app is running. If you changed the port, restart the app before testing the new QR URL.
               </p>
@@ -67,7 +67,7 @@ export function BorrowAdminView({ auth, borrow }: BorrowAdminViewProps) {
               </div>
             </div>
 
-            <div className="order-1 rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/25 p-3 xl:order-2 xl:self-start">
+            <div className="order-1 rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/25 p-3 lg:order-2 lg:w-[280px] lg:shrink-0 lg:self-start">
               <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
                 QR Preview
               </div>

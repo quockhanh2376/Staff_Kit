@@ -24,6 +24,11 @@ import {
     type AssetImportWizardFieldKey,
     type AssetImportWizardMapping,
 } from "./assetImportModeConfig"
+import {
+    buildAssetImportDeleteMessage,
+    buildAssetImportSuccessMessage,
+} from "./assetImportMessages"
+import { syncAssetImportWizardOnOpen } from "./assetImportOpenBehavior"
 
 type UseAssetImportStateOptions = {
     dbReady: boolean
@@ -162,17 +167,6 @@ export function useAssetImportState({
         setSelectedImportMode(DEFAULT_ASSET_IMPORT_MODE)
     }, [])
 
-    const openImportWizard = useCallback(() => {
-        setPanelMode("import")
-        setWizardOpen(true)
-        setStatusMessage("")
-        if (!activeBatchDetail) {
-            setCurrentStep("choose_file")
-            setSelectedImportMode(DEFAULT_ASSET_IMPORT_MODE)
-        }
-        void loadBatchSummaries()
-    }, [activeBatchDetail, loadBatchSummaries])
-
     const openManualAssetPanel = useCallback(() => {
         setPanelMode("manual")
         setWizardOpen(true)
@@ -286,6 +280,24 @@ export function useAssetImportState({
             setRefreshingBatch(false)
         }
     }, [activeBatchDetail, setGlobalError])
+
+    const openImportWizard = useCallback(() => {
+        setPanelMode("import")
+        setWizardOpen(true)
+        setStatusMessage("")
+        void syncAssetImportWizardOnOpen({
+            hasActiveBatchDetail: Boolean(activeBatchDetail),
+            openFreshWizard: () => {
+                setCurrentStep("choose_file")
+                setSelectedImportMode(DEFAULT_ASSET_IMPORT_MODE)
+            },
+            resetReviewFilterToAll: () => {
+                setReviewFilter("all")
+            },
+            refreshActiveBatch,
+            loadBatchSummaries,
+        })
+    }, [activeBatchDetail, loadBatchSummaries, refreshActiveBatch])
 
     const handleStageBatch = useCallback(async () => {
         if (!selectedFilePath) {
@@ -428,18 +440,12 @@ export function useAssetImportState({
 
     const handleImportValidRows = useCallback(async () => {
         if (!activeBatchDetail) return
-        if (activeBatchDetail.summary.importType === "quantity") {
-            setStatusMessage(
-                "Quantity batch commit into stock lands in the next slice. Review is supported now, but official stock writes stay blocked.",
-            )
-            return
-        }
 
         try {
             setImportingRows(true)
             const result = await staffApi.importAssetImportBatchValidRows(activeBatchDetail.summary.id)
             setStatusMessage(
-                `Imported ${result.importedCount} valid row(s). ${result.remainingErrorRows} row(s) still need review.`,
+                buildAssetImportSuccessMessage(activeBatchDetail.summary.importType, result),
             )
             await refreshActiveBatch()
             await loadBatchSummaries()
@@ -455,7 +461,10 @@ export function useAssetImportState({
         if (!activeBatchDetail) return
 
         const confirmed = window.confirm(
-            `Delete staged batch ${activeBatchDetail.summary.batchKey}? Imported rows already committed into assets will be kept.`,
+            buildAssetImportDeleteMessage(
+                activeBatchDetail.summary.batchKey,
+                activeBatchDetail.summary.importType,
+            ),
         )
         if (!confirmed) return
 
@@ -539,10 +548,7 @@ export function useAssetImportState({
     const canStageCurrentMode = inspection
         ? canStageAssetImportMode(currentImportMode, inspection.headers, mappingDraft)
         : false
-    const importBlockReason =
-        activeBatchDetail?.summary.importType === "quantity"
-            ? "Quantity batch commit into stock lands in the next slice."
-            : null
+    const importBlockReason = null
     const canImportCurrentBatch =
         Boolean(activeBatchDetail?.summary.validRows) && !importBlockReason
 
