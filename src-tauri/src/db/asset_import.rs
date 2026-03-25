@@ -2230,9 +2230,11 @@ mod tests {
 
     use super::{
         create_asset_import_batch_seed_conn, import_asset_import_batch_valid_rows_conn,
-        load_asset_import_batch_detail_conn, update_asset_import_row_conn,
+        load_asset_import_batch_detail_conn, parse_asset_import_source,
+        set_asset_import_row_skipped_conn, update_asset_import_row_conn,
         AssetImportBatchSeedInput, AssetImportFieldMapping, AssetImportMode,
-        AssetImportRawValue, AssetImportRowSeedInput, AssetImportRowUpdateInput,
+        AssetImportRawValue, AssetImportRowSeedInput, AssetImportRowSkipInput,
+        AssetImportRowUpdateInput,
     };
 
     fn open_test_connection() -> Connection {
@@ -2248,6 +2250,14 @@ mod tests {
             .expect("system clock should be after unix epoch")
             .as_nanos();
         std::env::temp_dir().join(format!("staff-kit-{test_name}-{unique}.sqlite3"))
+    }
+
+    fn temp_csv_path(test_name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("staff-kit-{test_name}-{unique}.csv"))
     }
 
     fn seed_asset(conn: &Connection, asset_code: &str) {
@@ -2939,6 +2949,179 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn partially_imported_quantity_batch_can_be_reopened_with_imported_and_error_rows() {
+        let db_path = temp_db_path("asset-import-quantity-partial-reopen");
+
+        let batch_id = {
+            let mut conn = Connection::open(&db_path).expect("open sqlite file");
+            configure_connection(&conn).expect("configure sqlite pragmas");
+            apply_migrations(&conn).expect("apply migrations");
+
+            let batch = create_asset_import_batch_seed_conn(
+                &mut conn,
+                sample_batch(
+                    AssetImportMode::Quantity,
+                    vec![
+                        quantity_row_without_asset_code(2, "Mouse", "Logitech M650", "10"),
+                        quantity_row_without_asset_code(3, "Mouse", "Logitech M650", "0"),
+                    ],
+                ),
+            )
+            .expect("create mixed quantity batch");
+
+            let result = import_asset_import_batch_valid_rows_conn(&mut conn, batch.summary.id)
+                .expect("import only valid quantity rows");
+            assert_eq!(result.imported_count, 1);
+
+            batch.summary.id
+        };
+
+        let conn = Connection::open(&db_path).expect("reopen sqlite file");
+        configure_connection(&conn).expect("configure sqlite pragmas");
+        apply_migrations(&conn).expect("apply migrations");
+
+        let reloaded = load_asset_import_batch_detail_conn(&conn, batch_id)
+            .expect("reload partially imported quantity batch");
+        assert_eq!(reloaded.summary.import_type, AssetImportMode::Quantity);
+        assert_eq!(reloaded.summary.imported_rows, 1);
+        assert_eq!(reloaded.summary.error_rows, 1);
+        assert_eq!(reloaded.summary.status, "pending_review");
+        assert_eq!(
+            reloaded
+                .rows
+                .iter()
+                .filter(|item| item.status == "imported")
+                .count(),
+            1
+        );
+        assert_eq!(
+            reloaded
+                .rows
+                .iter()
+                .filter(|item| item.status == "error")
+                .count(),
+            1
+        );
+
+        let stock_item_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM stock_items", [], |row| row.get(0))
+            .expect("count stock items after reopen");
+        assert_eq!(stock_item_count, 1);
+
+        let _ = fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn quantity_csv_file_can_stage_and_commit_into_stock_items() {
+        let csv_path = temp_csv_path("asset-import-quantity-smoke");
+        fs::write(
+            &csv_path,
+            concat!(
+                "Asset Type,Display Name,Brand,Quantity,Warehouse,Notes\n",
+                "Mouse,Logitech M650,Logitech,8,HCM,CSV smoke\n",
+            ),
+        )
+        .expect("write quantity csv fixture");
+
+        let parsed = parse_asset_import_source(csv_path.as_path(), AssetImportMode::Quantity, None, None)
+            .expect("parse quantity csv source");
+        assert_eq!(parsed.source_file_type, "csv");
+        assert_eq!(parsed.rows.len(), 1);
+        assert_eq!(parsed.auto_mapping.quantity.as_deref(), Some("Quantity"));
+
+        let mut conn = open_test_connection();
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            AssetImportBatchSeedInput {
+                import_type: AssetImportMode::Quantity,
+                source_file_name: parsed.source_file_name,
+                source_file_path: parsed.source_file_path,
+                source_file_type: parsed.source_file_type,
+                sheet_name: parsed.sheet_name,
+                header_row: parsed.header_row,
+                headers: parsed.headers,
+                mapping: parsed.auto_mapping,
+                rows: parsed.rows,
+            },
+        )
+        .expect("create quantity batch from csv");
+        assert_eq!(batch.summary.valid_rows, 1);
+
+        let result = import_asset_import_batch_valid_rows_conn(&mut conn, batch.summary.id)
+            .expect("import quantity csv rows");
+        assert_eq!(result.imported_count, 1);
+
+        let stock_item: (String, i64, Option<String>) = conn
+            .query_row(
+                "SELECT item_name, quantity_on_hand, note FROM stock_items",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("load stock item imported from csv");
+        assert_eq!(stock_item.0, "Logitech M650");
+        assert_eq!(stock_item.1, 8);
+        assert_eq!(stock_item.2.as_deref(), Some("CSV smoke"));
+
+        let _ = fs::remove_file(csv_path);
+    }
+
+    #[test]
+    fn partially_imported_quantity_batch_keeps_imported_rows_read_only_after_reopen() {
+        let db_path = temp_db_path("asset-import-quantity-read-only-reopen");
+
+        let imported_row_id = {
+            let mut conn = Connection::open(&db_path).expect("open sqlite file");
+            configure_connection(&conn).expect("configure sqlite pragmas");
+            apply_migrations(&conn).expect("apply migrations");
+
+            let batch = create_asset_import_batch_seed_conn(
+                &mut conn,
+                sample_batch(
+                    AssetImportMode::Quantity,
+                    vec![
+                        quantity_row_without_asset_code(2, "Mouse", "Logitech M650", "10"),
+                        quantity_row_without_asset_code(3, "Mouse", "Logitech M650", "0"),
+                    ],
+                ),
+            )
+            .expect("create mixed quantity batch");
+
+            let result = import_asset_import_batch_valid_rows_conn(&mut conn, batch.summary.id)
+                .expect("import only valid quantity rows");
+            assert_eq!(result.imported_row_ids.len(), 1);
+
+            result.imported_row_ids[0]
+        };
+
+        let mut conn = Connection::open(&db_path).expect("reopen sqlite file");
+        configure_connection(&conn).expect("configure sqlite pragmas");
+        apply_migrations(&conn).expect("apply migrations");
+
+        let update_error = update_asset_import_row_conn(
+            &mut conn,
+            AssetImportRowUpdateInput {
+                row_id: imported_row_id,
+                field_key: "quantity".to_string(),
+                value: Some("12".to_string()),
+            },
+        )
+        .expect_err("imported row should stay read-only after reopen");
+        assert_eq!(update_error, "imported rows are read-only");
+
+        let skip_error = set_asset_import_row_skipped_conn(
+            &mut conn,
+            AssetImportRowSkipInput {
+                row_id: imported_row_id,
+                skipped: true,
+            },
+        )
+        .expect_err("imported row skip should stay read-only after reopen");
+        assert_eq!(skip_error, "imported rows are read-only");
+
+        let _ = fs::remove_file(db_path);
     }
 
     #[test]
