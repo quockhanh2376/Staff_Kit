@@ -8,6 +8,9 @@ await syncAssetImportWizardOnOpen({
   openFreshWizard: () => {
     freshCalls.push("openFreshWizard")
   },
+  resetReviewFilterToAll: () => {
+    freshCalls.push("resetReviewFilterToAll")
+  },
   refreshActiveBatch: async () => {
     freshCalls.push("refreshActiveBatch")
   },
@@ -24,6 +27,9 @@ await syncAssetImportWizardOnOpen({
   openFreshWizard: () => {
     reopenCalls.push("openFreshWizard")
   },
+  resetReviewFilterToAll: () => {
+    reopenCalls.push("resetReviewFilterToAll")
+  },
   refreshActiveBatch: async () => {
     reopenCalls.push("refreshActiveBatch")
   },
@@ -32,6 +38,10 @@ await syncAssetImportWizardOnOpen({
   },
 })
 
-assert.deepEqual(reopenCalls, ["refreshActiveBatch", "loadBatchSummaries"])
+assert.deepEqual(reopenCalls, [
+  "resetReviewFilterToAll",
+  "refreshActiveBatch",
+  "loadBatchSummaries",
+])
 
 console.log("asset-import-open-behavior tests passed")

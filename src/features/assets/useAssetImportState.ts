@@ -291,6 +291,9 @@ export function useAssetImportState({
                 setCurrentStep("choose_file")
                 setSelectedImportMode(DEFAULT_ASSET_IMPORT_MODE)
             },
+            resetReviewFilterToAll: () => {
+                setReviewFilter("all")
+            },
             refreshActiveBatch,
             loadBatchSummaries,
         })
