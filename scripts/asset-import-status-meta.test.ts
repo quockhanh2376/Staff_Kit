@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 
 import {
+  getAssetImportSummaryLabel,
   getAssetImportReviewFilterLabel,
   getAssetImportStatusMeta,
 } from "../src/features/assets/assetImportStatusMeta.ts"
@@ -32,5 +33,10 @@ assert.equal(
 assert.equal(getAssetImportReviewFilterLabel("all"), "All Rows")
 assert.equal(getAssetImportReviewFilterLabel("errors"), "Needs Fix")
 assert.equal(getAssetImportReviewFilterLabel("pending"), "Needs Review")
+
+assert.equal(getAssetImportSummaryLabel("valid"), "Ready")
+assert.equal(getAssetImportSummaryLabel("errors"), "Needs Fix")
+assert.equal(getAssetImportSummaryLabel("imported"), "Imported")
+assert.equal(getAssetImportSummaryLabel("skipped"), "Skipped")
 
 console.log("asset-import-status-meta tests passed")

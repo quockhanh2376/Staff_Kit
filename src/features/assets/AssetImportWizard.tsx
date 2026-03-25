@@ -16,6 +16,7 @@ import {
 } from "./assetImportModeConfig"
 import {
     getAssetImportReviewFilterLabel,
+    getAssetImportSummaryLabel,
     getAssetImportStatusMeta,
 } from "./assetImportStatusMeta"
 
@@ -80,10 +81,10 @@ function ImportPanel({ assetImport }: AssetImportWizardProps) {
                                 {getAssetImportModeLabel(detail.summary.importType)}
                             </div>
                             <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                                <Stat label="Valid" value={String(detail.summary.validRows)} />
-                                <Stat label="Errors" value={String(detail.summary.errorRows)} />
-                                <Stat label="Imported" value={String(detail.summary.importedRows)} />
-                                <Stat label="Skipped" value={String(detail.summary.skippedRows)} />
+                                <Stat label={getAssetImportSummaryLabel("valid")} value={String(detail.summary.validRows)} />
+                                <Stat label={getAssetImportSummaryLabel("errors")} value={String(detail.summary.errorRows)} />
+                                <Stat label={getAssetImportSummaryLabel("imported")} value={String(detail.summary.importedRows)} />
+                                <Stat label={getAssetImportSummaryLabel("skipped")} value={String(detail.summary.skippedRows)} />
                             </div>
                         </div>
                     )}
@@ -531,7 +532,7 @@ function ExistingBatchPanel({ assetImport }: AssetImportWizardProps) {
                                 {getAssetImportModeLabel(summary.importType)}
                             </div>
                             <div className="mt-2 text-[11px] text-[var(--text-secondary)]">
-                                Valid {summary.validRows} | Errors {summary.errorRows} | Imported {summary.importedRows}
+                                {getAssetImportSummaryLabel("valid")} {summary.validRows} | {getAssetImportSummaryLabel("errors")} {summary.errorRows} | {getAssetImportSummaryLabel("imported")} {summary.importedRows}
                             </div>
                         </button>
                     ))
