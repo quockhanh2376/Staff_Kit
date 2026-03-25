@@ -28,6 +28,7 @@ import {
     buildAssetImportDeleteMessage,
     buildAssetImportSuccessMessage,
 } from "./assetImportMessages"
+import { syncAssetImportWizardOnOpen } from "./assetImportOpenBehavior"
 
 type UseAssetImportStateOptions = {
     dbReady: boolean
@@ -166,17 +167,6 @@ export function useAssetImportState({
         setSelectedImportMode(DEFAULT_ASSET_IMPORT_MODE)
     }, [])
 
-    const openImportWizard = useCallback(() => {
-        setPanelMode("import")
-        setWizardOpen(true)
-        setStatusMessage("")
-        if (!activeBatchDetail) {
-            setCurrentStep("choose_file")
-            setSelectedImportMode(DEFAULT_ASSET_IMPORT_MODE)
-        }
-        void loadBatchSummaries()
-    }, [activeBatchDetail, loadBatchSummaries])
-
     const openManualAssetPanel = useCallback(() => {
         setPanelMode("manual")
         setWizardOpen(true)
@@ -290,6 +280,21 @@ export function useAssetImportState({
             setRefreshingBatch(false)
         }
     }, [activeBatchDetail, setGlobalError])
+
+    const openImportWizard = useCallback(() => {
+        setPanelMode("import")
+        setWizardOpen(true)
+        setStatusMessage("")
+        void syncAssetImportWizardOnOpen({
+            hasActiveBatchDetail: Boolean(activeBatchDetail),
+            openFreshWizard: () => {
+                setCurrentStep("choose_file")
+                setSelectedImportMode(DEFAULT_ASSET_IMPORT_MODE)
+            },
+            refreshActiveBatch,
+            loadBatchSummaries,
+        })
+    }, [activeBatchDetail, loadBatchSummaries, refreshActiveBatch])
 
     const handleStageBatch = useCallback(async () => {
         if (!selectedFilePath) {
