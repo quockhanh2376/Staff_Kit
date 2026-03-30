@@ -1,6 +1,47 @@
 # Daily Log - 2026-03-30
 
 ## Objective
+Align wizard and Settings wording with the current import model so `quantity` clearly means stock-only updates and `serialized` clearly means borrow-ready asset records.
+
+## Work Completed
+- Tightened the asset import message helper contract:
+  - quantity success message now says rows were committed into stock records only
+  - serialized success message now says rows were committed into borrow-ready assets
+  - serialized delete warning now keeps the same borrow-ready wording
+  - added a dedicated CTA label helper for mode-aware import buttons
+- Updated the Review Batch primary action button to use mode-aware wording:
+  - `Import Stock Rows`
+  - `Import Serialized Assets`
+- Updated Settings copy around the import entry point:
+  - clarified the difference between quantity and serialized outcomes
+  - renamed the manual action button to `Add Serialized Asset`
+  - renamed the batch summary card to `Active Import Batch`
+  - surfaced the active batch mode in the summary line
+
+## Validation
+- Wrote the message-contract assertions first in `scripts/asset-import-messages.test.ts`
+- Ran `node --experimental-strip-types scripts/asset-import-messages.test.ts`
+- Ran `npm run check:quality`
+- Result: passed
+  - message helper script test: passed
+  - ESLint: passed
+  - TypeScript typecheck: passed
+  - Vite production build: passed
+  - Tauri `cargo check`: passed
+
+## Git History Added
+- `24bc723` - `style: align import outcome wording`
+
+## Current State
+The mainline import branch now speaks more clearly at the point of action. IT can see, from both Settings and the wizard CTA/success copy, whether a staged batch is headed into stock records or into borrow-ready serialized assets.
+
+## Next Suggested Focus
+- Decide whether Settings should also show mode-aware copy in the staged-batch count/empty state for even quicker scanning.
+- Decide whether manual serialized add should surface category metadata like prefix or QR expectations once a category is selected.
+
+# Daily Log - 2026-03-30
+
+## Objective
 Tighten the asset import wizard around the seeded category master so manual add and review edits stop relying on raw free-text category input when an active category already exists.
 
 ## Work Completed
