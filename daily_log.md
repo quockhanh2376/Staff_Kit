@@ -1,6 +1,42 @@
 # Daily Log - 2026-03-30
 
 ## Objective
+Finish the nearby batch-title polish by aligning the wizard `Active Batch` label with the `Active Import Batch` wording already used in Settings.
+
+## Work Completed
+- Added a shared copy helper for the active staged-batch section title.
+- Updated the wizard review rail to use `Active Import Batch` instead of `Active Batch`.
+- Updated the Settings active-batch card to read from the same helper so both surfaces stay aligned.
+- Kept scope copy-only:
+  - no import behavior changes
+  - no state changes
+  - no summary-count changes
+
+## Validation
+- Added the failing assertion first in `scripts/asset-import-copy.test.ts`
+- Verified the red step by running `node --experimental-strip-types scripts/asset-import-copy.test.ts` before the new export existed
+- Re-ran `node --experimental-strip-types scripts/asset-import-copy.test.ts`
+- Ran `npm run check:quality`
+- Result: passed
+  - copy helper script test: passed
+  - ESLint: passed
+  - TypeScript typecheck: passed
+  - Vite production build: passed
+  - Tauri `cargo check`: passed
+
+## Git History Added
+- `6af11b0` - `style: align active import batch titles`
+
+## Current State
+The asset-import batch vocabulary is now aligned across the main nearby headings: `Staged Import Batches`, `Active Import Batch`, and the staged-batch empty/count copy. The copy cluster is more stable for future UI work because the shared helper owns the repeated labels.
+
+## Next Suggested Focus
+- Decide whether the remaining asset-import headings should stay centralized in `assetImportCopy.ts` or be split once new behavior work resumes.
+- Shift back from copy polish to behavior work on the import flow once product wants the next functional slice.
+
+# Daily Log - 2026-03-30
+
+## Objective
 Rename the remaining wizard batch-section header so it matches the new staged-import vocabulary without widening the current copy cleanup scope.
 
 ## Work Completed
