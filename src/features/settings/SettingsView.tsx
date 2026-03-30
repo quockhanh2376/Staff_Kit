@@ -6,6 +6,7 @@ import type { AssetImportState } from "../assets/useAssetImportState"
 import type { StaffGroupKey } from "../../types/app"
 import { STAFF_GROUP_BUTTONS, DEFAULT_NEW_ACCOUNT_PASSWORD } from "../../lib/constants"
 import { getGroupCount } from "../../lib/utils"
+import { getAssetImportSettingsEntryActionLabel } from "../assets/assetImportCopy"
 import { getAssetImportModeLabel } from "../assets/assetImportModeConfig"
 import { getAssetImportSummaryLabel } from "../assets/assetImportStatusMeta"
 
@@ -396,7 +397,7 @@ export function SettingsView({
                                     disabled={!auth.isAdminAccount}
                                 >
                                     <FileSpreadsheet size={14} />
-                                    Import Assets
+                                    {getAssetImportSettingsEntryActionLabel()}
                                 </button>
                                 <button
                                     className="inline-flex items-center gap-2 rounded-[8px] border border-[var(--border)] px-3 py-2 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)] disabled:opacity-50"

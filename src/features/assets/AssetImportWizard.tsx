@@ -3,6 +3,13 @@ import { Drawer } from "../../components/Drawer"
 import { formatDate } from "../../lib/utils"
 import { AssetImportCategoryInput } from "./AssetImportCategoryInput"
 import {
+    getAssetImportManualPanelDescription,
+    getAssetImportManualPanelPrimaryActionLabel,
+    getAssetImportManualPanelTitle,
+    getAssetImportPanelTitle,
+    getAssetImportSerializedModeDescription,
+} from "./assetImportCopy"
+import {
     hasRequiredAssetImportMapping,
     type AssetImportState,
 } from "./useAssetImportState"
@@ -31,7 +38,7 @@ export function AssetImportWizard({ assetImport }: AssetImportWizardProps) {
         <Drawer
             open={assetImport.isWizardOpen}
             onClose={assetImport.closeWizard}
-            title={assetImport.panelMode === "manual" ? "Add Asset Manually" : "Asset Import Wizard"}
+            title={getAssetImportPanelTitle(assetImport.panelMode)}
             widthClass="w-[1080px]"
         >
             {assetImport.panelMode === "manual" ? (
@@ -117,8 +124,7 @@ function ChooseFileStep({ assetImport }: AssetImportWizardProps) {
                 {[
                     {
                         mode: "serialized" as const,
-                        description:
-                            "One asset per row. Category, asset name, serial number, warehouse, and note.",
+                        description: getAssetImportSerializedModeDescription(),
                     },
                     {
                         mode: "quantity" as const,
@@ -621,10 +627,10 @@ function ManualAssetPanel({ assetImport }: AssetImportWizardProps) {
         <div className="rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-5">
             <div className="flex items-center gap-2 text-sm font-semibold text-[var(--text-primary)]">
                 <PlusCircle size={16} />
-                Quick Manual Add
+                {getAssetImportManualPanelTitle()}
             </div>
             <p className="mt-2 text-sm text-[var(--text-secondary)]">
-                Serialized-only fallback for one-off assets or rows that are not worth pushing through batch review.
+                {getAssetImportManualPanelDescription()}
             </p>
             <div className="mt-4 grid gap-4 md:grid-cols-2">
                 {manualFields.map((field) => (
@@ -670,7 +676,7 @@ function ManualAssetPanel({ assetImport }: AssetImportWizardProps) {
                     type="button"
                     disabled={assetImport.isCreatingManualAsset}
                 >
-                    {assetImport.isCreatingManualAsset ? "Saving..." : "Create Asset"}
+                    {getAssetImportManualPanelPrimaryActionLabel(assetImport.isCreatingManualAsset)}
                 </button>
             </div>
             {assetImport.manualAssetMessage && (
