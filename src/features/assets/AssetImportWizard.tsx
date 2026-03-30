@@ -3,6 +3,7 @@ import { Drawer } from "../../components/Drawer"
 import { formatDate } from "../../lib/utils"
 import { AssetImportCategoryInput } from "./AssetImportCategoryInput"
 import {
+    getAssetImportActiveBatchTitle,
     getAssetImportBatchListTitle,
     getAssetImportBatchSummaryEmptyStateLabel,
     getAssetImportManualPanelDescription,
@@ -84,7 +85,9 @@ function ImportPanel({ assetImport }: AssetImportWizardProps) {
                     <ExistingBatchPanel assetImport={assetImport} />
                     {detail && (
                         <div className="rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-4">
-                            <div className="text-sm font-semibold text-[var(--text-primary)]">Active Batch</div>
+                            <div className="text-sm font-semibold text-[var(--text-primary)]">
+                                {getAssetImportActiveBatchTitle()}
+                            </div>
                             <div className="mt-2 text-xs text-[var(--text-secondary)]">
                                 {detail.summary.batchKey} | {detail.summary.sourceFileName}
                             </div>

@@ -30,6 +30,10 @@ export function getAssetImportBatchListTitle(): string {
   return "Staged Import Batches"
 }
 
+export function getAssetImportActiveBatchTitle(): string {
+  return "Active Import Batch"
+}
+
 export function getAssetImportSerializedModeDescription(): string {
   return "One serialized asset per row. Category, asset name, serial number, warehouse, and note."
 }
