@@ -1,6 +1,7 @@
 import { AlertCircle, FileSpreadsheet, PlusCircle, RefreshCw, Trash2, Upload } from "lucide-react"
 import { Drawer } from "../../components/Drawer"
 import { formatDate } from "../../lib/utils"
+import { AssetImportCategoryInput } from "./AssetImportCategoryInput"
 import {
     hasRequiredAssetImportMapping,
     type AssetImportState,
@@ -418,23 +419,45 @@ function ReviewBatchStep({ assetImport }: AssetImportWizardProps) {
                                             </td>
                                             {reviewFieldKeys.map((fieldKey) => (
                                                 <td key={`${row.id}-${fieldKey}`} className="px-2 py-2 align-top">
-                                                    <input
-                                                        className="form-input min-w-[130px] text-xs"
-                                                        value={getAssetImportRowFieldValue(
-                                                            row,
-                                                            fieldKey,
-                                                            assetImport.mappingDraft,
-                                                        )}
-                                                        disabled={
-                                                            row.status === "imported" ||
-                                                            assetImport.isUpdatingRow === row.id ||
-                                                            !isAssetImportFieldEditable(fieldKey)
-                                                        }
-                                                        onChange={(event) => {
-                                                            const nextValue = event.target.value
-                                                            void assetImport.handleUpdateRowField(row.id, fieldKey, nextValue)
-                                                        }}
-                                                    />
+                                                    {fieldKey === "category" ? (
+                                                        <AssetImportCategoryInput
+                                                            assetCategories={assetImport.assetCategories}
+                                                            className="form-input min-w-[130px] text-xs"
+                                                            value={getAssetImportRowFieldValue(
+                                                                row,
+                                                                fieldKey,
+                                                                assetImport.mappingDraft,
+                                                            )}
+                                                            mode={assetImport.currentImportMode}
+                                                            disabled={
+                                                                row.status === "imported" ||
+                                                                assetImport.isUpdatingRow === row.id ||
+                                                                !isAssetImportFieldEditable(fieldKey)
+                                                            }
+                                                            onChange={(nextValue) => {
+                                                                void assetImport.handleUpdateRowField(row.id, fieldKey, nextValue)
+                                                            }}
+                                                            placeholder="Select Category"
+                                                        />
+                                                    ) : (
+                                                        <input
+                                                            className="form-input min-w-[130px] text-xs"
+                                                            value={getAssetImportRowFieldValue(
+                                                                row,
+                                                                fieldKey,
+                                                                assetImport.mappingDraft,
+                                                            )}
+                                                            disabled={
+                                                                row.status === "imported" ||
+                                                                assetImport.isUpdatingRow === row.id ||
+                                                                !isAssetImportFieldEditable(fieldKey)
+                                                            }
+                                                            onChange={(event) => {
+                                                                const nextValue = event.target.value
+                                                                void assetImport.handleUpdateRowField(row.id, fieldKey, nextValue)
+                                                            }}
+                                                        />
+                                                    )}
                                                 </td>
                                             ))}
                                             <td className="px-3 py-2 align-top">
@@ -604,14 +627,26 @@ function ManualAssetPanel({ assetImport }: AssetImportWizardProps) {
                             {field.label}
                             {field.required ? " *" : ""}
                         </label>
-                        <input
-                            className="form-input"
-                            value={field.value}
-                            onChange={(event) =>
-                                assetImport.handleManualAssetFieldChange(field.targetKey, event.target.value)
-                            }
-                            placeholder={field.label}
-                        />
+                        {field.key === "category" ? (
+                            <AssetImportCategoryInput
+                                assetCategories={assetImport.assetCategories}
+                                value={field.value}
+                                mode="serialized"
+                                onChange={(nextValue) =>
+                                    assetImport.handleManualAssetFieldChange(field.targetKey, nextValue)
+                                }
+                                placeholder="Select Category"
+                            />
+                        ) : (
+                            <input
+                                className="form-input"
+                                value={field.value}
+                                onChange={(event) =>
+                                    assetImport.handleManualAssetFieldChange(field.targetKey, event.target.value)
+                                }
+                                placeholder={field.label}
+                            />
+                        )}
                     </div>
                 ))}
             </div>
