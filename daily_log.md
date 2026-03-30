@@ -1,6 +1,43 @@
 # Daily Log - 2026-03-30
 
 ## Objective
+Finish the last two hardcoded Settings import strings so the import copy cluster is fully routed through the shared helper before the next demo pass.
+
+## Work Completed
+- Added two Settings-specific asset import copy helpers:
+  - entry description for the staged import flow
+  - secondary manual action label for opening the serialized add drawer
+- Updated the Settings import card to use the shared helper instead of local hardcoded strings.
+- Kept the scope intentionally tiny:
+  - no behavior changes
+  - no state changes
+  - no import pipeline changes
+
+## Validation
+- Added the failing assertions first in `scripts/asset-import-copy.test.ts`
+- Verified the red step by running `node --experimental-strip-types scripts/asset-import-copy.test.ts` before the new exports existed
+- Re-ran `node --experimental-strip-types scripts/asset-import-copy.test.ts`
+- Ran `npm run check:quality`
+- Result: passed
+  - copy helper script test: passed
+  - ESLint: passed
+  - TypeScript typecheck: passed
+  - Vite production build: passed
+  - Tauri `cargo check`: passed
+
+## Git History Added
+- `30bf402` - `style: extract settings import copy helpers`
+
+## Current State
+The remaining Settings import copy now comes from the same helper module as the rest of the serialized manual-path wording. The asset import entry card is easier to maintain because its CTA, body copy, and secondary manual action label all live behind one shared copy surface.
+
+## Next Suggested Focus
+- Show a fresh demo pass of the current Settings/import UI after the copy cleanup.
+- Decide whether any remaining asset-import vocabulary in non-primary flows should move into the shared helper too, or stay local until behavior changes again.
+
+# Daily Log - 2026-03-30
+
+## Objective
 Clean up the remaining serialized-only manual-path copy and make the Settings entry CTA more mode-neutral without changing any import behavior.
 
 ## Work Completed
