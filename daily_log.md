@@ -1,6 +1,41 @@
 # Daily Log - 2026-03-30
 
 ## Objective
+Rename the remaining wizard batch-section header so it matches the new staged-import vocabulary without widening the current copy cleanup scope.
+
+## Work Completed
+- Added a tiny shared copy helper for the wizard batch list title.
+- Renamed the wizard section header from `Existing Staged Batches` to `Staged Import Batches`.
+- Kept the slice intentionally narrow:
+  - no behavior changes
+  - no state changes
+  - no batch summary logic changes
+
+## Validation
+- Added the failing assertion first in `scripts/asset-import-copy.test.ts`
+- Verified the red step by running `node --experimental-strip-types scripts/asset-import-copy.test.ts` before the new export existed
+- Re-ran `node --experimental-strip-types scripts/asset-import-copy.test.ts`
+- Ran `npm run check:quality`
+- Result: passed
+  - copy helper script test: passed
+  - ESLint: passed
+  - TypeScript typecheck: passed
+  - Vite production build: passed
+  - Tauri `cargo check`: passed
+
+## Git History Added
+- `a928dc8` - `style: align import batch section title`
+
+## Current State
+The staged-batch section now uses the same import-focused vocabulary across its title, empty state, and Settings summary references. The asset-import wording cluster is more internally consistent without touching behavior.
+
+## Next Suggested Focus
+- Decide whether `Active Import Batch` should stay as-is or be renamed to `Current Staged Import Batch` for full vocabulary alignment.
+- Decide whether asset-import helper strings should remain centralized in one file or be split into settings/wizard groups once behavior work resumes.
+
+# Daily Log - 2026-03-30
+
+## Objective
 Align the remaining asset-import batch empty-state wording so Settings and the wizard describe staged batches with the same vocabulary.
 
 ## Work Completed
