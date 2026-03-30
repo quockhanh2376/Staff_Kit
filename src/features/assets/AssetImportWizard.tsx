@@ -3,6 +3,7 @@ import { Drawer } from "../../components/Drawer"
 import { formatDate } from "../../lib/utils"
 import { AssetImportCategoryInput } from "./AssetImportCategoryInput"
 import {
+    getAssetImportBatchSummaryEmptyStateLabel,
     getAssetImportManualPanelDescription,
     getAssetImportManualPanelPrimaryActionLabel,
     getAssetImportManualPanelTitle,
@@ -551,7 +552,7 @@ function ExistingBatchPanel({ assetImport }: AssetImportWizardProps) {
             <div className="mt-4 space-y-3">
                 {assetImport.batchSummaries.length === 0 ? (
                     <div className="rounded-[8px] border border-dashed border-[var(--border)] bg-[var(--surface-hover)]/25 px-3 py-3 text-sm text-[var(--text-secondary)]">
-                        No staged batches yet.
+                        {getAssetImportBatchSummaryEmptyStateLabel()}
                     </div>
                 ) : (
                     assetImport.batchSummaries.slice(0, 6).map((summary) => (

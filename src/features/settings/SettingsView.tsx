@@ -7,6 +7,8 @@ import type { StaffGroupKey } from "../../types/app"
 import { STAFF_GROUP_BUTTONS, DEFAULT_NEW_ACCOUNT_PASSWORD } from "../../lib/constants"
 import { getGroupCount } from "../../lib/utils"
 import {
+    buildAssetImportBatchSummaryCountLabel,
+    getAssetImportBatchSummaryEmptyStateLabel,
     getAssetImportSettingsEntryActionLabel,
     getAssetImportSettingsEntryDescription,
     getAssetImportSettingsManualActionLabel,
@@ -413,8 +415,8 @@ export function SettingsView({
                             </div>
                             <div className="mt-3 rounded-[8px] border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs text-[var(--text-primary)]">
                                 {assetImport.batchSummaries.length === 0
-                                    ? "No staged import batches yet."
-                                    : `${assetImport.batchSummaries.length} staged import batch(es) available for review.`}
+                                    ? getAssetImportBatchSummaryEmptyStateLabel()
+                                    : buildAssetImportBatchSummaryCountLabel(assetImport.batchSummaries.length)}
                             </div>
                             {assetImport.activeBatchSummary && (
                                 <div className="mt-3 rounded-[8px] border border-[var(--border)] bg-[var(--surface)] px-3 py-2">

@@ -18,6 +18,14 @@ export function getAssetImportSettingsManualActionLabel(): string {
   return "Add Serialized Asset"
 }
 
+export function getAssetImportBatchSummaryEmptyStateLabel(): string {
+  return "No staged import batches yet."
+}
+
+export function buildAssetImportBatchSummaryCountLabel(count: number): string {
+  return `${count} staged import batch(es) available for review.`
+}
+
 export function getAssetImportSerializedModeDescription(): string {
   return "One serialized asset per row. Category, asset name, serial number, warehouse, and note."
 }

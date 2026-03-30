@@ -3,9 +3,11 @@ import assert from "node:assert/strict"
 import {
   buildManualSerializedAssetCreatedMessage,
   buildManualSerializedAssetRequiredMessage,
+  buildAssetImportBatchSummaryCountLabel,
   getAssetImportManualPanelDescription,
   getAssetImportManualPanelPrimaryActionLabel,
   getAssetImportManualPanelTitle,
+  getAssetImportBatchSummaryEmptyStateLabel,
   getAssetImportPanelTitle,
   getAssetImportSerializedModeDescription,
   getAssetImportSettingsEntryDescription,
@@ -24,6 +26,14 @@ assert.equal(
 assert.equal(
   getAssetImportSettingsManualActionLabel(),
   "Add Serialized Asset",
+)
+assert.equal(
+  getAssetImportBatchSummaryEmptyStateLabel(),
+  "No staged import batches yet.",
+)
+assert.equal(
+  buildAssetImportBatchSummaryCountLabel(3),
+  "3 staged import batch(es) available for review.",
 )
 assert.equal(
   getAssetImportSerializedModeDescription(),
