@@ -1,3 +1,39 @@
+# Daily Log - 2026-03-30
+
+## Objective
+Tighten the asset import wizard around the seeded category master so manual add and review edits stop relying on raw free-text category input when an active category already exists.
+
+## Work Completed
+- Added a focused category-option helper for the import wizard:
+  - filter category choices by `trackingMode`
+  - include only active category master records
+  - canonicalize current values by matching either `categoryCode` or `categoryName`
+  - preserve legacy current values when they do not match an active category
+- Added a reusable category input component for asset import surfaces.
+- Updated the review grid so the `Category` column uses category-master choices instead of a generic text input when category data is available.
+- Updated the manual asset panel so serialized manual add also uses the same category-master-driven input.
+
+## Validation
+- Wrote the new red/green rail first in `scripts/asset-import-category-options.test.ts`
+- Ran `node --experimental-strip-types scripts/asset-import-category-options.test.ts`
+- Ran `npm run check:quality`
+- Result: passed
+  - category-option script test: passed
+  - ESLint: passed
+  - TypeScript typecheck: passed
+  - Vite production build: passed
+  - Tauri `cargo check`: passed
+
+## Git History Added
+- `35d0c6e` - `feat: use category master in asset import inputs`
+
+## Current State
+The mainline quantity-import branch now reads from the seeded category master in the wizard UI instead of leaving category edits fully free-form. Existing legacy values are still preserved safely, but the normal path now nudges IT toward valid active categories for the selected import mode.
+
+## Next Suggested Focus
+- Align import success and Settings summary copy so `quantity` clearly means stock-only updates while `serialized` remains the borrow-ready asset path.
+- Decide whether the manual serialized add path should also surface category metadata like prefix or QR expectations once a category is chosen.
+
 # Daily Log - 2026-03-23
 
 ## Objective
