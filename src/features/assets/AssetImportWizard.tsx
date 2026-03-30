@@ -20,6 +20,7 @@ import {
     getAssetImportSummaryLabel,
     getAssetImportStatusMeta,
 } from "./assetImportStatusMeta"
+import { buildAssetImportActionLabel } from "./assetImportMessages"
 
 type AssetImportWizardProps = {
     assetImport: AssetImportState
@@ -54,7 +55,7 @@ function ImportPanel({ assetImport }: AssetImportWizardProps) {
                     <StepPill label="3. Review Batch" active={assetImport.currentStep === "review_batch"} />
                 </div>
                 <p className="mt-3 text-sm text-[var(--text-secondary)]">
-                    Desktop-first flow: inspect file, stage batch in SQLite, then review before importing valid rows.
+                    Desktop-first flow: inspect file, stage batch in SQLite, then confirm quantity rows into stock or serialized rows into borrow-ready assets after review.
                 </p>
                 {assetImport.statusMessage && (
                     <div className="mt-3 rounded-[8px] border border-[var(--primary)]/35 bg-[var(--primary)]/8 px-3 py-2 text-xs text-[var(--text-primary)]">
@@ -344,7 +345,12 @@ function ReviewBatchStep({ assetImport }: AssetImportWizardProps) {
                             type="button"
                             disabled={assetImport.isImportingRows || !assetImport.canImportCurrentBatch}
                         >
-                            {assetImport.isImportingRows ? "Importing..." : `Import Valid (${detail.summary.validRows})`}
+                            {assetImport.isImportingRows
+                                ? "Importing..."
+                                : buildAssetImportActionLabel(
+                                      detail.summary.importType,
+                                      detail.summary.validRows,
+                                  )}
                         </button>
                         <button
                             className="rounded-[8px] border border-red-500/50 px-3 py-2 text-xs font-medium text-red-300 transition hover:bg-red-500/10 disabled:opacity-50"

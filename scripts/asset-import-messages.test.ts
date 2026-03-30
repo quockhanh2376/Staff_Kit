@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 
 import {
+  buildAssetImportActionLabel,
   buildAssetImportDeleteMessage,
   buildAssetImportSuccessMessage,
 } from "../src/features/assets/assetImportMessages.ts"
@@ -17,12 +18,12 @@ const sharedResult: AssetImportCommitResult = {
 
 assert.equal(
   buildAssetImportSuccessMessage("quantity", sharedResult),
-  "Imported 1 valid quantity row(s) into stock. 2 row(s) still need review.",
+  "Imported 1 valid quantity row(s) into stock records only. 2 row(s) still need review.",
 )
 
 assert.equal(
   buildAssetImportSuccessMessage("serialized", sharedResult),
-  "Imported 1 valid row(s). 2 row(s) still need review.",
+  "Imported 1 valid serialized row(s) into borrow-ready assets. 2 row(s) still need review.",
 )
 
 assert.equal(
@@ -32,7 +33,17 @@ assert.equal(
 
 assert.equal(
   buildAssetImportDeleteMessage("BATCH-002", "serialized"),
-  "Delete staged batch BATCH-002? Imported rows already committed into assets will be kept.",
+  "Delete staged batch BATCH-002? Imported rows already committed into borrow-ready assets will be kept.",
+)
+
+assert.equal(
+  buildAssetImportActionLabel("quantity", 3),
+  "Import Stock Rows (3)",
+)
+
+assert.equal(
+  buildAssetImportActionLabel("serialized", 4),
+  "Import Serialized Assets (4)",
 )
 
 console.log("asset-import-messages tests passed")

@@ -6,6 +6,8 @@ import type { AssetImportState } from "../assets/useAssetImportState"
 import type { StaffGroupKey } from "../../types/app"
 import { STAFF_GROUP_BUTTONS, DEFAULT_NEW_ACCOUNT_PASSWORD } from "../../lib/constants"
 import { getGroupCount } from "../../lib/utils"
+import { getAssetImportModeLabel } from "../assets/assetImportModeConfig"
+import { getAssetImportSummaryLabel } from "../assets/assetImportStatusMeta"
 
 type SettingsViewProps = {
     auth: AuthState
@@ -382,8 +384,9 @@ export function SettingsView({
                                 Asset Import Wizard
                             </div>
                             <p className="text-[11px] text-[var(--text-secondary)]">
-                                Start the staged desktop flow for CSV/Excel asset imports, or add one asset manually when
-                                IT just needs a quick fix.
+                                Start the staged desktop flow for CSV/Excel imports, then confirm quantity rows into
+                                stock records or serialized rows into borrow-ready assets. Use manual add when IT just
+                                needs one serialized asset fast.
                             </p>
                             <div className="mt-3 flex flex-wrap gap-2">
                                 <button
@@ -402,24 +405,24 @@ export function SettingsView({
                                     disabled={!auth.isAdminAccount}
                                 >
                                     <PlusCircle size={14} />
-                                    Add Asset Manually
+                                    Add Serialized Asset
                                 </button>
                             </div>
                             <div className="mt-3 rounded-[8px] border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs text-[var(--text-primary)]">
                                 {assetImport.batchSummaries.length === 0
-                                    ? "No staged asset batches yet."
-                                    : `${assetImport.batchSummaries.length} staged batch(es) available for review.`}
+                                    ? "No staged import batches yet."
+                                    : `${assetImport.batchSummaries.length} staged import batch(es) available for review.`}
                             </div>
                             {assetImport.activeBatchSummary && (
                                 <div className="mt-3 rounded-[8px] border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
                                     <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
-                                        Active Asset Batch
+                                        Active Import Batch
                                     </div>
                                     <div className="mt-2 text-xs text-[var(--text-primary)]">
                                         {assetImport.activeBatchSummary.batchKey} Â· {assetImport.activeBatchSummary.sourceFileName}
                                     </div>
                                     <div className="mt-1 text-[11px] text-[var(--text-secondary)]">
-                                        Valid {assetImport.activeBatchSummary.validRows} Â· Errors {assetImport.activeBatchSummary.errorRows} Â· Imported {assetImport.activeBatchSummary.importedRows}
+                                        {getAssetImportModeLabel(assetImport.activeBatchSummary.importType)} Â· {getAssetImportSummaryLabel("valid")} {assetImport.activeBatchSummary.validRows} Â· {getAssetImportSummaryLabel("errors")} {assetImport.activeBatchSummary.errorRows} Â· {getAssetImportSummaryLabel("imported")} {assetImport.activeBatchSummary.importedRows}
                                     </div>
                                     <button
                                         className="mt-3 rounded-[8px] border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)]"
