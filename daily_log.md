@@ -1,6 +1,45 @@
 # Daily Log - 2026-03-30
 
 ## Objective
+Clean up the remaining serialized-only manual-path copy and make the Settings entry CTA more mode-neutral without changing any import behavior.
+
+## Work Completed
+- Added a focused asset-import copy helper for labels and user-facing manual serialized messages.
+- Updated the manual drawer title from a generic manual-add label to `Add Serialized Asset`.
+- Updated the serialized mode card description to say `One serialized asset per row`.
+- Updated the manual panel title/body/button copy:
+  - `Quick Serialized Add`
+  - serialized-only fallback wording for one-off serialized assets
+  - `Create Serialized Asset`
+- Updated the manual serialized validation and success messages in state:
+  - required fields now use UI labels `asset code, category, and asset name`
+  - success message now describes the result as a borrow-ready serialized asset instead of a raw table insert
+- Changed the Settings entry CTA from `Import Assets` to the more neutral `Open Import Wizard`.
+
+## Validation
+- Wrote the new helper rail first in `scripts/asset-import-copy.test.ts`
+- Ran `node --experimental-strip-types scripts/asset-import-copy.test.ts`
+- Ran `npm run check:quality`
+- Result: passed
+  - copy helper script test: passed
+  - ESLint: passed
+  - TypeScript typecheck: passed
+  - Vite production build: passed
+  - Tauri `cargo check`: passed
+
+## Git History Added
+- `5588869` - `style: clean serialized import copy`
+
+## Current State
+The import branch is now more consistent about the serialized manual path. The drawer title, CTA labels, mode description, and manual add messages all point to the same mental model: this path creates a serialized borrow-ready asset, while the main import wizard still handles both quantity and serialized flows.
+
+## Next Suggested Focus
+- Decide whether `Serialized Assets` in mode badges should also become `Serialized (Borrow-Ready)` for complete consistency.
+- Decide whether hidden seed-panel copy should be updated too, or left alone until that panel is either removed or restored.
+
+# Daily Log - 2026-03-30
+
+## Objective
 Align wizard and Settings wording with the current import model so `quantity` clearly means stock-only updates and `serialized` clearly means borrow-ready asset records.
 
 ## Work Completed
