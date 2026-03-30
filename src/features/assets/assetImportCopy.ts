@@ -26,6 +26,10 @@ export function buildAssetImportBatchSummaryCountLabel(count: number): string {
   return `${count} staged import batch(es) available for review.`
 }
 
+export function getAssetImportBatchListTitle(): string {
+  return "Staged Import Batches"
+}
+
 export function getAssetImportSerializedModeDescription(): string {
   return "One serialized asset per row. Category, asset name, serial number, warehouse, and note."
 }

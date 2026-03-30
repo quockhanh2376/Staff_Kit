@@ -3,6 +3,7 @@ import { Drawer } from "../../components/Drawer"
 import { formatDate } from "../../lib/utils"
 import { AssetImportCategoryInput } from "./AssetImportCategoryInput"
 import {
+    getAssetImportBatchListTitle,
     getAssetImportBatchSummaryEmptyStateLabel,
     getAssetImportManualPanelDescription,
     getAssetImportManualPanelPrimaryActionLabel,
@@ -547,7 +548,7 @@ function ExistingBatchPanel({ assetImport }: AssetImportWizardProps) {
         <div className="rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-4">
             <div className="flex items-center gap-2 text-sm font-semibold text-[var(--text-primary)]">
                 <Upload size={16} />
-                Existing Staged Batches
+                {getAssetImportBatchListTitle()}
             </div>
             <div className="mt-4 space-y-3">
                 {assetImport.batchSummaries.length === 0 ? (

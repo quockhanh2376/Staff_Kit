@@ -4,6 +4,7 @@ import {
   buildManualSerializedAssetCreatedMessage,
   buildManualSerializedAssetRequiredMessage,
   buildAssetImportBatchSummaryCountLabel,
+  getAssetImportBatchListTitle,
   getAssetImportManualPanelDescription,
   getAssetImportManualPanelPrimaryActionLabel,
   getAssetImportManualPanelTitle,
@@ -34,6 +35,10 @@ assert.equal(
 assert.equal(
   buildAssetImportBatchSummaryCountLabel(3),
   "3 staged import batch(es) available for review.",
+)
+assert.equal(
+  getAssetImportBatchListTitle(),
+  "Staged Import Batches",
 )
 assert.equal(
   getAssetImportSerializedModeDescription(),
