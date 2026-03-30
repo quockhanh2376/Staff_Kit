@@ -10,6 +10,14 @@ export function getAssetImportSettingsEntryActionLabel(): string {
   return "Open Import Wizard"
 }
 
+export function getAssetImportSettingsEntryDescription(): string {
+  return "Start the staged desktop flow for CSV/Excel imports, then confirm quantity rows into stock records or serialized rows into borrow-ready assets. Use manual add when IT just needs one serialized asset fast."
+}
+
+export function getAssetImportSettingsManualActionLabel(): string {
+  return "Add Serialized Asset"
+}
+
 export function getAssetImportSerializedModeDescription(): string {
   return "One serialized asset per row. Category, asset name, serial number, warehouse, and note."
 }

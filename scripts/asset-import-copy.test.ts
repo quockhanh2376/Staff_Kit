@@ -8,13 +8,23 @@ import {
   getAssetImportManualPanelTitle,
   getAssetImportPanelTitle,
   getAssetImportSerializedModeDescription,
+  getAssetImportSettingsEntryDescription,
   getAssetImportSettingsEntryActionLabel,
+  getAssetImportSettingsManualActionLabel,
 } from "../src/features/assets/assetImportCopy.ts"
 
 assert.equal(getAssetImportPanelTitle("import"), "Asset Import Wizard")
 assert.equal(getAssetImportPanelTitle("manual"), "Add Serialized Asset")
 
 assert.equal(getAssetImportSettingsEntryActionLabel(), "Open Import Wizard")
+assert.equal(
+  getAssetImportSettingsEntryDescription(),
+  "Start the staged desktop flow for CSV/Excel imports, then confirm quantity rows into stock records or serialized rows into borrow-ready assets. Use manual add when IT just needs one serialized asset fast.",
+)
+assert.equal(
+  getAssetImportSettingsManualActionLabel(),
+  "Add Serialized Asset",
+)
 assert.equal(
   getAssetImportSerializedModeDescription(),
   "One serialized asset per row. Category, asset name, serial number, warehouse, and note.",

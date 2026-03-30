@@ -6,7 +6,11 @@ import type { AssetImportState } from "../assets/useAssetImportState"
 import type { StaffGroupKey } from "../../types/app"
 import { STAFF_GROUP_BUTTONS, DEFAULT_NEW_ACCOUNT_PASSWORD } from "../../lib/constants"
 import { getGroupCount } from "../../lib/utils"
-import { getAssetImportSettingsEntryActionLabel } from "../assets/assetImportCopy"
+import {
+    getAssetImportSettingsEntryActionLabel,
+    getAssetImportSettingsEntryDescription,
+    getAssetImportSettingsManualActionLabel,
+} from "../assets/assetImportCopy"
 import { getAssetImportModeLabel } from "../assets/assetImportModeConfig"
 import { getAssetImportSummaryLabel } from "../assets/assetImportStatusMeta"
 
@@ -385,9 +389,7 @@ export function SettingsView({
                                 Asset Import Wizard
                             </div>
                             <p className="text-[11px] text-[var(--text-secondary)]">
-                                Start the staged desktop flow for CSV/Excel imports, then confirm quantity rows into
-                                stock records or serialized rows into borrow-ready assets. Use manual add when IT just
-                                needs one serialized asset fast.
+                                {getAssetImportSettingsEntryDescription()}
                             </p>
                             <div className="mt-3 flex flex-wrap gap-2">
                                 <button
@@ -406,7 +408,7 @@ export function SettingsView({
                                     disabled={!auth.isAdminAccount}
                                 >
                                     <PlusCircle size={14} />
-                                    Add Serialized Asset
+                                    {getAssetImportSettingsManualActionLabel()}
                                 </button>
                             </div>
                             <div className="mt-3 rounded-[8px] border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs text-[var(--text-primary)]">
