@@ -1,6 +1,44 @@
 # Daily Log - 2026-03-30
 
 ## Objective
+Align the remaining asset-import batch empty-state wording so Settings and the wizard describe staged batches with the same vocabulary.
+
+## Work Completed
+- Added shared copy helpers for:
+  - staged import batch empty state
+  - staged import batch count summary
+- Updated the Settings import card summary rail to use the shared helper for both the zero-state and the review-count message.
+- Updated the wizard `Existing Staged Batches` empty state to match the same `staged import batches` wording.
+- Kept scope copy-only:
+  - no import behavior changes
+  - no batch-state changes
+  - no layout changes
+
+## Validation
+- Added the failing assertions first in `scripts/asset-import-copy.test.ts`
+- Verified the red step by running `node --experimental-strip-types scripts/asset-import-copy.test.ts` before the new exports existed
+- Re-ran `node --experimental-strip-types scripts/asset-import-copy.test.ts`
+- Ran `npm run check:quality`
+- Result: passed
+  - copy helper script test: passed
+  - ESLint: passed
+  - TypeScript typecheck: passed
+  - Vite production build: passed
+  - Tauri `cargo check`: passed
+
+## Git History Added
+- `6ef1639` - `style: align import batch empty states`
+
+## Current State
+The batch-summary copy now reads consistently across both Settings and the wizard. IT sees the same `staged import batches` wording whether there are zero batches or a small review queue waiting.
+
+## Next Suggested Focus
+- Decide whether `Existing Staged Batches` should also be renamed to a more neutral label like `Staged Import Batches`.
+- Decide whether the `Active Import Batch` summary card should move into the shared copy helper too, or stay inline until its behavior changes.
+
+# Daily Log - 2026-03-30
+
+## Objective
 Finish the last two hardcoded Settings import strings so the import copy cluster is fully routed through the shared helper before the next demo pass.
 
 ## Work Completed
