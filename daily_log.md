@@ -1,3 +1,45 @@
+# Daily Log - 2026-03-31
+
+## Objective
+Start `ST 2.0.2` with the smallest backend-first groundwork for QR Return Flow by generalizing the pending review model just enough to carry a request type without changing current borrow behavior.
+
+## Work Completed
+- Created feature branch/worktree `codex/st-2-0-2-qr-return` from merged `security`.
+- Added `request_type TEXT NOT NULL DEFAULT 'borrow'` to the `borrow_requests` base schema.
+- Added a legacy migration step so existing databases gain `borrow_requests.request_type` with default `borrow`.
+- Threaded `request_type` through the Rust `BorrowRequestRecord` load path and submit path audit payload.
+- Exposed `requestType` in the shared TypeScript `BorrowRequestRecord` contract.
+- Kept the scope intentionally narrow:
+  - no return submit endpoint yet
+  - no admin UI review changes yet
+  - no approval/reject logic changes yet
+
+## Validation
+- Wrote the failing Rust rails first:
+  - `submit_borrow_request_creates_pending_request_for_valid_employee_and_assets`
+  - `apply_migrations_upgrades_existing_borrow_requests_with_request_type`
+- Verified the red step before implementation:
+  - compile/test failed because `BorrowRequestRecord` did not yet expose `request_type`
+- Re-ran the two targeted Rust tests after implementation
+- Ran `npm run check:quality`
+- Result: passed
+  - targeted borrow request test: passed
+  - targeted legacy migration test: passed
+  - ESLint: passed
+  - TypeScript typecheck: passed
+  - Vite production build: passed
+  - Tauri `cargo check`: passed
+
+## Git History Added
+- `f19fd59` - `feat: add request type to pending review model`
+
+## Current State
+The codebase can now distinguish pending review records by type at the data-contract level while still behaving exactly like borrow-only flow in production. This gives `ST 2.0.2` a safe anchor point for the next slice: LAN return submit path.
+
+## Next Suggested Focus
+- Add a public LAN return-submit path and minimal request input shape without enabling return approval yet.
+- Decide whether the first public return UX should be a dedicated `/return` page or a shared borrow/return page with mode switch.
+
 # Daily Log - 2026-03-30
 
 ## Objective
