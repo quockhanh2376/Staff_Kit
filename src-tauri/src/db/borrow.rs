@@ -16,6 +16,7 @@ use super::{
 const REQUEST_STATUS_PENDING: &str = "pending";
 const REQUEST_STATUS_APPROVED: &str = "approved";
 const REQUEST_STATUS_REJECTED: &str = "rejected";
+const REQUEST_TYPE_BORROW: &str = "borrow";
 const ASSET_STATUS_IN_STOCK: &str = "in_stock";
 const ASSET_STATUS_ASSIGNED: &str = "assigned";
 const DEFAULT_BORROW_LAN_PORT: u16 = 8787;
@@ -49,6 +50,7 @@ pub struct BorrowRequestSubmitInput {
 pub struct BorrowRequestRecord {
     pub id: i64,
     pub request_key: String,
+    pub request_type: String,
     pub submitted_employee_id: String,
     pub submitted_full_name: String,
     pub status: String,
@@ -194,6 +196,7 @@ pub(crate) fn submit_borrow_request_conn(
         r#"
         INSERT INTO borrow_requests(
           request_key,
+          request_type,
           employee_id_fk,
           submitted_employee_id,
           submitted_full_name,
@@ -201,10 +204,11 @@ pub(crate) fn submit_borrow_request_conn(
           submit_source_ip,
           submitted_at
         )
-        VALUES(?, ?, ?, ?, ?, ?, datetime('now'))
+        VALUES(?, ?, ?, ?, ?, ?, ?, datetime('now'))
         "#,
         params![
             request_key.as_str(),
+            REQUEST_TYPE_BORROW,
             employee_id_fk,
             submitted_employee_id.as_str(),
             submitted_full_name.as_str(),
@@ -237,6 +241,7 @@ pub(crate) fn submit_borrow_request_conn(
     }
 
     let audit_payload = json!({
+        "requestType": REQUEST_TYPE_BORROW,
         "submittedEmployeeId": submitted_employee_id,
         "submittedFullName": submitted_full_name,
         "assetCodes": asset_codes,
@@ -622,6 +627,7 @@ fn load_borrow_request_record(
     let (
         id,
         request_key,
+        request_type,
         submitted_employee_id,
         submitted_full_name,
         status,
@@ -633,6 +639,7 @@ fn load_borrow_request_record(
             SELECT
               id,
               request_key,
+              request_type,
               submitted_employee_id,
               submitted_full_name,
               status,
@@ -650,7 +657,8 @@ fn load_borrow_request_record(
                     row.get::<_, String>(3)?,
                     row.get::<_, String>(4)?,
                     row.get::<_, String>(5)?,
-                    row.get::<_, Option<String>>(6)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, Option<String>>(7)?,
                 ))
             },
         )
@@ -661,6 +669,7 @@ fn load_borrow_request_record(
     Ok(BorrowRequestRecord {
         id,
         request_key,
+        request_type,
         submitted_employee_id,
         submitted_full_name,
         status,
@@ -755,6 +764,7 @@ mod tests {
         .expect("submit borrow request");
 
         assert_eq!(request.status, "pending");
+        assert_eq!(request.request_type, "borrow");
         assert_eq!(request.submitted_employee_id, "EE1001");
         assert_eq!(request.submitted_full_name, "Nguyen Van A");
         assert_eq!(request.asset_codes, vec!["ASSET-001", "ASSET-002"]);
