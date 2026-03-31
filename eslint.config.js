@@ -11,6 +11,7 @@ export default defineConfig([
     'src-tauri/target/**',
     '.worktrees/**',
     '.agent/**',
+    '.agents/**',
     '.opencode/**',
     'bmad_method_ref/**',
     '_tmp_staffkit/**',
