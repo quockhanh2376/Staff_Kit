@@ -357,6 +357,22 @@ option {
   background: color-mix(in oklab, var(--surface-hover) 75%, var(--surface) 25%);
 }
 
+.table-cell-body {
+  color: var(--text-primary);
+}
+
+.table-cell-full-name {
+  color: var(--text-primary);
+}
+
+.dark .table-cell-body {
+  color: color-mix(in oklab, var(--text-primary) 85%, var(--text-secondary) 15%);
+}
+
+.dark .table-cell-full-name {
+  color: color-mix(in oklab, var(--text-primary) 91%, var(--text-secondary) 9%);
+}
+
 .table-row td {
   line-height: 1.38;
 }

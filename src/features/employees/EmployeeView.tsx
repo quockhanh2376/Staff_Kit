@@ -334,10 +334,12 @@ export function EmployeeView({
                                                     return (
                                                         <td
                                                             key={`${employee.id}-${column.key}`}
-                                                            className={`px-3 py-3 text-[var(--text-primary)] ${column.key === "employeeId"
+                                                            className={`px-3 py-3 ${column.key === "employeeId"
                                                                 ? "font-semibold text-[var(--primary)]"
-                                                                : ""
-                                                                } ${column.key === "fullName" ? "font-medium text-[var(--text-primary)]" : ""} ${isSearchMatchedCell ? "search-highlight-cell" : ""}`}
+                                                                : column.key === "fullName"
+                                                                    ? "table-cell-full-name font-medium"
+                                                                    : "table-cell-body"
+                                                                } ${isSearchMatchedCell ? "search-highlight-cell" : ""}`}
                                                             style={{
                                                                 width: `${col.resolvedColumnWidths[column.key] ?? 170}px`,
                                                                 minWidth: `${col.resolvedColumnWidths[column.key] ?? 170}px`,
