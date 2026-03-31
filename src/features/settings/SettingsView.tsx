@@ -1,15 +1,27 @@
-import { LoaderCircle, Upload } from "lucide-react"
+import { FileSpreadsheet, LoaderCircle, PlusCircle, Upload } from "lucide-react"
 import type { AuthState } from "../auth/useAuthState"
 import type { SettingsState } from "./useSettingsState"
 import type { ImportState } from "../import/useImportState"
+import type { AssetImportState } from "../assets/useAssetImportState"
 import type { StaffGroupKey } from "../../types/app"
 import { STAFF_GROUP_BUTTONS, DEFAULT_NEW_ACCOUNT_PASSWORD } from "../../lib/constants"
 import { getGroupCount } from "../../lib/utils"
+import {
+    getAssetImportActiveBatchTitle,
+    buildAssetImportBatchSummaryCountLabel,
+    getAssetImportBatchSummaryEmptyStateLabel,
+    getAssetImportSettingsEntryActionLabel,
+    getAssetImportSettingsEntryDescription,
+    getAssetImportSettingsManualActionLabel,
+} from "../assets/assetImportCopy"
+import { getAssetImportModeLabel } from "../assets/assetImportModeConfig"
+import { getAssetImportSummaryLabel } from "../assets/assetImportStatusMeta"
 
 type SettingsViewProps = {
     auth: AuthState
     settings: SettingsState
     importState: ImportState
+    assetImport: AssetImportState
     employeeGroupCounts: {
         employeeList: number
         onboarding: number
@@ -25,6 +37,7 @@ export function SettingsView({
     auth,
     settings,
     importState,
+    assetImport,
     employeeGroupCounts,
     dbStatus,
     setGlobalError,
@@ -324,6 +337,155 @@ export function SettingsView({
                                     )
                                 })}
                             </div>
+                        </div>
+                    </div>
+                </div>
+
+
+                <div className="rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-4 text-sm text-[var(--text-secondary)]">
+                    <div className="text-sm font-semibold text-[var(--text-primary)]">Borrow LAN &amp; Asset Import</div>
+                    <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                        Configure the fixed LAN URL for the employee QR flow, then stage CSV or Excel asset batches before IT reviews and imports valid rows.
+                    </p>
+
+                    <div className="mt-4 grid gap-4 md:grid-cols-2">
+                        <div className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/25 p-3">
+                            <div className="mb-2 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
+                                Borrow LAN URL
+                            </div>
+                            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr),120px]">
+                                <input
+                                    className="form-input text-xs"
+                                    value={settings.borrowLanHostInput}
+                                    onChange={(event) => settings.setBorrowLanHostInput(event.target.value)}
+                                    placeholder="192.168.1.25 or OFFICE-PC"
+                                    disabled={!auth.isAdminAccount || settings.isSavingBorrowLanSettings}
+                                />
+                                <input
+                                    className="form-input text-xs"
+                                    value={settings.borrowLanPortInput}
+                                    onChange={(event) => settings.setBorrowLanPortInput(event.target.value)}
+                                    placeholder="8787"
+                                    disabled={!auth.isAdminAccount || settings.isSavingBorrowLanSettings}
+                                />
+                            </div>
+                            <div className="mt-2 rounded-[8px] border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs text-[var(--text-primary)]">
+                                {settings.borrowLanSettings?.borrowUrl ?? "Borrow URL will appear here after save."}
+                            </div>
+                            <button
+                                className="mt-3 rounded-[8px] border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)] disabled:opacity-50"
+                                onClick={() => void settings.handleSaveBorrowLanSettings()}
+                                type="button"
+                                disabled={!auth.isAdminAccount || settings.isSavingBorrowLanSettings}
+                            >
+                                {settings.isSavingBorrowLanSettings ? "Saving..." : "Save Borrow LAN Settings"}
+                            </button>
+                            {settings.borrowLanMessage && (
+                                <div className="mt-2 rounded-[8px] border border-[var(--primary)]/35 bg-[var(--primary)]/8 px-3 py-2 text-xs text-[var(--text-primary)]">
+                                    {settings.borrowLanMessage}
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/25 p-3">
+                            <div className="mb-2 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
+                                Asset Import Wizard
+                            </div>
+                            <p className="text-[11px] text-[var(--text-secondary)]">
+                                {getAssetImportSettingsEntryDescription()}
+                            </p>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                                <button
+                                    className="inline-flex items-center gap-2 rounded-[8px] bg-[var(--primary)] px-3 py-2 text-xs font-semibold text-[#00131c] disabled:opacity-50"
+                                    onClick={assetImport.openImportWizard}
+                                    type="button"
+                                    disabled={!auth.isAdminAccount}
+                                >
+                                    <FileSpreadsheet size={14} />
+                                    {getAssetImportSettingsEntryActionLabel()}
+                                </button>
+                                <button
+                                    className="inline-flex items-center gap-2 rounded-[8px] border border-[var(--border)] px-3 py-2 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)] disabled:opacity-50"
+                                    onClick={assetImport.openManualAssetPanel}
+                                    type="button"
+                                    disabled={!auth.isAdminAccount}
+                                >
+                                    <PlusCircle size={14} />
+                                    {getAssetImportSettingsManualActionLabel()}
+                                </button>
+                            </div>
+                            <div className="mt-3 rounded-[8px] border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs text-[var(--text-primary)]">
+                                {assetImport.batchSummaries.length === 0
+                                    ? getAssetImportBatchSummaryEmptyStateLabel()
+                                    : buildAssetImportBatchSummaryCountLabel(assetImport.batchSummaries.length)}
+                            </div>
+                            {assetImport.activeBatchSummary && (
+                                <div className="mt-3 rounded-[8px] border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
+                                    <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
+                                        {getAssetImportActiveBatchTitle()}
+                                    </div>
+                                    <div className="mt-2 text-xs text-[var(--text-primary)]">
+                                        {assetImport.activeBatchSummary.batchKey} Â· {assetImport.activeBatchSummary.sourceFileName}
+                                    </div>
+                                    <div className="mt-1 text-[11px] text-[var(--text-secondary)]">
+                                        {getAssetImportModeLabel(assetImport.activeBatchSummary.importType)} Â· {getAssetImportSummaryLabel("valid")} {assetImport.activeBatchSummary.validRows} Â· {getAssetImportSummaryLabel("errors")} {assetImport.activeBatchSummary.errorRows} Â· {getAssetImportSummaryLabel("imported")} {assetImport.activeBatchSummary.importedRows}
+                                    </div>
+                                    <button
+                                        className="mt-3 rounded-[8px] border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)]"
+                                        onClick={() => {
+                                            const batch = assetImport.activeBatchSummary
+                                            if (!batch) return
+                                            void assetImport.openBatchDetail(batch.id)
+                                        }}
+                                        type="button"
+                                    >
+                                        Resume Review
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="hidden rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/25 p-3">
+                            <div className="mb-2 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
+                                Asset Seed Utility
+                            </div>
+                            <p className="text-[11px] text-[var(--text-secondary)]">
+                                One asset per line. Format: <span className="font-semibold text-[var(--text-primary)]">assetCode|assetType|displayName|model|serialNumber|notes</span>
+                            </p>
+                            <textarea
+                                className="form-input mt-2 min-h-[180px] resize-y text-xs"
+                                value={settings.assetSeedText}
+                                onChange={(event) => settings.setAssetSeedText(event.target.value)}
+                                placeholder={"ASSET-001|Laptop|Dell Latitude 7440|7440|SN-001|Initial stock\nASSET-002|Mouse|Logitech M650|||"}
+                                disabled={!auth.isAdminAccount || settings.isSeedingAssets}
+                            />
+                            <button
+                                className="mt-3 rounded-[8px] bg-[var(--primary)] px-3 py-2 text-xs font-semibold text-[#00131c] disabled:opacity-50"
+                                onClick={() => void settings.handleSeedAssets()}
+                                type="button"
+                                disabled={!auth.isAdminAccount || settings.isSeedingAssets}
+                            >
+                                {settings.isSeedingAssets ? "Seeding..." : "Seed Assets"}
+                            </button>
+                            {settings.assetSeedMessage && (
+                                <div className="mt-2 rounded-[8px] border border-[var(--primary)]/35 bg-[var(--primary)]/8 px-3 py-2 text-xs text-[var(--text-primary)]">
+                                    {settings.assetSeedMessage}
+                                </div>
+                            )}
+                            {settings.seededAssets.length > 0 && (
+                                <div className="mt-3 rounded-[8px] border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
+                                    <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
+                                        Last Seeded Assets
+                                    </div>
+                                    <div className="mt-2 space-y-1 text-xs text-[var(--text-primary)]">
+                                        {settings.seededAssets.slice(0, 5).map((asset) => (
+                                            <div key={asset.id}>
+                                                {asset.assetCode} · {asset.assetType} · {asset.displayName} · {asset.status}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>

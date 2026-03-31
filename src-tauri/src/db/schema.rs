@@ -25,8 +25,7 @@ pub(super) const DEFAULT_NEW_LOCAL_ACCOUNT_PASSWORD: &str = "Welcome!";
 /// AES-256 encryption key applied to every SQLite connection via PRAGMA key.
 /// This is an app-level key stored in the binary — not a user password.
 /// Changing this value requires migrating all existing databases.
-pub(super) const APP_DB_ENCRYPTION_KEY: &str =
-    "SK-AES256-staffkit-2026-io.staffkit.app";
+pub(super) const APP_DB_ENCRYPTION_KEY: &str = "SK-AES256-staffkit-2026-io.staffkit.app";
 pub(super) const DB_ENCRYPTION_MIGRATION_SETTING_KEY: &str = "db_encrypted_v1";
 
 // ── Settings keys ─────────────────────────────────────────────────────────────
@@ -35,6 +34,10 @@ pub(super) const DEFAULT_ADMIN_SEED_SETTING_KEY: &str = "default_admin_seed_v1";
 pub(super) const BACKUP_DIRECTORY_SETTING_KEY: &str = "backup_directory_path";
 pub(super) const AUTO_BACKUP_ENABLED_SETTING_KEY: &str = "backup_auto_enabled_v1";
 pub(super) const AUTO_BACKUP_LAST_DATE_SETTING_KEY: &str = "backup_auto_last_date_v1";
+#[allow(dead_code)]
+pub(super) const BORROW_LAN_HOST_SETTING_KEY: &str = "borrow_lan_host_v1";
+#[allow(dead_code)]
+pub(super) const BORROW_LAN_PORT_SETTING_KEY: &str = "borrow_lan_port_v1";
 
 // ── Backup ────────────────────────────────────────────────────────────────────
 pub(super) const AUTO_BACKUP_RETENTION_FILES: usize = 7;
@@ -199,6 +202,137 @@ CREATE TABLE IF NOT EXISTS app_settings (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS asset_categories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  category_code TEXT NOT NULL UNIQUE,
+  category_name TEXT NOT NULL,
+  tracking_mode TEXT NOT NULL,
+  prefix_code TEXT,
+  qr_required INTEGER NOT NULL DEFAULT 0,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS assets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  asset_code TEXT NOT NULL UNIQUE,
+  category_id INTEGER REFERENCES asset_categories(id) ON UPDATE CASCADE ON DELETE SET NULL,
+  asset_type TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  brand TEXT,
+  model TEXT,
+  serial_number TEXT,
+  warehouse TEXT,
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'in_stock',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS stock_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  category_id INTEGER NOT NULL REFERENCES asset_categories(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+  item_name TEXT NOT NULL,
+  brand TEXT,
+  model TEXT,
+  warehouse TEXT,
+  quantity_on_hand INTEGER NOT NULL DEFAULT 0,
+  assigned_quantity INTEGER NOT NULL DEFAULT 0,
+  note TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS asset_import_batches (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  batch_key TEXT NOT NULL UNIQUE,
+  import_type TEXT NOT NULL DEFAULT 'serialized',
+  source_file_name TEXT NOT NULL,
+  source_file_path TEXT NOT NULL,
+  source_file_type TEXT NOT NULL,
+  sheet_name TEXT,
+  header_row INTEGER NOT NULL DEFAULT 1,
+  headers_json TEXT NOT NULL,
+  mapping_json TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending_review',
+  total_rows INTEGER NOT NULL DEFAULT 0,
+  valid_rows INTEGER NOT NULL DEFAULT 0,
+  error_rows INTEGER NOT NULL DEFAULT 0,
+  imported_rows INTEGER NOT NULL DEFAULT 0,
+  skipped_rows INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS asset_import_rows (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  batch_id INTEGER NOT NULL REFERENCES asset_import_batches(id) ON DELETE CASCADE,
+  row_number INTEGER NOT NULL,
+  raw_row_json TEXT NOT NULL,
+  asset_code TEXT,
+  asset_type TEXT,
+  display_name TEXT,
+  brand TEXT,
+  model TEXT,
+  serial_number TEXT,
+  quantity TEXT,
+  warehouse TEXT,
+  notes TEXT,
+  validation_errors_json TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'valid',
+  edited INTEGER NOT NULL DEFAULT 0,
+  edited_fields_json TEXT NOT NULL DEFAULT '[]',
+  imported_asset_id INTEGER REFERENCES assets(id) ON UPDATE CASCADE ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(batch_id, row_number)
+);
+
+CREATE TABLE IF NOT EXISTS borrow_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  request_key TEXT NOT NULL UNIQUE,
+  employee_id_fk INTEGER NOT NULL REFERENCES employees(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+  submitted_employee_id TEXT NOT NULL,
+  submitted_full_name TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  submit_source_ip TEXT,
+  decision_note TEXT,
+  decided_by_account_id INTEGER REFERENCES app_local_accounts(id) ON UPDATE CASCADE ON DELETE SET NULL,
+  submitted_at TEXT NOT NULL DEFAULT (datetime('now')),
+  decided_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS borrow_request_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  borrow_request_id INTEGER NOT NULL REFERENCES borrow_requests(id) ON DELETE CASCADE,
+  asset_id INTEGER NOT NULL REFERENCES assets(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+  asset_code_snapshot TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(borrow_request_id, asset_id)
+);
+
+CREATE TABLE IF NOT EXISTS asset_loans (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  asset_id INTEGER NOT NULL REFERENCES assets(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+  employee_id_fk INTEGER NOT NULL REFERENCES employees(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+  borrow_request_id INTEGER NOT NULL REFERENCES borrow_requests(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+  approved_by_account_id INTEGER REFERENCES app_local_accounts(id) ON UPDATE CASCADE ON DELETE SET NULL,
+  borrowed_at TEXT NOT NULL DEFAULT (datetime('now')),
+  returned_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_type TEXT NOT NULL,
+  actor_type TEXT NOT NULL,
+  actor_ref TEXT,
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  payload_json TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_employees_team_id ON employees(team_id);
 CREATE INDEX IF NOT EXISTS idx_employees_full_name ON employees(full_name);
 CREATE INDEX IF NOT EXISTS idx_employees_asw_start_date ON employees(asw_start_date);
@@ -207,6 +341,24 @@ CREATE INDEX IF NOT EXISTS idx_dynamic_values_employee_id ON employee_dynamic_va
 CREATE INDEX IF NOT EXISTS idx_dynamic_values_field_key ON employee_dynamic_values(field_key);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_local_accounts_display_name_unique
   ON app_local_accounts(display_name COLLATE NOCASE);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_categories_code_unique
+  ON asset_categories(category_code COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_assets_status ON assets(status);
+CREATE INDEX IF NOT EXISTS idx_stock_items_category_id ON stock_items(category_id);
+CREATE INDEX IF NOT EXISTS idx_asset_import_batches_status_created_at
+  ON asset_import_batches(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_asset_import_rows_batch_status
+  ON asset_import_rows(batch_id, status, row_number);
+CREATE INDEX IF NOT EXISTS idx_borrow_requests_status_submitted_at
+  ON borrow_requests(status, submitted_at);
+CREATE INDEX IF NOT EXISTS idx_borrow_request_items_request_id
+  ON borrow_request_items(borrow_request_id);
+CREATE INDEX IF NOT EXISTS idx_asset_loans_employee_active
+  ON asset_loans(employee_id_fk, returned_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_loans_asset_active_unique
+  ON asset_loans(asset_id) WHERE returned_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_audit_logs_entity
+  ON audit_logs(entity_type, entity_id, created_at);
 "#;
 
 // ── FTS virtual table ─────────────────────────────────────────────────────────

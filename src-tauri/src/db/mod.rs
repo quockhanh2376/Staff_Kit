@@ -23,17 +23,24 @@ use tauri::{AppHandle, Manager};
 use schema::*;
 
 // ── Sub-modules ───────────────────────────────────────────────────────────────
-mod schema;
+pub(crate) mod asset;
+pub(crate) mod asset_import;
+pub(crate) mod audit;
 pub mod auth;
 pub mod backup;
+pub mod borrow;
 pub mod column;
 pub mod employee;
 pub mod import;
+mod schema;
 pub mod team;
 
 // ── Re-exports (all public types bubble up to `db::`) ─────────────────────────
+pub use asset::*;
+pub use asset_import::*;
 pub use auth::*;
 pub use backup::*;
+pub use borrow::*;
 pub use column::*;
 pub use employee::*;
 pub use import::*;
@@ -134,8 +141,8 @@ pub(crate) fn open_runtime_connection(app: &AppHandle) -> Result<Connection, Str
 /// Open a connection and apply the AES-256 SQLCipher key.
 /// All reads/writes go through this — the DB file stays encrypted at rest.
 pub(crate) fn open_encrypted_connection(path: &std::path::Path) -> Result<Connection, String> {
-    let conn = Connection::open(path)
-        .map_err(|err| format!("failed to open sqlite database: {err}"))?;
+    let conn =
+        Connection::open(path).map_err(|err| format!("failed to open sqlite database: {err}"))?;
     // Apply encryption key FIRST, before any other PRAGMA
     conn.execute_batch(&format!("PRAGMA key = '{APP_DB_ENCRYPTION_KEY}';"))
         .map_err(|err| format!("failed to apply database encryption key: {err}"))?;
@@ -183,7 +190,7 @@ pub(crate) fn resolve_database_path(app: &AppHandle) -> Result<PathBuf, String> 
     Ok(data_dir)
 }
 
-fn configure_connection(conn: &Connection) -> Result<(), String> {
+pub(crate) fn configure_connection(conn: &Connection) -> Result<(), String> {
     conn.busy_timeout(Duration::from_secs(5))
         .map_err(|err| format!("failed to set sqlite busy timeout: {err}"))?;
 
@@ -220,15 +227,16 @@ fn migrate_to_encrypted(db_path: &std::path::Path) -> Result<(), String> {
     let is_already_encrypted = {
         match Connection::open(db_path) {
             Ok(test_conn) => {
-                let key_result = test_conn.execute_batch(
-                    &format!("PRAGMA key = '{APP_DB_ENCRYPTION_KEY}';"),
-                );
+                let key_result =
+                    test_conn.execute_batch(&format!("PRAGMA key = '{APP_DB_ENCRYPTION_KEY}';"));
                 if key_result.is_err() {
                     false
                 } else {
                     // Try a simple query to verify key is correct
                     test_conn
-                        .query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get::<_, i64>(0))
+                        .query_row("SELECT count(*) FROM sqlite_master", [], |r| {
+                            r.get::<_, i64>(0)
+                        })
                         .is_ok()
                 }
             }
@@ -238,7 +246,10 @@ fn migrate_to_encrypted(db_path: &std::path::Path) -> Result<(), String> {
 
     if is_already_encrypted {
         // Mark migration as done
-        let _ = fs::write(&sidecar_path, format!("{{\"{DB_ENCRYPTION_MIGRATION_SETTING_KEY}\": true}}"));
+        let _ = fs::write(
+            &sidecar_path,
+            format!("{{\"{DB_ENCRYPTION_MIGRATION_SETTING_KEY}\": true}}"),
+        );
         return Ok(());
     }
 
@@ -265,7 +276,10 @@ fn migrate_to_encrypted(db_path: &std::path::Path) -> Result<(), String> {
         .map_err(|err| format!("failed to replace database with encrypted version: {err}"))?;
 
     // Mark migration done
-    let _ = fs::write(&sidecar_path, format!("{{\"{DB_ENCRYPTION_MIGRATION_SETTING_KEY}\": true}}"));
+    let _ = fs::write(
+        &sidecar_path,
+        format!("{{\"{DB_ENCRYPTION_MIGRATION_SETTING_KEY}\": true}}"),
+    );
 
     Ok(())
 }
@@ -275,13 +289,14 @@ fn sqlite_version(conn: &Connection) -> Result<String, String> {
         .map_err(|err| format!("failed to query sqlite version: {err}"))
 }
 
-fn apply_migrations(conn: &Connection) -> Result<(), String> {
+pub(crate) fn apply_migrations(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(BASE_SCHEMA_SQL)
         .map_err(|err| format!("failed to initialize schema: {err}"))?;
 
     ensure_employee_columns(conn)?;
     ensure_team_columns(conn)?;
     ensure_local_account_columns(conn)?;
+    ensure_asset_model_tables(conn)?;
     auth::ensure_local_accounts_seed(conn)?;
     normalize_staff_group_values(conn)?;
     normalize_eml_security_tool_values(conn)?;
@@ -351,7 +366,8 @@ fn ensure_local_account_columns(conn: &Connection) -> Result<(), String> {
 
     let mut existing = Vec::new();
     for row in rows {
-        existing.push(row.map_err(|err| format!("failed to read local account column info: {err}"))?);
+        existing
+            .push(row.map_err(|err| format!("failed to read local account column info: {err}"))?);
     }
 
     let additional_columns = [
@@ -377,6 +393,162 @@ fn ensure_local_account_columns(conn: &Connection) -> Result<(), String> {
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_local_accounts_username_unique ON app_local_accounts(username COLLATE NOCASE);",
     )
     .map_err(|err| format!("failed to ensure username unique index: {err}"))?;
+
+    Ok(())
+}
+
+fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS asset_categories (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          category_code TEXT NOT NULL UNIQUE,
+          category_name TEXT NOT NULL,
+          tracking_mode TEXT NOT NULL,
+          prefix_code TEXT,
+          qr_required INTEGER NOT NULL DEFAULT 0,
+          is_active INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS stock_items (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          category_id INTEGER NOT NULL REFERENCES asset_categories(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+          item_name TEXT NOT NULL,
+          brand TEXT,
+          model TEXT,
+          warehouse TEXT,
+          quantity_on_hand INTEGER NOT NULL DEFAULT 0,
+          assigned_quantity INTEGER NOT NULL DEFAULT 0,
+          note TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_categories_code_unique
+          ON asset_categories(category_code COLLATE NOCASE);
+        CREATE INDEX IF NOT EXISTS idx_stock_items_category_id ON stock_items(category_id);
+        "#,
+    )
+    .map_err(|err| format!("failed to ensure asset category and stock tables: {err}"))?;
+
+    let mut stmt = conn
+        .prepare("PRAGMA table_info(assets)")
+        .map_err(|err| format!("failed to inspect assets table: {err}"))?;
+    let existing = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|err| format!("failed to read assets table columns: {err}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("failed to collect assets table columns: {err}"))?;
+
+    for (column_name, column_type) in [
+        (
+            "category_id",
+            "INTEGER REFERENCES asset_categories(id) ON UPDATE CASCADE ON DELETE SET NULL",
+        ),
+        ("brand", "TEXT"),
+        ("warehouse", "TEXT"),
+    ] {
+        if existing.iter().any(|name| name == column_name) {
+            continue;
+        }
+
+        conn.execute(
+            &format!("ALTER TABLE assets ADD COLUMN {column_name} {column_type}"),
+            [],
+        )
+        .map_err(|err| format!("failed to add assets.{column_name} column: {err}"))?;
+    }
+
+    conn.execute_batch(
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_assets_status ON assets(status);
+        CREATE INDEX IF NOT EXISTS idx_assets_category_id ON assets(category_id);
+        "#,
+    )
+    .map_err(|err| format!("failed to ensure asset indexes: {err}"))?;
+
+    let mut batch_stmt = conn
+        .prepare("PRAGMA table_info(asset_import_batches)")
+        .map_err(|err| format!("failed to inspect asset_import_batches table: {err}"))?;
+    let existing_batch_columns = batch_stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|err| format!("failed to read asset_import_batches columns: {err}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("failed to collect asset_import_batches columns: {err}"))?;
+
+    if !existing_batch_columns
+        .iter()
+        .any(|column_name| column_name == "import_type")
+    {
+        conn.execute(
+            "ALTER TABLE asset_import_batches ADD COLUMN import_type TEXT NOT NULL DEFAULT 'serialized'",
+            [],
+        )
+        .map_err(|err| format!("failed to add asset_import_batches.import_type column: {err}"))?;
+    }
+
+    let mut row_stmt = conn
+        .prepare("PRAGMA table_info(asset_import_rows)")
+        .map_err(|err| format!("failed to inspect asset_import_rows table: {err}"))?;
+    let existing_row_columns = row_stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|err| format!("failed to read asset_import_rows columns: {err}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("failed to collect asset_import_rows columns: {err}"))?;
+
+    for (column_name, column_type) in [("brand", "TEXT"), ("quantity", "TEXT"), ("warehouse", "TEXT")] {
+        if existing_row_columns.iter().any(|name| name == column_name) {
+            continue;
+        }
+
+        conn.execute(
+            &format!("ALTER TABLE asset_import_rows ADD COLUMN {column_name} {column_type}"),
+            [],
+        )
+        .map_err(|err| format!("failed to add asset_import_rows.{column_name} column: {err}"))?;
+    }
+
+    for (category_code, category_name, tracking_mode, prefix_code, qr_required) in [
+        ("laptop", "Laptop", "serialized", Some("ASWVNLAP"), 1_i64),
+        ("monitor", "Monitor", "serialized", Some("ASWVNMON"), 1_i64),
+        ("mouse", "Mouse", "quantity", None, 0_i64),
+        ("keyboard", "Keyboard", "quantity", None, 0_i64),
+        ("headset", "Headset", "quantity", None, 0_i64),
+        ("usb_type_c_hub", "USB Type-C Hub", "quantity", None, 0_i64),
+    ] {
+        conn.execute(
+            r#"
+            INSERT INTO asset_categories(
+              category_code,
+              category_name,
+              tracking_mode,
+              prefix_code,
+              qr_required,
+              is_active,
+              created_at,
+              updated_at
+            )
+            VALUES(?, ?, ?, ?, ?, 1, datetime('now'), datetime('now'))
+            ON CONFLICT(category_code) DO UPDATE SET
+              category_name = excluded.category_name,
+              tracking_mode = excluded.tracking_mode,
+              prefix_code = excluded.prefix_code,
+              qr_required = excluded.qr_required,
+              is_active = 1,
+              updated_at = datetime('now')
+            "#,
+            params![
+                category_code,
+                category_name,
+                tracking_mode,
+                prefix_code,
+                qr_required,
+            ],
+        )
+        .map_err(|err| format!("failed to seed asset category '{category_code}': {err}"))?;
+    }
 
     Ok(())
 }
@@ -532,6 +704,9 @@ pub(crate) fn humanize_sqlite_error(err: rusqlite::Error) -> String {
             if message.contains("teams.name") {
                 return "team name already exists".to_string();
             }
+            if message.contains("assets.asset_code") {
+                return "assetCode already exists".to_string();
+            }
             message
         }
         other => other.to_string(),
@@ -616,7 +791,9 @@ pub(crate) fn normalize_dynamic_key(value: &str) -> String {
     output.trim_matches('_').to_string()
 }
 
-pub(crate) fn normalize_dynamic_fields(input: Option<HashMap<String, String>>) -> HashMap<String, String> {
+pub(crate) fn normalize_dynamic_fields(
+    input: Option<HashMap<String, String>>,
+) -> HashMap<String, String> {
     let mut fields = HashMap::new();
     let Some(items) = input else {
         return fields;
@@ -680,4 +857,107 @@ fn normalize_header_key(value: &str) -> String {
         .filter(|ch| ch.is_alphanumeric())
         .flat_map(|ch| ch.to_lowercase())
         .collect::<String>()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn table_exists(conn: &Connection, table_name: &str) -> bool {
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?)",
+            params![table_name],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|exists| exists > 0)
+        .unwrap_or(false)
+    }
+
+    fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> bool {
+        let pragma = format!("PRAGMA table_info({table_name})");
+        conn.prepare(&pragma)
+            .and_then(|mut stmt| {
+                stmt.query_map([], |row| row.get::<_, String>(1))
+                    .and_then(|rows| rows.collect::<Result<Vec<_>, _>>())
+            })
+            .map(|columns| columns.iter().any(|existing| existing == column_name))
+            .unwrap_or(false)
+    }
+
+    fn index_exists(conn: &Connection, index_name: &str) -> bool {
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?)",
+            params![index_name],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|exists| exists > 0)
+        .unwrap_or(false)
+    }
+
+    #[test]
+    fn apply_migrations_creates_borrow_flow_tables() {
+        let conn = Connection::open_in_memory().expect("open in-memory sqlite database");
+        configure_connection(&conn).expect("configure sqlite pragmas");
+        apply_migrations(&conn).expect("apply database migrations");
+
+        for table_name in [
+            "asset_categories",
+            "assets",
+            "stock_items",
+            "asset_import_batches",
+            "asset_import_rows",
+            "borrow_requests",
+            "borrow_request_items",
+            "asset_loans",
+            "audit_logs",
+        ] {
+            assert!(
+                table_exists(&conn, table_name),
+                "expected table '{table_name}' to exist after migrations",
+            );
+        }
+    }
+
+    #[test]
+    fn apply_migrations_upgrades_existing_assets_table_before_creating_category_index() {
+        let conn = Connection::open_in_memory().expect("open in-memory sqlite database");
+        configure_connection(&conn).expect("configure sqlite pragmas");
+
+        conn.execute_batch(
+            r#"
+            CREATE TABLE assets (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              asset_code TEXT NOT NULL UNIQUE,
+              asset_type TEXT NOT NULL,
+              display_name TEXT NOT NULL,
+              model TEXT,
+              serial_number TEXT,
+              notes TEXT,
+              status TEXT NOT NULL DEFAULT 'in_stock',
+              created_at TEXT NOT NULL DEFAULT (datetime('now')),
+              updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            "#,
+        )
+        .expect("create legacy assets table");
+
+        apply_migrations(&conn).expect("apply migrations to legacy assets table");
+
+        assert!(
+            column_exists(&conn, "assets", "category_id"),
+            "expected assets.category_id to be added for legacy databases"
+        );
+        assert!(
+            column_exists(&conn, "assets", "brand"),
+            "expected assets.brand to be added for legacy databases"
+        );
+        assert!(
+            column_exists(&conn, "assets", "warehouse"),
+            "expected assets.warehouse to be added for legacy databases"
+        );
+        assert!(
+            index_exists(&conn, "idx_assets_category_id"),
+            "expected idx_assets_category_id to exist after migration"
+        );
+    }
 }

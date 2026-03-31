@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { LoaderCircle, LogOut, Moon, Settings, Sun, Users } from "lucide-react"
+import { ClipboardList, LoaderCircle, LogOut, Moon, Settings, Sun, Users } from "lucide-react"
 import { staffApi } from "./services/staff-api"
 import type { DatabaseStatus } from "./types/staff"
 import type { AppView, Theme } from "./types/app"
@@ -21,6 +21,8 @@ import { useEmployeeState } from "./features/employees/useEmployeeState"
 import { useTableEdit } from "./features/employees/useTableEdit"
 import { useImportState } from "./features/import/useImportState"
 import { useTeamState } from "./features/teams/useTeamState"
+import { useBorrowState } from "./features/borrow/useBorrowState"
+import { useAssetImportState } from "./features/assets/useAssetImportState"
 import { useSettingsState } from "./features/settings/useSettingsState"
 
 // Feature views
@@ -29,6 +31,8 @@ import { EmployeeView } from "./features/employees/EmployeeView"
 import { ColumnsDrawer } from "./features/columns/ColumnsDrawer"
 import { ImportDrawer } from "./features/import/ImportDrawer"
 import { TeamView } from "./features/teams/TeamView"
+import { BorrowAdminView } from "./features/borrow/BorrowAdminView"
+import { AssetImportWizard } from "./features/assets/AssetImportWizard"
 import { SettingsView } from "./features/settings/SettingsView"
 
 function App() {
@@ -214,6 +218,24 @@ function App() {
     triggerReload,
   })
 
+  const borrow = useBorrowState({
+    dbReady,
+    isAuthenticated,
+    isAdminAccount: auth.isAdminAccount,
+    reloadToken,
+    borrowLanSettings: settings.borrowLanSettings,
+    setGlobalError,
+    triggerReload,
+  })
+
+  const assetImport = useAssetImportState({
+    dbReady,
+    isAuthenticated,
+    reloadToken,
+    setGlobalError,
+    triggerReload,
+  })
+
   // ── Bootstrap database ───────────────────────────────────────────────────────
   useEffect(() => {
     let disposed = false
@@ -238,10 +260,10 @@ function App() {
 
   // ── Auto-reset to employees view when losing settings access ────────────────
   useEffect(() => {
-    if (activeView === "settings" && !canAccessSettings) {
+    if ((activeView === "settings" && !canAccessSettings) || (activeView === "borrow" && !auth.isAdminAccount)) {
       setActiveView("employees")
     }
-  }, [activeView, canAccessSettings])
+  }, [activeView, canAccessSettings, auth.isAdminAccount])
 
   // ── Reset column prefs on login ──────────────────────────────────────────────
   useEffect(() => {
@@ -350,6 +372,15 @@ function App() {
             >
               <Users size={18} /> Employees
             </button>
+            {auth.isAdminAccount && (
+              <button
+                className={`nav-button ${activeView === "borrow" ? "nav-button-active" : ""}`}
+                onClick={() => setActiveView("borrow")}
+                type="button"
+              >
+                <ClipboardList size={18} /> Borrow
+              </button>
+            )}
             <button
               className={`nav-button ${activeView === "teams" ? "nav-button-active" : ""}`}
               onClick={() => setActiveView("teams")}
@@ -453,10 +484,18 @@ function App() {
 
           {activeView === "teams" && <TeamView teamState={teamState} />}
 
+          {activeView === "borrow" && (
+            <BorrowAdminView
+              auth={auth}
+              borrow={borrow}
+            />
+          )}
+
           {activeView === "settings" && (
             <SettingsView
               auth={auth}
               settings={settings}
+              assetImport={assetImport}
               importState={imp}
               employeeGroupCounts={emp.employeeGroupCounts}
               dbStatus={dbStatus}
@@ -469,7 +508,7 @@ function App() {
 
       {/* Mobile bottom nav */}
       <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-[var(--border)] bg-[var(--surface)] px-2 py-2 lg:hidden">
-        <div className={`grid gap-2 ${canAccessSettings ? "grid-cols-3" : "grid-cols-2"}`}>
+        <div className={`grid gap-2 ${auth.isAdminAccount ? "grid-cols-4" : "grid-cols-2"}`}>
           <button
             className={`mobile-nav ${activeView === "employees" ? "mobile-nav-active" : ""}`}
             onClick={() => setActiveView("employees")}
@@ -477,12 +516,21 @@ function App() {
           >
             <Users size={16} /> Employees
           </button>
+          {auth.isAdminAccount && (
+            <button
+              className={`mobile-nav ${activeView === "borrow" ? "mobile-nav-active" : ""}`}
+              onClick={() => setActiveView("borrow")}
+              type="button"
+            >
+              <ClipboardList size={16} /> Borrow
+            </button>
+          )}
           <button
             className={`mobile-nav ${activeView === "teams" ? "mobile-nav-active" : ""}`}
             onClick={() => setActiveView("teams")}
             type="button"
           >
-            <Users size={16} /> Teams
+              <Users size={16} /> Teams
           </button>
           {canAccessSettings && (
             <button
@@ -506,6 +554,7 @@ function App() {
       />
 
       <ImportDrawer importState={imp} />
+      <AssetImportWizard assetImport={assetImport} />
     </div>
   )
 }
