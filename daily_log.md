@@ -150,6 +150,27 @@ Refocus `Staff_Kit` as a native desktop-only application and fully separate it f
 # Daily Log - 2026-04-01
 
 ## Objective
+Lock the `pending-reviews` web build regression with a dedicated CI rail that proves `npm run build` still works when `DATABASE_URL` is unset.
+
+## Work Completed
+- Added `.github/workflows/web-build-no-db.yml`.
+- Scoped the workflow to changes under `web/**` and the workflow file itself.
+- Configured the job to:
+  - use Node.js 20
+  - run in `web/`
+  - install with `npm ci`
+  - build with `DATABASE_URL` forced to an empty string
+
+## Verification
+- Re-ran `npm run build` in `web` with `DATABASE_URL` unset after adding the workflow.
+- Result: passed
+
+## Current State
+The branch now has a dedicated GitHub Actions rail for the exact failure mode we just fixed, so future regressions should surface immediately on push/PR instead of during release prep.
+
+# Daily Log - 2026-04-01
+
+## Objective
 Remove the last hard requirement for `DATABASE_URL` during `web` production builds on `pending-reviews`, so `npm run build` can succeed in CI or local release prep without a live database URL.
 
 ## Root Cause
