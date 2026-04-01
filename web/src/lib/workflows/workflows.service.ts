@@ -12,7 +12,6 @@ import {
   createReturnSessionRecord,
   findActiveReceiveSession,
   findActiveAssignmentsByAssetCodes,
-  findActiveReceiveSessionByQrToken,
   findActiveReturnSessionByQrToken,
   findAssetsByAssetCodes,
   findEmployeeByEmployeeId,

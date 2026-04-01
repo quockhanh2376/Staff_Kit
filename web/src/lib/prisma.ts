@@ -10,6 +10,18 @@ function createPrismaClient() {
   const connectionString = process.env.DATABASE_URL;
 
   if (!connectionString) {
+    if (process.env.NODE_ENV === "test") {
+      const handler: ProxyHandler<object> = {
+        get(_target, property) {
+          throw new Error(
+            `Prisma client access is not available in test mode without DATABASE_URL. Attempted to read "${String(property)}".`,
+          );
+        },
+      };
+
+      return new Proxy(Object.create(null), handler) as PrismaClient;
+    }
+
     throw new Error("DATABASE_URL is required to initialize Prisma Client.");
   }
 

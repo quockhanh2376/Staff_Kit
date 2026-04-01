@@ -27,6 +27,7 @@ type ReturnFixture = {
 };
 
 const fixtures: ReturnFixture[] = [];
+const describeWithDatabase = process.env.DATABASE_URL ? describe : describe.skip;
 
 async function createReturnFixture() {
   const token = `return-review-${randomUUID()}`;
@@ -240,7 +241,7 @@ afterEach(async () => {
   });
 });
 
-describe("reviewPendingRequest for return requests", () => {
+describeWithDatabase("reviewPendingRequest for return requests", () => {
   it("approves a return request after removing an invalid reviewed asset", async () => {
     const fixture = await createReturnFixture();
     const request = await prisma.returnRequest.findUniqueOrThrow({

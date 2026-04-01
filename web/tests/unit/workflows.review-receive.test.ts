@@ -26,6 +26,7 @@ type ReceiveFixture = {
 };
 
 const fixtureKeys: ReceiveFixture[] = [];
+const describeWithDatabase = process.env.DATABASE_URL ? describe : describe.skip;
 
 async function createReceiveFixture() {
   const token = `review-test-${randomUUID()}`;
@@ -230,7 +231,7 @@ afterEach(async () => {
   });
 });
 
-describe("reviewPendingRequest for receive requests", () => {
+describeWithDatabase("reviewPendingRequest for receive requests", () => {
   it("approves a receive request with corrected employee and reviewed asset codes", async () => {
     const fixture = await createReceiveFixture();
 
