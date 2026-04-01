@@ -14,11 +14,6 @@ import {
     getRequiredAssetImportMappingKeys,
     isAssetImportFieldEditable,
 } from "./assetImportModeConfig"
-import {
-    getAssetImportReviewFilterLabel,
-    getAssetImportSummaryLabel,
-    getAssetImportStatusMeta,
-} from "./assetImportStatusMeta"
 
 type AssetImportWizardProps = {
     assetImport: AssetImportState
@@ -81,10 +76,10 @@ function ImportPanel({ assetImport }: AssetImportWizardProps) {
                                 {getAssetImportModeLabel(detail.summary.importType)}
                             </div>
                             <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                                <Stat label={getAssetImportSummaryLabel("valid")} value={String(detail.summary.validRows)} />
-                                <Stat label={getAssetImportSummaryLabel("errors")} value={String(detail.summary.errorRows)} />
-                                <Stat label={getAssetImportSummaryLabel("imported")} value={String(detail.summary.importedRows)} />
-                                <Stat label={getAssetImportSummaryLabel("skipped")} value={String(detail.summary.skippedRows)} />
+                                <Stat label="Valid" value={String(detail.summary.validRows)} />
+                                <Stat label="Errors" value={String(detail.summary.errorRows)} />
+                                <Stat label="Imported" value={String(detail.summary.importedRows)} />
+                                <Stat label="Skipped" value={String(detail.summary.skippedRows)} />
                             </div>
                         </div>
                     )}
@@ -303,14 +298,6 @@ function ReviewBatchStep({ assetImport }: AssetImportWizardProps) {
     }
 
     const reviewFieldKeys = getAssetImportReviewFieldKeys(assetImport.currentImportMode)
-    const selectedRowStatusMeta = assetImport.selectedRow
-        ? getAssetImportStatusMeta(assetImport.selectedRow.status)
-        : null
-    const reviewFilters = [
-        { key: "all" as const },
-        { key: "errors" as const },
-        { key: "pending" as const },
-    ]
 
     return (
         <div className="space-y-5">
@@ -359,7 +346,11 @@ function ReviewBatchStep({ assetImport }: AssetImportWizardProps) {
                     </div>
                 </div>
                 <div className="mt-4 flex flex-wrap gap-2">
-                    {reviewFilters.map((filter) => (
+                    {[
+                        { key: "all", label: "All Rows" },
+                        { key: "errors", label: "Errors Only" },
+                        { key: "pending", label: "Pending Only" },
+                    ].map((filter) => (
                         <button
                             key={filter.key}
                             className={`rounded-[999px] border px-3 py-1.5 text-xs font-medium transition ${
@@ -370,7 +361,7 @@ function ReviewBatchStep({ assetImport }: AssetImportWizardProps) {
                             onClick={() => assetImport.setReviewFilter(filter.key as "all" | "errors" | "pending")}
                             type="button"
                         >
-                            {getAssetImportReviewFilterLabel(filter.key)}
+                            {filter.label}
                         </button>
                     ))}
                 </div>
@@ -401,58 +392,54 @@ function ReviewBatchStep({ assetImport }: AssetImportWizardProps) {
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-[var(--border)]">
-                                {assetImport.filteredRows.map((row) => {
-                                    const statusMeta = getAssetImportStatusMeta(row.status)
-
-                                    return (
-                                        <tr
-                                            key={row.id}
-                                            className={assetImport.selectedRowId === row.id ? "bg-[var(--primary)]/6" : ""}
-                                            onClick={() => assetImport.setSelectedRowId(row.id)}
-                                        >
-                                            <td className="px-3 py-2 align-top text-xs text-[var(--text-secondary)]">{row.rowNumber}</td>
-                                            <td className="px-3 py-2 align-top">
-                                                <span className="rounded-[999px] border border-[var(--border)] px-2 py-0.5 text-[10px] uppercase tracking-[0.06em] text-[var(--text-primary)]">
-                                                    {statusMeta.label}
-                                                </span>
-                                            </td>
-                                            {reviewFieldKeys.map((fieldKey) => (
-                                                <td key={`${row.id}-${fieldKey}`} className="px-2 py-2 align-top">
-                                                    <input
-                                                        className="form-input min-w-[130px] text-xs"
-                                                        value={getAssetImportRowFieldValue(
-                                                            row,
-                                                            fieldKey,
-                                                            assetImport.mappingDraft,
-                                                        )}
-                                                        disabled={
-                                                            row.status === "imported" ||
-                                                            assetImport.isUpdatingRow === row.id ||
-                                                            !isAssetImportFieldEditable(fieldKey)
-                                                        }
-                                                        onChange={(event) => {
-                                                            const nextValue = event.target.value
-                                                            void assetImport.handleUpdateRowField(row.id, fieldKey, nextValue)
-                                                        }}
-                                                    />
-                                                </td>
-                                            ))}
-                                            <td className="px-3 py-2 align-top">
-                                                <button
-                                                    className="rounded-[8px] border border-[var(--border)] px-2.5 py-1.5 text-xs font-medium text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)] disabled:opacity-50"
-                                                    onClick={(event) => {
-                                                        event.stopPropagation()
-                                                        void assetImport.handleToggleRowSkipped(row)
+                                {assetImport.filteredRows.map((row) => (
+                                    <tr
+                                        key={row.id}
+                                        className={assetImport.selectedRowId === row.id ? "bg-[var(--primary)]/6" : ""}
+                                        onClick={() => assetImport.setSelectedRowId(row.id)}
+                                    >
+                                        <td className="px-3 py-2 align-top text-xs text-[var(--text-secondary)]">{row.rowNumber}</td>
+                                        <td className="px-3 py-2 align-top">
+                                            <span className="rounded-[999px] border border-[var(--border)] px-2 py-0.5 text-[10px] uppercase tracking-[0.06em] text-[var(--text-primary)]">
+                                                {row.status}
+                                            </span>
+                                        </td>
+                                        {reviewFieldKeys.map((fieldKey) => (
+                                            <td key={`${row.id}-${fieldKey}`} className="px-2 py-2 align-top">
+                                                <input
+                                                    className="form-input min-w-[130px] text-xs"
+                                                    value={getAssetImportRowFieldValue(
+                                                        row,
+                                                        fieldKey,
+                                                        assetImport.mappingDraft,
+                                                    )}
+                                                    disabled={
+                                                        row.status === "imported" ||
+                                                        assetImport.isUpdatingRow === row.id ||
+                                                        !isAssetImportFieldEditable(fieldKey)
+                                                    }
+                                                    onChange={(event) => {
+                                                        const nextValue = event.target.value
+                                                        void assetImport.handleUpdateRowField(row.id, fieldKey, nextValue)
                                                     }}
-                                                    type="button"
-                                                    disabled={row.status === "imported" || assetImport.isUpdatingRow === row.id}
-                                                >
-                                                    {row.status === "skipped" ? "Unskip" : "Skip"}
-                                                </button>
+                                                />
                                             </td>
-                                        </tr>
-                                    )
-                                })}
+                                        ))}
+                                        <td className="px-3 py-2 align-top">
+                                            <button
+                                                className="rounded-[8px] border border-[var(--border)] px-2.5 py-1.5 text-xs font-medium text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)] disabled:opacity-50"
+                                                onClick={(event) => {
+                                                    event.stopPropagation()
+                                                    void assetImport.handleToggleRowSkipped(row)
+                                                }}
+                                                type="button"
+                                                disabled={row.status === "imported" || assetImport.isUpdatingRow === row.id}
+                                            >
+                                                {row.status === "skipped" ? "Unskip" : "Skip"}
+                                            </button>
+                                        </td>
+                                    </tr>
+                                ))}
                             </tbody>
                         </table>
                     </div>
@@ -474,7 +461,7 @@ function ReviewBatchStep({ assetImport }: AssetImportWizardProps) {
                                     Row {assetImport.selectedRow.rowNumber}
                                 </div>
                                 <div className="mt-1 text-xs text-[var(--text-secondary)]">
-                                    Status: {selectedRowStatusMeta?.label}
+                                    Status: {assetImport.selectedRow.status}
                                 </div>
                             </div>
                             <div>
@@ -483,7 +470,7 @@ function ReviewBatchStep({ assetImport }: AssetImportWizardProps) {
                                 </div>
                                 {assetImport.selectedRow.validationErrors.length === 0 ? (
                                     <div className="rounded-[8px] border border-emerald-500/35 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300">
-                                        {selectedRowStatusMeta?.emptyValidationMessage}
+                                        No validation errors.
                                     </div>
                                 ) : (
                                     <div className="space-y-2">
@@ -532,7 +519,7 @@ function ExistingBatchPanel({ assetImport }: AssetImportWizardProps) {
                                 {getAssetImportModeLabel(summary.importType)}
                             </div>
                             <div className="mt-2 text-[11px] text-[var(--text-secondary)]">
-                                {getAssetImportSummaryLabel("valid")} {summary.validRows} | {getAssetImportSummaryLabel("errors")} {summary.errorRows} | {getAssetImportSummaryLabel("imported")} {summary.importedRows}
+                                Valid {summary.validRows} | Errors {summary.errorRows} | Imported {summary.importedRows}
                             </div>
                         </button>
                     ))
