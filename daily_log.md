@@ -147,6 +147,53 @@ Refocus `Staff_Kit` as a native desktop-only application and fully separate it f
 - Keep docs and internal workflows desktop-only
 - Avoid reintroducing `AssetDesk-Pro` web planning into this repo
 
+# Daily Log - 2026-04-01
+
+## Objective
+Lock the `pending-reviews` web build regression with a dedicated CI rail that proves `npm run build` still works when `DATABASE_URL` is unset.
+
+## Work Completed
+- Added `.github/workflows/web-build-no-db.yml`.
+- Scoped the workflow to changes under `web/**` and the workflow file itself.
+- Configured the job to:
+  - use Node.js 20
+  - run in `web/`
+  - install with `npm ci`
+  - build with `DATABASE_URL` forced to an empty string
+
+## Verification
+- Re-ran `npm run build` in `web` with `DATABASE_URL` unset after adding the workflow.
+- Result: passed
+
+## Current State
+The branch now has a dedicated GitHub Actions rail for the exact failure mode we just fixed, so future regressions should surface immediately on push/PR instead of during release prep.
+
+# Daily Log - 2026-04-01
+
+## Objective
+Remove the last hard requirement for `DATABASE_URL` during `web` production builds on `pending-reviews`, so `npm run build` can succeed in CI or local release prep without a live database URL.
+
+## Root Cause
+- `web/prisma.config.ts` used `env("DATABASE_URL")`, so `prisma generate` failed while loading Prisma config before the build even started.
+- `web/src/lib/prisma.ts` instantiated `PrismaClient` at module import time, so even after unblocking `prisma generate`, Next.js build-time route evaluation still crashed while collecting page data.
+
+## Work Completed
+- Changed `web/prisma.config.ts` to read `process.env.DATABASE_URL ?? ""` so Prisma config can load without throwing during `prisma generate`.
+- Refactored `web/src/lib/prisma.ts` to lazily create the Prisma client only on first property access instead of at module import time.
+- Preserved the existing test-mode guard so DB-backed suites still fail loudly if they accidentally touch Prisma without a configured test database.
+
+## Verification
+- Ran `npm run check` in `web` with `DATABASE_URL` unset.
+- Result: passed
+  - ESLint: passed
+  - TypeScript typecheck: passed
+  - Vitest: `28 passed`, `7 skipped`
+  - `prisma generate`: passed without `DATABASE_URL`
+  - `next build --webpack`: passed without `DATABASE_URL`
+
+## Current State
+`pending-reviews` no longer requires `DATABASE_URL` just to generate Prisma client code or complete a production build. A real database URL is still required at runtime when server code actually uses Prisma.
+
 # Daily Log - 2026-03-21
 
 ## Objective
