@@ -4,7 +4,9 @@ import { describe, expect, it } from "vitest";
 
 import { getReviewRequestDetail } from "@/lib/workflows/workflows.service";
 
-describe("getReviewRequestDetail", () => {
+const describeWithDatabase = process.env.DATABASE_URL ? describe : describe.skip;
+
+describeWithDatabase("getReviewRequestDetail", () => {
   it("builds receive review detail with submitted snapshot and reviewed defaults", async () => {
     const detail = await getReviewRequestDetail("RECEIVE", "seed-receive-pending-001");
 
