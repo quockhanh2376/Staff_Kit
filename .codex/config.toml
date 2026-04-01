@@ -1,0 +1,10 @@
+[features]
+multi_agent = true
+
+[agents]
+# Keep headroom for the main thread plus the named support agents.
+max_threads = 6
+# Prevent recursive fan-out and keep delegation shallow.
+max_depth = 1
+# Default timeout for longer research or coordination jobs.
+job_max_runtime_seconds = 1800

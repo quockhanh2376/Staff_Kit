@@ -15,7 +15,7 @@ description: Analyze ideas with the user and create preliminary high-level docum
 | :------------------------------------------- | :----------------------------------------------------- | :-------------------------------------- |
 | `mcp_sequential-thinking_sequentialthinking` | Analyze requirements, feature dependencies, trade-offs | Break down ambiguous requests           |
 | `mcp_context7_resolve-library-id`            | Find library ID before querying                        | "mermaid js"                            |
-| `mcp_context7_query-docs`                    | Research library patterns, APIs, best practices        | "How to setup auth in Next.js"          |
+| `mcp_context7_query-docs`                    | Research library patterns, APIs, best practices        | "How to structure a Vite React feature" |
 | `search_web`                                 | Proactive research for implementation patterns         | "best architecture for agentic systems" |
 
 ---

@@ -23,9 +23,18 @@ function stripDiacritics(str: string): string {
     return str.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase()
 }
 
+function hasSearchMatch(text: string, query: string): boolean {
+    const trimmedQuery = query.trim()
+    if (!trimmedQuery) return false
+
+    return stripDiacritics(text).includes(stripDiacritics(trimmedQuery))
+}
+
 function HighlightText({ text, query }: { text: string; query: string }) {
-    if (!query.trim()) return <>{text}</>
-    const normQuery = stripDiacritics(query.trim())
+    const trimmedQuery = query.trim()
+    if (!trimmedQuery) return <>{text}</>
+
+    const normQuery = stripDiacritics(trimmedQuery)
     const normText = stripDiacritics(text)
     const parts: React.ReactNode[] = []
     let cursor = 0
@@ -37,12 +46,7 @@ function HighlightText({ text, query }: { text: string; query: string }) {
         parts.push(
             <mark
                 key={idx}
-                style={{
-                    background: "var(--highlight-bg)",
-                    color: "var(--highlight-text)",
-                    borderRadius: "2px",
-                    padding: "0 1px",
-                }}
+                className="search-highlight-mark"
             >
                 {text.slice(idx, idx + normQuery.length)}
             </mark>
@@ -306,97 +310,107 @@ export function EmployeeView({
                                         >
 
                                             {col.visibleColumns.map((column) => (
-                                                <td
-                                                    key={`${employee.id}-${column.key}`}
-                                                    className={`px-3 py-3 text-[var(--text-primary)] ${column.key === "employeeId"
-                                                        ? "font-semibold text-[var(--primary)]"
-                                                        : ""
-                                                        } ${column.key === "fullName" ? "font-medium text-[var(--text-primary)]" : ""}`}
-                                                    style={{
-                                                        width: `${col.resolvedColumnWidths[column.key] ?? 170}px`,
-                                                        minWidth: `${col.resolvedColumnWidths[column.key] ?? 170}px`,
-                                                    }}
-                                                    onDoubleClick={() => edit.startTableCellEdit(employee, column.key)}
-                                                >
-                                                    {(() => {
-                                                        const isEditable =
-                                                            canEditEmployeeTable &&
-                                                            edit.isTableEditMode &&
-                                                            edit.isTableEditableColumn(column.key)
-                                                        const isMoveSelector =
-                                                            canEditEmployeeTable &&
-                                                            edit.isTableEditMode &&
-                                                            column.key === "employeeId"
-                                                        const draftValue = edit.getDraftCellText(employee, column.key)
-                                                        const isActiveCell =
-                                                            edit.activeTableEditCell?.employeeId === employee.id &&
-                                                            edit.activeTableEditCell?.columnKey === column.key
+                                                (() => {
+                                                    const isEditable =
+                                                        canEditEmployeeTable &&
+                                                        edit.isTableEditMode &&
+                                                        edit.isTableEditableColumn(column.key)
+                                                    const isMoveSelector =
+                                                        canEditEmployeeTable &&
+                                                        edit.isTableEditMode &&
+                                                        column.key === "employeeId"
+                                                    const draftValue = edit.getDraftCellText(employee, column.key)
+                                                    const isActiveCell =
+                                                        edit.activeTableEditCell?.employeeId === employee.id &&
+                                                        edit.activeTableEditCell?.columnKey === column.key
+                                                    const rawCellValue = edit.readCellValue(employee, column.key, index, draftValue, formatDate)
+                                                    const isSearchMatchedCell =
+                                                        typeof rawCellValue === "string" &&
+                                                        hasSearchMatch(rawCellValue, emp.searchTerm) &&
+                                                        !isDuplicate &&
+                                                        !isMoveSelected &&
+                                                        !isActiveCell
 
-                                                        if (isMoveSelector) {
-                                                            return (
-                                                                <button
-                                                                    className={`inline-flex items-center gap-2 rounded-[6px] px-1.5 py-1 text-left text-sm transition ${isMoveSelected
-                                                                        ? "bg-[var(--primary)]/20 text-[var(--primary)]"
-                                                                        : "text-[var(--primary)] hover:bg-[var(--surface-hover)]"
-                                                                        }`}
-                                                                    onClick={() => edit.toggleMoveEmployeeSelection(employee.id)}
-                                                                    type="button"
-                                                                    title="Select this EE ID to move row to another list"
-                                                                >
-                                                                    <span
-                                                                        className={`inline-flex h-4 w-4 items-center justify-center rounded-[4px] border ${isMoveSelected
-                                                                            ? "border-[var(--primary)] bg-[var(--primary)]/25"
-                                                                            : "border-[var(--border)]"
-                                                                            }`}
-                                                                    >
-                                                                        {isMoveSelected ? <Check size={11} /> : null}
+                                                    return (
+                                                        <td
+                                                            key={`${employee.id}-${column.key}`}
+                                                            className={`px-3 py-3 ${column.key === "employeeId"
+                                                                ? "font-semibold text-[var(--primary)]"
+                                                                : column.key === "fullName"
+                                                                    ? "table-cell-full-name font-medium"
+                                                                    : "table-cell-body"
+                                                                } ${isSearchMatchedCell ? "search-highlight-cell" : ""}`}
+                                                            style={{
+                                                                width: `${col.resolvedColumnWidths[column.key] ?? 170}px`,
+                                                                minWidth: `${col.resolvedColumnWidths[column.key] ?? 170}px`,
+                                                            }}
+                                                            onDoubleClick={() => edit.startTableCellEdit(employee, column.key)}
+                                                        >
+                                                            {(() => {
+
+                                                                if (isMoveSelector) {
+                                                                    return (
+                                                                        <button
+                                                                            className={`inline-flex items-center gap-2 rounded-[6px] px-1.5 py-1 text-left text-sm transition ${isMoveSelected
+                                                                                ? "bg-[var(--primary)]/20 text-[var(--primary)]"
+                                                                                : "text-[var(--primary)] hover:bg-[var(--surface-hover)]"
+                                                                                }`}
+                                                                            onClick={() => edit.toggleMoveEmployeeSelection(employee.id)}
+                                                                            type="button"
+                                                                            title="Select this EE ID to move row to another list"
+                                                                        >
+                                                                            <span
+                                                                                className={`inline-flex h-4 w-4 items-center justify-center rounded-[4px] border ${isMoveSelected
+                                                                                    ? "border-[var(--primary)] bg-[var(--primary)]/25"
+                                                                                    : "border-[var(--border)]"
+                                                                                    }`}
+                                                                            >
+                                                                                {isMoveSelected ? <Check size={11} /> : null}
+                                                                            </span>
+                                                                            <span>{employee.employeeId}</span>
+                                                                        </button>
+                                                                    )
+                                                                }
+
+                                                                if (isEditable && isActiveCell) {
+                                                                    return (
+                                                                        <input
+                                                                            autoFocus
+                                                                            className="form-input h-8 px-2 py-1 text-xs"
+                                                                            type={DATE_COLUMN_KEYS.has(column.key) ? "date" : "text"}
+                                                                            value={draftValue}
+                                                                            onChange={(event) =>
+                                                                                edit.setDraftCellText(employee, column.key, event.target.value)
+                                                                            }
+                                                                            onBlur={() => edit.setActiveTableEditCell(null)}
+                                                                            onKeyDown={(event) => {
+                                                                                if (event.key === "Enter") {
+                                                                                    event.currentTarget.blur()
+                                                                                }
+                                                                                if (event.key === "Escape") {
+                                                                                    edit.setDraftCellText(
+                                                                                        employee,
+                                                                                        column.key,
+                                                                                        edit.readRawCellText(employee, column.key),
+                                                                                    )
+                                                                                    edit.setActiveTableEditCell(null)
+                                                                                }
+                                                                            }}
+                                                                        />
+                                                                    )
+                                                                }
+
+                                                                return (
+                                                                    <span className={isEditable ? "cursor-cell select-none" : ""}>
+                                                                        {typeof rawCellValue === "string" && hasSearchMatch(rawCellValue, emp.searchTerm) ? (
+                                                                            <HighlightText text={rawCellValue} query={emp.searchTerm} />
+                                                                        ) : rawCellValue}
                                                                     </span>
-                                                                    <span>{employee.employeeId}</span>
-                                                                </button>
-                                                            )
-                                                        }
-
-                                                        if (isEditable && isActiveCell) {
-                                                            return (
-                                                                <input
-                                                                    autoFocus
-                                                                    className="form-input h-8 px-2 py-1 text-xs"
-                                                                    type={DATE_COLUMN_KEYS.has(column.key) ? "date" : "text"}
-                                                                    value={draftValue}
-                                                                    onChange={(event) =>
-                                                                        edit.setDraftCellText(employee, column.key, event.target.value)
-                                                                    }
-                                                                    onBlur={() => edit.setActiveTableEditCell(null)}
-                                                                    onKeyDown={(event) => {
-                                                                        if (event.key === "Enter") {
-                                                                            event.currentTarget.blur()
-                                                                        }
-                                                                        if (event.key === "Escape") {
-                                                                            edit.setDraftCellText(
-                                                                                employee,
-                                                                                column.key,
-                                                                                edit.readRawCellText(employee, column.key),
-                                                                            )
-                                                                            edit.setActiveTableEditCell(null)
-                                                                        }
-                                                                    }}
-                                                                />
-                                                            )
-                                                        }
-
-                                                        return (
-                                                            <span className={isEditable ? "cursor-cell select-none" : ""}>
-                                                                {(() => {
-                                                                    const raw = edit.readCellValue(employee, column.key, index, draftValue, formatDate)
-                                                                    const showHighlight = emp.searchTerm.trim().length >= 1 && typeof raw === "string"
-                                                                    return showHighlight ? (
-                                                                        <HighlightText text={raw} query={emp.searchTerm} />
-                                                                    ) : raw
-                                                                })()}
-                                                            </span>
-                                                        )
-                                                    })()}
-                                                </td>
+                                                                )
+                                                            })()}
+                                                        </td>
+                                                    )
+                                                })()
                                             ))}
                                         </tr>
                                     )

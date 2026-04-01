@@ -1,6 +1,6 @@
 // ── App-level types ───────────────────────────────────────────────────────────
 
-export type AppView = "employees" | "teams" | "settings"
+export type AppView = "employees" | "teams" | "borrow" | "settings"
 export type Theme = "dark" | "light"
 export type UiColumnSource = "core" | "dynamic" | "system"
 export type StaffGroupKey = "employee_list" | "onboarding" | "offboarding" | "internal_movement"
