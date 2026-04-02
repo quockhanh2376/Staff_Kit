@@ -21,8 +21,12 @@
 
 Add tests for:
 - valid return submit creates a pending request with `request_type = "return"`
+- return submit rejects unknown employees
+- return submit rejects duplicate asset codes
 - return submit rejects asset codes not actively loaned to the submitted employee
-- borrow approval rejects requests whose `request_type` is not `borrow`
+- borrow approve/reject actions reject requests whose `request_type` is not `borrow`
+- pending borrow queue excludes hidden return requests
+- return submit writes `return_request.submit` audit logging
 
 - [ ] **Step 2: Run targeted tests to verify they fail**
 
@@ -36,7 +40,9 @@ In `src-tauri/src/db/borrow.rs`:
 - add a return-submit input/flow alongside the existing borrow-submit flow
 - resolve active-loan eligibility from `asset_loans` where `returned_at IS NULL`
 - insert pending requests with `request_type = "return"`
-- add a guard so borrow approval rejects non-borrow request types
+- add guards so borrow approve/reject actions reject non-borrow request types
+- keep `list_pending_borrow_requests` filtered to borrow-only during this hidden slice
+- emit `return_request.submit` audit logs
 
 - [ ] **Step 4: Re-run targeted tests**
 
@@ -96,22 +102,23 @@ git commit -m "feat: add lan qr return submit endpoint"
 ### Task 3: Expose typed request contracts and verify the slice
 
 **Files:**
-- Modify: `src/types/staff.ts`
-- Modify: `src/services/staff-api.ts` if needed for parity
+- Modify: docs only if implementation realities changed from the original slice spec
 
-- [ ] **Step 1: Add the failing TS expectation**
+- [ ] **Step 1: Update docs or contracts only if the slice actually needed them**
 
-If needed, add or tighten the return request submit type shape so the contract is explicit and matches the backend.
+For this hidden backend-first slice, only change TS contracts if implementation required them. Otherwise, keep this chunk focused on final verification plus doc alignment.
 
 - [ ] **Step 2: Run type/quality verification**
 
 Run: `npm run check:quality`
 
-Expected: if the TS contract is incomplete, typecheck or lint fails.
+Expected: quality checks still pass after the backend-only slice.
 
-- [ ] **Step 3: Implement the minimal TS contract updates**
+- [ ] **Step 3: Implement only the minimal follow-up changes still needed**
 
-Add only the types or API helpers needed to represent return request submission cleanly.
+Examples:
+- doc alignment for queue/guard behavior
+- minimal TS surface update only if a backend helper was intentionally exposed
 
 - [ ] **Step 4: Run full verification**
 
@@ -126,6 +133,6 @@ Expected:
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/types/staff.ts src/services/staff-api.ts
-git commit -m "chore: align typed contracts for qr return submit"
+git add docs/superpowers/specs/2026-04-02-qr-return-submit-slice-design.md docs/superpowers/plans/2026-04-02-qr-return-submit-slice.md
+git commit -m "docs: align qr return submit plan with implementation"
 ```
