@@ -903,6 +903,15 @@ mod tests {
         .expect("count active loans")
     }
 
+    fn latest_audit_event_for_entity(conn: &Connection, entity_id: i64) -> (String, String) {
+        conn.query_row(
+            "SELECT event_type, payload_json FROM audit_logs WHERE entity_id = ? ORDER BY id DESC LIMIT 1",
+            params![entity_id.to_string()],
+            |row| Ok((row.get(0)?, row.get::<_, Option<String>>(1)?.unwrap_or_default())),
+        )
+        .expect("load latest audit event")
+    }
+
     fn create_active_loan_for_employee(
         conn: &mut Connection,
         employee_id: &str,
@@ -1037,6 +1046,66 @@ mod tests {
         .expect_err("return request should reject assets loaned to another employee");
 
         assert!(error.contains("active loan") || error.contains("employee"));
+    }
+
+    #[test]
+    fn submit_return_request_rejects_unknown_employee() {
+        let mut conn = open_test_connection();
+        create_active_loan_for_employee(&mut conn, "EE2002", "Tran Thi B", "ASSET-011");
+
+        let error = submit_return_request_conn(
+            &mut conn,
+            BorrowRequestSubmitInput {
+                submitted_employee_id: "UNKNOWN".to_string(),
+                submitted_full_name: "Ghost User".to_string(),
+                asset_codes: vec!["ASSET-011".to_string()],
+                submit_source_ip: None,
+            },
+        )
+        .expect_err("unknown employee should be rejected");
+
+        assert!(error.contains("employee"));
+    }
+
+    #[test]
+    fn submit_return_request_rejects_duplicate_asset_codes() {
+        let mut conn = open_test_connection();
+        create_active_loan_for_employee(&mut conn, "EE1001", "Nguyen Van A", "ASSET-012");
+
+        let error = submit_return_request_conn(
+            &mut conn,
+            BorrowRequestSubmitInput {
+                submitted_employee_id: "EE1001".to_string(),
+                submitted_full_name: "Nguyen Van A".to_string(),
+                asset_codes: vec!["ASSET-012".to_string(), "ASSET-012".to_string()],
+                submit_source_ip: None,
+            },
+        )
+        .expect_err("duplicate asset codes should be rejected");
+
+        assert!(error.contains("duplicate"));
+    }
+
+    #[test]
+    fn submit_return_request_writes_return_submit_audit_log() {
+        let mut conn = open_test_connection();
+        create_active_loan_for_employee(&mut conn, "EE1001", "Nguyen Van A", "ASSET-013");
+
+        let request = submit_return_request_conn(
+            &mut conn,
+            BorrowRequestSubmitInput {
+                submitted_employee_id: "EE1001".to_string(),
+                submitted_full_name: "Nguyen Van A".to_string(),
+                asset_codes: vec!["ASSET-013".to_string()],
+                submit_source_ip: Some("192.168.1.70".to_string()),
+            },
+        )
+        .expect("submit return request");
+
+        let (event_type, payload_json) = latest_audit_event_for_entity(&conn, request.id);
+        assert_eq!(event_type, "return_request.submit");
+        assert!(payload_json.contains("\"requestType\":\"return\""));
+        assert!(payload_json.contains("ASSET-013"));
     }
 
     #[test]
