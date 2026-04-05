@@ -110,6 +110,33 @@
         font: inherit;
       }
 
+      .search-row {
+        display: flex;
+        gap: 8px;
+        align-items: stretch;
+      }
+
+      .search-row input {
+        flex: 1;
+        width: auto;
+      }
+
+      #search-btn {
+        width: auto;
+        flex-shrink: 0;
+        padding: 12px 18px;
+        background: var(--surface-2);
+        color: var(--text);
+        font-weight: 600;
+        border: 1px solid var(--border);
+        cursor: pointer;
+        transition: background 140ms ease;
+      }
+
+      #search-btn:hover {
+        background: var(--surface);
+      }
+
       input {
         background: var(--surface-2);
         color: var(--text);
@@ -219,7 +246,10 @@
         <input id="full-name" autocomplete="name" placeholder="Nguyen Van A" />
 
         <label for="asset-search">Search Asset</label>
-        <input id="asset-search" autocomplete="off" placeholder="ASSET-001 or Dell Latitude" />
+        <div class="search-row">
+          <input id="asset-search" autocomplete="off" placeholder="ASSET-001 or Dell Latitude" />
+          <button id="search-btn" type="button">Search</button>
+        </div>
         <div class="helper" id="search-helper">Only in-stock assets are searchable.</div>
 
         <div id="selected-assets"></div>
@@ -245,6 +275,7 @@
       const searchHelper = document.getElementById("search-helper");
       const btnBorrow   = document.getElementById("btn-borrow");
       const btnReturn   = document.getElementById("btn-return");
+      const searchBtn   = document.getElementById("search-btn");
 
       // â”€â”€ Mode switch â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       const MODES = {
@@ -349,20 +380,19 @@
         });
       };
 
-      // â”€â”€ Asset search â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      let searchTimeout = null;
-      searchInput.addEventListener("input", () => {
-        clearTimeout(searchTimeout);
-        searchTimeout = setTimeout(async () => {
-          try {
-            const q = encodeURIComponent(searchInput.value.trim());
-            const res = await fetch(`${MODES[mode].endpoint}?q=${q}`);
-            renderResults(await res.json());
-          } catch (err) {
-            setMessage(err instanceof Error ? err.message : "Asset search failed.");
-          }
-        }, 180);
-      });
+      // -- Asset search --------------------------------------------------------
+      const doSearch = async () => {
+        try {
+          const q = encodeURIComponent(searchInput.value.trim());
+          const res = await fetch(`${MODES[mode].endpoint}?q=${q}`);
+          renderResults(await res.json());
+        } catch (err) {
+          setMessage(err instanceof Error ? err.message : "Asset search failed.");
+        }
+      };
+
+      searchBtn.addEventListener("click", doSearch);
+      searchInput.addEventListener("keydown", (e) => { if (e.key === "Enter") doSearch(); });
 
       // â”€â”€ Submit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       submitBtn.addEventListener("click", async () => {
