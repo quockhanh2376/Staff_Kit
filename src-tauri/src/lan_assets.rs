@@ -208,8 +208,8 @@
         <p id="page-desc">Enter your Staff ID, full name, then search and select the asset items you are receiving from IT.</p>
 
         <div class="mode-toggle">
-          <button class="mode-btn active-borrow" id="btn-borrow" type="button">ðŸ“¥ Borrow</button>
-          <button class="mode-btn" id="btn-return" type="button">ðŸ“¤ Return</button>
+          <button class="mode-btn active-borrow" id="btn-borrow" type="button">&#x2193; Borrow</button>
+          <button class="mode-btn" id="btn-return" type="button">&#x2191; Return</button>
         </div>
 
         <label for="staff-id">Staff ID</label>
