@@ -10,7 +10,7 @@ Show numeric-only staff ID on frontend tables (`ASWVN1253` -> `1253`) while pres
   - table cell display for `employeeId` column
   - mobile card subtitle
 - Kept raw `employeeId` unchanged in backend payloads, state, DB, and import flow.
-- Because `EmployeeView` is shared by `employee_list`, `onboarding`, and `offboarding`, the display change is now active for all three views.
+- Because `EmployeeView` is shared by `employee_list`, `onboarding`, `offboarding`, and `internal_movement`, the display change is now active for all four views.
 
 ## Validation
 - TDD red step: added `scripts/employee-id-display.test.ts` first, confirmed failure before helper existed.
