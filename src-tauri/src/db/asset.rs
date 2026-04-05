@@ -43,6 +43,23 @@ pub struct AssetCategoryRecord {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct AssetCategoryLookupRecord {
+    pub id: i64,
+    pub tracking_mode: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct StockItemCreateInput {
+    pub category_id: i64,
+    pub item_name: String,
+    pub brand: Option<String>,
+    pub model: Option<String>,
+    pub warehouse: Option<String>,
+    pub quantity_on_hand: i64,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct AssetLookupRecord {
     pub id: i64,
     pub asset_code: String,
@@ -181,6 +198,38 @@ fn load_asset_record_by_id_conn(
         .map_err(|err| format!("failed to load asset with id {asset_id}: {err}"))
 }
 
+pub(crate) fn load_asset_category_by_code_or_name_tx(
+    tx: &Transaction<'_>,
+    value: &str,
+) -> Result<Option<AssetCategoryLookupRecord>, String> {
+    let normalized = value.trim();
+    if normalized.is_empty() {
+        return Ok(None);
+    }
+
+    tx.query_row(
+        r#"
+        SELECT id, tracking_mode
+        FROM asset_categories
+        WHERE is_active = 1
+          AND (
+            category_code = ? COLLATE NOCASE
+            OR category_name = ? COLLATE NOCASE
+          )
+        LIMIT 1
+        "#,
+        params![normalized, normalized],
+        |row| {
+            Ok(AssetCategoryLookupRecord {
+                id: row.get(0)?,
+                tracking_mode: row.get(1)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(|err| format!("failed to load asset category '{normalized}': {err}"))
+}
+
 pub(crate) fn create_asset_tx(
     tx: &Transaction<'_>,
     input: &AssetUpsertInput,
@@ -203,6 +252,51 @@ pub(crate) fn create_asset_tx(
     )?;
 
     load_asset_record_by_id_conn(tx, asset_id)
+}
+
+pub(crate) fn create_stock_item_tx(
+    tx: &Transaction<'_>,
+    input: &StockItemCreateInput,
+) -> Result<i64, String> {
+    let item_name = require_text(input.item_name.clone(), "itemName")?;
+    if input.quantity_on_hand <= 0 {
+        return Err("quantity must be a positive integer".to_string());
+    }
+
+    let brand = normalize_optional_text(input.brand.clone());
+    let model = normalize_optional_text(input.model.clone());
+    let warehouse = normalize_optional_text(input.warehouse.clone());
+    let note = normalize_optional_text(input.note.clone());
+
+    tx.execute(
+        r#"
+        INSERT INTO stock_items(
+          category_id,
+          item_name,
+          brand,
+          model,
+          warehouse,
+          quantity_on_hand,
+          assigned_quantity,
+          note,
+          created_at,
+          updated_at
+        )
+        VALUES(?, ?, ?, ?, ?, ?, 0, ?, datetime('now'), datetime('now'))
+        "#,
+        params![
+            input.category_id,
+            item_name,
+            brand.as_deref(),
+            model.as_deref(),
+            warehouse.as_deref(),
+            input.quantity_on_hand,
+            note.as_deref(),
+        ],
+    )
+    .map_err(humanize_sqlite_error)?;
+
+    Ok(tx.last_insert_rowid())
 }
 
 pub(crate) fn create_asset_conn(

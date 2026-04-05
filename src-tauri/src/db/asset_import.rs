@@ -754,10 +754,135 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
     revalidate_batch_tx(&tx, batch_id)?;
     let summary = load_batch_summary_tx(&tx, batch_id)?;
 
+    let mut imported_row_ids = Vec::new();
+    let mut imported_asset_codes = Vec::new();
+
     if summary.import_type == AssetImportMode::Quantity {
-        return Err(
-            "Quantity batch commit into stock lands in the next slice. Review is supported now, but official stock writes stay blocked.".to_string(),
-        );
+        let mut stmt = tx
+            .prepare(
+                r#"
+                SELECT
+                  id,
+                  asset_type,
+                  display_name,
+                  brand,
+                  model,
+                  quantity,
+                  warehouse,
+                  notes
+                FROM asset_import_rows
+                WHERE batch_id = ? AND status = ?
+                ORDER BY row_number ASC, id ASC
+                "#,
+            )
+            .map_err(|err| format!("failed to prepare valid quantity row query: {err}"))?;
+
+        let rows = stmt
+            .query_map(params![batch_id, ROW_STATUS_VALID], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                ))
+            })
+            .map_err(|err| format!("failed to query valid quantity rows: {err}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|err| format!("failed to read valid quantity rows: {err}"))?;
+
+        drop(stmt);
+
+        let mut imported_stock_item_ids = Vec::new();
+
+        for (row_id, asset_type, display_name, brand, model, quantity, warehouse, notes) in rows {
+            let category_value = asset_type
+                .clone()
+                .ok_or_else(|| format!("row {row_id} is missing assetType"))?;
+            let category = asset::load_asset_category_by_code_or_name_tx(&tx, category_value.as_str())?
+                .ok_or_else(|| format!("asset category '{category_value}' was not found"))?;
+
+            if category.tracking_mode != AssetImportMode::Quantity.as_str() {
+                return Err(format!(
+                    "asset category '{}' is not configured for quantity stock",
+                    category_value
+                ));
+            }
+
+            let item_name = display_name
+                .clone()
+                .ok_or_else(|| format!("row {row_id} is missing displayName"))?;
+            let quantity_on_hand = quantity
+                .as_deref()
+                .ok_or_else(|| format!("row {row_id} is missing quantity"))?
+                .parse::<i64>()
+                .map_err(|_| format!("row {row_id} has invalid quantity"))?;
+
+            let stock_item_id = asset::create_stock_item_tx(
+                &tx,
+                &asset::StockItemCreateInput {
+                    category_id: category.id,
+                    item_name,
+                    brand,
+                    model,
+                    warehouse,
+                    quantity_on_hand,
+                    note: notes,
+                },
+            )?;
+
+            tx.execute(
+                r#"
+                UPDATE asset_import_rows
+                SET
+                  status = ?,
+                  imported_asset_id = NULL,
+                  validation_errors_json = '[]',
+                  updated_at = datetime('now')
+                WHERE id = ?
+                "#,
+                params![ROW_STATUS_IMPORTED, row_id],
+            )
+            .map_err(humanize_sqlite_error)?;
+
+            imported_row_ids.push(row_id);
+            imported_stock_item_ids.push(stock_item_id);
+        }
+
+        revalidate_batch_tx(&tx, batch_id)?;
+        let summary = load_batch_summary_tx(&tx, batch_id)?;
+
+        let payload_json = json!({
+            "importType": "quantity",
+            "importedRowIds": imported_row_ids,
+            "importedStockItemIds": imported_stock_item_ids,
+        })
+        .to_string();
+
+        audit::insert_audit_log_tx(
+            &tx,
+            "asset_import.import_valid_rows",
+            "local_account",
+            actor_ref.as_deref(),
+            "asset_import_batch",
+            batch_id.to_string().as_str(),
+            Some(payload_json.as_str()),
+        )?;
+
+        tx.commit()
+            .map_err(|err| format!("failed to commit asset import transaction: {err}"))?;
+
+        return Ok(AssetImportCommitResult {
+            batch_id,
+            imported_count: imported_row_ids.len() as i64,
+            imported_row_ids,
+            imported_asset_codes,
+            remaining_error_rows: summary.error_rows,
+            batch_status: summary.status,
+        });
     }
 
     let mut stmt = tx
@@ -804,9 +929,6 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
             "Serialized asset code generation lands in the next slice. Review can proceed, but import stays blocked until codes are assigned.".to_string(),
         );
     }
-
-    let mut imported_row_ids = Vec::new();
-    let mut imported_asset_codes = Vec::new();
 
     for (row_id, asset_code, asset_type, display_name, model, serial_number, notes) in rows {
         let record = asset::create_asset_tx(
@@ -2421,7 +2543,7 @@ mod tests {
     }
 
     #[test]
-    fn import_valid_rows_rejects_quantity_batches_until_stock_commit_slice() {
+    fn import_valid_rows_commits_quantity_batches_into_stock_items() {
         let mut conn = open_test_connection();
 
         let batch = create_asset_import_batch_seed_conn(
@@ -2438,10 +2560,45 @@ mod tests {
         )
         .expect("create quantity batch");
 
-        let error = import_asset_import_batch_valid_rows_conn(&mut conn, batch.summary.id)
-            .expect_err("quantity batch import should stay blocked");
+        let result = import_asset_import_batch_valid_rows_conn(&mut conn, batch.summary.id)
+            .expect("import valid quantity rows into stock_items");
 
-        assert!(error.contains("Quantity batch commit into stock lands in the next slice"));
+        assert_eq!(result.imported_count, 1);
+        assert_eq!(result.imported_row_ids.len(), 1);
+
+        let stock_item = conn
+            .query_row(
+                r#"
+                SELECT si.item_name, si.quantity_on_hand, si.assigned_quantity, si.warehouse, si.note
+                FROM stock_items si
+                INNER JOIN asset_categories c ON c.id = si.category_id
+                WHERE c.category_code = 'mouse'
+                "#,
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                    ))
+                },
+            )
+            .expect("load imported stock item");
+
+        assert_eq!(stock_item.0, "Logitech M650");
+        assert_eq!(stock_item.1, 10);
+        assert_eq!(stock_item.2, 0);
+        assert_eq!(stock_item.3.as_deref(), Some("HCM"));
+        assert_eq!(stock_item.4.as_deref(), Some("Initial import"));
+
+        let batch_after = load_asset_import_batch_detail_conn(&conn, batch.summary.id)
+            .expect("reload quantity batch after import");
+        assert_eq!(batch_after.summary.imported_rows, 1);
+        assert_eq!(batch_after.summary.error_rows, 0);
+        assert_eq!(batch_after.summary.status, "completed");
+        assert_eq!(batch_after.rows[0].status, "imported");
     }
 
     #[test]

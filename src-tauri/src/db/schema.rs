@@ -35,6 +35,8 @@ pub(super) const BACKUP_DIRECTORY_SETTING_KEY: &str = "backup_directory_path";
 pub(super) const AUTO_BACKUP_ENABLED_SETTING_KEY: &str = "backup_auto_enabled_v1";
 pub(super) const AUTO_BACKUP_LAST_DATE_SETTING_KEY: &str = "backup_auto_last_date_v1";
 #[allow(dead_code)]
+pub(super) const BORROW_LAN_ENABLED_SETTING_KEY: &str = "borrow_lan_enabled_v1";
+#[allow(dead_code)]
 pub(super) const BORROW_LAN_HOST_SETTING_KEY: &str = "borrow_lan_host_v1";
 #[allow(dead_code)]
 pub(super) const BORROW_LAN_PORT_SETTING_KEY: &str = "borrow_lan_port_v1";

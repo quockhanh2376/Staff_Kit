@@ -9,7 +9,9 @@ use serde_json::json;
 use tauri::AppHandle;
 
 use super::auth;
-use super::schema::{BORROW_LAN_HOST_SETTING_KEY, BORROW_LAN_PORT_SETTING_KEY};
+use super::schema::{
+    BORROW_LAN_ENABLED_SETTING_KEY, BORROW_LAN_HOST_SETTING_KEY, BORROW_LAN_PORT_SETTING_KEY,
+};
 use super::{
     asset, audit, get_setting_value, humanize_sqlite_error, open_runtime_connection, require_text,
     set_setting_value,
@@ -32,6 +34,7 @@ const BORROW_LAN_DETECTION_TARGETS: [&str; 3] = [
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BorrowLanSettings {
+    pub enabled: bool,
     pub host: String,
     pub port: u16,
     pub borrow_url: String,
@@ -40,6 +43,8 @@ pub struct BorrowLanSettings {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BorrowLanSettingsUpdateInput {
+    #[serde(default)]
+    pub enabled: Option<bool>,
     pub host: String,
     pub port: u16,
 }
@@ -100,9 +105,20 @@ pub fn update_borrow_lan_settings(
     let port_text = payload.port.to_string();
     set_setting_value(&conn, BORROW_LAN_PORT_SETTING_KEY, Some(port_text.as_str()))?;
 
+    if let Some(enabled) = payload.enabled {
+        set_setting_value(
+            &conn,
+            BORROW_LAN_ENABLED_SETTING_KEY,
+            Some(if enabled { "1" } else { "0" }),
+        )?;
+    }
+
+    let updated_settings = read_borrow_lan_settings(&conn)?;
+
     let payload_json = json!({
-        "host": host,
-        "port": payload.port,
+        "enabled": updated_settings.enabled,
+        "host": updated_settings.host,
+        "port": updated_settings.port,
     })
     .to_string();
 
@@ -123,7 +139,7 @@ pub fn update_borrow_lan_settings(
         Some(payload_json.as_str()),
     )?;
 
-    read_borrow_lan_settings(&conn)
+    Ok(updated_settings)
 }
 
 pub fn detect_borrow_lan_host() -> Result<Option<String>, String> {
@@ -520,6 +536,10 @@ fn normalize_asset_codes(asset_codes: Vec<String>) -> Result<Vec<String>, String
 }
 
 fn read_borrow_lan_settings(conn: &Connection) -> Result<BorrowLanSettings, String> {
+    let enabled = get_setting_value(conn, BORROW_LAN_ENABLED_SETTING_KEY)?
+        .as_deref()
+        .map(parse_borrow_lan_enabled_setting)
+        .unwrap_or(false);
     let host = get_setting_value(conn, BORROW_LAN_HOST_SETTING_KEY)?
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
@@ -530,10 +550,18 @@ fn read_borrow_lan_settings(conn: &Connection) -> Result<BorrowLanSettings, Stri
         .unwrap_or(DEFAULT_BORROW_LAN_PORT);
 
     Ok(BorrowLanSettings {
+        enabled,
         borrow_url: build_borrow_lan_url(host.as_str(), port),
         host,
         port,
     })
+}
+
+fn parse_borrow_lan_enabled_setting(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
 }
 
 fn normalize_detected_borrow_lan_host_candidate(candidate: &str) -> Option<String> {
@@ -845,6 +873,7 @@ mod tests {
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-001".to_string(), "ASSET-002".to_string()],
                 submit_source_ip: Some("192.168.1.50".to_string()),
+                request_type: None,
             },
         )
         .expect("submit borrow request");
@@ -872,6 +901,7 @@ mod tests {
                 submitted_full_name: "Ghost User".to_string(),
                 asset_codes: vec!["ASSET-001".to_string()],
                 submit_source_ip: None,
+                request_type: None,
             },
         )
         .expect_err("unknown employee should be rejected");
@@ -892,6 +922,7 @@ mod tests {
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-001".to_string(), "ASSET-001".to_string()],
                 submit_source_ip: None,
+                request_type: None,
             },
         )
         .expect_err("duplicate asset codes should be rejected");
@@ -912,6 +943,7 @@ mod tests {
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-001".to_string()],
                 submit_source_ip: None,
+                request_type: None,
             },
         )
         .expect("submit borrow request");
@@ -947,6 +979,7 @@ mod tests {
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-001".to_string()],
                 submit_source_ip: None,
+                request_type: None,
             },
         )
         .expect("submit borrow request");
@@ -974,6 +1007,7 @@ mod tests {
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-001".to_string()],
                 submit_source_ip: None,
+                request_type: None,
             },
         )
         .expect("submit borrow request");
@@ -1001,6 +1035,7 @@ mod tests {
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-001".to_string()],
                 submit_source_ip: None,
+                request_type: None,
             },
         )
         .expect("create first pending request");
@@ -1012,6 +1047,7 @@ mod tests {
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-002".to_string()],
                 submit_source_ip: None,
+                request_type: None,
             },
         )
         .expect("create request to approve");
@@ -1024,6 +1060,7 @@ mod tests {
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-003".to_string()],
                 submit_source_ip: None,
+                request_type: None,
             },
         )
         .expect("create last pending request");
@@ -1049,6 +1086,7 @@ mod tests {
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-001".to_string()],
                 submit_source_ip: Some("192.168.1.50".to_string()),
+                request_type: None,
             },
         )
         .expect("submit request");
