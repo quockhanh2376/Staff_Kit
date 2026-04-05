@@ -5,8 +5,9 @@
   --bg: #f1f4f2;
   --surface: #ffffff;
   --surface-hover: #eaf4eb;
-  --table-header-bg: #e6eaee;
-  --table-header-divider: #d2d8df;
+  --table-header-bg: #dce2e8;
+  --table-header-divider: #c7ced6;
+  --table-header-column-divider: #bcc4cd;
   --border: #cfd9d0;
   --text-primary: #111a14;
   --text-secondary: #4f5a53;
@@ -26,8 +27,9 @@
   --bg: #0f1115;
   --surface: #171a20;
   --surface-hover: #20242b;
-  --table-header-bg: #232933;
-  --table-header-divider: #353d48;
+  --table-header-bg: #202731;
+  --table-header-divider: #323b47;
+  --table-header-column-divider: #3b4552;
   --border: #2e343d;
   --text-primary: #f3f4f6;
   --text-secondary: #9ca3af;
@@ -355,6 +357,13 @@ option {
     inset 0 1px 0 color-mix(in oklab, white 16%, transparent);
 }
 
+.table-head th:not(:last-child) {
+  box-shadow:
+    inset -1px 0 0 var(--table-header-column-divider),
+    inset 0 -1px 0 var(--table-header-divider),
+    inset 0 1px 0 color-mix(in oklab, white 16%, transparent);
+}
+
 .table-row:nth-child(odd) {
   background: color-mix(in oklab, var(--surface) 88%, var(--bg) 12%);
 }
@@ -470,6 +479,45 @@ option {
 .column-drag-handle:hover {
   border-color: color-mix(in oklab, var(--primary) 44%, var(--border) 56%);
   background: color-mix(in oklab, var(--primary) 10%, var(--surface) 90%);
+}
+
+.action-icon-button {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in oklab, var(--border) 88%, transparent);
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--surface) 92%, var(--bg) 8%);
+  color: var(--text-secondary);
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease,
+    color 140ms ease,
+    transform 140ms ease;
+}
+
+.action-icon-button:hover:not(:disabled) {
+  border-color: color-mix(in oklab, var(--primary) 34%, var(--border) 66%);
+  background: color-mix(in oklab, var(--surface-hover) 72%, var(--surface) 28%);
+  color: var(--text-primary);
+  transform: translateY(-1px);
+}
+
+.action-icon-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.action-icon-button-danger {
+  color: color-mix(in oklab, var(--error) 84%, var(--text-primary) 16%);
+}
+
+.action-icon-button-danger:hover:not(:disabled) {
+  border-color: color-mix(in oklab, var(--error) 38%, var(--border) 62%);
+  background: color-mix(in oklab, var(--error) 10%, var(--surface) 90%);
+  color: color-mix(in oklab, var(--error) 90%, var(--text-primary) 10%);
 }
 
 .column-drag-handle:active {

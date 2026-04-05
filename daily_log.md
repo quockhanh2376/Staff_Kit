@@ -1,6 +1,56 @@
 # Daily Log - 2026-04-05
 
 ## Objective
+Unify admin action UI across employee table tooling, Teams, and Settings so row-level actions use the same icon-driven visual language.
+
+## Work Completed
+- Replaced column-drawer-specific icon button classes with generic reusable action icon classes in `src/index.css`.
+- Kept the stronger gray employee table header and clearer header column dividers as part of the same visual consistency pass.
+- Updated `ColumnsDrawer` to use the shared action-icon classes.
+- Updated `TeamView` action column:
+  - removed the three-dot dropdown for row actions
+  - replaced it with direct edit and trash icon buttons
+- Updated Settings account actions:
+  - `Use` -> user-switch icon
+  - `Edit` -> pencil icon
+  - `Reset Password` -> key icon
+  - `Delete` -> trash icon
+- Preserved clarity with `title` and `aria-label` on all icon actions.
+- Added `scripts/action-icon-ui.test.ts` to verify Teams, Settings, and ColumnsDrawer all use the shared icon-action pattern.
+
+## Validation
+- TDD red step: added `scripts/action-icon-ui.test.ts` first and confirmed failure before the generic action-icon pattern existed in all target screens.
+- TDD green step: re-ran `node --experimental-strip-types scripts/action-icon-ui.test.ts` -> passed.
+- Ran `npm run check:frontend` -> passed (ESLint + TypeScript + build).
+
+## Current State
+Teams, Settings, and Column Preferences now share the same icon-based action treatment, making the admin UI more compact, clearer, and visually consistent in both light mode and dark mode.
+
+# Daily Log - 2026-04-05
+
+## Objective
+Refine the employee table header to look closer to the target UI and clean up Column Preferences actions by replacing text buttons with clearer icon actions.
+
+## Work Completed
+- Darkened the employee table header gray background one more step for stronger separation from body rows.
+- Added dedicated vertical header dividers so column boundaries read more clearly.
+- Kept the header styling driven by theme tokens for both light mode and dark mode.
+- Updated Column Preferences action buttons:
+  - replaced visible `Rename` text with edit icon button
+  - replaced visible `Delete` text with trash icon button
+  - preserved accessibility with `aria-label` and `title`
+- Added dedicated icon-button styling for normal and destructive actions in the drawer.
+
+## Validation
+- Ran `npm run check:frontend` -> passed (ESLint + TypeScript + build).
+- Confirmed `ColumnsDrawer.tsx` no longer renders visible `Rename/Delete` text for action buttons; labels remain only in accessibility attributes.
+
+## Current State
+The employee table header now has a stronger gray band with clearer column separation, and the Column Preferences drawer uses compact edit/trash icons for cleaner, sharper UI.
+
+# Daily Log - 2026-04-05
+
+## Objective
 Give the employee table header a clearer gray background, matching the desired visual separation in both light and dark mode.
 
 ## Work Completed

@@ -1,4 +1,4 @@
-import { FileSpreadsheet, LoaderCircle, PlusCircle, Upload } from "lucide-react"
+import { FileSpreadsheet, KeyRound, LoaderCircle, PencilLine, PlusCircle, Trash2, Upload, UserRoundCheck } from "lucide-react"
 import type { AuthState } from "../auth/useAuthState"
 import type { SettingsState } from "./useSettingsState"
 import type { ImportState } from "../import/useImportState"
@@ -150,25 +150,29 @@ export function SettingsView({
                                                 )}
                                                 <div className="ml-auto flex items-center gap-2">
                                                     <button
-                                                        className="icon-button text-xs"
+                                                        className="action-icon-button"
                                                         onClick={() =>
                                                             void auth.handleActivateAccount(account.id, setGlobalError, triggerReload)
                                                         }
                                                         type="button"
                                                         disabled={auth.isMutatingAccounts || auth.isLoadingAccounts}
+                                                        aria-label={`Use ${account.displayName}`}
+                                                        title={`Use ${account.displayName}`}
                                                     >
-                                                        Use
+                                                        <UserRoundCheck size={15} />
                                                     </button>
                                                     <button
-                                                        className="icon-button text-xs"
+                                                        className="action-icon-button"
                                                         onClick={() => auth.handleStartEdit(account)}
                                                         type="button"
                                                         disabled={auth.isMutatingAccounts || auth.isLoadingAccounts}
+                                                        aria-label={`Edit ${account.displayName}`}
+                                                        title={`Edit ${account.displayName}`}
                                                     >
-                                                        Edit
+                                                        <PencilLine size={15} />
                                                     </button>
                                                     <button
-                                                        className="icon-button text-xs"
+                                                        className="action-icon-button"
                                                         onClick={() =>
                                                             void auth.handleAdminResetPassword(
                                                                 account,
@@ -180,18 +184,22 @@ export function SettingsView({
                                                         }
                                                         type="button"
                                                         disabled={auth.isMutatingAccounts || auth.isLoadingAccounts}
+                                                        aria-label={`Reset password for ${account.displayName}`}
+                                                        title={`Reset password for ${account.displayName}`}
                                                     >
-                                                        Reset Password
+                                                        <KeyRound size={15} />
                                                     </button>
                                                     <button
-                                                        className="icon-button text-xs text-[var(--error)]"
+                                                        className="action-icon-button action-icon-button-danger"
                                                         onClick={() =>
                                                             void auth.handleDeleteAccount(account, setGlobalError, triggerReload)
                                                         }
                                                         type="button"
                                                         disabled={auth.isMutatingAccounts || auth.isLoadingAccounts}
+                                                        aria-label={`Delete ${account.displayName}`}
+                                                        title={`Delete ${account.displayName}`}
                                                     >
-                                                        Delete
+                                                        <Trash2 size={15} />
                                                     </button>
                                                 </div>
                                             </div>

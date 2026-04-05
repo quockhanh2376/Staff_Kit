@@ -1,5 +1,5 @@
-import { ArrowDown, ArrowUp, ArrowUpDown, LoaderCircle, MoreHorizontal, Plus } from "lucide-react"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { ArrowDown, ArrowUp, ArrowUpDown, LoaderCircle, PencilLine, Plus, Trash2 } from "lucide-react"
+import { useMemo, useState } from "react"
 import type { TeamState } from "./useTeamState"
 import type { TeamRecord } from "../../types/staff"
 
@@ -54,57 +54,27 @@ function TeamTableHeader({
     )
 }
 
-function ActionMenu({ t, teamState, flipUp }: { t: TeamRecord; teamState: TeamState; flipUp?: boolean }) {
-    const [open, setOpen] = useState(false)
-    const ref = useRef<HTMLDivElement>(null)
-
-    useEffect(() => {
-        if (!open) return
-        const handler = (e: MouseEvent) => {
-            if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-        }
-        document.addEventListener("mousedown", handler)
-        return () => document.removeEventListener("mousedown", handler)
-    }, [open])
-
-    const dropdownPos = flipUp
-        ? "absolute right-0 bottom-full z-50 mb-1"
-        : "absolute right-0 top-full z-50 mt-1"
-
+function RowActions({ t, teamState }: { t: TeamRecord; teamState: TeamState }) {
     return (
-        <div ref={ref} className="relative">
+        <div className="flex items-center justify-center gap-2">
             <button
                 type="button"
-                className="team-grid-action-button icon-button flex items-center gap-1 py-0.5"
-                onClick={() => setOpen((v) => !v)}
-                title="Actions"
+                className="action-icon-button"
+                onClick={() => void teamState.handleRenameTeam(t)}
+                title={`Rename ${t.name}`}
+                aria-label={`Rename ${t.name}`}
             >
-                <MoreHorizontal size={15} />
+                <PencilLine size={15} />
             </button>
-            {open && (
-                <div className={`${dropdownPos} min-w-[130px] rounded-[8px] border border-[var(--border)] bg-[var(--surface)] py-1 shadow-lg`}>
-                    <button
-                        type="button"
-                        className="flex w-full items-center px-3 py-1.5 text-left text-sm text-[var(--text-primary)] hover:bg-[var(--surface-hover)]"
-                        onClick={() => {
-                            void teamState.handleRenameTeam(t)
-                            setOpen(false)
-                        }}
-                    >
-                        Rename
-                    </button>
-                    <button
-                        type="button"
-                        className="flex w-full items-center px-3 py-1.5 text-left text-sm text-[var(--error)] hover:bg-[var(--surface-hover)]"
-                        onClick={() => {
-                            void teamState.handleDeleteTeam(t)
-                            setOpen(false)
-                        }}
-                    >
-                        Remove
-                    </button>
-                </div>
-            )}
+            <button
+                type="button"
+                className="action-icon-button action-icon-button-danger"
+                onClick={() => void teamState.handleDeleteTeam(t)}
+                title={`Delete ${t.name}`}
+                aria-label={`Delete ${t.name}`}
+            >
+                <Trash2 size={15} />
+            </button>
         </div>
     )
 }
@@ -142,7 +112,6 @@ export function TeamView({ teamState }: TeamViewProps) {
     const renderRows = (items: TeamRecord[], startIndex: number) =>
         items.map((t, localIdx) => {
             const globalIndex = startIndex + localIdx
-            const flipUp = localIdx >= items.length - 3
             return (
                 <div
                     key={t.id}
@@ -154,7 +123,7 @@ export function TeamView({ teamState }: TeamViewProps) {
                     </span>
                     <span className="team-grid-count text-center">{t.memberCount ?? 0}</span>
                     <div className="flex justify-center">
-                        <ActionMenu t={t} teamState={team} flipUp={flipUp} />
+                        <RowActions t={t} teamState={team} />
                     </div>
                 </div>
             )
