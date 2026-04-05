@@ -33,6 +33,17 @@ export function useBorrowState({
   const [isLoadingDetail, setLoadingDetail] = useState(false)
   const [isApproving, setApproving] = useState(false)
   const [isRejecting, setRejecting] = useState(false)
+  const [lanServerAlive, setLanServerAlive] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    const port = borrowLanSettings?.port
+    if (!port) {
+      setLanServerAlive(null)
+      return
+    }
+    setLanServerAlive(null)
+    void staffApi.probeLanServer(port).then(setLanServerAlive)
+  }, [borrowLanSettings?.port])
 
   const loadRequestDetail = useCallback(
     async (requestId: number | null) => {
@@ -147,6 +158,7 @@ export function useBorrowState({
 
   return {
     borrowLanSettings,
+    lanServerAlive,
     pendingRequests,
     selectedRequestId,
     selectedRequest,

@@ -1,8 +1,13 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog"
 import { staffApi } from "../../services/staff-api"
 import type { AssetRecord, AssetSeedItemInput, BackupSettings, BorrowLanSettings, SnapshotInfo } from "../../types/staff"
 import { getErrorMessage } from "../../lib/utils"
+import {
+    applyDetectedBorrowLanSettings,
+    buildBorrowLanUrlPreview,
+    chooseBorrowLanHostInput,
+} from "./borrowLanAutoFill"
 
 type UseSettingsStateOptions = {
     dbReady: boolean
@@ -46,13 +51,84 @@ export function useSettingsState({
     const [borrowLanHostInput, setBorrowLanHostInput] = useState("")
     const [borrowLanPortInput, setBorrowLanPortInput] = useState("8787")
     const [borrowLanMessage, setBorrowLanMessage] = useState("")
+    const [borrowLanDetectionNote, setBorrowLanDetectionNote] = useState("")
+    const [isDetectingBorrowLanHost, setDetectingBorrowLanHost] = useState(false)
     const [isSavingBorrowLanSettings, setSavingBorrowLanSettings] = useState(false)
+    const borrowLanHostTouchedRef = useRef(false)
 
     // Asset seed utility
     const [assetSeedText, setAssetSeedText] = useState("")
     const [seededAssets, setSeededAssets] = useState<AssetRecord[]>([])
     const [assetSeedMessage, setAssetSeedMessage] = useState("")
     const [isSeedingAssets, setSeedingAssets] = useState(false)
+
+    const detectBorrowLanHost = useCallback(
+        async ({
+            savedHost,
+            forceReplace = false,
+            showMissingMessage = false,
+        }: {
+            savedHost: string
+            forceReplace?: boolean
+            showMissingMessage?: boolean
+        }) => {
+            try {
+                setDetectingBorrowLanHost(true)
+                if (showMissingMessage) {
+                    setBorrowLanDetectionNote("")
+                }
+
+                const detectedHost = await staffApi.detectBorrowLanHost()
+                const nextHost = chooseBorrowLanHostInput(savedHost, detectedHost)
+                const normalizedSavedHost = savedHost.trim()
+
+                if (!detectedHost?.trim()) {
+                    if (showMissingMessage) {
+                        setBorrowLanDetectionNote(
+                            "Could not detect the current LAN IP on this machine. Enter it manually if needed.",
+                        )
+                    }
+                    return null
+                }
+
+                if (forceReplace) {
+                    borrowLanHostTouchedRef.current = false
+                    setBorrowLanHostInput(nextHost)
+                    setBorrowLanSettings((current) => applyDetectedBorrowLanSettings(current, nextHost))
+                    setBorrowLanDetectionNote(
+                        `Detected current LAN IP ${nextHost}. The Borrow URL and QR are updated for this session. Save to keep it for the next launch.`,
+                    )
+                    return nextHost
+                }
+
+                if (borrowLanHostTouchedRef.current) {
+                    return nextHost
+                }
+
+                setBorrowLanHostInput(nextHost)
+                setBorrowLanSettings((current) => applyDetectedBorrowLanSettings(current, nextHost))
+                if (nextHost !== normalizedSavedHost) {
+                    setBorrowLanDetectionNote(
+                        `Auto-detected current LAN IP ${nextHost}. The Borrow URL and QR are updated for this session. Save to keep it for the next launch, or edit it manually if needed.`,
+                    )
+                }
+
+                return nextHost
+            } catch {
+                if (showMissingMessage) {
+                    setBorrowLanDetectionNote(
+                        "Could not detect the current LAN IP on this machine. Enter it manually if needed.",
+                    )
+                } else {
+                    setBorrowLanDetectionNote("")
+                }
+                return null
+            } finally {
+                setDetectingBorrowLanHost(false)
+            }
+        },
+        [],
+    )
 
     // Load backup settings + current DB custom path
     useEffect(() => {
@@ -74,7 +150,15 @@ export function useSettingsState({
                     setBorrowLanSettings(lanSettings)
                     setBorrowLanHostInput(lanSettings.host)
                     setBorrowLanPortInput(String(lanSettings.port))
+                    setBorrowLanDetectionNote("")
+                    borrowLanHostTouchedRef.current = false
                     setDbCustomPathInput(customPathValue ?? "")
+                }
+
+                if (!disposed) {
+                    void detectBorrowLanHost({
+                        savedHost: lanSettings.host,
+                    })
                 }
             } catch (error) {
                 if (!disposed) setGlobalError(getErrorMessage(error))
@@ -82,7 +166,7 @@ export function useSettingsState({
         })()
 
         return () => { disposed = true }
-    }, [dbReady, isAuthenticated, reloadToken, setGlobalError])
+    }, [dbReady, detectBorrowLanHost, isAuthenticated, reloadToken, setGlobalError])
 
     // Load history snapshots
     const loadSnapshots = useCallback(async () => {
@@ -279,6 +363,7 @@ export function useSettingsState({
             setBorrowLanSettings(updated)
             setBorrowLanHostInput(updated.host)
             setBorrowLanPortInput(String(updated.port))
+            borrowLanHostTouchedRef.current = false
             setBorrowLanMessage("Borrow LAN settings saved.")
         } catch (error) {
             setBorrowLanMessage(getErrorMessage(error))
@@ -286,6 +371,25 @@ export function useSettingsState({
             setSavingBorrowLanSettings(false)
         }
     }
+
+    const handleBorrowLanHostInputChange = useCallback((nextValue: string) => {
+        borrowLanHostTouchedRef.current = true
+        setBorrowLanHostInput(nextValue)
+    }, [])
+
+    const handleRefreshBorrowLanHost = useCallback(() => {
+        setBorrowLanMessage("")
+        void detectBorrowLanHost({
+            savedHost: borrowLanHostInput,
+            forceReplace: true,
+            showMissingMessage: true,
+        })
+    }, [borrowLanHostInput, detectBorrowLanHost])
+
+    const borrowLanUrlPreview = useMemo(
+        () => buildBorrowLanUrlPreview(borrowLanHostInput, borrowLanPortInput),
+        [borrowLanHostInput, borrowLanPortInput],
+    )
 
     const handleSeedAssets = async () => {
         try {
@@ -345,11 +449,15 @@ export function useSettingsState({
         // Borrow LAN
         borrowLanSettings,
         borrowLanHostInput,
-        setBorrowLanHostInput,
+        handleBorrowLanHostInputChange,
         borrowLanPortInput,
         setBorrowLanPortInput,
+        borrowLanUrlPreview,
         borrowLanMessage,
+        borrowLanDetectionNote,
+        isDetectingBorrowLanHost,
         isSavingBorrowLanSettings,
+        handleRefreshBorrowLanHost,
         handleSaveBorrowLanSettings,
         // Asset seed
         assetSeedText,

@@ -1,4 +1,4 @@
-import { FileSpreadsheet, KeyRound, LoaderCircle, PencilLine, PlusCircle, Trash2, Upload, UserRoundCheck } from "lucide-react"
+import { FileSpreadsheet, KeyRound, LoaderCircle, PencilLine, PlusCircle, RefreshCw, Trash2, Upload, UserRoundCheck } from "lucide-react"
 import type { AuthState } from "../auth/useAuthState"
 import type { SettingsState } from "./useSettingsState"
 import type { ImportState } from "../import/useImportState"
@@ -353,7 +353,7 @@ export function SettingsView({
                 <div className="rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-4 text-sm text-[var(--text-secondary)]">
                     <div className="text-sm font-semibold text-[var(--text-primary)]">Borrow LAN &amp; Asset Import</div>
                     <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                        Configure the fixed LAN URL for the employee QR flow, then stage CSV or Excel asset batches before IT reviews and imports valid rows.
+                        Auto-detect the current LAN IP on this machine for the employee QR flow. The live Borrow URL updates immediately, and Save keeps it for the next app launch.
                     </p>
 
                     <div className="mt-4 grid gap-4 md:grid-cols-2">
@@ -365,29 +365,45 @@ export function SettingsView({
                                 <input
                                     className="form-input text-xs"
                                     value={settings.borrowLanHostInput}
-                                    onChange={(event) => settings.setBorrowLanHostInput(event.target.value)}
+                                    onChange={(event) => settings.handleBorrowLanHostInputChange(event.target.value)}
                                     placeholder="192.168.1.25 or OFFICE-PC"
-                                    disabled={!auth.isAdminAccount || settings.isSavingBorrowLanSettings}
+                                    disabled={!auth.isAdminAccount || settings.isSavingBorrowLanSettings || settings.isDetectingBorrowLanHost}
                                 />
                                 <input
                                     className="form-input text-xs"
                                     value={settings.borrowLanPortInput}
                                     onChange={(event) => settings.setBorrowLanPortInput(event.target.value)}
                                     placeholder="8787"
-                                    disabled={!auth.isAdminAccount || settings.isSavingBorrowLanSettings}
+                                    disabled={!auth.isAdminAccount || settings.isSavingBorrowLanSettings || settings.isDetectingBorrowLanHost}
                                 />
                             </div>
                             <div className="mt-2 rounded-[8px] border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs text-[var(--text-primary)]">
-                                {settings.borrowLanSettings?.borrowUrl ?? "Borrow URL will appear here after save."}
+                                {settings.borrowLanUrlPreview}
                             </div>
-                            <button
-                                className="mt-3 rounded-[8px] border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)] disabled:opacity-50"
-                                onClick={() => void settings.handleSaveBorrowLanSettings()}
-                                type="button"
-                                disabled={!auth.isAdminAccount || settings.isSavingBorrowLanSettings}
-                            >
-                                {settings.isSavingBorrowLanSettings ? "Saving..." : "Save Borrow LAN Settings"}
-                            </button>
+                            {settings.borrowLanDetectionNote && (
+                                <div className="mt-2 text-[11px] text-[var(--primary)]">
+                                    {settings.borrowLanDetectionNote}
+                                </div>
+                            )}
+                            <div className="mt-3 flex flex-wrap gap-2">
+                                <button
+                                    className="inline-flex items-center gap-2 rounded-[8px] border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)] disabled:opacity-50"
+                                    onClick={() => settings.handleRefreshBorrowLanHost()}
+                                    type="button"
+                                    disabled={!auth.isAdminAccount || settings.isSavingBorrowLanSettings || settings.isDetectingBorrowLanHost}
+                                >
+                                    <RefreshCw className={settings.isDetectingBorrowLanHost ? "animate-spin" : undefined} size={14} />
+                                    {settings.isDetectingBorrowLanHost ? "Detecting..." : "Refresh LAN IP"}
+                                </button>
+                                <button
+                                    className="rounded-[8px] border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)] disabled:opacity-50"
+                                    onClick={() => void settings.handleSaveBorrowLanSettings()}
+                                    type="button"
+                                    disabled={!auth.isAdminAccount || settings.isSavingBorrowLanSettings || settings.isDetectingBorrowLanHost}
+                                >
+                                    {settings.isSavingBorrowLanSettings ? "Saving..." : "Save Borrow LAN Settings"}
+                                </button>
+                            </div>
                             {settings.borrowLanMessage && (
                                 <div className="mt-2 rounded-[8px] border border-[var(--primary)]/35 bg-[var(--primary)]/8 px-3 py-2 text-xs text-[var(--text-primary)]">
                                     {settings.borrowLanMessage}

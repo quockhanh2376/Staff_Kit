@@ -430,6 +430,79 @@ pub(crate) fn search_in_stock_assets_conn(
     Ok(items)
 }
 
+pub(crate) fn search_assigned_assets_conn(
+    conn: &Connection,
+    query: Option<&str>,
+    limit: usize,
+) -> Result<Vec<AssetRecord>, String> {
+    let normalized_limit = limit.clamp(1, 50) as i64;
+    let like_query = query
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("%{}%", value.to_uppercase()));
+
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT
+              id,
+              asset_code,
+              asset_type,
+              display_name,
+              model,
+              serial_number,
+              notes,
+              status
+            FROM assets
+            WHERE status = 'assigned'
+              AND (
+                ? IS NULL
+                OR UPPER(asset_code) LIKE ?
+                OR UPPER(asset_type) LIKE ?
+                OR UPPER(display_name) LIKE ?
+                OR UPPER(COALESCE(model, '')) LIKE ?
+                OR UPPER(COALESCE(serial_number, '')) LIKE ?
+              )
+            ORDER BY asset_code ASC, id ASC
+            LIMIT ?
+            "#,
+        )
+        .map_err(|err| format!("failed to prepare assigned asset search query: {err}"))?;
+
+    let rows = stmt
+        .query_map(
+            params![
+                like_query.as_deref(),
+                like_query.as_deref(),
+                like_query.as_deref(),
+                like_query.as_deref(),
+                like_query.as_deref(),
+                like_query.as_deref(),
+                normalized_limit
+            ],
+            |row| {
+                Ok(AssetRecord {
+                    id: row.get(0)?,
+                    asset_code: row.get(1)?,
+                    asset_type: row.get(2)?,
+                    display_name: row.get(3)?,
+                    model: row.get(4)?,
+                    serial_number: row.get(5)?,
+                    notes: row.get(6)?,
+                    status: row.get(7)?,
+                })
+            },
+        )
+        .map_err(|err| format!("failed to query assigned assets for search: {err}"))?;
+
+    let mut items = Vec::new();
+    for row in rows {
+        items.push(row.map_err(|err| format!("failed to read assigned asset search row: {err}"))?);
+    }
+
+    Ok(items)
+}
+
 pub fn upsert_assets(
     app: &AppHandle,
     assets: Vec<AssetUpsertInput>,

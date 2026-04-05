@@ -1,6 +1,117 @@
 # Daily Log - 2026-04-05
 
 ## Objective
+Add Borrow / Return mode toggle to the LAN phone page so employees can choose which operation to perform when scanning a single shared QR code, and surface the LAN server liveness status with automatic Windows Firewall rule management.
+
+## Work Completed
+
+### LAN Server Firewall + Probe
+- Added `ensure_firewall_rule(port)` in `src-tauri/src/lan_server.rs` that runs `netsh advfirewall` silently at startup to allow inbound TCP on the configured borrow port; no-op stub added for non-Windows targets.
+- Added `probe_lan_server(port)` Tauri async command in `src-tauri/src/lib.rs` (TCP connect to `127.0.0.1:port`, 800 ms timeout) and registered in invoke handler.
+- Added `probeLanServer` in `src/services/staff-api.ts`.
+- Added `lanServerAlive: boolean | null` state in `src/features/borrow/useBorrowState.ts` with a `useEffect` that probes on mount and when port changes.
+- Added server status badge (spinner / green / amber) in `src/features/borrow/BorrowAdminView.tsx`; shows firewall troubleshooting note when server appears down.
+
+### Borrow / Return Mode on Phone Page
+- Added `request_type TEXT NOT NULL DEFAULT 'borrow'` column to `borrow_requests` table in `src-tauri/src/db/schema.rs`.
+- Added `ensure_borrow_request_columns(conn)` migration in `src-tauri/src/db/mod.rs` — adds column via `ALTER TABLE` if not present.
+- Added `search_assigned_assets_conn(conn, query, limit)` in `src-tauri/src/db/asset.rs` — mirrors in-stock search but filters `status = 'assigned'`.
+- Updated `src-tauri/src/db/borrow.rs`:
+  - Added `REQUEST_TYPE_BORROW` / `REQUEST_TYPE_RETURN` constants.
+  - Added `request_type: Option<String>` to `BorrowRequestSubmitInput` and `request_type: String` to `BorrowRequestRecord`.
+  - `submit_borrow_request_conn` — validates request type, checks in-stock for Borrow or assigned for Return before inserting.
+  - `load_request_state_tx` — returns 3-tuple `(employee_id, status, request_type)` using `COALESCE(request_type, 'borrow')`.
+  - `approve_borrow_request_conn` — branches on request type: Return path sets `IN_STOCK` + updates `asset_loans.returned_at`; Borrow path sets `ASSIGNED` + inserts `asset_loans` row.
+  - `load_borrow_request_record` — reads `request_type` from DB.
+- Added `/api/assigned-assets` GET route in `src-tauri/src/lan_server.rs`.
+- Rewrote `borrow_page_html()` in `src-tauri/src/lan_assets.rs`:
+  - Mode toggle: **Borrow** (green) / **Return** (amber) buttons at top of form.
+  - `MODES` config object switches title, description, helper text, submit label, and API endpoint on toggle.
+  - Asset search hits `/api/assets` (Borrow) or `/api/assigned-assets` (Return).
+  - POST body includes `requestType` field.
+- Added `requestType: string` to `BorrowRequestRecord` type in `src/types/staff.ts`.
+- Added Borrow/Return type badges in `src/features/borrow/BorrowAdminView.tsx` — pending queue list items and request detail header.
+- Updated nav button label in `src/App.tsx` to **Borrow / Return** (dimmed slash) on both desktop and mobile nav.
+
+## Validation
+- `cargo check` → Finished dev target(s) — 0 errors
+- `npm run build` → 1762 modules, 0 errors, built in 10.72s
+
+## Current State
+Employees can now scan one fixed QR code and choose to Borrow (green) or Return (amber) before submitting. IT sees Borrow/Return type badges in the admin approval queue, and the approval logic correctly branches: Return mode restores asset stock and closes the loan, while Borrow mode assigns the asset and opens a new loan. The LAN server auto-registers a Windows Firewall rule on startup so phone connections are not blocked by default.
+
+---
+
+# Daily Log - 2026-04-05
+
+## Objective
+Correct Borrow URL host detection so Staff Kit uses the machine's current LAN IP instead of a public internet IP, and add a manual refresh control for re-detecting the host from Settings.
+
+## Work Completed
+- Replaced the Borrow host detection path in `src-tauri/src/db/borrow.rs` so it now derives the active LAN IP from the machine's outbound network interface instead of calling external public-IP services.
+- Renamed the Tauri command and frontend API wiring from public-WAN naming to Borrow LAN host detection:
+  - `detect_public_wan_ip` -> `detect_borrow_lan_host`
+  - `detectPublicWanIp` -> `detectBorrowLanHost`
+- Kept the host normalization logic strict so loopback and unspecified addresses are rejected.
+- Updated `useSettingsState.ts` so the Settings screen now:
+  - auto-detects the current LAN IP after loading Borrow settings
+  - preserves manual edits unless the user explicitly clicks refresh
+  - supports `handleRefreshBorrowLanHost` to replace the current input with a fresh LAN IP detection result
+  - shows clearer inline notes when detection succeeds or when LAN IP detection is unavailable
+- Updated `SettingsView.tsx` so the Borrow LAN card:
+  - explains LAN-IP detection instead of public-WAN detection
+  - disables the host/port inputs while refresh is running
+  - shows a new `Refresh LAN IP` action beside the save button
+  - keeps the Borrow URL preview live from the current input values
+- Removed the temporary `reqwest` dependency because LAN detection no longer needs outbound HTTP requests.
+
+## Validation
+- Re-ran `node --experimental-strip-types scripts/borrow-lan-autofill.test.ts` -> passed.
+- Re-ran targeted Rust test:
+  - `cargo test normalize_detected_borrow_lan_host_candidate_accepts_real_ips_and_rejects_loopback --lib` -> passed.
+- Ran `npm run check:quality` -> passed.
+- Ran `npm run test:tauri` -> passed (`40 passed, 0 failed`).
+
+## Current State
+The Borrow LAN settings now detect the machine's local LAN IP, let IT refresh that detection on demand, keep the host editable, and require an explicit save before changing persisted Borrow URL settings.
+
+# Daily Log - 2026-04-05
+
+## Objective
+Auto-detect the current public WAN IP of the machine running Staff Kit and prefill the Borrow URL host automatically, while still allowing IT to edit the host manually before saving.
+
+## Work Completed
+- Added backend WAN IP detection in `src-tauri/src/db/borrow.rs` using a small fallback chain of public IP endpoints.
+- Exposed new Tauri command `detect_public_wan_ip` in `src-tauri/src/lib.rs` and wired it through `src/services/staff-api.ts`.
+- Added frontend helper module `src/features/settings/borrowLanAutoFill.ts` for:
+  - choosing detected WAN IP over saved host when available
+  - building live Borrow URL preview from current input values
+  - formatting IPv6 hosts safely in preview URLs
+- Updated `useSettingsState.ts` so Settings now:
+  - loads saved Borrow settings immediately
+  - detects current public WAN IP in the background
+  - auto-fills the host input with detected WAN IP when available
+  - does not overwrite the field after the user has started typing manually
+  - keeps save behavior explicit; auto-detect only prefills, it does not auto-save
+- Updated `SettingsView.tsx` so the Borrow URL preview now reflects the current input values instead of only the last saved backend value.
+- Updated copy in the Settings card to explain that the Borrow URL host is auto-detected but still editable.
+
+## Validation
+- TDD red step (frontend): added `scripts/borrow-lan-autofill.test.ts` first and confirmed failure before the helper module existed.
+- TDD red step (backend): added Rust tests first and confirmed failure before WAN parsing helpers existed.
+- Re-ran `node --experimental-strip-types scripts/borrow-lan-autofill.test.ts` -> passed.
+- Re-ran targeted Rust tests:
+  - `parse_public_wan_ip_candidate_accepts_valid_ip_and_rejects_noise` -> passed
+  - `build_borrow_lan_url_wraps_ipv6_hosts` -> passed
+- Ran `npm run check:quality` -> passed.
+- Ran `npm run test:tauri` -> passed (`40 passed, 0 failed`).
+
+## Current State
+The Borrow URL section now auto-fills the current public WAN IP for the host field when detection succeeds, keeps the field editable, and previews the exact URL that will be saved. Existing save behavior remains manual and explicit.
+
+# Daily Log - 2026-04-05
+
+## Objective
 Unify admin action UI across employee table tooling, Teams, and Settings so row-level actions use the same icon-driven visual language.
 
 ## Work Completed
