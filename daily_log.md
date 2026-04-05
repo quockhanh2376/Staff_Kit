@@ -1,6 +1,29 @@
 # Daily Log - 2026-04-05
 
 ## Objective
+Show numeric-only staff ID on frontend tables (`ASWVN1253` -> `1253`) while preserving full `employeeId` in data/storage to keep import uniqueness and prevent collisions.
+
+## Work Completed
+- Added `formatEmployeeIdForDisplay` helper in `src/features/employees/employeeIdDisplay.ts`.
+- Applied display formatting in `EmployeeView` only (UI layer):
+  - EE ID move-selector button in table rows
+  - table cell display for `employeeId` column
+  - mobile card subtitle
+- Kept raw `employeeId` unchanged in backend payloads, state, DB, and import flow.
+- Because `EmployeeView` is shared by `employee_list`, `onboarding`, and `offboarding`, the display change is now active for all three views.
+
+## Validation
+- TDD red step: added `scripts/employee-id-display.test.ts` first, confirmed failure before helper existed.
+- TDD green step: implemented helper and re-ran test.
+- Ran `node --experimental-strip-types scripts/employee-id-display.test.ts` -> passed.
+- Ran `npm run check:frontend` (ESLint + TypeScript + build) -> passed.
+
+## Current State
+Frontend now shows numeric-only ID in employee tables and cards, while the canonical full ID remains intact for uniqueness guarantees and Excel import integrity.
+
+# Daily Log - 2026-04-05
+
+## Objective
 Full code-quality audit of the desktop frontend (TypeScript, ESLint, naming, file-size, browser API usage) before the next development cycle. No behavior changes — read-only pass with findings documented for future action.
 
 ## Scope
