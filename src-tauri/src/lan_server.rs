@@ -125,7 +125,7 @@ async fn search_assets(
     let items = db::asset::search_in_stock_assets_conn(
         &conn,
         query.q.as_deref(),
-        query.limit.unwrap_or(12),
+        query.limit.unwrap_or(12).min(100),
     )
     .map_err(internal_api_error)?;
     Ok(Json(items))
@@ -139,7 +139,7 @@ async fn search_assigned_assets(
     let items = db::asset::search_assigned_assets_conn(
         &conn,
         query.q.as_deref(),
-        query.limit.unwrap_or(12),
+        query.limit.unwrap_or(12).min(100),
     )
     .map_err(internal_api_error)?;
     Ok(Json(items))

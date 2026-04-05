@@ -453,4 +453,22 @@ mod tests {
             "expected mode toggle return button"
         );
     }
+
+    #[test]
+    fn borrow_page_does_not_contain_mojibake_sequences() {
+        let html = borrow_page_html();
+
+        assert!(
+            !html.contains("Â·"),
+            "expected borrow page HTML to avoid mojibake middle-dot sequences"
+        );
+        assert!(
+            !html.contains("Ã—"),
+            "expected borrow page HTML to avoid mojibake multiplication glyphs"
+        );
+        assert!(
+            !html.contains("â"),
+            "expected borrow page HTML comments and labels to avoid mojibake sequences"
+        );
+    }
 }

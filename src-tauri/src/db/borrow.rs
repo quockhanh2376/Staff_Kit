@@ -1080,4 +1080,19 @@ mod tests {
         assert_eq!(build_borrow_lan_url("203.0.113.45", 8787), "http://203.0.113.45:8787/borrow");
         assert_eq!(build_borrow_lan_url("2001:db8::10", 8787), "http://[2001:db8::10]:8787/borrow");
     }
+
+    #[test]
+    fn borrow_lan_settings_default_to_disabled_until_explicitly_enabled() {
+        let conn = open_test_connection();
+
+        let settings = read_borrow_lan_settings(&conn).expect("read default borrow lan settings");
+        assert!(!settings.enabled);
+
+        set_setting_value(&conn, BORROW_LAN_ENABLED_SETTING_KEY, Some("1"))
+            .expect("enable borrow lan setting");
+
+        let updated_settings =
+            read_borrow_lan_settings(&conn).expect("read updated borrow lan settings");
+        assert!(updated_settings.enabled);
+    }
 }
