@@ -296,6 +296,7 @@ CREATE TABLE IF NOT EXISTS borrow_requests (
   submitted_employee_id TEXT NOT NULL,
   submitted_full_name TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending',
+  request_type TEXT NOT NULL DEFAULT 'borrow',
   submit_source_ip TEXT,
   decision_note TEXT,
   decided_by_account_id INTEGER REFERENCES app_local_accounts(id) ON UPDATE CASCADE ON DELETE SET NULL,

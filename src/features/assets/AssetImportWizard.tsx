@@ -1,6 +1,17 @@
 import { AlertCircle, FileSpreadsheet, PlusCircle, RefreshCw, Trash2, Upload } from "lucide-react"
 import { Drawer } from "../../components/Drawer"
 import { formatDate } from "../../lib/utils"
+import { AssetImportCategoryInput } from "./AssetImportCategoryInput"
+import {
+    getAssetImportActiveBatchTitle,
+    getAssetImportBatchListTitle,
+    getAssetImportBatchSummaryEmptyStateLabel,
+    getAssetImportManualPanelDescription,
+    getAssetImportManualPanelPrimaryActionLabel,
+    getAssetImportManualPanelTitle,
+    getAssetImportPanelTitle,
+    getAssetImportSerializedModeDescription,
+} from "./assetImportCopy"
 import {
     hasRequiredAssetImportMapping,
     type AssetImportState,
@@ -14,6 +25,8 @@ import {
     getRequiredAssetImportMappingKeys,
     isAssetImportFieldEditable,
 } from "./assetImportModeConfig"
+import { getAssetImportStatusMeta } from "./assetImportStatusMeta"
+import { buildAssetImportActionLabel } from "./assetImportMessages"
 
 type AssetImportWizardProps = {
     assetImport: AssetImportState
@@ -24,7 +37,7 @@ export function AssetImportWizard({ assetImport }: AssetImportWizardProps) {
         <Drawer
             open={assetImport.isWizardOpen}
             onClose={assetImport.closeWizard}
-            title={assetImport.panelMode === "manual" ? "Add Asset Manually" : "Asset Import Wizard"}
+            title={getAssetImportPanelTitle(assetImport.panelMode)}
             widthClass="w-[1080px]"
         >
             {assetImport.panelMode === "manual" ? (
@@ -48,7 +61,7 @@ function ImportPanel({ assetImport }: AssetImportWizardProps) {
                     <StepPill label="3. Review Batch" active={assetImport.currentStep === "review_batch"} />
                 </div>
                 <p className="mt-3 text-sm text-[var(--text-secondary)]">
-                    Desktop-first flow: inspect file, stage batch in SQLite, then review before importing valid rows.
+                    Desktop-first flow: inspect file, stage batch in SQLite, then confirm quantity rows into stock or serialized rows into borrow-ready assets after review.
                 </p>
                 {assetImport.statusMessage && (
                     <div className="mt-3 rounded-[8px] border border-[var(--primary)]/35 bg-[var(--primary)]/8 px-3 py-2 text-xs text-[var(--text-primary)]">
@@ -68,7 +81,9 @@ function ImportPanel({ assetImport }: AssetImportWizardProps) {
                     <ExistingBatchPanel assetImport={assetImport} />
                     {detail && (
                         <div className="rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-4">
-                            <div className="text-sm font-semibold text-[var(--text-primary)]">Active Batch</div>
+                            <div className="text-sm font-semibold text-[var(--text-primary)]">
+                                {getAssetImportActiveBatchTitle()}
+                            </div>
                             <div className="mt-2 text-xs text-[var(--text-secondary)]">
                                 {detail.summary.batchKey} | {detail.summary.sourceFileName}
                             </div>
@@ -110,8 +125,7 @@ function ChooseFileStep({ assetImport }: AssetImportWizardProps) {
                 {[
                     {
                         mode: "serialized" as const,
-                        description:
-                            "One asset per row. Category, asset name, serial number, warehouse, and note.",
+                        description: getAssetImportSerializedModeDescription(),
                     },
                     {
                         mode: "quantity" as const,
@@ -330,7 +344,12 @@ function ReviewBatchStep({ assetImport }: AssetImportWizardProps) {
                             type="button"
                             disabled={assetImport.isImportingRows || !assetImport.canImportCurrentBatch}
                         >
-                            {assetImport.isImportingRows ? "Importing..." : `Import Valid (${detail.summary.validRows})`}
+                            {assetImport.isImportingRows
+                                ? "Importing..."
+                                : buildAssetImportActionLabel(
+                                      detail.summary.importType,
+                                      detail.summary.validRows,
+                                  )}
                         </button>
                         <button
                             className="rounded-[8px] border border-red-500/50 px-3 py-2 text-xs font-medium text-red-300 transition hover:bg-red-500/10 disabled:opacity-50"
@@ -392,54 +411,80 @@ function ReviewBatchStep({ assetImport }: AssetImportWizardProps) {
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-[var(--border)]">
-                                {assetImport.filteredRows.map((row) => (
-                                    <tr
-                                        key={row.id}
-                                        className={assetImport.selectedRowId === row.id ? "bg-[var(--primary)]/6" : ""}
-                                        onClick={() => assetImport.setSelectedRowId(row.id)}
-                                    >
-                                        <td className="px-3 py-2 align-top text-xs text-[var(--text-secondary)]">{row.rowNumber}</td>
-                                        <td className="px-3 py-2 align-top">
-                                            <span className="rounded-[999px] border border-[var(--border)] px-2 py-0.5 text-[10px] uppercase tracking-[0.06em] text-[var(--text-primary)]">
-                                                {row.status}
-                                            </span>
-                                        </td>
-                                        {reviewFieldKeys.map((fieldKey) => (
-                                            <td key={`${row.id}-${fieldKey}`} className="px-2 py-2 align-top">
-                                                <input
-                                                    className="form-input min-w-[130px] text-xs"
-                                                    value={getAssetImportRowFieldValue(
-                                                        row,
-                                                        fieldKey,
-                                                        assetImport.mappingDraft,
-                                                    )}
-                                                    disabled={
-                                                        row.status === "imported" ||
-                                                        assetImport.isUpdatingRow === row.id ||
-                                                        !isAssetImportFieldEditable(fieldKey)
-                                                    }
-                                                    onChange={(event) => {
-                                                        const nextValue = event.target.value
-                                                        void assetImport.handleUpdateRowField(row.id, fieldKey, nextValue)
-                                                    }}
-                                                />
+                                {assetImport.filteredRows.map((row) => {
+                                    const statusMeta = getAssetImportStatusMeta(row.status)
+
+                                    return (
+                                        <tr
+                                            key={row.id}
+                                            className={assetImport.selectedRowId === row.id ? "bg-[var(--primary)]/6" : ""}
+                                            onClick={() => assetImport.setSelectedRowId(row.id)}
+                                        >
+                                            <td className="px-3 py-2 align-top text-xs text-[var(--text-secondary)]">{row.rowNumber}</td>
+                                            <td className="px-3 py-2 align-top">
+                                                <span className="rounded-[999px] border border-[var(--border)] px-2 py-0.5 text-[10px] uppercase tracking-[0.06em] text-[var(--text-primary)]">
+                                                    {statusMeta.label}
+                                                </span>
                                             </td>
-                                        ))}
-                                        <td className="px-3 py-2 align-top">
-                                            <button
-                                                className="rounded-[8px] border border-[var(--border)] px-2.5 py-1.5 text-xs font-medium text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)] disabled:opacity-50"
-                                                onClick={(event) => {
-                                                    event.stopPropagation()
-                                                    void assetImport.handleToggleRowSkipped(row)
-                                                }}
-                                                type="button"
-                                                disabled={row.status === "imported" || assetImport.isUpdatingRow === row.id}
-                                            >
-                                                {row.status === "skipped" ? "Unskip" : "Skip"}
-                                            </button>
-                                        </td>
-                                    </tr>
-                                ))}
+                                            {reviewFieldKeys.map((fieldKey) => (
+                                                <td key={`${row.id}-${fieldKey}`} className="px-2 py-2 align-top">
+                                                    {fieldKey === "category" ? (
+                                                        <AssetImportCategoryInput
+                                                            assetCategories={assetImport.assetCategories}
+                                                            className="form-input min-w-[130px] text-xs"
+                                                            value={getAssetImportRowFieldValue(
+                                                                row,
+                                                                fieldKey,
+                                                                assetImport.mappingDraft,
+                                                            )}
+                                                            mode={assetImport.currentImportMode}
+                                                            disabled={
+                                                                row.status === "imported" ||
+                                                                assetImport.isUpdatingRow === row.id ||
+                                                                !isAssetImportFieldEditable(fieldKey)
+                                                            }
+                                                            onChange={(nextValue) => {
+                                                                void assetImport.handleUpdateRowField(row.id, fieldKey, nextValue)
+                                                            }}
+                                                            placeholder="Select Category"
+                                                        />
+                                                    ) : (
+                                                        <input
+                                                            className="form-input min-w-[130px] text-xs"
+                                                            value={getAssetImportRowFieldValue(
+                                                                row,
+                                                                fieldKey,
+                                                                assetImport.mappingDraft,
+                                                            )}
+                                                            disabled={
+                                                                row.status === "imported" ||
+                                                                assetImport.isUpdatingRow === row.id ||
+                                                                !isAssetImportFieldEditable(fieldKey)
+                                                            }
+                                                            onChange={(event) => {
+                                                                const nextValue = event.target.value
+                                                                void assetImport.handleUpdateRowField(row.id, fieldKey, nextValue)
+                                                            }}
+                                                        />
+                                                    )}
+                                                </td>
+                                            ))}
+                                            <td className="px-3 py-2 align-top">
+                                                <button
+                                                    className="rounded-[8px] border border-[var(--border)] px-2.5 py-1.5 text-xs font-medium text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)] disabled:opacity-50"
+                                                    onClick={(event) => {
+                                                        event.stopPropagation()
+                                                        void assetImport.handleToggleRowSkipped(row)
+                                                    }}
+                                                    type="button"
+                                                    disabled={row.status === "imported" || assetImport.isUpdatingRow === row.id}
+                                                >
+                                                    {row.status === "skipped" ? "Unskip" : "Skip"}
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    )
+                                })}
                             </tbody>
                         </table>
                     </div>
@@ -498,12 +543,12 @@ function ExistingBatchPanel({ assetImport }: AssetImportWizardProps) {
         <div className="rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-4">
             <div className="flex items-center gap-2 text-sm font-semibold text-[var(--text-primary)]">
                 <Upload size={16} />
-                Existing Staged Batches
+                {getAssetImportBatchListTitle()}
             </div>
             <div className="mt-4 space-y-3">
                 {assetImport.batchSummaries.length === 0 ? (
                     <div className="rounded-[8px] border border-dashed border-[var(--border)] bg-[var(--surface-hover)]/25 px-3 py-3 text-sm text-[var(--text-secondary)]">
-                        No staged batches yet.
+                        {getAssetImportBatchSummaryEmptyStateLabel()}
                     </div>
                 ) : (
                     assetImport.batchSummaries.slice(0, 6).map((summary) => (
@@ -579,10 +624,10 @@ function ManualAssetPanel({ assetImport }: AssetImportWizardProps) {
         <div className="rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-5">
             <div className="flex items-center gap-2 text-sm font-semibold text-[var(--text-primary)]">
                 <PlusCircle size={16} />
-                Quick Manual Add
+                {getAssetImportManualPanelTitle()}
             </div>
             <p className="mt-2 text-sm text-[var(--text-secondary)]">
-                Serialized-only fallback for one-off assets or rows that are not worth pushing through batch review.
+                {getAssetImportManualPanelDescription()}
             </p>
             <div className="mt-4 grid gap-4 md:grid-cols-2">
                 {manualFields.map((field) => (
@@ -591,14 +636,26 @@ function ManualAssetPanel({ assetImport }: AssetImportWizardProps) {
                             {field.label}
                             {field.required ? " *" : ""}
                         </label>
-                        <input
-                            className="form-input"
-                            value={field.value}
-                            onChange={(event) =>
-                                assetImport.handleManualAssetFieldChange(field.targetKey, event.target.value)
-                            }
-                            placeholder={field.label}
-                        />
+                        {field.key === "category" ? (
+                            <AssetImportCategoryInput
+                                assetCategories={assetImport.assetCategories}
+                                value={field.value}
+                                mode="serialized"
+                                onChange={(nextValue) =>
+                                    assetImport.handleManualAssetFieldChange(field.targetKey, nextValue)
+                                }
+                                placeholder="Select Category"
+                            />
+                        ) : (
+                            <input
+                                className="form-input"
+                                value={field.value}
+                                onChange={(event) =>
+                                    assetImport.handleManualAssetFieldChange(field.targetKey, event.target.value)
+                                }
+                                placeholder={field.label}
+                            />
+                        )}
                     </div>
                 ))}
             </div>
@@ -616,7 +673,7 @@ function ManualAssetPanel({ assetImport }: AssetImportWizardProps) {
                     type="button"
                     disabled={assetImport.isCreatingManualAsset}
                 >
-                    {assetImport.isCreatingManualAsset ? "Saving..." : "Create Asset"}
+                    {getAssetImportManualPanelPrimaryActionLabel(assetImport.isCreatingManualAsset)}
                 </button>
             </div>
             {assetImport.manualAssetMessage && (

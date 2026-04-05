@@ -297,6 +297,7 @@ pub(crate) fn apply_migrations(conn: &Connection) -> Result<(), String> {
     ensure_team_columns(conn)?;
     ensure_local_account_columns(conn)?;
     ensure_asset_model_tables(conn)?;
+    ensure_borrow_request_columns(conn)?;
     auth::ensure_local_accounts_seed(conn)?;
     normalize_staff_group_values(conn)?;
     normalize_eml_security_tool_values(conn)?;
@@ -548,6 +549,26 @@ fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
             ],
         )
         .map_err(|err| format!("failed to seed asset category '{category_code}': {err}"))?;
+    }
+
+    Ok(())
+}
+
+fn ensure_borrow_request_columns(conn: &Connection) -> Result<(), String> {
+    let existing = conn
+        .prepare("PRAGMA table_info(borrow_requests)")
+        .map_err(|err| format!("failed to inspect borrow_requests table: {err}"))?
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|err| format!("failed to read borrow_requests columns: {err}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("failed to collect borrow_requests columns: {err}"))?;
+
+    if !existing.iter().any(|name| name == "request_type") {
+        conn.execute(
+            "ALTER TABLE borrow_requests ADD COLUMN request_type TEXT NOT NULL DEFAULT 'borrow'",
+            [],
+        )
+        .map_err(|err| format!("failed to add borrow_requests.request_type column: {err}"))?;
     }
 
     Ok(())

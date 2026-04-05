@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { staffApi } from "../../services/staff-api"
 import type { BorrowLanSettings, BorrowRequestRecord } from "../../types/staff"
 import { getErrorMessage } from "../../lib/utils"
@@ -33,6 +33,28 @@ export function useBorrowState({
   const [isLoadingDetail, setLoadingDetail] = useState(false)
   const [isApproving, setApproving] = useState(false)
   const [isRejecting, setRejecting] = useState(false)
+  const [lanServerAlive, setLanServerAlive] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    const port = borrowLanSettings?.port
+    if (!port) {
+      setLanServerAlive(null)
+      return
+    }
+    let disposed = false
+    setLanServerAlive(null)
+    void staffApi
+      .probeLanServer(port)
+      .then((alive) => {
+        if (!disposed) setLanServerAlive(alive)
+      })
+      .catch(() => {
+        if (!disposed) setLanServerAlive(false)
+      })
+    return () => {
+      disposed = true
+    }
+  }, [borrowLanSettings?.port])
 
   const loadRequestDetail = useCallback(
     async (requestId: number | null) => {
@@ -84,6 +106,11 @@ export function useBorrowState({
     [dbReady, isAuthenticated, isAdminAccount, loadRequestDetail, setGlobalError],
   )
 
+  const selectedRequestIdRef = useRef(selectedRequestId)
+  useEffect(() => {
+    selectedRequestIdRef.current = selectedRequestId
+  }, [selectedRequestId])
+
   useEffect(() => {
     if (!dbReady || !isAuthenticated || !isAdminAccount) {
       setPendingRequests([])
@@ -92,8 +119,8 @@ export function useBorrowState({
       return
     }
 
-    void refreshQueue(selectedRequestId)
-  }, [dbReady, isAuthenticated, isAdminAccount, reloadToken, refreshQueue, selectedRequestId])
+    void refreshQueue(selectedRequestIdRef.current)
+  }, [dbReady, isAuthenticated, isAdminAccount, reloadToken, refreshQueue])
 
   const handleSelectRequest = async (requestId: number) => {
     setSelectedRequestId(requestId)
@@ -147,6 +174,7 @@ export function useBorrowState({
 
   return {
     borrowLanSettings,
+    lanServerAlive,
     pendingRequests,
     selectedRequestId,
     selectedRequest,

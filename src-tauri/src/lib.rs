@@ -271,6 +271,24 @@ fn update_borrow_lan_settings(
 }
 
 #[tauri::command]
+fn detect_borrow_lan_host() -> Result<Option<String>, String> {
+    db::detect_borrow_lan_host()
+}
+
+#[tauri::command]
+async fn probe_lan_server(port: u16) -> bool {
+    use std::time::Duration;
+    use tokio::net::TcpStream;
+    use tokio::time::timeout;
+
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    timeout(Duration::from_millis(800), TcpStream::connect(addr))
+        .await
+        .map(|r| r.is_ok())
+        .unwrap_or(false)
+}
+
+#[tauri::command]
 fn inspect_asset_import_file(
     payload: db::AssetImportInspectInput,
 ) -> Result<db::AssetImportFileInspection, String> {
@@ -413,6 +431,8 @@ pub fn run() {
             restore_database_from_file,
             get_borrow_lan_settings,
             update_borrow_lan_settings,
+            detect_borrow_lan_host,
+            probe_lan_server,
             inspect_asset_import_file,
             create_asset_import_batch,
             list_asset_import_batches,

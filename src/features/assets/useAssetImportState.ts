@@ -24,6 +24,10 @@ import {
     type AssetImportWizardFieldKey,
     type AssetImportWizardMapping,
 } from "./assetImportModeConfig"
+import {
+    buildManualSerializedAssetCreatedMessage,
+    buildManualSerializedAssetRequiredMessage,
+} from "./assetImportCopy"
 
 type UseAssetImportStateOptions = {
     dbReady: boolean
@@ -501,7 +505,7 @@ export function useAssetImportState({
         }
 
         if (!payload.assetCode || !payload.assetType || !payload.displayName) {
-            setManualAssetMessage("Asset code, asset type, and display name are required.")
+            setManualAssetMessage(buildManualSerializedAssetRequiredMessage())
             return
         }
 
@@ -509,7 +513,7 @@ export function useAssetImportState({
             setCreatingManualAsset(true)
             const record = await staffApi.createAssetManually(payload)
             setManualAssetResult(record)
-            setManualAssetMessage(`Created asset ${record.assetCode} in main assets table.`)
+            setManualAssetMessage(buildManualSerializedAssetCreatedMessage(record.assetCode))
             setManualAssetForm(EMPTY_MANUAL_ASSET_FORM)
             triggerReload()
         } catch (error) {
