@@ -524,6 +524,50 @@ Chunk 3 now has its first usable UI skeleton in place. The next pass should focu
 # Daily Log - 2026-03-16
 
 ## Objective
+Capture the QR-based asset receive/return business rules from `AssetDesktop_Pro` so `Staff_Kit` can continue development without creating any code or runtime coupling between the two projects.
+
+## Project Naming
+- `Staff_Kit` is referred to as `project ST`.
+- `AssetDesktop_Pro` (repository path `E:\AssetDesk-Pro`) is referred to as `project ASP`.
+
+## Work Completed
+- Reviewed `project ASP` in read-only mode to extract the business flow for QR-based asset handover.
+- Confirmed `project ST` and `project ASP` are independent projects and must remain independent.
+- Confirmed only `project ST` is allowed to change code; `project ASP` was used strictly as a flow and rules reference.
+- Focused the review on asset receive, asset return, approval, and auditability rules that are relevant for future `project ST` development.
+
+## ASP Reference Inputs
+- `E:\AssetDesk-Pro\openspec\specs\receive-flow\spec.md`
+- `E:\AssetDesk-Pro\openspec\specs\return-flow\spec.md`
+- `E:\AssetDesk-Pro\openspec\specs\approval-workflow\spec.md`
+- `E:\AssetDesk-Pro\openspec\specs\audit-log\spec.md`
+- `E:\AssetDesk-Pro\src\lib\workflows\workflows.service.ts`
+
+## Business Conditions Extracted From ASP
+- QR receive and QR return must start from a valid, active session created by an authorized management user.
+- Invalid, expired, or closed QR sessions must be rejected.
+- Employee-facing QR submission must create a pending request only; it must not directly mutate the official asset stock or assignment state.
+- Official stock and assignment changes must happen only after an approval step.
+- Asset codes used in QR flows must already exist in the system before submission; unknown asset codes must be rejected.
+- Duplicate asset codes inside the same request must be rejected.
+- Receive flow may contain multiple assets in one request, but the reviewed assets must still be eligible for assignment when approved.
+- Return flow may contain multiple assets in one request, but only assets that are currently assigned to the submitted employee and eligible for return may be accepted.
+- Receive flow requires the employee to acknowledge the active policy version; stale policy versions must be rejected until the latest version is reloaded.
+- Review actions must be role-restricted and auditable.
+- Receive review may revise both the employee target and the asset list.
+- Return review may remove assets from the submitted list, but must not add new assets that were not submitted.
+- Rejected requests must leave official stock and assignment data unchanged.
+- Submit, approve, reject, and sensitive session actions should all be audit logged with actor/context, timestamp, request type, result, and affected assets.
+
+## Implications For Next ST Development
+- `project ST` may continue building its own QR-based asset handover flow by following the business rules above, but all implementation must stay inside `project ST`.
+- Do not import or mirror `project ASP` code directly into `project ST`.
+- If `project ST` adds receive/return flows, model pending requests, approval decisions, policy version handling, and audit logs explicitly instead of mutating employee asset state directly from QR submissions.
+- Keep the separation boundary clear: `project ASP` is a reference for business flow only, not a shared code dependency.
+
+# Daily Log - 2026-03-16
+
+## Objective
 Ship `Staff_Kit` `2.0.1` as `project ST` with a LAN-only fixed-QR borrow flow, using `project ASP` only as business-flow reference and keeping all code changes isolated to ST.
 
 ## Business Scope Locked
