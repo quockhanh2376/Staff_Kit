@@ -1,6 +1,23 @@
 # Daily Log - 2026-04-05
 
 ## Objective
+Give the employee table header a clearer gray background, matching the desired visual separation in both light and dark mode.
+
+## Work Completed
+- Added dedicated theme tokens for the employee table header background and divider in `src/index.css`.
+- Updated `.table-head` and sticky header cells to use the new gray header background instead of the previous subtle surface/background mix.
+- Kept the change scoped to the employee table header only.
+- Applied the styling through theme variables so both light mode and dark mode render a consistent gray header treatment.
+
+## Validation
+- Ran `npm run check:frontend` -> passed (ESLint + TypeScript + build).
+
+## Current State
+The employee table header now reads as a distinct gray band in both themes, closer to the requested look from image 2, while body rows remain unchanged.
+
+# Daily Log - 2026-04-05
+
+## Objective
 Show numeric-only staff ID on frontend tables (`ASWVN1253` -> `1253`) while preserving full `employeeId` in data/storage to keep import uniqueness and prevent collisions.
 
 ## Work Completed
