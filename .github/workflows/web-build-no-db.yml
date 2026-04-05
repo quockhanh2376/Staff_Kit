@@ -1,0 +1,37 @@
+name: Web Build Without Database URL
+
+on:
+  push:
+    paths:
+      - "web/**"
+      - ".github/workflows/web-build-no-db.yml"
+  pull_request:
+    paths:
+      - "web/**"
+      - ".github/workflows/web-build-no-db.yml"
+
+jobs:
+  build-without-database-url:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    env:
+      CI: true
+      DATABASE_URL: ""
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web app without DATABASE_URL
+        run: npm run build
