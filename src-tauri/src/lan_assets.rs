@@ -56,7 +56,7 @@
         line-height: 1.5;
       }
 
-      /* â”€â”€ Mode toggle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+      /* Mode toggle */
       .mode-toggle {
         display: grid;
         grid-template-columns: 1fr 1fr;
@@ -93,7 +93,7 @@
         color: #1c0a00;
       }
 
-      /* â”€â”€ Form â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+      /* Form */
       label {
         display: block;
         margin-top: 14px;
@@ -260,11 +260,11 @@
     </main>
 
     <script>
-      // â”€â”€ State â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      // State
       let mode = "borrow"; // "borrow" | "return"
       const selectedAssets = new Map();
 
-      // â”€â”€ Element refs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      // Element refs
       const resultsEl   = document.getElementById("asset-results");
       const selectedEl  = document.getElementById("selected-assets");
       const messageEl   = document.getElementById("message");
@@ -277,7 +277,7 @@
       const btnReturn   = document.getElementById("btn-return");
       const searchBtn   = document.getElementById("search-btn");
 
-      // â”€â”€ Mode switch â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      // Mode switch
       const MODES = {
         borrow: {
           title: "Borrow Asset",
@@ -328,14 +328,14 @@
       btnBorrow.addEventListener("click", () => applyMode("borrow"));
       btnReturn.addEventListener("click", () => applyMode("return"));
 
-      // â”€â”€ Render helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      // Render helpers
       const renderSelected = () => {
         if (selectedAssets.size === 0) { selectedEl.innerHTML = ""; return; }
         const chips = Array.from(selectedAssets.values())
           .map((asset) => `
             <span class="selected-chip">
               ${asset.assetCode}
-              <button type="button" data-remove="${asset.assetCode}">Ã—</button>
+              <button type="button" data-remove="${asset.assetCode}">&times;</button>
             </span>
           `)
           .join("");
@@ -363,7 +363,7 @@
           .map((asset) => `
             <div class="asset-item">
               <div><strong>${asset.assetCode}</strong></div>
-              <div>${asset.assetType} Â· ${asset.displayName}</div>
+              <div>${asset.assetType} - ${asset.displayName}</div>
               <div class="helper">${asset.model ?? ""} ${asset.serialNumber ?? ""}</div>
               <button type="button" class="${isReturn ? "return-mode" : ""}" data-add="${asset.assetCode}">${MODES[mode].addLabel}</button>
             </div>
@@ -394,7 +394,7 @@
       searchBtn.addEventListener("click", doSearch);
       searchInput.addEventListener("keydown", (e) => { if (e.key === "Enter") doSearch(); });
 
-      // â”€â”€ Submit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      // Submit
       submitBtn.addEventListener("click", async () => {
         try {
           const submittedEmployeeId = document.getElementById("staff-id").value.trim();
