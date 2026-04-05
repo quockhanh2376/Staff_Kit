@@ -1,3 +1,56 @@
+# Daily Log - 2026-04-05
+
+## Objective
+Full code-quality audit of the desktop frontend (TypeScript, ESLint, naming, file-size, browser API usage) before the next development cycle. No behavior changes — read-only pass with findings documented for future action.
+
+## Scope
+Audit covered all files under `src/` using the project's own `check:quality` pipeline plus manual inspection of: type safety, console usage, `eslint-disable` suppressions, TODO markers, naming conventions, and file-size guideline adherence.
+
+## Findings — Green (no action needed)
+
+- **TypeScript strict mode**: `strict: true`, `noUnusedLocals`, `noUnusedParameters` all active in `tsconfig.app.json`. Zero type errors. Zero `any` types. Zero `@ts-ignore` / `@ts-expect-error` suppressions.
+- **ESLint**: passes cleanly. Only 2 `eslint-disable` comments in `App.tsx`, both for `react-hooks/exhaustive-deps` with documented intent (scoped theme restore and column prefs on auth). Acceptable.
+- **Console discipline**: Only one `console.error` in `useAuthState.ts` (line 89) inside a catch block — permitted by convention.
+- **No TODO / FIXME / HACK markers** anywhere in `src/`.
+- **Naming conventions**: hooks use `use` prefix, constants use SCREAMING_SNAKE, types use PascalCase, files follow correct casing throughout.
+- **Service layer is clean**: `staff-api.ts` is a thin typed wrapper over Tauri `invoke`. No business logic leaking into the API layer.
+- **Shared copy helpers**: `assetImportCopy.ts`, `assetImportMessages.ts`, `assetImportStatusMeta.ts`, `assetImportModeConfig.ts` all under 340 lines and well-factored.
+
+## Findings — Amber (technical debt, not blocking demo)
+
+### File-size overages
+The project follows a 300-line limit for React components and 150-line limit for hooks. Several files significantly exceed these:
+
+| File | Lines | Guideline |
+|------|-------|-----------|
+| `AssetImportWizard.tsx` | 726 | 300 (component) |
+| `SettingsView.tsx` | 707 | 300 (component) |
+| `EmployeeView.tsx` | 632 | 300 (component) |
+| `useAssetImportState.ts` | 628 | 150 (hook) |
+| `useColumnState.ts` | 625 | 150 (hook) |
+| `App.tsx` | 562 | 300 (component) |
+| `useAuthState.ts` | 387 | 150 (hook) |
+| `useSettingsState.ts` | 378 | 150 (hook) |
+| `useTableEdit.ts` | 347 | 150 (hook) |
+
+These are all cohesive and internally clean — no mixed concerns, no logic in wrong layers. The overages come from feature density, not sloppiness. They are tech debt to address when those features evolve next, not before demo.
+
+### `window.confirm` / `window.prompt` usage
+14 browser dialog calls spread across `useColumnState.ts`, `useAuthState.ts`, `useSettingsState.ts`, `useAssetImportState.ts`, and `useTeamState.ts`. These work in Tauri but are UX-rough (native OS dialogs instead of in-app confirms). Acceptable for current phase; worth replacing with in-app confirm components in a future UX polish pass.
+
+## Validation
+- Ran `npm run check:quality` → passed (ESLint + TypeScript + Vite build + `cargo check`)
+- Ran `npm run test:tauri` → `38 passed, 0 failed`
+- Ran all 3 script tests → `asset-import-copy`, `asset-import-messages`, `asset-import-category-options` all passed
+
+## Current State
+The codebase is in clean, demo-ready shape. Zero blocking quality issues. Technical debt is confined to file-size overages (no logic problems) and native browser dialogs (no functional problems). Safe to demo or start the next feature from here.
+
+## Next Suggested Focus
+- **Demo**: branch is clean (`security`, tagged `v2.0.1`), all checks green
+- **Next feature**: consider splitting `useAssetImportState.ts` and `AssetImportWizard.tsx` naturally when QR return flow (v2.0.2) work begins — the new slice will make the split boundary obvious
+- **UX polish future**: replace `window.confirm` / `window.prompt` calls with in-app modal confirms when the UI matures
+
 # Daily Log - 2026-03-30
 
 ## Objective
