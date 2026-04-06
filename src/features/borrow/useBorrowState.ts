@@ -2,6 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { staffApi } from "../../services/staff-api"
 import type { BorrowLanSettings, BorrowRequestRecord } from "../../types/staff"
 import { getErrorMessage } from "../../lib/utils"
+import {
+  buildBorrowReviewApproveSuccessMessage,
+  buildBorrowReviewRejectSuccessMessage,
+} from "./borrowReviewCopy"
 
 type UseBorrowStateOptions = {
   dbReady: boolean
@@ -134,7 +138,9 @@ export function useBorrowState({
       setApproving(true)
       setQueueMessage("")
       const approved = await staffApi.approveBorrowRequest(selectedRequest.id)
-      setQueueMessage(`Approved request ${approved.requestKey}. Stock and loan records were updated.`)
+      setQueueMessage(
+        buildBorrowReviewApproveSuccessMessage(approved.requestType, approved.requestKey),
+      )
       setReviewNote("")
       await refreshQueue(selectedRequest.id)
       triggerReload()
@@ -161,7 +167,9 @@ export function useBorrowState({
         requestId: selectedRequest.id,
         note,
       })
-      setQueueMessage(`Rejected request ${rejected.requestKey}. The employee must resubmit with the correct asset item.`)
+      setQueueMessage(
+        buildBorrowReviewRejectSuccessMessage(rejected.requestType, rejected.requestKey),
+      )
       setReviewNote("")
       await refreshQueue(selectedRequest.id)
       triggerReload()
