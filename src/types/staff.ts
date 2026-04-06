@@ -201,6 +201,7 @@ export type BorrowRequestSubmitInput = {
 export type BorrowRequestRecord = {
   id: number
   requestKey: string
+  requestType: string
   submittedEmployeeId: string
   submittedFullName: string
   status: string

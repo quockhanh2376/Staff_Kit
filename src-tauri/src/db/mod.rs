@@ -555,6 +555,10 @@ fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
 }
 
 fn ensure_borrow_request_columns(conn: &Connection) -> Result<(), String> {
+    let mut stmt = conn
+        .prepare("PRAGMA table_info(borrow_requests)")
+        .map_err(|err| format!("failed to inspect borrow_requests table: {err}"))?;
+    let existing = stmt
     let existing = conn
         .prepare("PRAGMA table_info(borrow_requests)")
         .map_err(|err| format!("failed to inspect borrow_requests table: {err}"))?
@@ -980,5 +984,56 @@ mod tests {
             index_exists(&conn, "idx_assets_category_id"),
             "expected idx_assets_category_id to exist after migration"
         );
+    }
+
+    #[test]
+    fn apply_migrations_upgrades_existing_borrow_requests_with_request_type() {
+        let conn = Connection::open_in_memory().expect("open in-memory sqlite database");
+        configure_connection(&conn).expect("configure sqlite pragmas");
+
+        conn.execute_batch(
+            r#"
+            CREATE TABLE borrow_requests (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              request_key TEXT NOT NULL UNIQUE,
+              employee_id_fk INTEGER NOT NULL,
+              submitted_employee_id TEXT NOT NULL,
+              submitted_full_name TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'pending',
+              submit_source_ip TEXT,
+              decision_note TEXT,
+              decided_by_account_id INTEGER,
+              submitted_at TEXT NOT NULL DEFAULT (datetime('now')),
+              decided_at TEXT
+            );
+
+            INSERT INTO borrow_requests(
+              request_key,
+              employee_id_fk,
+              submitted_employee_id,
+              submitted_full_name,
+              status,
+              submitted_at
+            )
+            VALUES('BRQ-LEGACY', 1, 'EE1001', 'Legacy User', 'pending', datetime('now'));
+            "#,
+        )
+        .expect("create legacy borrow_requests table");
+
+        apply_migrations(&conn).expect("apply migrations to legacy borrow_requests table");
+
+        assert!(
+            column_exists(&conn, "borrow_requests", "request_type"),
+            "expected borrow_requests.request_type to be added for legacy databases"
+        );
+
+        let request_type: String = conn
+            .query_row(
+                "SELECT request_type FROM borrow_requests WHERE request_key = 'BRQ-LEGACY'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("load legacy request_type value");
+        assert_eq!(request_type, "borrow");
     }
 }
