@@ -1,3 +1,41 @@
+# Daily Log - 2026-04-06
+
+## Objective
+Ship `Staff Kit 2.0.3` as the first complete owner-aware asset import release on top of the stabilized Borrow / Return mainline.
+
+## Work Completed
+- Merged the owner-aware asset import slice into `main` after stabilizing the employee laptop-query path.
+- Extended the asset import wizard so it now supports two serialized-asset lanes from workbook-style files:
+  - `Available` rows import warehouse assets into `in_stock` without owner resolution.
+  - `Laptop` rows stage owner-aware assigned assets with review before commit.
+- Added employee-owner resolution against the full employee master across all staff groups (`employee_list`, `onboarding`, `internal_movement`, `offboarding`).
+- Kept raw source columns intact in staged rows so future mapping expansion is still possible.
+- Added review-time owner editing and warning handling:
+  - unresolved employee rows stay out of the successful import set
+  - mismatched name/team rows remain editable and reviewable
+- Committed approved `Laptop` rows into official data by creating serialized asset records plus active `asset_loans`.
+- Switched employee-table `Computer Name` rendering to derived active laptop ownership values:
+  - display value = `ASW` + `asset_code`
+  - multiple active laptops render as comma-separated lines in one cell
+- Hardened employee computer-name behavior after review:
+  - derived `Computer Name` is read-only in table edit mode
+  - save payload preserves the stored raw `employees.computername` value instead of echoing the derived display
+  - duplicate detection now tokenizes multi-line / comma-separated computer names per laptop
+  - active-laptop aggregation order is deterministic by `asset_loans.id`
+  - employee count queries now skip the laptop aggregation join unless a computer-name query actually needs it
+
+## Validation
+- Ran `npm run check:quality` -> passed.
+- Ran `npm run test:tauri` -> passed.
+- Ran `node --experimental-strip-types scripts/owner-aware-asset-import-mapping.test.ts` -> passed.
+- Ran `node --experimental-strip-types scripts/employee-computer-name-rules.test.ts` -> passed.
+- Ran `cargo test employee::tests:: -- --nocapture` -> passed.
+
+## Current State
+`main` now supports importing warehouse assets and already-assigned laptop assets from the same wizard flow, with IT review deciding what becomes official. Employee table `Computer Name` values are derived from active laptop loans, stay searchable, and support multiple active laptops per employee. This is the release baseline for `2.0.3`.
+
+---
+
 # Daily Log - 2026-03-31
 
 ## Objective
