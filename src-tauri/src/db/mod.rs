@@ -413,6 +413,16 @@ fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
           updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
+        CREATE TABLE IF NOT EXISTS asset_category_prefixes (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          category_id INTEGER NOT NULL REFERENCES asset_categories(id) ON UPDATE CASCADE ON DELETE CASCADE,
+          prefix_value TEXT NOT NULL,
+          is_primary INTEGER NOT NULL DEFAULT 0,
+          is_active INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
         CREATE TABLE IF NOT EXISTS stock_items (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           category_id INTEGER NOT NULL REFERENCES asset_categories(id) ON UPDATE CASCADE ON DELETE RESTRICT,
@@ -429,6 +439,11 @@ fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
 
         CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_categories_code_unique
           ON asset_categories(category_code COLLATE NOCASE);
+        CREATE INDEX IF NOT EXISTS idx_asset_category_prefixes_category_id
+          ON asset_category_prefixes(category_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_category_prefixes_active_value_unique
+          ON asset_category_prefixes(prefix_value COLLATE NOCASE)
+          WHERE is_active = 1;
         CREATE INDEX IF NOT EXISTS idx_stock_items_category_id ON stock_items(category_id);
         "#,
     )
@@ -448,8 +463,10 @@ fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
             "category_id",
             "INTEGER REFERENCES asset_categories(id) ON UPDATE CASCADE ON DELETE SET NULL",
         ),
+        ("display_name_short", "TEXT"),
         ("brand", "TEXT"),
         ("warehouse", "TEXT"),
+        ("usage_location", "TEXT"),
     ] {
         if existing.iter().any(|name| name == column_name) {
             continue;
@@ -529,8 +546,8 @@ fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
     }
 
     for (category_code, category_name, tracking_mode, prefix_code, qr_required) in [
-        ("laptop", "Laptop", "serialized", Some("ASWVNLAP"), 1_i64),
-        ("monitor", "Monitor", "serialized", Some("ASWVNMON"), 1_i64),
+        ("laptop", "Laptop", "serialized", Some("VNLAP"), 1_i64),
+        ("monitor", "Monitor", "serialized", Some("VNMON"), 1_i64),
         ("mouse", "Mouse", "quantity", None, 0_i64),
         ("keyboard", "Keyboard", "quantity", None, 0_i64),
         ("headset", "Headset", "quantity", None, 0_i64),
@@ -566,6 +583,68 @@ fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
             ],
         )
         .map_err(|err| format!("failed to seed asset category '{category_code}': {err}"))?;
+    }
+
+    ensure_seeded_asset_category_prefixes(conn)?;
+
+    Ok(())
+}
+
+fn ensure_seeded_asset_category_prefixes(conn: &Connection) -> Result<(), String> {
+    let mut category_stmt = conn
+        .prepare(
+            r#"
+            SELECT id, category_code, prefix_code
+            FROM asset_categories
+            WHERE prefix_code IS NOT NULL
+              AND trim(prefix_code) <> ''
+            "#,
+        )
+        .map_err(|err| format!("failed to prepare asset category prefix backfill query: {err}"))?;
+
+    let seeded_rows = category_stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(|err| format!("failed to read asset category prefix backfill rows: {err}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("failed to collect asset category prefix backfill rows: {err}"))?;
+
+    for (category_id, _category_code, prefix_code) in seeded_rows {
+        asset::upsert_asset_category_prefix_conn(conn, category_id, prefix_code.as_str(), true, true)?;
+    }
+
+    for (category_code, active_prefixes) in [
+        ("laptop", &["VNLAP", "VNIMACPRO", "VNMACAIR", "VNMACPRO"][..]),
+        ("monitor", &["VNMON"][..]),
+    ] {
+        let category_id = conn
+            .query_row(
+                "SELECT id FROM asset_categories WHERE category_code = ? COLLATE NOCASE LIMIT 1",
+                params![category_code],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|err| format!("failed to load seeded category '{category_code}' for prefixes: {err}"))?;
+
+        conn.execute(
+            "UPDATE asset_category_prefixes SET is_primary = 0, is_active = 0, updated_at = datetime('now') WHERE category_id = ?",
+            params![category_id],
+        )
+        .map_err(|err| format!("failed to reset prefixes for category '{category_code}': {err}"))?;
+
+        for (index, prefix_value) in active_prefixes.iter().enumerate() {
+            asset::upsert_asset_category_prefix_conn(
+                conn,
+                category_id,
+                prefix_value,
+                index == 0,
+                true,
+            )?;
+        }
     }
 
     Ok(())

@@ -230,6 +230,112 @@ pub(crate) fn load_asset_category_by_code_or_name_tx(
     .map_err(|err| format!("failed to load asset category '{normalized}': {err}"))
 }
 
+fn normalize_asset_category_prefix(value: &str) -> Option<String> {
+    let normalized = value.trim().to_ascii_uppercase();
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
+#[allow(dead_code)]
+pub(crate) fn load_asset_category_by_prefix_conn(
+    conn: &Connection,
+    asset_code: &str,
+) -> Result<Option<AssetCategoryLookupRecord>, String> {
+    let normalized_code = asset_code.trim().to_ascii_uppercase();
+    if normalized_code.is_empty() {
+        return Ok(None);
+    }
+
+    conn.query_row(
+        r#"
+        SELECT c.id, c.tracking_mode
+        FROM asset_category_prefixes p
+        INNER JOIN asset_categories c ON c.id = p.category_id
+        WHERE p.is_active = 1
+          AND c.is_active = 1
+          AND ? LIKE p.prefix_value || '%'
+        ORDER BY p.is_primary DESC, length(p.prefix_value) DESC, p.id ASC
+        LIMIT 1
+        "#,
+        params![normalized_code],
+        |row| {
+            Ok(AssetCategoryLookupRecord {
+                id: row.get(0)?,
+                tracking_mode: row.get(1)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(|err| format!("failed to load asset category by prefix '{normalized_code}': {err}"))
+}
+
+pub(crate) fn upsert_asset_category_prefix_conn(
+    conn: &Connection,
+    category_id: i64,
+    prefix_value: &str,
+    is_primary: bool,
+    is_active: bool,
+) -> Result<(), String> {
+    let Some(normalized_prefix) = normalize_asset_category_prefix(prefix_value) else {
+        return Err("asset category prefix cannot be blank".to_string());
+    };
+
+    let existing_id = conn
+        .query_row(
+            r#"
+            SELECT id
+            FROM asset_category_prefixes
+            WHERE category_id = ?
+              AND prefix_value = ? COLLATE NOCASE
+            LIMIT 1
+            "#,
+            params![category_id, normalized_prefix.as_str()],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(|err| format!("failed to inspect asset category prefix '{normalized_prefix}': {err}"))?;
+
+    if let Some(prefix_id) = existing_id {
+        conn.execute(
+            r#"
+            UPDATE asset_category_prefixes
+            SET is_primary = ?,
+                is_active = ?,
+                updated_at = datetime('now')
+            WHERE id = ?
+            "#,
+            params![if is_primary { 1_i64 } else { 0_i64 }, if is_active { 1_i64 } else { 0_i64 }, prefix_id],
+        )
+        .map_err(humanize_sqlite_error)?;
+    } else {
+        conn.execute(
+            r#"
+            INSERT INTO asset_category_prefixes(
+              category_id,
+              prefix_value,
+              is_primary,
+              is_active,
+              created_at,
+              updated_at
+            )
+            VALUES(?, ?, ?, ?, datetime('now'), datetime('now'))
+            "#,
+            params![
+                category_id,
+                normalized_prefix.as_str(),
+                if is_primary { 1_i64 } else { 0_i64 },
+                if is_active { 1_i64 } else { 0_i64 },
+            ],
+        )
+        .map_err(humanize_sqlite_error)?;
+    }
+
+    Ok(())
+}
+
 pub(crate) fn create_asset_tx(
     tx: &Transaction<'_>,
     input: &AssetUpsertInput,
@@ -633,6 +739,26 @@ mod tests {
         conn
     }
 
+    fn load_category_prefix_values(conn: &Connection, category_code: &str) -> Vec<String> {
+        let mut stmt = conn
+            .prepare(
+                r#"
+                SELECT p.prefix_value
+                FROM asset_category_prefixes p
+                INNER JOIN asset_categories c ON c.id = p.category_id
+                WHERE c.category_code = ?
+                  AND p.is_active = 1
+                ORDER BY p.is_primary DESC, p.prefix_value COLLATE NOCASE ASC, p.id ASC
+                "#,
+            )
+            .expect("prepare prefix lookup");
+
+        stmt.query_map(params![category_code], |row| row.get::<_, String>(0))
+            .expect("query category prefixes")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect category prefixes")
+    }
+
     #[test]
     fn upsert_assets_conn_inserts_new_assets_as_in_stock() {
         let mut conn = open_test_connection();
@@ -699,6 +825,143 @@ mod tests {
     }
 
     #[test]
+    fn assets_table_persists_dashboard_metadata_columns() {
+        let conn = open_test_connection();
+
+        conn.execute(
+            r#"
+            INSERT INTO assets(
+              asset_code,
+              asset_type,
+              display_name,
+              display_name_short,
+              usage_location,
+              status,
+              created_at,
+              updated_at
+            )
+            VALUES(?, ?, ?, ?, ?, 'assigned', datetime('now'), datetime('now'))
+            "#,
+            params!["VNMON709", "Monitor", "Dell 24 Monitor", "Mon709", "office"],
+        )
+        .expect("insert asset with dashboard metadata");
+
+        let stored = conn
+            .query_row(
+                "SELECT display_name_short, usage_location FROM assets WHERE asset_code = ?",
+                params!["VNMON709"],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                    ))
+                },
+            )
+            .expect("load stored dashboard metadata");
+
+        assert_eq!(stored.0.as_deref(), Some("Mon709"));
+        assert_eq!(stored.1.as_deref(), Some("office"));
+    }
+
+    #[test]
+    fn seeded_asset_category_prefixes_cover_laptop_family_and_monitor_codes() {
+        let conn = open_test_connection();
+
+        let laptop_prefixes = load_category_prefix_values(&conn, "laptop");
+        let monitor_prefixes = load_category_prefix_values(&conn, "monitor");
+
+        assert_eq!(
+            laptop_prefixes,
+            vec![
+                "VNLAP".to_string(),
+                "VNIMACPRO".to_string(),
+                "VNMACAIR".to_string(),
+                "VNMACPRO".to_string(),
+            ]
+        );
+        assert_eq!(monitor_prefixes, vec!["VNMON".to_string()]);
+    }
+
+    #[test]
+    fn asset_category_prefix_lookup_resolves_asset_code_family() {
+        let conn = open_test_connection();
+        let expected_laptop_id = conn
+            .query_row(
+                "SELECT id FROM asset_categories WHERE category_code = 'laptop'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("load laptop category id");
+        let expected_monitor_id = conn
+            .query_row(
+                "SELECT id FROM asset_categories WHERE category_code = 'monitor'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("load monitor category id");
+
+        let laptop_category =
+            load_asset_category_by_prefix_conn(&conn, "VNMACPRO003").expect("resolve laptop prefix");
+        let monitor_category =
+            load_asset_category_by_prefix_conn(&conn, "VNMON709").expect("resolve monitor prefix");
+
+        assert_eq!(
+            laptop_category.as_ref().map(|record| record.id),
+            Some(expected_laptop_id)
+        );
+        assert_eq!(
+            monitor_category.as_ref().map(|record| record.id),
+            Some(expected_monitor_id)
+        );
+        assert_eq!(
+            laptop_category.as_ref().map(|record| record.tracking_mode.as_str()),
+            Some("serialized")
+        );
+        assert_eq!(
+            monitor_category
+                .as_ref()
+                .map(|record| record.tracking_mode.as_str()),
+            Some("serialized")
+        );
+    }
+
+    #[test]
+    fn asset_category_prefixes_reject_duplicate_active_values() {
+        let conn = open_test_connection();
+
+        let mouse_category_id = conn
+            .query_row(
+                "SELECT id FROM asset_categories WHERE category_code = 'mouse'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("load mouse category id");
+
+        let duplicate_error = conn
+            .execute(
+                r#"
+                INSERT INTO asset_category_prefixes(
+                  category_id,
+                  prefix_value,
+                  is_primary,
+                  is_active,
+                  created_at,
+                  updated_at
+                )
+                VALUES(?, ?, 0, 1, datetime('now'), datetime('now'))
+                "#,
+                params![mouse_category_id, "VNLAP"],
+            )
+            .expect_err("duplicate active prefix should be rejected");
+
+        let message = duplicate_error.to_string().to_lowercase();
+        assert!(
+            message.contains("unique") || message.contains("constraint"),
+            "expected uniqueness error, got: {duplicate_error}"
+        );
+    }
+
+    #[test]
     fn seeded_asset_categories_include_tracking_mode_and_prefix_rules() {
         let conn = open_test_connection();
 
@@ -708,7 +971,7 @@ mod tests {
             categories.iter().any(|category| {
                 category.category_code == "laptop"
                     && category.tracking_mode == "serialized"
-                    && category.prefix_code.as_deref() == Some("ASWVNLAP")
+                    && category.prefix_code.as_deref() == Some("VNLAP")
                     && category.qr_required
                     && category.is_active
             }),
