@@ -4,10 +4,6 @@ use rusqlite::{params, types::Value, Connection, OptionalExtension, Row, Transac
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
-use super::{
-    humanize_sqlite_error, normalize_date_value, normalize_dynamic_fields,
-    normalize_optional_text, normalize_staff_group, open_runtime_connection, require_text,
-};
 use super::column::{
     dynamic_field_exists, upsert_dynamic_field_definitions_for_map, upsert_dynamic_fields_tx,
 };
@@ -16,6 +12,10 @@ use super::schema::{
     STAFF_GROUP_OFFBOARDING, STAFF_GROUP_ONBOARDING,
 };
 use super::team::resolve_team_id_tx;
+use super::{
+    humanize_sqlite_error, normalize_date_value, normalize_dynamic_fields, normalize_optional_text,
+    normalize_staff_group, open_runtime_connection, require_text,
+};
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -40,6 +40,7 @@ pub struct EmployeeRecord {
     pub client_year_of_services: Option<String>,
     pub start_date: Option<String>,
     pub computer_name: Option<String>,
+    pub stored_computer_name: Option<String>,
     pub notes: Option<String>,
     pub staff_group: String,
     pub dynamic_fields: HashMap<String, String>,
@@ -174,6 +175,32 @@ struct EmployeeSortSpec {
     order_params: Vec<Value>,
 }
 
+const EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL: &str = r#"
+LEFT JOIN (
+    SELECT
+      laptop_names.employee_id_fk,
+      laptop_names.computer_name
+    FROM (
+      SELECT
+        al.employee_id_fk,
+        GROUP_CONCAT('ASW' || a.asset_code, ',' || char(10)) OVER (
+          PARTITION BY al.employee_id_fk
+          ORDER BY al.id ASC
+          ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+        ) AS computer_name,
+        ROW_NUMBER() OVER (
+          PARTITION BY al.employee_id_fk
+          ORDER BY al.id DESC
+        ) AS row_num
+      FROM asset_loans al
+      INNER JOIN assets a ON a.id = al.asset_id
+      WHERE al.returned_at IS NULL
+        AND lower(trim(COALESCE(a.asset_type, ''))) = 'laptop'
+    ) laptop_names
+    WHERE laptop_names.row_num = 1
+) lc ON lc.employee_id_fk = e.id
+"#;
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 pub fn list_employees(
@@ -230,7 +257,10 @@ pub fn create_employee(
     app: &AppHandle,
     payload: EmployeePayload,
 ) -> Result<EmployeeRecord, String> {
-    let raw_group = payload.staff_group.clone().unwrap_or_else(|| STAFF_GROUP_EMPLOYEE_LIST.to_string());
+    let raw_group = payload
+        .staff_group
+        .clone()
+        .unwrap_or_else(|| STAFF_GROUP_EMPLOYEE_LIST.to_string());
     let target_group = normalize_staff_group(raw_group.as_str())
         .ok_or_else(|| format!("invalid staff group: {raw_group}"))?;
 
@@ -267,22 +297,18 @@ pub fn update_employee(
     let row_id: i64 = if id > 0 {
         id
     } else {
-        tx
-            .query_row(
-                "SELECT id FROM employees WHERE employee_id = ?",
-                params![normalized.employee_id.as_str()],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(|err| format!("failed to find employee: {err}"))?
-            .ok_or_else(|| format!("employee '{}' was not found", normalized.employee_id))?
+        tx.query_row(
+            "SELECT id FROM employees WHERE employee_id = ?",
+            params![normalized.employee_id.as_str()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|err| format!("failed to find employee: {err}"))?
+        .ok_or_else(|| format!("employee '{}' was not found", normalized.employee_id))?
     };
 
-    let target_group = resolve_update_staff_group_tx(
-        &tx,
-        row_id,
-        requested_staff_group.as_deref(),
-    )?;
+    let target_group =
+        resolve_update_staff_group_tx(&tx, row_id, requested_staff_group.as_deref())?;
 
     tx.execute(
         r#"
@@ -365,8 +391,7 @@ pub fn move_employees_group(
         "UPDATE employees SET staff_group = ?, updated_at = datetime('now') WHERE id IN ({placeholders})"
     );
 
-    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> =
-        vec![Box::new(target_group.to_string())];
+    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(target_group.to_string())];
     for id in &payload.employee_ids {
         params_vec.push(Box::new(*id));
     }
@@ -396,7 +421,7 @@ pub(crate) fn load_employee_by_employee_id(
     employee_id: &str,
 ) -> Result<Option<EmployeeRecord>, String> {
     let sql = format!(
-        "SELECT {EMPLOYEE_SELECT_COLUMNS} FROM employees e LEFT JOIN teams t ON t.id = e.team_id WHERE e.employee_id = ?"
+        "SELECT {EMPLOYEE_SELECT_COLUMNS} FROM employees e LEFT JOIN teams t ON t.id = e.team_id {EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL} WHERE e.employee_id = ?"
     );
 
     let maybe_employee = conn
@@ -418,7 +443,7 @@ pub(crate) fn load_employees_by_email_normalized(
     email: &str,
 ) -> Result<Vec<EmployeeRecord>, String> {
     let sql = format!(
-        "SELECT {EMPLOYEE_SELECT_COLUMNS} FROM employees e LEFT JOIN teams t ON t.id = e.team_id WHERE lower(trim(COALESCE(e.email, ''))) = lower(trim(?))"
+        "SELECT {EMPLOYEE_SELECT_COLUMNS} FROM employees e LEFT JOIN teams t ON t.id = e.team_id {EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL} WHERE lower(trim(COALESCE(e.email, ''))) = lower(trim(?))"
     );
 
     let mut stmt = conn
@@ -581,23 +606,51 @@ pub(crate) fn upsert_employee_from_payload(
 
 // ── Private helpers ───────────────────────────────────────────────────────────
 
-fn query_employees(conn: &Connection, filters: EmployeeQuery) -> Result<EmployeeListResponse, String> {
-    let limit = i64::from(filters.limit.unwrap_or(20).clamp(1, 5000));
-    let offset = i64::from(filters.offset.unwrap_or(0));
+fn query_employees(
+    conn: &Connection,
+    filters: EmployeeQuery,
+) -> Result<EmployeeListResponse, String> {
+    let EmployeeQuery {
+        query,
+        team_name,
+        staff_group,
+        sort_key,
+        sort_direction,
+        start_date_from,
+        start_date_to,
+        limit,
+        offset,
+    } = filters;
 
-    let mut from_clause = " FROM employees e LEFT JOIN teams t ON t.id = e.team_id ".to_string();
+    let limit = i64::from(limit.unwrap_or(20).clamp(1, 5000));
+    let offset = i64::from(offset.unwrap_or(0));
+
+    let query_text = normalize_optional_text(query);
+    let team_name = normalize_optional_text(team_name);
+    let raw_group = normalize_optional_text(staff_group);
+    let start_from = normalize_date_value(start_date_from);
+    let start_to = normalize_date_value(start_date_to);
+    let count_from_clause = build_employee_from_clause(query_text.is_some());
+    let select_from_clause = build_employee_from_clause(true);
     let mut where_clauses: Vec<String> = Vec::new();
     let mut filter_params: Vec<Value> = Vec::new();
 
-    if let Some(query) = normalize_optional_text(filters.query) {
+    if let Some(query) = query_text {
+        let query_like = format!("%{}%", query.to_lowercase());
         if let Some(fts_query) = build_fts_query(&query) {
-            from_clause.push_str(" INNER JOIN employees_fts ON employees_fts.rowid = e.id ");
-            where_clauses.push("employees_fts MATCH ?".to_string());
+            where_clauses.push(
+                "(e.id IN (SELECT rowid FROM employees_fts WHERE employees_fts MATCH ?) OR lower(COALESCE(lc.computer_name, '')) LIKE ?)"
+                    .to_string(),
+            );
             filter_params.push(Value::Text(fts_query));
+            filter_params.push(Value::Text(query_like));
+        } else {
+            where_clauses.push("lower(COALESCE(lc.computer_name, '')) LIKE ?".to_string());
+            filter_params.push(Value::Text(query_like));
         }
     }
 
-    if let Some(team_name) = normalize_optional_text(filters.team_name) {
+    if let Some(team_name) = team_name {
         // Match employees in this team OR in any sub-team (child) of this team
         where_clauses.push(
             "(t.name = ? OR EXISTS (SELECT 1 FROM teams pt WHERE pt.id = t.parent_id AND pt.name = ?))"
@@ -607,7 +660,7 @@ fn query_employees(conn: &Connection, filters: EmployeeQuery) -> Result<Employee
         filter_params.push(Value::Text(team_name));
     }
 
-    if let Some(raw_group) = normalize_optional_text(filters.staff_group) {
+    if let Some(raw_group) = raw_group {
         let Some(staff_group) = normalize_staff_group(raw_group.as_str()) else {
             return Err(format!("invalid staff group filter: {raw_group}"));
         };
@@ -616,12 +669,12 @@ fn query_employees(conn: &Connection, filters: EmployeeQuery) -> Result<Employee
         filter_params.push(Value::Text(staff_group.to_string()));
     }
 
-    if let Some(start_from) = normalize_date_value(filters.start_date_from) {
+    if let Some(start_from) = start_from {
         where_clauses.push("COALESCE(e.asw_start_date, e.start_date, '') >= ?".to_string());
         filter_params.push(Value::Text(start_from));
     }
 
-    if let Some(start_to) = normalize_date_value(filters.start_date_to) {
+    if let Some(start_to) = start_to {
         where_clauses.push("COALESCE(e.asw_start_date, e.start_date, '') <= ?".to_string());
         filter_params.push(Value::Text(start_to));
     }
@@ -632,19 +685,21 @@ fn query_employees(conn: &Connection, filters: EmployeeQuery) -> Result<Employee
         format!(" WHERE {}", where_clauses.join(" AND "))
     };
 
-    let sort_key = normalize_optional_text(filters.sort_key);
-    let sort_direction = normalize_sort_direction(filters.sort_direction.as_deref());
+    let sort_key = normalize_optional_text(sort_key);
+    let sort_direction = normalize_sort_direction(sort_direction.as_deref());
     let sort_spec = resolve_employee_sort_spec(conn, sort_key.as_deref(), sort_direction)?;
 
-    let count_sql = format!("SELECT COUNT(*) {from_clause}{where_sql}");
+    let count_sql = format!("SELECT COUNT(*) {count_from_clause}{where_sql}");
     let total: i64 = conn
-        .query_row(&count_sql, rusqlite::params_from_iter(filter_params.iter()), |row| {
-            row.get(0)
-        })
+        .query_row(
+            &count_sql,
+            rusqlite::params_from_iter(filter_params.iter()),
+            |row| row.get(0),
+        )
         .map_err(|err| format!("failed to count employees: {err}"))?;
 
     let select_sql = format!(
-        "SELECT {EMPLOYEE_SELECT_COLUMNS} {from_clause}{where_sql} {} LIMIT ? OFFSET ?",
+        "SELECT {EMPLOYEE_SELECT_COLUMNS} {select_from_clause}{where_sql} {} LIMIT ? OFFSET ?",
         sort_spec.order_sql
     );
 
@@ -658,7 +713,10 @@ fn query_employees(conn: &Connection, filters: EmployeeQuery) -> Result<Employee
         .map_err(|err| format!("failed to prepare employee query: {err}"))?;
 
     let rows = stmt
-        .query_map(rusqlite::params_from_iter(select_params.iter()), map_employee_row)
+        .query_map(
+            rusqlite::params_from_iter(select_params.iter()),
+            map_employee_row,
+        )
         .map_err(|err| format!("failed to query employees: {err}"))?;
 
     let mut items = Vec::new();
@@ -677,7 +735,7 @@ fn query_employees(conn: &Connection, filters: EmployeeQuery) -> Result<Employee
 
 fn load_employee_by_id(conn: &Connection, id: i64) -> Result<EmployeeRecord, String> {
     let sql = format!(
-        "SELECT {EMPLOYEE_SELECT_COLUMNS} FROM employees e LEFT JOIN teams t ON t.id = e.team_id WHERE e.id = ?"
+        "SELECT {EMPLOYEE_SELECT_COLUMNS} FROM employees e LEFT JOIN teams t ON t.id = e.team_id {EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL} WHERE e.id = ?"
     );
 
     let mut employee = conn
@@ -765,13 +823,21 @@ fn map_employee_row(row: &Row<'_>) -> rusqlite::Result<EmployeeRecord> {
         client_year_of_services: row.get(15)?,
         start_date: row.get(16)?,
         computer_name: row.get(17)?,
-        notes: row.get(18)?,
-        staff_group: row.get(19)?,
+        stored_computer_name: row.get(18)?,
+        notes: row.get(19)?,
+        staff_group: row.get(20)?,
         dynamic_fields: HashMap::new(),
-        updated_at: row.get(20)?,
+        updated_at: row.get(21)?,
     })
 }
 
+fn build_employee_from_clause(include_active_laptop_join: bool) -> String {
+    if include_active_laptop_join {
+        format!(" FROM employees e LEFT JOIN teams t ON t.id = e.team_id {EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL} ")
+    } else {
+        " FROM employees e LEFT JOIN teams t ON t.id = e.team_id ".to_string()
+    }
+}
 
 fn normalize_sort_direction(input: Option<&str>) -> &'static str {
     let Some(raw) = input else {
@@ -808,7 +874,9 @@ fn resolve_core_sort_expression(sort_key: &str) -> Option<&'static str> {
         "clientstartdate" => "COALESCE(e.client_start_date, '')",
         "contractenddate" => "COALESCE(e.contract_end_date, '')",
         "clientyearofservices" => "COALESCE(e.client_year_of_services, '') COLLATE NOCASE",
-        "computername" => "COALESCE(e.computername, '') COLLATE NOCASE",
+        "computername" => {
+            "COALESCE(NULLIF(lc.computer_name, ''), e.computername, '') COLLATE NOCASE"
+        }
         "notes" => "COALESCE(e.notes, '') COLLATE NOCASE",
         _ => return None,
     };
@@ -873,7 +941,9 @@ fn resolve_update_staff_group_tx(
     row_id: i64,
     requested_staff_group: Option<&str>,
 ) -> Result<String, String> {
-    if let Some(raw_group) = requested_staff_group.and_then(|value| normalize_optional_text(Some(value.to_string()))) {
+    if let Some(raw_group) =
+        requested_staff_group.and_then(|value| normalize_optional_text(Some(value.to_string())))
+    {
         let target_group = normalize_staff_group(raw_group.as_str())
             .ok_or_else(|| format!("invalid staff group: {raw_group}"))?;
         return Ok(target_group.to_string());
@@ -949,4 +1019,190 @@ fn build_fts_query(raw: &str) -> Option<String> {
             .collect::<Vec<_>>()
             .join(" AND "),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::{params, Connection};
+
+    use crate::db::{apply_migrations, configure_connection};
+
+    use super::{
+        build_employee_from_clause, query_employees, EmployeeQuery, EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL,
+    };
+
+    fn open_test_connection() -> Connection {
+        let conn = Connection::open_in_memory().expect("open in-memory sqlite database");
+        configure_connection(&conn).expect("configure sqlite pragmas");
+        apply_migrations(&conn).expect("apply migrations");
+        conn
+    }
+
+    fn seed_employee(conn: &Connection, employee_id: &str, full_name: &str) -> i64 {
+        conn.execute("INSERT OR IGNORE INTO teams(name) VALUES ('Examworks')", [])
+            .expect("insert team");
+        let team_id: i64 = conn
+            .query_row("SELECT id FROM teams WHERE name = 'Examworks'", [], |row| {
+                row.get(0)
+            })
+            .expect("load team id");
+
+        conn.execute(
+            r#"
+            INSERT INTO employees(
+              employee_id,
+              full_name,
+              team_id,
+              staff_group,
+              updated_at
+            )
+            VALUES(?, ?, ?, 'employee_list', datetime('now'))
+            "#,
+            params![employee_id, full_name, team_id],
+        )
+        .expect("insert employee");
+
+        conn.last_insert_rowid()
+    }
+
+    fn seed_laptop_asset(conn: &Connection, asset_code: &str) -> i64 {
+        conn.execute(
+            r#"
+            INSERT INTO assets(asset_code, asset_type, display_name, status, created_at, updated_at)
+            VALUES(?, 'Laptop', ?, 'assigned', datetime('now'), datetime('now'))
+            "#,
+            params![asset_code, asset_code],
+        )
+        .expect("insert laptop asset");
+        conn.last_insert_rowid()
+    }
+
+    fn seed_active_loan(conn: &Connection, employee_row_id: i64, asset_id: i64) {
+        conn.execute(
+            r#"
+            INSERT INTO borrow_requests(
+              request_key,
+              employee_id_fk,
+              submitted_employee_id,
+              submitted_full_name,
+              status,
+              request_type,
+              submitted_at
+            )
+            VALUES(?, ?, 'ASWVN1302', 'Lư Thế Hùng', 'approved', 'borrow', datetime('now'))
+            "#,
+            params![format!("TEST-BR-{asset_id}"), employee_row_id],
+        )
+        .expect("insert synthetic borrow request");
+        let borrow_request_id = conn.last_insert_rowid();
+
+        conn.execute(
+            r#"
+            INSERT INTO asset_loans(
+              asset_id,
+              employee_id_fk,
+              borrow_request_id,
+              borrowed_at
+            )
+            VALUES(?, ?, ?, datetime('now'))
+            "#,
+            params![asset_id, employee_row_id, borrow_request_id],
+        )
+        .expect("insert active asset loan");
+    }
+
+    #[test]
+    fn query_employees_derives_computer_name_from_active_laptop_loans() {
+        let conn = open_test_connection();
+        let employee_row_id = seed_employee(&conn, "ASWVN1302", "Lư Thế Hùng");
+        let mac_asset_id = seed_laptop_asset(&conn, "VNMACPRO010");
+        let lap_asset_id = seed_laptop_asset(&conn, "VNLAP293");
+        seed_active_loan(&conn, employee_row_id, mac_asset_id);
+        seed_active_loan(&conn, employee_row_id, lap_asset_id);
+
+        let response = query_employees(
+            &conn,
+            EmployeeQuery {
+                query: None,
+                team_name: None,
+                staff_group: None,
+                sort_key: None,
+                sort_direction: None,
+                start_date_from: None,
+                start_date_to: None,
+                limit: Some(20),
+                offset: Some(0),
+            },
+        )
+        .expect("query employees");
+
+        let employee = response
+            .items
+            .iter()
+            .find(|item| item.employee_id == "ASWVN1302")
+            .expect("find seeded employee");
+        assert_eq!(
+            employee.computer_name.as_deref(),
+            Some("ASWVNMACPRO010,\nASWVNLAP293")
+        );
+    }
+
+    #[test]
+    fn query_employees_can_search_by_derived_laptop_computer_name() {
+        let conn = open_test_connection();
+        let employee_row_id = seed_employee(&conn, "ASWVN1302", "Lư Thế Hùng");
+        let lap_asset_id = seed_laptop_asset(&conn, "VNLAP293");
+        seed_active_loan(&conn, employee_row_id, lap_asset_id);
+
+        let response = query_employees(
+            &conn,
+            EmployeeQuery {
+                query: Some("ASWVNLAP293".to_string()),
+                team_name: None,
+                staff_group: None,
+                sort_key: None,
+                sort_direction: None,
+                start_date_from: None,
+                start_date_to: None,
+                limit: Some(20),
+                offset: Some(0),
+            },
+        )
+        .expect("search employees by derived computer name");
+
+        assert_eq!(response.total, 1);
+        assert_eq!(response.items[0].employee_id, "ASWVN1302");
+    }
+
+    #[test]
+    fn active_laptop_join_uses_ordered_window_aggregation() {
+        assert!(
+            EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL.contains("GROUP_CONCAT('ASW' || a.asset_code"),
+            "active-laptop join should aggregate directly from ordered loan rows",
+        );
+        assert!(
+            EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL
+                .contains("ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING"),
+            "active-laptop join should use a window frame to keep GROUP_CONCAT ordering stable",
+        );
+        assert!(
+            EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL.contains("ROW_NUMBER() OVER"),
+            "active-laptop join should select one deterministic row per employee",
+        );
+    }
+
+    #[test]
+    fn count_from_clause_skips_laptop_join_without_query_filter() {
+        let without_query_join = build_employee_from_clause(false);
+        let with_query_join = build_employee_from_clause(true);
+
+        assert!(
+            !without_query_join.contains("asset_loans"),
+            "count path should not pay for laptop aggregation when query filter does not use lc",
+        );
+        assert!(
+            with_query_join.contains("asset_loans"),
+            "query path should still include laptop aggregation when lc is referenced",
+        );
+    }
 }

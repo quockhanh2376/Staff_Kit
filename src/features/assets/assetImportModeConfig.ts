@@ -16,6 +16,12 @@ export type AssetImportWizardFieldKey =
     | "warehouse"
     | "note"
 
+export type AssetImportOwnerFieldKey =
+    | "submittedStaffId"
+    | "submittedFullName"
+    | "submittedTeam"
+    | "submittedPhoneNumber"
+
 export type AssetImportWizardMapping = Partial<
     Record<AssetImportWizardFieldKey, string | null>
 >
@@ -75,6 +81,20 @@ const FIELD_LABELS: Record<AssetImportWizardFieldKey, string> = {
     note: "Note",
 }
 
+const OWNER_FIELD_LABELS: Record<AssetImportOwnerFieldKey, string> = {
+    submittedStaffId: "Staff ID",
+    submittedFullName: "Submitted Name",
+    submittedTeam: "Submitted Team",
+    submittedPhoneNumber: "Phone Number",
+}
+
+const OWNER_FIELD_ALIASES: Record<AssetImportOwnerFieldKey, string[]> = {
+    submittedStaffId: ["staffid", "eeid", "employeeid"],
+    submittedFullName: ["tennhanvien", "vietnamesename", "fullname", "hoten"],
+    submittedTeam: ["team", "client", "clientpmd"],
+    submittedPhoneNumber: ["phonenumber", "phone", "cellphone", "mobilenumber"],
+}
+
 const MODE_LABELS: Record<AssetImportMode, string> = {
     serialized: "Serialized Assets",
     quantity: "Quantity Stock",
@@ -118,6 +138,12 @@ export function getAssetImportFieldLabel(
     fieldKey: AssetImportWizardFieldKey,
 ): string {
     return FIELD_LABELS[fieldKey]
+}
+
+export function getAssetImportOwnerFieldLabel(
+    fieldKey: AssetImportOwnerFieldKey,
+): string {
+    return OWNER_FIELD_LABELS[fieldKey]
 }
 
 export function isAssetImportFieldEditable(
@@ -275,8 +301,50 @@ export function getAssetImportRowFieldValue(
     }
 }
 
+export function getAssetImportOwnerFieldValue(
+    row: AssetImportRowRecord,
+    fieldKey: AssetImportOwnerFieldKey,
+): string {
+    switch (fieldKey) {
+        case "submittedStaffId":
+            return row.submittedStaffId ?? findRawValueByAliases(row.rawValues, OWNER_FIELD_ALIASES[fieldKey])
+        case "submittedFullName":
+            return row.submittedFullName ?? findRawValueByAliases(row.rawValues, OWNER_FIELD_ALIASES[fieldKey])
+        case "submittedTeam":
+            return row.submittedTeam ?? findRawValueByAliases(row.rawValues, OWNER_FIELD_ALIASES[fieldKey])
+        case "submittedPhoneNumber":
+            return row.submittedPhoneNumber ?? findRawValueByAliases(row.rawValues, OWNER_FIELD_ALIASES[fieldKey])
+        default:
+            return ""
+    }
+}
+
+export function rowHasOwnerSnapshot(row: AssetImportRowRecord): boolean {
+    return Boolean(
+        getAssetImportOwnerFieldValue(row, "submittedStaffId") ||
+            getAssetImportOwnerFieldValue(row, "submittedFullName") ||
+            getAssetImportOwnerFieldValue(row, "submittedTeam") ||
+            getAssetImportOwnerFieldValue(row, "submittedPhoneNumber"),
+    )
+}
+
+export function buildDerivedComputerName(assetCode: string): string {
+    const normalized = assetCode.trim().toUpperCase()
+    if (!normalized) {
+        return ""
+    }
+    return `ASW${normalized}`
+}
+
+export function formatDerivedComputerNames(assetCodes: readonly string[]): string {
+    return assetCodes
+        .map((assetCode) => buildDerivedComputerName(assetCode))
+        .filter(Boolean)
+        .join(",\n")
+}
+
 export function toBackendRowFieldKey(
-    fieldKey: AssetImportWizardFieldKey,
+    fieldKey: AssetImportWizardFieldKey | AssetImportOwnerFieldKey,
 ):
     | "assetType"
     | "displayName"
@@ -286,6 +354,10 @@ export function toBackendRowFieldKey(
     | "quantity"
     | "warehouse"
     | "notes"
+    | "submittedStaffId"
+    | "submittedFullName"
+    | "submittedTeam"
+    | "submittedPhoneNumber"
     | null {
     switch (fieldKey) {
         case "category":
@@ -305,6 +377,14 @@ export function toBackendRowFieldKey(
             return "warehouse"
         case "note":
             return "notes"
+        case "submittedStaffId":
+            return "submittedStaffId"
+        case "submittedFullName":
+            return "submittedFullName"
+        case "submittedTeam":
+            return "submittedTeam"
+        case "submittedPhoneNumber":
+            return "submittedPhoneNumber"
         default:
             return null
     }
@@ -325,10 +405,31 @@ function findRawValue(
     return matched?.value ?? ""
 }
 
+function findRawValueByAliases(
+    rawValues: AssetImportRawValue[],
+    aliases: readonly string[],
+): string {
+    const matched = rawValues.find((rawValue) =>
+        aliases.some((alias) => normalizeLookupKey(alias) === normalizeLookupKey(rawValue.header)),
+    )
+    return matched?.value ?? ""
+}
+
 function normalizeHeader(value: string): string {
     return value
+        .normalize("NFD")
+        .replace(/\p{M}/gu, "")
         .trim()
         .toLowerCase()
         .replace(/[_-]/g, " ")
         .replace(/\s+/g, " ")
+}
+
+function normalizeLookupKey(value: string): string {
+    return value
+        .normalize("NFD")
+        .replace(/\p{M}/gu, "")
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, "")
 }

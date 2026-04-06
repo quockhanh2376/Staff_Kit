@@ -1,9 +1,14 @@
 import { useCallback, useMemo, useRef, useState } from "react"
 import { staffApi } from "../../services/staff-api"
-import type { EmployeeRecord, EmployeePayload } from "../../types/staff"
+import type { EmployeeRecord } from "../../types/staff"
 import type { StaffGroupKey, ActiveTableEditCell, TableEditDrafts } from "../../types/app"
 import { getErrorMessage } from "../../lib/utils"
 import { DATE_COLUMN_KEYS } from "../../lib/constants"
+import {
+    buildEmployeePayloadForSave,
+    isEmployeeTableEditableColumn,
+    readEmployeeCellText,
+} from "./employeeTableRules"
 
 type UseTableEditOptions = {
     employees: EmployeeRecord[]
@@ -19,12 +24,7 @@ const INACTIVITY_MS = 2 * 60 * 1000
 // ── Cell text helpers ─────────────────────────────────────────────────────────
 
 export function readRawCellText(employee: EmployeeRecord, key: string): string {
-    if (key === "rowNumber") return ""
-    const record = employee as Record<string, unknown>
-    // Try top-level property first, then fall back to dynamicFields
-    const value = key in record ? record[key] : (employee.dynamicFields?.[key] ?? undefined)
-    if (value === null || value === undefined) return ""
-    return String(value)
+    return readEmployeeCellText(employee, key)
 }
 
 export function readCellValue(
@@ -37,12 +37,6 @@ export function readCellValue(
     if (key === "rowNumber") return index + 1
     if (DATE_COLUMN_KEYS.has(key)) return formatDate(draftValue || null)
     return draftValue || "-"
-}
-
-function isTableEditableColumn(key: string): boolean {
-    if (key === "rowNumber") return false
-    if (key === "employeeId") return false
-    return true
 }
 
 function isColumnSortable(key: string): boolean {
@@ -164,7 +158,7 @@ export function useTableEdit({
 
     const startTableCellEdit = useCallback(
         (employee: EmployeeRecord, key: string) => {
-            if (!canEditEmployeeTable || !isTableEditMode || !isTableEditableColumn(key)) return
+            if (!canEditEmployeeTable || !isTableEditMode || !isEmployeeTableEditableColumn(key)) return
             resetInactivityTimer()  // reset timer when user clicks a cell
             setActiveTableEditCell({ employeeId: employee.id, columnKey: key })
         },
@@ -202,48 +196,7 @@ export function useTableEdit({
                 const employee = employees.find((emp) => emp.id === id)
                 if (!employee) continue
 
-                // Top-level keys that map directly to EmployeePayload fields
-                const TOP_LEVEL_KEYS = new Set([
-                    "employeeId", "fullName", "nickName", "teamName", "project",
-                    "jobTitle", "email", "cellphone", "dateOfBirth", "gender",
-                    "aswStartDate", "clientStartDate", "contractEndDate",
-                    "clientYearOfServices", "computerName", "notes",
-                ])
-
-                // Separate drafts: top-level vs dynamic fields
-                const dynamicDrafts: Record<string, string> = {}
-                for (const [key, value] of Object.entries(drafts)) {
-                    if (!TOP_LEVEL_KEYS.has(key)) {
-                        dynamicDrafts[key] = value
-                    }
-                }
-
-                // Build a valid EmployeePayload by merging drafts over existing data
-                const payload: EmployeePayload = {
-                    employeeId: (drafts.employeeId ?? employee.employeeId) || "",
-                    fullName: (drafts.fullName ?? employee.fullName) || "",
-                    nickName: drafts.nickName ?? employee.nickName ?? null,
-                    teamName: drafts.teamName ?? employee.teamName ?? null,
-                    project: drafts.project ?? employee.project ?? null,
-                    jobTitle: drafts.jobTitle ?? employee.jobTitle ?? null,
-                    email: drafts.email ?? employee.email ?? null,
-                    cellphone: drafts.cellphone ?? employee.cellphone ?? null,
-                    dateOfBirth: drafts.dateOfBirth ?? employee.dateOfBirth ?? null,
-                    gender: drafts.gender ?? employee.gender ?? null,
-                    aswStartDate: drafts.aswStartDate ?? employee.aswStartDate ?? null,
-                    clientStartDate: drafts.clientStartDate ?? employee.clientStartDate ?? null,
-                    contractEndDate: drafts.contractEndDate ?? employee.contractEndDate ?? null,
-                    clientYearOfServices: drafts.clientYearOfServices ?? employee.clientYearOfServices ?? null,
-                    computerName: drafts.computerName ?? employee.computerName ?? null,
-                    notes: drafts.notes ?? employee.notes ?? null,
-                    staffGroup: employee.staffGroup,
-                    // Merge dynamic field drafts (e.g. computer_2) into existing dynamicFields
-                    dynamicFields: Object.keys(dynamicDrafts).length > 0
-                        ? { ...(employee.dynamicFields ?? {}), ...dynamicDrafts }
-                        : (employee.dynamicFields ?? null),
-                }
-
-
+                const payload = buildEmployeePayloadForSave(employee, drafts)
                 await staffApi.updateEmployee(id, payload)
             }
             setTableEditDrafts({})
@@ -341,7 +294,7 @@ export function useTableEdit({
         // utilities re-exported for use in views
         readRawCellText,
         readCellValue,
-        isTableEditableColumn,
+        isTableEditableColumn: isEmployeeTableEditableColumn,
         isColumnSortable,
     }
 }
