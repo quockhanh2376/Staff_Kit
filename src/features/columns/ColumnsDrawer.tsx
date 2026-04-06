@@ -1,4 +1,4 @@
-import { GripVertical } from "lucide-react"
+import { GripVertical, PencilLine, Trash2 } from "lucide-react"
 import { Drawer } from "../../components/Drawer"
 import type { ColumnState } from "./useColumnState"
 
@@ -108,21 +108,25 @@ export function ColumnsDrawer({
                                     <div className="text-[11px] uppercase tracking-[0.06em] text-[var(--text-secondary)]">{column.source}</div>
                                 </div>
                                 <button
-                                    className="rounded-[6px] border border-[var(--border)] px-2 py-1 text-xs"
+                                    className="action-icon-button"
                                     onClick={() => void col.handleRenameColumn(column, triggerReload)}
                                     type="button"
                                     disabled={col.isMutatingColumns}
+                                    aria-label={`Rename ${column.label}`}
+                                    title={`Rename ${column.label}`}
                                 >
-                                    Rename
+                                    <PencilLine size={15} />
                                 </button>
                                 {column.source === "dynamic" && (
                                     <button
-                                        className="rounded-[6px] border border-[var(--border)] px-2 py-1 text-xs text-[var(--error)]"
+                                        className="action-icon-button action-icon-button-danger"
                                         onClick={() => void col.handleDeleteColumn(column, triggerReload)}
                                         type="button"
                                         disabled={col.isMutatingColumns}
+                                        aria-label={`Delete ${column.label}`}
+                                        title={`Delete ${column.label}`}
                                     >
-                                        Delete
+                                        <Trash2 size={15} />
                                     </button>
                                 )}
                             </div>

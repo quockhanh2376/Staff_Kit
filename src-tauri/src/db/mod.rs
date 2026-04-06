@@ -559,6 +559,9 @@ fn ensure_borrow_request_columns(conn: &Connection) -> Result<(), String> {
         .prepare("PRAGMA table_info(borrow_requests)")
         .map_err(|err| format!("failed to inspect borrow_requests table: {err}"))?;
     let existing = stmt
+    let existing = conn
+        .prepare("PRAGMA table_info(borrow_requests)")
+        .map_err(|err| format!("failed to inspect borrow_requests table: {err}"))?
         .query_map([], |row| row.get::<_, String>(1))
         .map_err(|err| format!("failed to read borrow_requests columns: {err}"))?
         .collect::<Result<Vec<_>, _>>()

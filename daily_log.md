@@ -39,6 +39,259 @@ The codebase can now distinguish pending review records by type at the data-cont
 ## Next Suggested Focus
 - Add a public LAN return-submit path and minimal request input shape without enabling return approval yet.
 - Decide whether the first public return UX should be a dedicated `/return` page or a shared borrow/return page with mode switch.
+# Daily Log - 2026-04-05
+
+## Objective
+Add Borrow / Return mode toggle to the LAN phone page so employees can choose which operation to perform when scanning a single shared QR code, and surface the LAN server liveness status with automatic Windows Firewall rule management.
+
+## Work Completed
+
+### LAN Server Firewall + Probe
+- Added `ensure_firewall_rule(port)` in `src-tauri/src/lan_server.rs` that runs `netsh advfirewall` silently at startup to allow inbound TCP on the configured borrow port; no-op stub added for non-Windows targets.
+- Added `probe_lan_server(port)` Tauri async command in `src-tauri/src/lib.rs` (TCP connect to `127.0.0.1:port`, 800 ms timeout) and registered in invoke handler.
+- Added `probeLanServer` in `src/services/staff-api.ts`.
+- Added `lanServerAlive: boolean | null` state in `src/features/borrow/useBorrowState.ts` with a `useEffect` that probes on mount and when port changes.
+- Added server status badge (spinner / green / amber) in `src/features/borrow/BorrowAdminView.tsx`; shows firewall troubleshooting note when server appears down.
+
+### Borrow / Return Mode on Phone Page
+- Added `request_type TEXT NOT NULL DEFAULT 'borrow'` column to `borrow_requests` table in `src-tauri/src/db/schema.rs`.
+- Added `ensure_borrow_request_columns(conn)` migration in `src-tauri/src/db/mod.rs` — adds column via `ALTER TABLE` if not present.
+- Added `search_assigned_assets_conn(conn, query, limit)` in `src-tauri/src/db/asset.rs` — mirrors in-stock search but filters `status = 'assigned'`.
+- Updated `src-tauri/src/db/borrow.rs`:
+  - Added `REQUEST_TYPE_BORROW` / `REQUEST_TYPE_RETURN` constants.
+  - Added `request_type: Option<String>` to `BorrowRequestSubmitInput` and `request_type: String` to `BorrowRequestRecord`.
+  - `submit_borrow_request_conn` — validates request type, checks in-stock for Borrow or assigned for Return before inserting.
+  - `load_request_state_tx` — returns 3-tuple `(employee_id, status, request_type)` using `COALESCE(request_type, 'borrow')`.
+  - `approve_borrow_request_conn` — branches on request type: Return path sets `IN_STOCK` + updates `asset_loans.returned_at`; Borrow path sets `ASSIGNED` + inserts `asset_loans` row.
+  - `load_borrow_request_record` — reads `request_type` from DB.
+- Added `/api/assigned-assets` GET route in `src-tauri/src/lan_server.rs`.
+- Rewrote `borrow_page_html()` in `src-tauri/src/lan_assets.rs`:
+  - Mode toggle: **Borrow** (green) / **Return** (amber) buttons at top of form.
+  - `MODES` config object switches title, description, helper text, submit label, and API endpoint on toggle.
+  - Asset search hits `/api/assets` (Borrow) or `/api/assigned-assets` (Return).
+  - POST body includes `requestType` field.
+- Added `requestType: string` to `BorrowRequestRecord` type in `src/types/staff.ts`.
+- Added Borrow/Return type badges in `src/features/borrow/BorrowAdminView.tsx` — pending queue list items and request detail header.
+- Updated nav button label in `src/App.tsx` to **Borrow / Return** (dimmed slash) on both desktop and mobile nav.
+
+## Validation
+- `cargo check` → Finished dev target(s) — 0 errors
+- `npm run build` → 1762 modules, 0 errors, built in 10.72s
+
+## Current State
+Employees can now scan one fixed QR code and choose to Borrow (green) or Return (amber) before submitting. IT sees Borrow/Return type badges in the admin approval queue, and the approval logic correctly branches: Return mode restores asset stock and closes the loan, while Borrow mode assigns the asset and opens a new loan. The LAN server auto-registers a Windows Firewall rule on startup so phone connections are not blocked by default.
+
+---
+
+# Daily Log - 2026-04-05
+
+## Objective
+Correct Borrow URL host detection so Staff Kit uses the machine's current LAN IP instead of a public internet IP, and add a manual refresh control for re-detecting the host from Settings.
+
+## Work Completed
+- Replaced the Borrow host detection path in `src-tauri/src/db/borrow.rs` so it now derives the active LAN IP from the machine's outbound network interface instead of calling external public-IP services.
+- Renamed the Tauri command and frontend API wiring from public-WAN naming to Borrow LAN host detection:
+  - `detect_public_wan_ip` -> `detect_borrow_lan_host`
+  - `detectPublicWanIp` -> `detectBorrowLanHost`
+- Kept the host normalization logic strict so loopback and unspecified addresses are rejected.
+- Updated `useSettingsState.ts` so the Settings screen now:
+  - auto-detects the current LAN IP after loading Borrow settings
+  - preserves manual edits unless the user explicitly clicks refresh
+  - supports `handleRefreshBorrowLanHost` to replace the current input with a fresh LAN IP detection result
+  - shows clearer inline notes when detection succeeds or when LAN IP detection is unavailable
+- Updated `SettingsView.tsx` so the Borrow LAN card:
+  - explains LAN-IP detection instead of public-WAN detection
+  - disables the host/port inputs while refresh is running
+  - shows a new `Refresh LAN IP` action beside the save button
+  - keeps the Borrow URL preview live from the current input values
+- Removed the temporary `reqwest` dependency because LAN detection no longer needs outbound HTTP requests.
+
+## Validation
+- Re-ran `node --experimental-strip-types scripts/borrow-lan-autofill.test.ts` -> passed.
+- Re-ran targeted Rust test:
+  - `cargo test normalize_detected_borrow_lan_host_candidate_accepts_real_ips_and_rejects_loopback --lib` -> passed.
+- Ran `npm run check:quality` -> passed.
+- Ran `npm run test:tauri` -> passed (`40 passed, 0 failed`).
+
+## Current State
+The Borrow LAN settings now detect the machine's local LAN IP, let IT refresh that detection on demand, keep the host editable, and require an explicit save before changing persisted Borrow URL settings.
+
+# Daily Log - 2026-04-05
+
+## Objective
+Auto-detect the current public WAN IP of the machine running Staff Kit and prefill the Borrow URL host automatically, while still allowing IT to edit the host manually before saving.
+
+## Work Completed
+- Added backend WAN IP detection in `src-tauri/src/db/borrow.rs` using a small fallback chain of public IP endpoints.
+- Exposed new Tauri command `detect_public_wan_ip` in `src-tauri/src/lib.rs` and wired it through `src/services/staff-api.ts`.
+- Added frontend helper module `src/features/settings/borrowLanAutoFill.ts` for:
+  - choosing detected WAN IP over saved host when available
+  - building live Borrow URL preview from current input values
+  - formatting IPv6 hosts safely in preview URLs
+- Updated `useSettingsState.ts` so Settings now:
+  - loads saved Borrow settings immediately
+  - detects current public WAN IP in the background
+  - auto-fills the host input with detected WAN IP when available
+  - does not overwrite the field after the user has started typing manually
+  - keeps save behavior explicit; auto-detect only prefills, it does not auto-save
+- Updated `SettingsView.tsx` so the Borrow URL preview now reflects the current input values instead of only the last saved backend value.
+- Updated copy in the Settings card to explain that the Borrow URL host is auto-detected but still editable.
+
+## Validation
+- TDD red step (frontend): added `scripts/borrow-lan-autofill.test.ts` first and confirmed failure before the helper module existed.
+- TDD red step (backend): added Rust tests first and confirmed failure before WAN parsing helpers existed.
+- Re-ran `node --experimental-strip-types scripts/borrow-lan-autofill.test.ts` -> passed.
+- Re-ran targeted Rust tests:
+  - `parse_public_wan_ip_candidate_accepts_valid_ip_and_rejects_noise` -> passed
+  - `build_borrow_lan_url_wraps_ipv6_hosts` -> passed
+- Ran `npm run check:quality` -> passed.
+- Ran `npm run test:tauri` -> passed (`40 passed, 0 failed`).
+
+## Current State
+The Borrow URL section now auto-fills the current public WAN IP for the host field when detection succeeds, keeps the field editable, and previews the exact URL that will be saved. Existing save behavior remains manual and explicit.
+
+# Daily Log - 2026-04-05
+
+## Objective
+Unify admin action UI across employee table tooling, Teams, and Settings so row-level actions use the same icon-driven visual language.
+
+## Work Completed
+- Replaced column-drawer-specific icon button classes with generic reusable action icon classes in `src/index.css`.
+- Kept the stronger gray employee table header and clearer header column dividers as part of the same visual consistency pass.
+- Updated `ColumnsDrawer` to use the shared action-icon classes.
+- Updated `TeamView` action column:
+  - removed the three-dot dropdown for row actions
+  - replaced it with direct edit and trash icon buttons
+- Updated Settings account actions:
+  - `Use` -> user-switch icon
+  - `Edit` -> pencil icon
+  - `Reset Password` -> key icon
+  - `Delete` -> trash icon
+- Preserved clarity with `title` and `aria-label` on all icon actions.
+- Added `scripts/action-icon-ui.test.ts` to verify Teams, Settings, and ColumnsDrawer all use the shared icon-action pattern.
+
+## Validation
+- TDD red step: added `scripts/action-icon-ui.test.ts` first and confirmed failure before the generic action-icon pattern existed in all target screens.
+- TDD green step: re-ran `node --experimental-strip-types scripts/action-icon-ui.test.ts` -> passed.
+- Ran `npm run check:frontend` -> passed (ESLint + TypeScript + build).
+
+## Current State
+Teams, Settings, and Column Preferences now share the same icon-based action treatment, making the admin UI more compact, clearer, and visually consistent in both light mode and dark mode.
+
+# Daily Log - 2026-04-05
+
+## Objective
+Refine the employee table header to look closer to the target UI and clean up Column Preferences actions by replacing text buttons with clearer icon actions.
+
+## Work Completed
+- Darkened the employee table header gray background one more step for stronger separation from body rows.
+- Added dedicated vertical header dividers so column boundaries read more clearly.
+- Kept the header styling driven by theme tokens for both light mode and dark mode.
+- Updated Column Preferences action buttons:
+  - replaced visible `Rename` text with edit icon button
+  - replaced visible `Delete` text with trash icon button
+  - preserved accessibility with `aria-label` and `title`
+- Added dedicated icon-button styling for normal and destructive actions in the drawer.
+
+## Validation
+- Ran `npm run check:frontend` -> passed (ESLint + TypeScript + build).
+- Confirmed `ColumnsDrawer.tsx` no longer renders visible `Rename/Delete` text for action buttons; labels remain only in accessibility attributes.
+
+## Current State
+The employee table header now has a stronger gray band with clearer column separation, and the Column Preferences drawer uses compact edit/trash icons for cleaner, sharper UI.
+
+# Daily Log - 2026-04-05
+
+## Objective
+Give the employee table header a clearer gray background, matching the desired visual separation in both light and dark mode.
+
+## Work Completed
+- Added dedicated theme tokens for the employee table header background and divider in `src/index.css`.
+- Updated `.table-head` and sticky header cells to use the new gray header background instead of the previous subtle surface/background mix.
+- Kept the change scoped to the employee table header only.
+- Applied the styling through theme variables so both light mode and dark mode render a consistent gray header treatment.
+
+## Validation
+- Ran `npm run check:frontend` -> passed (ESLint + TypeScript + build).
+
+## Current State
+The employee table header now reads as a distinct gray band in both themes, closer to the requested look from image 2, while body rows remain unchanged.
+
+# Daily Log - 2026-04-05
+
+## Objective
+Show numeric-only staff ID on frontend tables (`ASWVN1253` -> `1253`) while preserving full `employeeId` in data/storage to keep import uniqueness and prevent collisions.
+
+## Work Completed
+- Added `formatEmployeeIdForDisplay` helper in `src/features/employees/employeeIdDisplay.ts`.
+- Applied display formatting in `EmployeeView` only (UI layer):
+  - EE ID move-selector button in table rows
+  - table cell display for `employeeId` column
+  - mobile card subtitle
+- Kept raw `employeeId` unchanged in backend payloads, state, DB, and import flow.
+- Because `EmployeeView` is shared by `employee_list`, `onboarding`, `offboarding`, and `internal_movement`, the display change is now active for all four views.
+
+## Validation
+- TDD red step: added `scripts/employee-id-display.test.ts` first, confirmed failure before helper existed.
+- TDD green step: implemented helper and re-ran test.
+- Ran `node --experimental-strip-types scripts/employee-id-display.test.ts` -> passed.
+- Ran `npm run check:frontend` (ESLint + TypeScript + build) -> passed.
+
+## Current State
+Frontend now shows numeric-only ID in employee tables and cards, while the canonical full ID remains intact for uniqueness guarantees and Excel import integrity.
+
+# Daily Log - 2026-04-05
+
+## Objective
+Full code-quality audit of the desktop frontend (TypeScript, ESLint, naming, file-size, browser API usage) before the next development cycle. No behavior changes — read-only pass with findings documented for future action.
+
+## Scope
+Audit covered all files under `src/` using the project's own `check:quality` pipeline plus manual inspection of: type safety, console usage, `eslint-disable` suppressions, TODO markers, naming conventions, and file-size guideline adherence.
+
+## Findings — Green (no action needed)
+
+- **TypeScript strict mode**: `strict: true`, `noUnusedLocals`, `noUnusedParameters` all active in `tsconfig.app.json`. Zero type errors. Zero `any` types. Zero `@ts-ignore` / `@ts-expect-error` suppressions.
+- **ESLint**: passes cleanly. Only 2 `eslint-disable` comments in `App.tsx`, both for `react-hooks/exhaustive-deps` with documented intent (scoped theme restore and column prefs on auth). Acceptable.
+- **Console discipline**: Only one `console.error` in `useAuthState.ts` (line 89) inside a catch block — permitted by convention.
+- **No TODO / FIXME / HACK markers** anywhere in `src/`.
+- **Naming conventions**: hooks use `use` prefix, constants use SCREAMING_SNAKE, types use PascalCase, files follow correct casing throughout.
+- **Service layer is clean**: `staff-api.ts` is a thin typed wrapper over Tauri `invoke`. No business logic leaking into the API layer.
+- **Shared copy helpers**: `assetImportCopy.ts`, `assetImportMessages.ts`, `assetImportStatusMeta.ts`, `assetImportModeConfig.ts` all under 340 lines and well-factored.
+
+## Findings — Amber (technical debt, not blocking demo)
+
+### File-size overages
+The project follows a 300-line limit for React components and 150-line limit for hooks. Several files significantly exceed these:
+
+| File | Lines | Guideline |
+|------|-------|-----------|
+| `AssetImportWizard.tsx` | 726 | 300 (component) |
+| `SettingsView.tsx` | 707 | 300 (component) |
+| `EmployeeView.tsx` | 632 | 300 (component) |
+| `useAssetImportState.ts` | 628 | 150 (hook) |
+| `useColumnState.ts` | 625 | 150 (hook) |
+| `App.tsx` | 562 | 300 (component) |
+| `useAuthState.ts` | 387 | 150 (hook) |
+| `useSettingsState.ts` | 378 | 150 (hook) |
+| `useTableEdit.ts` | 347 | 150 (hook) |
+
+These are all cohesive and internally clean — no mixed concerns, no logic in wrong layers. The overages come from feature density, not sloppiness. They are tech debt to address when those features evolve next, not before demo.
+
+### `window.confirm` / `window.prompt` usage
+14 browser dialog calls spread across `useColumnState.ts`, `useAuthState.ts`, `useSettingsState.ts`, `useAssetImportState.ts`, and `useTeamState.ts`. These work in Tauri but are UX-rough (native OS dialogs instead of in-app confirms). Acceptable for current phase; worth replacing with in-app confirm components in a future UX polish pass.
+
+## Validation
+- Ran `npm run check:quality` → passed (ESLint + TypeScript + Vite build + `cargo check`)
+- Ran `npm run test:tauri` → `38 passed, 0 failed`
+- Ran all 3 script tests → `asset-import-copy`, `asset-import-messages`, `asset-import-category-options` all passed
+
+## Current State
+The codebase is in clean, demo-ready shape. Zero blocking quality issues. Technical debt is confined to file-size overages (no logic problems) and native browser dialogs (no functional problems). Safe to demo or start the next feature from here.
+
+## Next Suggested Focus
+- **Demo**: branch is clean (`security`, tagged `v2.0.1`), all checks green
+- **Next feature**: consider splitting `useAssetImportState.ts` and `AssetImportWizard.tsx` naturally when QR return flow (v2.0.2) work begins — the new slice will make the split boundary obvious
+- **UX polish future**: replace `window.confirm` / `window.prompt` calls with in-app modal confirms when the UI matures
 
 # Daily Log - 2026-03-30
 
@@ -451,6 +704,53 @@ Refocus `Staff_Kit` as a native desktop-only application and fully separate it f
 - Keep docs and internal workflows desktop-only
 - Avoid reintroducing `AssetDesk-Pro` web planning into this repo
 
+# Daily Log - 2026-04-01
+
+## Objective
+Lock the `pending-reviews` web build regression with a dedicated CI rail that proves `npm run build` still works when `DATABASE_URL` is unset.
+
+## Work Completed
+- Added `.github/workflows/web-build-no-db.yml`.
+- Scoped the workflow to changes under `web/**` and the workflow file itself.
+- Configured the job to:
+  - use Node.js 20
+  - run in `web/`
+  - install with `npm ci`
+  - build with `DATABASE_URL` forced to an empty string
+
+## Verification
+- Re-ran `npm run build` in `web` with `DATABASE_URL` unset after adding the workflow.
+- Result: passed
+
+## Current State
+The branch now has a dedicated GitHub Actions rail for the exact failure mode we just fixed, so future regressions should surface immediately on push/PR instead of during release prep.
+
+# Daily Log - 2026-04-01
+
+## Objective
+Remove the last hard requirement for `DATABASE_URL` during `web` production builds on `pending-reviews`, so `npm run build` can succeed in CI or local release prep without a live database URL.
+
+## Root Cause
+- `web/prisma.config.ts` used `env("DATABASE_URL")`, so `prisma generate` failed while loading Prisma config before the build even started.
+- `web/src/lib/prisma.ts` instantiated `PrismaClient` at module import time, so even after unblocking `prisma generate`, Next.js build-time route evaluation still crashed while collecting page data.
+
+## Work Completed
+- Changed `web/prisma.config.ts` to read `process.env.DATABASE_URL ?? ""` so Prisma config can load without throwing during `prisma generate`.
+- Refactored `web/src/lib/prisma.ts` to lazily create the Prisma client only on first property access instead of at module import time.
+- Preserved the existing test-mode guard so DB-backed suites still fail loudly if they accidentally touch Prisma without a configured test database.
+
+## Verification
+- Ran `npm run check` in `web` with `DATABASE_URL` unset.
+- Result: passed
+  - ESLint: passed
+  - TypeScript typecheck: passed
+  - Vitest: `28 passed`, `7 skipped`
+  - `prisma generate`: passed without `DATABASE_URL`
+  - `next build --webpack`: passed without `DATABASE_URL`
+
+## Current State
+`pending-reviews` no longer requires `DATABASE_URL` just to generate Prisma client code or complete a production build. A real database URL is still required at runtime when server code actually uses Prisma.
+
 # Daily Log - 2026-03-21
 
 ## Objective
@@ -562,6 +862,50 @@ Chunk 3 now has its first usable UI skeleton in place. The next pass should focu
   - bulk QR printing
   - advanced duplicate heuristics
 - No runtime code changed in this preparation step. This checklist was captured from NotebookLM review so the next coding pass starts from the correct business model.
+
+# Daily Log - 2026-03-16
+
+## Objective
+Capture the QR-based asset receive/return business rules from `AssetDesktop_Pro` so `Staff_Kit` can continue development without creating any code or runtime coupling between the two projects.
+
+## Project Naming
+- `Staff_Kit` is referred to as `project ST`.
+- `AssetDesktop_Pro` (repository path `E:\AssetDesk-Pro`) is referred to as `project ASP`.
+
+## Work Completed
+- Reviewed `project ASP` in read-only mode to extract the business flow for QR-based asset handover.
+- Confirmed `project ST` and `project ASP` are independent projects and must remain independent.
+- Confirmed only `project ST` is allowed to change code; `project ASP` was used strictly as a flow and rules reference.
+- Focused the review on asset receive, asset return, approval, and auditability rules that are relevant for future `project ST` development.
+
+## ASP Reference Inputs
+- `E:\AssetDesk-Pro\openspec\specs\receive-flow\spec.md`
+- `E:\AssetDesk-Pro\openspec\specs\return-flow\spec.md`
+- `E:\AssetDesk-Pro\openspec\specs\approval-workflow\spec.md`
+- `E:\AssetDesk-Pro\openspec\specs\audit-log\spec.md`
+- `E:\AssetDesk-Pro\src\lib\workflows\workflows.service.ts`
+
+## Business Conditions Extracted From ASP
+- QR receive and QR return must start from a valid, active session created by an authorized management user.
+- Invalid, expired, or closed QR sessions must be rejected.
+- Employee-facing QR submission must create a pending request only; it must not directly mutate the official asset stock or assignment state.
+- Official stock and assignment changes must happen only after an approval step.
+- Asset codes used in QR flows must already exist in the system before submission; unknown asset codes must be rejected.
+- Duplicate asset codes inside the same request must be rejected.
+- Receive flow may contain multiple assets in one request, but the reviewed assets must still be eligible for assignment when approved.
+- Return flow may contain multiple assets in one request, but only assets that are currently assigned to the submitted employee and eligible for return may be accepted.
+- Receive flow requires the employee to acknowledge the active policy version; stale policy versions must be rejected until the latest version is reloaded.
+- Review actions must be role-restricted and auditable.
+- Receive review may revise both the employee target and the asset list.
+- Return review may remove assets from the submitted list, but must not add new assets that were not submitted.
+- Rejected requests must leave official stock and assignment data unchanged.
+- Submit, approve, reject, and sensitive session actions should all be audit logged with actor/context, timestamp, request type, result, and affected assets.
+
+## Implications For Next ST Development
+- `project ST` may continue building its own QR-based asset handover flow by following the business rules above, but all implementation must stay inside `project ST`.
+- Do not import or mirror `project ASP` code directly into `project ST`.
+- If `project ST` adds receive/return flows, model pending requests, approval decisions, policy version handling, and audit logs explicitly instead of mutating employee asset state directly from QR submissions.
+- Keep the separation boundary clear: `project ASP` is a reference for business flow only, not a shared code dependency.
 
 # Daily Log - 2026-03-16
 

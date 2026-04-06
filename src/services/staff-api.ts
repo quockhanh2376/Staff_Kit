@@ -104,6 +104,10 @@ export const staffApi = {
 
   getBorrowLanSettings: () => call<BorrowLanSettings>("get_borrow_lan_settings"),
 
+  detectBorrowLanHost: () => call<string | null>("detect_borrow_lan_host"),
+
+  probeLanServer: (port: number) => call<boolean>("probe_lan_server", { port }),
+
   updateBorrowLanSettings: (payload: BorrowLanSettingsUpdateInput) =>
     call<BorrowLanSettings>("update_borrow_lan_settings", {
       payload: {

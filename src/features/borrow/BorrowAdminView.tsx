@@ -51,6 +51,34 @@ export function BorrowAdminView({ auth, borrow }: BorrowAdminViewProps) {
                 Keep Staff Kit open. The local LAN server is available while the app is running. If you changed the port, restart the app before testing the new QR URL.
               </p>
 
+              {borrow.lanServerAlive === null && (
+                <div className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+                  <LoaderCircle className="animate-spin" size={13} />
+                  Checking LAN server…
+                </div>
+              )}
+              {borrow.lanServerAlive === true && (
+                <div className="flex items-center gap-2 text-xs text-emerald-400">
+                  <CheckCircle2 size={13} />
+                  LAN server active on port {borrow.borrowLanSettings?.port}.
+                </div>
+              )}
+              {borrow.lanServerAlive === false && (
+                <div className="space-y-1 rounded-[8px] border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+                  <div className="flex items-center gap-2 font-semibold">
+                    <XCircle size={13} />
+                    LAN server not responding on port {borrow.borrowLanSettings?.port ?? "?"}.
+                  </div>
+                  <div>
+                    Port may be in use by a previous session, or Windows Firewall is blocking inbound connections.
+                    Restart the app — if it still fails, add a Firewall exception:{" "}
+                    <span className="font-medium text-amber-200">
+                      Windows Security → Firewall → Allow an app through firewall → Staff Kit
+                    </span>
+                  </div>
+                </div>
+              )}
+
               <div className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/25 p-3">
                 <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
                   Borrow URL
@@ -119,6 +147,15 @@ export function BorrowAdminView({ auth, borrow }: BorrowAdminViewProps) {
                 >
                   <div className="flex items-center gap-2">
                     <div className="text-sm font-semibold text-[var(--text-primary)]">{request.submittedEmployeeId}</div>
+                    {request.requestType === "return" ? (
+                      <div className="rounded-[999px] border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.06em] text-amber-300">
+                        Return
+                      </div>
+                    ) : (
+                      <div className="rounded-[999px] border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.06em] text-emerald-300">
+                        Borrow
+                      </div>
+                    )}
                     <div className="rounded-[999px] border border-[var(--border)] px-2 py-0.5 text-[10px] uppercase tracking-[0.06em] text-[var(--text-secondary)]">
                       {request.assetCodes.length} asset
                     </div>
@@ -143,8 +180,19 @@ export function BorrowAdminView({ auth, borrow }: BorrowAdminViewProps) {
             </p>
           </div>
           {borrow.selectedRequest && (
-            <div className="rounded-[999px] border border-[var(--border)] px-3 py-1 text-[11px] uppercase tracking-[0.06em] text-[var(--text-secondary)]">
-              {borrow.selectedRequest.requestKey}
+            <div className="flex items-center gap-2">
+              {borrow.selectedRequest.requestType === "return" ? (
+                <div className="rounded-[999px] border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-[11px] uppercase tracking-[0.06em] text-amber-300">
+                  Return
+                </div>
+              ) : (
+                <div className="rounded-[999px] border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-[11px] uppercase tracking-[0.06em] text-emerald-300">
+                  Borrow
+                </div>
+              )}
+              <div className="rounded-[999px] border border-[var(--border)] px-3 py-1 text-[11px] uppercase tracking-[0.06em] text-[var(--text-secondary)]">
+                {borrow.selectedRequest.requestKey}
+              </div>
             </div>
           )}
         </div>
