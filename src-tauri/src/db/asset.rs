@@ -12,11 +12,8 @@ pub struct AssetUpsertInput {
     pub asset_code: String,
     pub asset_type: String,
     pub display_name: String,
-    pub category_id: Option<i64>,
-    pub brand: Option<String>,
     pub model: Option<String>,
     pub serial_number: Option<String>,
-    pub warehouse: Option<String>,
     pub notes: Option<String>,
 }
 
@@ -46,17 +43,27 @@ pub struct AssetCategoryRecord {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct AssetCategoryLookupRecord {
+    pub id: i64,
+    pub tracking_mode: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct StockItemCreateInput {
+    pub category_id: i64,
+    pub item_name: String,
+    pub brand: Option<String>,
+    pub model: Option<String>,
+    pub warehouse: Option<String>,
+    pub quantity_on_hand: i64,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct AssetLookupRecord {
     pub id: i64,
     pub asset_code: String,
     pub status: String,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct AssetCategoryLookupRecord {
-    pub id: i64,
-    pub category_name: String,
-    pub prefix_code: Option<String>,
 }
 
 pub(crate) fn load_asset_by_code_tx(
@@ -121,11 +128,8 @@ fn insert_asset_stmt(
     asset_code: &str,
     asset_type: &str,
     display_name: &str,
-    category_id: Option<i64>,
-    brand: Option<&str>,
     model: Option<&str>,
     serial_number: Option<&str>,
-    warehouse: Option<&str>,
     notes: Option<&str>,
 ) -> Result<i64, String> {
     executor
@@ -133,29 +137,23 @@ fn insert_asset_stmt(
             r#"
             INSERT INTO assets(
               asset_code,
-              category_id,
               asset_type,
               display_name,
-              brand,
               model,
               serial_number,
-              warehouse,
               notes,
               status,
               created_at,
               updated_at
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 'in_stock', datetime('now'), datetime('now'))
+            VALUES(?, ?, ?, ?, ?, ?, 'in_stock', datetime('now'), datetime('now'))
             "#,
             params![
                 asset_code,
-                category_id,
                 asset_type,
                 display_name,
-                brand,
                 model,
                 serial_number,
-                warehouse,
                 notes
             ],
         )
@@ -200,6 +198,38 @@ fn load_asset_record_by_id_conn(
         .map_err(|err| format!("failed to load asset with id {asset_id}: {err}"))
 }
 
+pub(crate) fn load_asset_category_by_code_or_name_tx(
+    tx: &Transaction<'_>,
+    value: &str,
+) -> Result<Option<AssetCategoryLookupRecord>, String> {
+    let normalized = value.trim();
+    if normalized.is_empty() {
+        return Ok(None);
+    }
+
+    tx.query_row(
+        r#"
+        SELECT id, tracking_mode
+        FROM asset_categories
+        WHERE is_active = 1
+          AND (
+            category_code = ? COLLATE NOCASE
+            OR category_name = ? COLLATE NOCASE
+          )
+        LIMIT 1
+        "#,
+        params![normalized, normalized],
+        |row| {
+            Ok(AssetCategoryLookupRecord {
+                id: row.get(0)?,
+                tracking_mode: row.get(1)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(|err| format!("failed to load asset category '{normalized}': {err}"))
+}
+
 pub(crate) fn create_asset_tx(
     tx: &Transaction<'_>,
     input: &AssetUpsertInput,
@@ -207,11 +237,8 @@ pub(crate) fn create_asset_tx(
     let asset_code = require_text(input.asset_code.clone(), "assetCode")?.to_uppercase();
     let asset_type = require_text(input.asset_type.clone(), "assetType")?;
     let display_name = require_text(input.display_name.clone(), "displayName")?;
-    let category_id = input.category_id;
-    let brand = normalize_optional_text(input.brand.clone());
     let model = normalize_optional_text(input.model.clone());
-    let serial_number = normalize_optional_text(input.serial_number.clone()).map(|value| value.to_uppercase());
-    let warehouse = normalize_optional_text(input.warehouse.clone());
+    let serial_number = normalize_optional_text(input.serial_number.clone());
     let notes = normalize_optional_text(input.notes.clone());
 
     let asset_id = insert_asset_stmt(
@@ -219,15 +246,57 @@ pub(crate) fn create_asset_tx(
         asset_code.as_str(),
         asset_type.as_str(),
         display_name.as_str(),
-        category_id,
-        brand.as_deref(),
         model.as_deref(),
         serial_number.as_deref(),
-        warehouse.as_deref(),
         notes.as_deref(),
     )?;
 
     load_asset_record_by_id_conn(tx, asset_id)
+}
+
+pub(crate) fn create_stock_item_tx(
+    tx: &Transaction<'_>,
+    input: &StockItemCreateInput,
+) -> Result<i64, String> {
+    let item_name = require_text(input.item_name.clone(), "itemName")?;
+    if input.quantity_on_hand <= 0 {
+        return Err("quantity must be a positive integer".to_string());
+    }
+
+    let brand = normalize_optional_text(input.brand.clone());
+    let model = normalize_optional_text(input.model.clone());
+    let warehouse = normalize_optional_text(input.warehouse.clone());
+    let note = normalize_optional_text(input.note.clone());
+
+    tx.execute(
+        r#"
+        INSERT INTO stock_items(
+          category_id,
+          item_name,
+          brand,
+          model,
+          warehouse,
+          quantity_on_hand,
+          assigned_quantity,
+          note,
+          created_at,
+          updated_at
+        )
+        VALUES(?, ?, ?, ?, ?, ?, 0, ?, datetime('now'), datetime('now'))
+        "#,
+        params![
+            input.category_id,
+            item_name,
+            brand.as_deref(),
+            model.as_deref(),
+            warehouse.as_deref(),
+            input.quantity_on_hand,
+            note.as_deref(),
+        ],
+    )
+    .map_err(humanize_sqlite_error)?;
+
+    Ok(tx.last_insert_rowid())
 }
 
 pub(crate) fn create_asset_conn(
@@ -264,50 +333,38 @@ pub(crate) fn upsert_assets_conn(
         let asset_code = require_text(input.asset_code, "assetCode")?.to_uppercase();
         let asset_type = require_text(input.asset_type, "assetType")?;
         let display_name = require_text(input.display_name, "displayName")?;
-        let category_id = input.category_id;
-        let brand = normalize_optional_text(input.brand);
         let model = normalize_optional_text(input.model);
-        let serial_number = normalize_optional_text(input.serial_number).map(|value| value.to_uppercase());
-        let warehouse = normalize_optional_text(input.warehouse);
+        let serial_number = normalize_optional_text(input.serial_number);
         let notes = normalize_optional_text(input.notes);
 
         tx.execute(
             r#"
             INSERT INTO assets(
               asset_code,
-              category_id,
               asset_type,
               display_name,
-              brand,
               model,
               serial_number,
-              warehouse,
               notes,
               status,
               created_at,
               updated_at
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 'in_stock', datetime('now'), datetime('now'))
+            VALUES(?, ?, ?, ?, ?, ?, 'in_stock', datetime('now'), datetime('now'))
             ON CONFLICT(asset_code) DO UPDATE SET
-              category_id = COALESCE(excluded.category_id, assets.category_id),
               asset_type = excluded.asset_type,
               display_name = excluded.display_name,
-              brand = excluded.brand,
               model = excluded.model,
               serial_number = excluded.serial_number,
-              warehouse = excluded.warehouse,
               notes = excluded.notes,
               updated_at = datetime('now')
             "#,
             params![
                 asset_code.as_str(),
-                category_id,
                 asset_type.as_str(),
                 display_name.as_str(),
-                brand.as_deref(),
                 model.as_deref(),
                 serial_number.as_deref(),
-                warehouse.as_deref(),
                 notes.as_deref(),
             ],
         )
@@ -430,6 +487,79 @@ pub(crate) fn search_in_stock_assets_conn(
     Ok(items)
 }
 
+pub(crate) fn search_assigned_assets_conn(
+    conn: &Connection,
+    query: Option<&str>,
+    limit: usize,
+) -> Result<Vec<AssetRecord>, String> {
+    let normalized_limit = limit.clamp(1, 50) as i64;
+    let like_query = query
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("%{}%", value.to_uppercase()));
+
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT
+              id,
+              asset_code,
+              asset_type,
+              display_name,
+              model,
+              serial_number,
+              notes,
+              status
+            FROM assets
+            WHERE status = 'assigned'
+              AND (
+                ? IS NULL
+                OR UPPER(asset_code) LIKE ?
+                OR UPPER(asset_type) LIKE ?
+                OR UPPER(display_name) LIKE ?
+                OR UPPER(COALESCE(model, '')) LIKE ?
+                OR UPPER(COALESCE(serial_number, '')) LIKE ?
+              )
+            ORDER BY asset_code ASC, id ASC
+            LIMIT ?
+            "#,
+        )
+        .map_err(|err| format!("failed to prepare assigned asset search query: {err}"))?;
+
+    let rows = stmt
+        .query_map(
+            params![
+                like_query.as_deref(),
+                like_query.as_deref(),
+                like_query.as_deref(),
+                like_query.as_deref(),
+                like_query.as_deref(),
+                like_query.as_deref(),
+                normalized_limit
+            ],
+            |row| {
+                Ok(AssetRecord {
+                    id: row.get(0)?,
+                    asset_code: row.get(1)?,
+                    asset_type: row.get(2)?,
+                    display_name: row.get(3)?,
+                    model: row.get(4)?,
+                    serial_number: row.get(5)?,
+                    notes: row.get(6)?,
+                    status: row.get(7)?,
+                })
+            },
+        )
+        .map_err(|err| format!("failed to query assigned assets for search: {err}"))?;
+
+    let mut items = Vec::new();
+    for row in rows {
+        items.push(row.map_err(|err| format!("failed to read assigned asset search row: {err}"))?);
+    }
+
+    Ok(items)
+}
+
 pub fn upsert_assets(
     app: &AppHandle,
     assets: Vec<AssetUpsertInput>,
@@ -488,78 +618,6 @@ pub(crate) fn list_asset_categories_conn(
     Ok(categories)
 }
 
-pub(crate) fn find_active_asset_category_by_name_or_code_tx(
-    tx: &Transaction<'_>,
-    category_value: &str,
-    tracking_mode: &str,
-) -> Result<Option<AssetCategoryLookupRecord>, String> {
-    let normalized = require_text(category_value.to_string(), "assetType")?;
-
-    tx.query_row(
-        r#"
-        SELECT
-          id,
-          category_name,
-          prefix_code
-        FROM asset_categories
-        WHERE is_active = 1
-          AND tracking_mode = ?
-          AND (
-            category_code = ? COLLATE NOCASE
-            OR category_name = ? COLLATE NOCASE
-          )
-        ORDER BY id ASC
-        LIMIT 1
-        "#,
-        params![tracking_mode, normalized.as_str(), normalized.as_str()],
-        |row| {
-            Ok(AssetCategoryLookupRecord {
-                id: row.get(0)?,
-                category_name: row.get(1)?,
-                prefix_code: row.get(2)?,
-            })
-        },
-    )
-    .optional()
-    .map_err(|err| format!("failed to resolve asset category '{normalized}': {err}"))
-}
-
-pub(crate) fn generate_next_asset_code_for_prefix_tx(
-    tx: &Transaction<'_>,
-    prefix_code: &str,
-) -> Result<String, String> {
-    let prefix = require_text(prefix_code.to_string(), "prefixCode")?.to_uppercase();
-    let like_pattern = format!("{prefix}%");
-
-    let mut stmt = tx
-        .prepare("SELECT asset_code FROM assets WHERE UPPER(asset_code) LIKE ?")
-        .map_err(|err| format!("failed to prepare asset code sequence query: {err}"))?;
-    let rows = stmt
-        .query_map(params![like_pattern.as_str()], |row| row.get::<_, String>(0))
-        .map_err(|err| format!("failed to query existing asset codes for prefix '{prefix}': {err}"))?;
-
-    let mut max_sequence = 0_u64;
-    for row in rows {
-        let asset_code = row
-            .map_err(|err| format!("failed to read existing asset code for prefix '{prefix}': {err}"))?
-            .to_uppercase();
-        if !asset_code.starts_with(prefix.as_str()) {
-            continue;
-        }
-
-        let suffix = &asset_code[prefix.len()..];
-        if suffix.is_empty() || !suffix.chars().all(|ch| ch.is_ascii_digit()) {
-            continue;
-        }
-
-        if let Ok(parsed) = suffix.parse::<u64>() {
-            max_sequence = max_sequence.max(parsed);
-        }
-    }
-
-    Ok(format!("{prefix}{:04}", max_sequence + 1))
-}
-
 #[cfg(test)]
 mod tests {
     use rusqlite::{params, Connection};
@@ -585,11 +643,8 @@ mod tests {
                 asset_code: "asset-001".to_string(),
                 asset_type: "Laptop".to_string(),
                 display_name: "Dell Latitude".to_string(),
-                category_id: None,
-                brand: None,
                 model: Some("7440".to_string()),
                 serial_number: Some("SN-001".to_string()),
-                warehouse: None,
                 notes: Some("Seed import".to_string()),
             }],
         )
@@ -610,11 +665,8 @@ mod tests {
                 asset_code: "ASSET-001".to_string(),
                 asset_type: "Laptop".to_string(),
                 display_name: "Dell Latitude".to_string(),
-                category_id: None,
-                brand: None,
                 model: None,
                 serial_number: None,
-                warehouse: None,
                 notes: None,
             }],
         )
@@ -632,11 +684,8 @@ mod tests {
                 asset_code: "ASSET-001".to_string(),
                 asset_type: "Laptop".to_string(),
                 display_name: "Dell Latitude 7450".to_string(),
-                category_id: None,
-                brand: None,
                 model: Some("7450".to_string()),
                 serial_number: Some("SN-001".to_string()),
-                warehouse: None,
                 notes: Some("Updated metadata".to_string()),
             }],
         )

@@ -83,3 +83,9 @@ bmad_method_ref/
 __pycache__/
 *.pyc
 *.pyo
+
+# Dolt database files (added by bd init)
+.dolt/
+
+# Beads / Dolt files (added by bd init)
+.beads-credential-key

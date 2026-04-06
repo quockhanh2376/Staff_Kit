@@ -17,6 +17,7 @@ import type { ColumnState } from "../columns/useColumnState"
 import type { StaffGroupKey } from "../../types/app"
 import { STAFF_GROUP_BUTTONS, DATE_COLUMN_KEYS } from "../../lib/constants"
 import { formatDate } from "../../lib/utils"
+import { formatEmployeeIdForDisplay } from "./employeeIdDisplay"
 
 // ── Diacritic-insensitive highlight helper ─────────────────────────────────────
 function stripDiacritics(str: string): string {
@@ -367,7 +368,7 @@ export function EmployeeView({
                                                                             >
                                                                                 {isMoveSelected ? <Check size={11} /> : null}
                                                                             </span>
-                                                                            <span>{employee.employeeId}</span>
+                                                                            <span>{formatEmployeeIdForDisplay(employee.employeeId)}</span>
                                                                         </button>
                                                                     )
                                                                 }
@@ -400,11 +401,16 @@ export function EmployeeView({
                                                                     )
                                                                 }
 
+                                                                const displayCellValue =
+                                                                    column.key === "employeeId" && typeof rawCellValue === "string"
+                                                                        ? formatEmployeeIdForDisplay(rawCellValue)
+                                                                        : rawCellValue
+
                                                                 return (
                                                                     <span className={isEditable ? "cursor-cell select-none" : ""}>
-                                                                        {typeof rawCellValue === "string" && hasSearchMatch(rawCellValue, emp.searchTerm) ? (
-                                                                            <HighlightText text={rawCellValue} query={emp.searchTerm} />
-                                                                        ) : rawCellValue}
+                                                                        {typeof displayCellValue === "string" && hasSearchMatch(displayCellValue, emp.searchTerm) ? (
+                                                                            <HighlightText text={displayCellValue} query={emp.searchTerm} />
+                                                                        ) : displayCellValue}
                                                                     </span>
                                                                 )
                                                             })()}
@@ -429,7 +435,7 @@ export function EmployeeView({
                                 <div className="flex items-start justify-between gap-3">
                                     <div>
                                         <div className="font-semibold text-[var(--text-primary)]">{employee.fullName}</div>
-                                        <div className="text-xs text-[var(--text-secondary)]">{employee.employeeId}</div>
+                                        <div className="text-xs text-[var(--text-secondary)]">{formatEmployeeIdForDisplay(employee.employeeId)}</div>
                                     </div>
                                     <span className="text-xs text-[var(--text-secondary)]">
                                         #{(emp.currentPage - 1) * emp.rowsPerPage + index + 1}

@@ -1,4 +1,6 @@
 use std::collections::HashSet;
+use std::net::IpAddr;
+use std::net::UdpSocket;
 
 use rand::{distributions::Alphanumeric, Rng};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
@@ -7,7 +9,9 @@ use serde_json::json;
 use tauri::AppHandle;
 
 use super::auth;
-use super::schema::{BORROW_LAN_HOST_SETTING_KEY, BORROW_LAN_PORT_SETTING_KEY};
+use super::schema::{
+    BORROW_LAN_ENABLED_SETTING_KEY, BORROW_LAN_HOST_SETTING_KEY, BORROW_LAN_PORT_SETTING_KEY,
+};
 use super::{
     asset, audit, get_setting_value, humanize_sqlite_error, open_runtime_connection, require_text,
     set_setting_value,
@@ -21,10 +25,16 @@ const REQUEST_TYPE_RETURN: &str = "return";
 const ASSET_STATUS_IN_STOCK: &str = "in_stock";
 const ASSET_STATUS_ASSIGNED: &str = "assigned";
 const DEFAULT_BORROW_LAN_PORT: u16 = 8787;
+const BORROW_LAN_DETECTION_TARGETS: [&str; 3] = [
+    "1.1.1.1:80",
+    "8.8.8.8:80",
+    "208.67.222.222:80",
+];
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BorrowLanSettings {
+    pub enabled: bool,
     pub host: String,
     pub port: u16,
     pub borrow_url: String,
@@ -33,6 +43,8 @@ pub struct BorrowLanSettings {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BorrowLanSettingsUpdateInput {
+    #[serde(default)]
+    pub enabled: Option<bool>,
     pub host: String,
     pub port: u16,
 }
@@ -44,6 +56,7 @@ pub struct BorrowRequestSubmitInput {
     pub submitted_full_name: String,
     pub asset_codes: Vec<String>,
     pub submit_source_ip: Option<String>,
+    pub request_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -55,6 +68,7 @@ pub struct BorrowRequestRecord {
     pub submitted_employee_id: String,
     pub submitted_full_name: String,
     pub status: String,
+    pub request_type: String,
     pub asset_codes: Vec<String>,
     pub submitted_at: String,
     pub decision_note: Option<String>,
@@ -92,9 +106,20 @@ pub fn update_borrow_lan_settings(
     let port_text = payload.port.to_string();
     set_setting_value(&conn, BORROW_LAN_PORT_SETTING_KEY, Some(port_text.as_str()))?;
 
+    if let Some(enabled) = payload.enabled {
+        set_setting_value(
+            &conn,
+            BORROW_LAN_ENABLED_SETTING_KEY,
+            Some(if enabled { "1" } else { "0" }),
+        )?;
+    }
+
+    let updated_settings = read_borrow_lan_settings(&conn)?;
+
     let payload_json = json!({
-        "host": host,
-        "port": payload.port,
+        "enabled": updated_settings.enabled,
+        "host": updated_settings.host,
+        "port": updated_settings.port,
     })
     .to_string();
 
@@ -115,7 +140,17 @@ pub fn update_borrow_lan_settings(
         Some(payload_json.as_str()),
     )?;
 
-    read_borrow_lan_settings(&conn)
+    Ok(updated_settings)
+}
+
+pub fn detect_borrow_lan_host() -> Result<Option<String>, String> {
+    for target in BORROW_LAN_DETECTION_TARGETS {
+        if let Some(host) = detect_borrow_lan_host_via_target(target) {
+            return Ok(Some(host));
+        }
+    }
+
+    Ok(None)
 }
 
 pub fn list_pending_borrow_requests(app: &AppHandle) -> Result<Vec<BorrowRequestRecord>, String> {
@@ -170,6 +205,18 @@ pub(crate) fn submit_borrow_request_conn(
             Some(trimmed)
         }
     });
+    let request_type = input
+        .request_type
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or(REQUEST_TYPE_BORROW);
+    if request_type != REQUEST_TYPE_BORROW && request_type != REQUEST_TYPE_RETURN {
+        return Err(format!(
+            "invalid request_type '{}', must be 'borrow' or 'return'",
+            request_type
+        ));
+    }
 
     let tx = conn
         .transaction()
@@ -183,9 +230,15 @@ pub(crate) fn submit_borrow_request_conn(
     for asset_code in &asset_codes {
         let asset_record = asset::load_asset_by_code_tx(&tx, asset_code.as_str())?
             .ok_or_else(|| format!("asset '{}' was not found", asset_code))?;
-        if asset_record.status != ASSET_STATUS_IN_STOCK {
+        if request_type == REQUEST_TYPE_BORROW && asset_record.status != ASSET_STATUS_IN_STOCK {
             return Err(format!(
                 "asset '{}' is not in_stock",
+                asset_record.asset_code
+            ));
+        }
+        if request_type == REQUEST_TYPE_RETURN && asset_record.status != ASSET_STATUS_ASSIGNED {
+            return Err(format!(
+                "asset '{}' is not currently assigned",
                 asset_record.asset_code
             ));
         }
@@ -202,6 +255,7 @@ pub(crate) fn submit_borrow_request_conn(
           submitted_employee_id,
           submitted_full_name,
           status,
+          request_type,
           submit_source_ip,
           submitted_at
         )
@@ -214,6 +268,7 @@ pub(crate) fn submit_borrow_request_conn(
             submitted_employee_id.as_str(),
             submitted_full_name.as_str(),
             REQUEST_STATUS_PENDING,
+            request_type,
             submit_source_ip.as_deref(),
         ],
     )
@@ -245,6 +300,7 @@ pub(crate) fn submit_borrow_request_conn(
         "requestType": REQUEST_TYPE_BORROW,
         "submittedEmployeeId": submitted_employee_id,
         "submittedFullName": submitted_full_name,
+        "requestType": request_type,
         "assetCodes": asset_codes,
     })
     .to_string();
@@ -387,6 +443,7 @@ pub(crate) fn approve_borrow_request_conn(
         .map_err(|err| format!("failed to start borrow approval transaction: {err}"))?;
 
     let (employee_id_fk, request_type, status) = load_request_state_tx(&tx, request_id)?;
+    let (employee_id_fk, status, request_type) = load_request_state_tx(&tx, request_id)?;
     ensure_pending_status(status.as_str())?;
     ensure_borrow_request_type(request_type.as_str())?;
 
@@ -395,10 +452,18 @@ pub(crate) fn approve_borrow_request_conn(
         return Err("borrow request has no asset items".to_string());
     }
 
+    // Validate asset statuses match the request type
     for item in &request_items {
         let asset_record = asset::load_asset_by_id_tx(&tx, item.asset_id)?
             .ok_or_else(|| format!("asset with id {} was not found", item.asset_id))?;
-        if asset_record.status != ASSET_STATUS_IN_STOCK {
+        if request_type == REQUEST_TYPE_RETURN {
+            if asset_record.status != ASSET_STATUS_ASSIGNED {
+                return Err(format!(
+                    "asset '{}' is not assigned (cannot approve return)",
+                    asset_record.asset_code
+                ));
+            }
+        } else if asset_record.status != ASSET_STATUS_IN_STOCK {
             return Err(format!(
                 "asset '{}' is not in_stock",
                 asset_record.asset_code
@@ -406,27 +471,37 @@ pub(crate) fn approve_borrow_request_conn(
         }
     }
 
+    // Apply the status transition
     for item in &request_items {
-        asset::set_asset_status_tx(&tx, item.asset_id, ASSET_STATUS_ASSIGNED)?;
-        tx.execute(
-            r#"
-            INSERT INTO asset_loans(
-              asset_id,
-              employee_id_fk,
-              borrow_request_id,
-              approved_by_account_id,
-              borrowed_at
+        if request_type == REQUEST_TYPE_RETURN {
+            asset::set_asset_status_tx(&tx, item.asset_id, ASSET_STATUS_IN_STOCK)?;
+            tx.execute(
+                "UPDATE asset_loans SET returned_at = datetime('now') WHERE asset_id = ? AND returned_at IS NULL",
+                params![item.asset_id],
             )
-            VALUES(?, ?, ?, ?, datetime('now'))
-            "#,
-            params![
-                item.asset_id,
-                employee_id_fk,
-                request_id,
-                reviewer_account_id
-            ],
-        )
-        .map_err(humanize_sqlite_error)?;
+            .map_err(humanize_sqlite_error)?;
+        } else {
+            asset::set_asset_status_tx(&tx, item.asset_id, ASSET_STATUS_ASSIGNED)?;
+            tx.execute(
+                r#"
+                INSERT INTO asset_loans(
+                  asset_id,
+                  employee_id_fk,
+                  borrow_request_id,
+                  approved_by_account_id,
+                  borrowed_at
+                )
+                VALUES(?, ?, ?, ?, datetime('now'))
+                "#,
+                params![
+                    item.asset_id,
+                    employee_id_fk,
+                    request_id,
+                    reviewer_account_id
+                ],
+            )
+            .map_err(humanize_sqlite_error)?;
+        }
     }
 
     tx.execute(
@@ -445,6 +520,7 @@ pub(crate) fn approve_borrow_request_conn(
 
     let audit_payload = json!({
         "reviewerAccountId": reviewer_account_id,
+        "requestType": request_type,
         "assetCodes": request_items
             .iter()
             .map(|item| item.asset_code_snapshot.clone())
@@ -482,6 +558,7 @@ pub(crate) fn reject_borrow_request_conn(
         .map_err(|err| format!("failed to start borrow reject transaction: {err}"))?;
 
     let (_, request_type, status) = load_request_state_tx(&tx, request_id)?;
+    let (_, status, _) = load_request_state_tx(&tx, request_id)?;
     ensure_pending_status(status.as_str())?;
     ensure_borrow_request_type(request_type.as_str())?;
 
@@ -580,6 +657,10 @@ fn normalize_asset_codes(asset_codes: Vec<String>) -> Result<Vec<String>, String
 }
 
 fn read_borrow_lan_settings(conn: &Connection) -> Result<BorrowLanSettings, String> {
+    let enabled = get_setting_value(conn, BORROW_LAN_ENABLED_SETTING_KEY)?
+        .as_deref()
+        .map(parse_borrow_lan_enabled_setting)
+        .unwrap_or(false);
     let host = get_setting_value(conn, BORROW_LAN_HOST_SETTING_KEY)?
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
@@ -590,10 +671,34 @@ fn read_borrow_lan_settings(conn: &Connection) -> Result<BorrowLanSettings, Stri
         .unwrap_or(DEFAULT_BORROW_LAN_PORT);
 
     Ok(BorrowLanSettings {
+        enabled,
         borrow_url: build_borrow_lan_url(host.as_str(), port),
         host,
         port,
     })
+}
+
+fn parse_borrow_lan_enabled_setting(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
+fn normalize_detected_borrow_lan_host_candidate(candidate: &str) -> Option<String> {
+    let trimmed = candidate.trim();
+    let parsed = trimmed.parse::<IpAddr>().ok()?;
+    if parsed.is_loopback() || parsed.is_unspecified() {
+        return None;
+    }
+    Some(parsed.to_string())
+}
+
+fn detect_borrow_lan_host_via_target(target: &str) -> Option<String> {
+    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect(target).ok()?;
+    let local_ip = socket.local_addr().ok()?.ip().to_string();
+    normalize_detected_borrow_lan_host_candidate(local_ip.as_str())
 }
 
 fn default_borrow_lan_host() -> String {
@@ -605,7 +710,21 @@ fn default_borrow_lan_host() -> String {
 }
 
 fn build_borrow_lan_url(host: &str, port: u16) -> String {
-    format!("http://{host}:{port}/borrow")
+    let formatted_host = format_borrow_lan_url_host(host);
+    format!("http://{formatted_host}:{port}/borrow")
+}
+
+fn format_borrow_lan_url_host(host: &str) -> String {
+    let trimmed = host.trim();
+
+    if trimmed.starts_with('[') && trimmed.ends_with(']') {
+        return trimmed.to_string();
+    }
+
+    match trimmed.parse::<IpAddr>() {
+        Ok(IpAddr::V6(_)) => format!("[{trimmed}]"),
+        _ => trimmed.to_string(),
+    }
 }
 
 fn require_active_admin_account_id(conn: &Connection) -> Result<i64, String> {
@@ -684,6 +803,9 @@ fn load_request_state_tx(
 ) -> Result<(i64, String, String), String> {
     tx.query_row(
         "SELECT employee_id_fk, request_type, status FROM borrow_requests WHERE id = ?",
+fn load_request_state_tx(tx: &Transaction<'_>, request_id: i64) -> Result<(i64, String, String), String> {
+    tx.query_row(
+        "SELECT employee_id_fk, status, COALESCE(request_type, 'borrow') FROM borrow_requests WHERE id = ?",
         params![request_id],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     )
@@ -789,6 +911,7 @@ fn load_borrow_request_record(
         submitted_employee_id,
         submitted_full_name,
         status,
+        request_type,
         submitted_at,
         decision_note,
     ) = conn
@@ -801,6 +924,7 @@ fn load_borrow_request_record(
               submitted_employee_id,
               submitted_full_name,
               status,
+              COALESCE(request_type, 'borrow'),
               submitted_at,
               decision_note
             FROM borrow_requests
@@ -831,6 +955,7 @@ fn load_borrow_request_record(
         submitted_employee_id,
         submitted_full_name,
         status,
+        request_type,
         asset_codes: load_request_asset_codes(conn, request_id)?,
         submitted_at,
         decision_note,
@@ -948,6 +1073,7 @@ mod tests {
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-001".to_string(), "ASSET-002".to_string()],
                 submit_source_ip: Some("192.168.1.50".to_string()),
+                request_type: None,
             },
         )
         .expect("submit borrow request");
@@ -976,6 +1102,7 @@ mod tests {
                 submitted_full_name: "Ghost User".to_string(),
                 asset_codes: vec!["ASSET-001".to_string()],
                 submit_source_ip: None,
+                request_type: None,
             },
         )
         .expect_err("unknown employee should be rejected");
@@ -996,6 +1123,7 @@ mod tests {
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-001".to_string(), "ASSET-001".to_string()],
                 submit_source_ip: None,
+                request_type: None,
             },
         )
         .expect_err("duplicate asset codes should be rejected");
@@ -1121,6 +1249,7 @@ mod tests {
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-001".to_string()],
                 submit_source_ip: None,
+                request_type: None,
             },
         )
         .expect("submit borrow request");
@@ -1156,6 +1285,7 @@ mod tests {
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-001".to_string()],
                 submit_source_ip: None,
+                request_type: None,
             },
         )
         .expect("submit borrow request");
@@ -1183,6 +1313,7 @@ mod tests {
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-001".to_string()],
                 submit_source_ip: None,
+                request_type: None,
             },
         )
         .expect("submit borrow request");
@@ -1261,6 +1392,7 @@ mod tests {
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-001".to_string()],
                 submit_source_ip: None,
+                request_type: None,
             },
         )
         .expect("create first pending request");
@@ -1272,6 +1404,7 @@ mod tests {
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-002".to_string()],
                 submit_source_ip: None,
+                request_type: None,
             },
         )
         .expect("create request to approve");
@@ -1284,6 +1417,7 @@ mod tests {
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-003".to_string()],
                 submit_source_ip: None,
+                request_type: None,
             },
         )
         .expect("create last pending request");
@@ -1331,6 +1465,7 @@ mod tests {
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-001".to_string()],
                 submit_source_ip: Some("192.168.1.50".to_string()),
+                request_type: None,
             },
         )
         .expect("submit request");
@@ -1345,5 +1480,36 @@ mod tests {
         assert_eq!(detail.asset_codes, vec!["ASSET-001"]);
         assert_eq!(detail.status, "rejected");
         assert_eq!(detail.decision_note.as_deref(), Some("Wrong asset type"));
+    }
+
+    #[test]
+    fn normalize_detected_borrow_lan_host_candidate_accepts_real_ips_and_rejects_loopback() {
+        assert_eq!(normalize_detected_borrow_lan_host_candidate("192.168.2.15"), Some("192.168.2.15".to_string()));
+        assert_eq!(normalize_detected_borrow_lan_host_candidate("10.24.8.9\n"), Some("10.24.8.9".to_string()));
+        assert_eq!(normalize_detected_borrow_lan_host_candidate(" 2001:db8::10 "), Some("2001:db8::10".to_string()));
+        assert_eq!(normalize_detected_borrow_lan_host_candidate("127.0.0.1"), None);
+        assert_eq!(normalize_detected_borrow_lan_host_candidate("0.0.0.0"), None);
+        assert_eq!(normalize_detected_borrow_lan_host_candidate("not-an-ip"), None);
+    }
+
+    #[test]
+    fn build_borrow_lan_url_wraps_ipv6_hosts() {
+        assert_eq!(build_borrow_lan_url("203.0.113.45", 8787), "http://203.0.113.45:8787/borrow");
+        assert_eq!(build_borrow_lan_url("2001:db8::10", 8787), "http://[2001:db8::10]:8787/borrow");
+    }
+
+    #[test]
+    fn borrow_lan_settings_default_to_disabled_until_explicitly_enabled() {
+        let conn = open_test_connection();
+
+        let settings = read_borrow_lan_settings(&conn).expect("read default borrow lan settings");
+        assert!(!settings.enabled);
+
+        set_setting_value(&conn, BORROW_LAN_ENABLED_SETTING_KEY, Some("1"))
+            .expect("enable borrow lan setting");
+
+        let updated_settings =
+            read_borrow_lan_settings(&conn).expect("read updated borrow lan settings");
+        assert!(updated_settings.enabled);
     }
 }

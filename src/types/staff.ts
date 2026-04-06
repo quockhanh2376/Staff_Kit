@@ -205,6 +205,7 @@ export type BorrowRequestRecord = {
   submittedEmployeeId: string
   submittedFullName: string
   status: string
+  requestType: string
   assetCodes: string[]
   submittedAt: string
   decisionNote: string | null

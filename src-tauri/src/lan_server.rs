@@ -36,9 +36,50 @@ struct ApiErrorPayload {
     error: String,
 }
 
+/// Attempt to add/refresh a Windows Firewall inbound rule so phones on the same
+/// LAN can reach the borrow server without a manual UAC prompt.
+/// Runs `netsh advfirewall` via a hidden process — best-effort only, never fatal.
+#[cfg(target_os = "windows")]
+fn ensure_firewall_rule(port: u16) {
+    use std::os::windows::process::CommandExt;
+    use std::process::Command;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    const RULE_NAME: &str = "Staff Kit LAN Borrow Server";
+
+    // Delete any stale rule first (wrong port or old binary path), then re-add.
+    // Both commands are fire-and-forget; errors are silently ignored.
+    let _ = Command::new("netsh")
+        .args([
+            "advfirewall", "firewall", "delete", "rule",
+            &format!("name={RULE_NAME}"),
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+
+    let _ = Command::new("netsh")
+        .args([
+            "advfirewall", "firewall", "add", "rule",
+            &format!("name={RULE_NAME}"),
+            "protocol=TCP",
+            "dir=in",
+            "action=allow",
+            &format!("localport={port}"),
+            "profile=private,domain",
+            "description=Allows Staff Kit employees on the local network to submit borrow requests via QR code.",
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+}
+
+#[cfg(not(target_os = "windows"))]
+fn ensure_firewall_rule(_port: u16) {}
+
 pub fn start(app: AppHandle) -> Result<(), String> {
     let lan_settings = db::get_borrow_lan_settings(&app)?;
     let bind_addr = format!("0.0.0.0:{}", lan_settings.port);
+
+    ensure_firewall_rule(lan_settings.port);
 
     let app_handle = app.clone();
     let db_factory: DbFactory = Arc::new(move || db::open_runtime_connection(&app_handle));
@@ -67,6 +108,7 @@ fn build_router(db_factory: DbFactory) -> Router {
     Router::new()
         .route("/borrow", get(serve_borrow_page))
         .route("/api/assets", get(search_assets))
+        .route("/api/assigned-assets", get(search_assigned_assets))
         .route("/api/borrow-requests", post(submit_borrow_request))
         .route("/api/return-requests", post(submit_return_request))
         .with_state(LanServerState { db_factory })
@@ -84,7 +126,21 @@ async fn search_assets(
     let items = db::asset::search_in_stock_assets_conn(
         &conn,
         query.q.as_deref(),
-        query.limit.unwrap_or(12),
+        query.limit.unwrap_or(12).min(100),
+    )
+    .map_err(internal_api_error)?;
+    Ok(Json(items))
+}
+
+async fn search_assigned_assets(
+    State(state): State<LanServerState>,
+    Query(query): Query<AssetSearchQuery>,
+) -> Result<Json<Vec<db::AssetRecord>>, (StatusCode, Json<ApiErrorPayload>)> {
+    let conn = (state.db_factory)().map_err(internal_api_error)?;
+    let items = db::asset::search_assigned_assets_conn(
+        &conn,
+        query.q.as_deref(),
+        query.limit.unwrap_or(12).min(100),
     )
     .map_err(internal_api_error)?;
     Ok(Json(items))
