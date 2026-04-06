@@ -110,6 +110,7 @@ fn build_router(db_factory: DbFactory) -> Router {
         .route("/api/assets", get(search_assets))
         .route("/api/assigned-assets", get(search_assigned_assets))
         .route("/api/borrow-requests", post(submit_borrow_request))
+        .route("/api/return-requests", post(submit_return_request))
         .with_state(LanServerState { db_factory })
 }
 
@@ -151,6 +152,16 @@ async fn submit_borrow_request(
 ) -> Result<Json<db::BorrowRequestRecord>, (StatusCode, Json<ApiErrorPayload>)> {
     let mut conn = (state.db_factory)().map_err(internal_api_error)?;
     let record = db::borrow::submit_borrow_request_conn(&mut conn, payload)
+        .map_err(bad_request_api_error)?;
+    Ok(Json(record))
+}
+
+async fn submit_return_request(
+    State(state): State<LanServerState>,
+    Json(payload): Json<db::BorrowRequestSubmitInput>,
+) -> Result<Json<db::BorrowRequestRecord>, (StatusCode, Json<ApiErrorPayload>)> {
+    let mut conn = (state.db_factory)().map_err(internal_api_error)?;
+    let record = db::borrow::submit_return_request_conn(&mut conn, payload)
         .map_err(bad_request_api_error)?;
     Ok(Json(record))
 }
@@ -231,6 +242,38 @@ impl LanServerTestHarness {
             db::configure_connection(&conn)?;
             Ok(conn)
         })
+    }
+
+    fn seed_active_loan_for_employee(
+        &self,
+        employee_id: &str,
+        full_name: &str,
+        asset_code: &str,
+    ) {
+        let mut conn = Connection::open(&self.db_path).expect("open test sqlite file");
+        db::configure_connection(&conn).expect("configure sqlite pragmas");
+        conn.execute(
+            r#"
+            INSERT INTO assets(asset_code, asset_type, display_name, status, created_at, updated_at)
+            VALUES(?, 'Laptop', ?, 'in_stock', datetime('now'), datetime('now'))
+            "#,
+            [asset_code, asset_code],
+        )
+        .expect("seed return asset");
+
+        let request = db::borrow::submit_borrow_request_conn(
+            &mut conn,
+            db::BorrowRequestSubmitInput {
+                submitted_employee_id: employee_id.to_string(),
+                submitted_full_name: full_name.to_string(),
+                asset_codes: vec![asset_code.to_string()],
+                submit_source_ip: None,
+            },
+        )
+        .expect("submit borrow request for active loan");
+
+        db::borrow::approve_borrow_request_conn(&mut conn, request.id, 1)
+            .expect("approve borrow request for active loan");
     }
 }
 
@@ -351,5 +394,66 @@ mod tests {
         let payload: serde_json::Value = serde_json::from_slice(&body).expect("parse json");
         assert_eq!(payload["status"], "pending");
         assert_eq!(payload["assetCodes"][0], "ASSET-001");
+    }
+
+    #[tokio::test]
+    async fn rejects_invalid_return_submit_payloads() {
+        let (router, _harness) = build_router_for_tests().await;
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/return-requests")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({
+                            "submittedEmployeeId": "EE1001",
+                            "submittedFullName": "Nguyen Van A",
+                            "assetCodes": ["ASSET-001"]
+                        })
+                        .to_string(),
+                    ))
+                    .expect("build request"),
+            )
+            .await
+            .expect("submit invalid return request");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn accepts_valid_return_submit_and_creates_pending_request() {
+        let (router, harness) = build_router_for_tests().await;
+        harness.seed_active_loan_for_employee("EE1001", "Nguyen Van A", "ASSET-003");
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/return-requests")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({
+                            "submittedEmployeeId": "EE1001",
+                            "submittedFullName": "Nguyen Van A",
+                            "assetCodes": ["ASSET-003"],
+                            "submitSourceIp": "192.168.1.60"
+                        })
+                        .to_string(),
+                    ))
+                    .expect("build request"),
+            )
+            .await
+            .expect("submit valid return request");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read body");
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("parse json");
+        assert_eq!(payload["status"], "pending");
+        assert_eq!(payload["requestType"], "return");
+        assert_eq!(payload["assetCodes"][0], "ASSET-003");
     }
 }

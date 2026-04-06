@@ -704,6 +704,56 @@ Refocus `Staff_Kit` as a native desktop-only application and fully separate it f
 - Keep docs and internal workflows desktop-only
 - Avoid reintroducing `AssetDesk-Pro` web planning into this repo
 
+# Daily Log - 2026-04-02
+
+## Objective
+Start `ST 2.0.2` with the first meaningful QR return slice while keeping the current desktop borrow review UI unchanged.
+
+## Scope Locked
+- Backend-first and hidden from the current desktop UI
+- Employee-side return submit creates a pending request only
+- No stock mutation, no `returned_at` mutation, and no return approval/reject flow yet
+- Current borrow-only queue and review actions stay protected from pending return requests
+
+## Work Completed
+- Created a fresh feature worktree from `security` and replayed the `request_type` groundwork.
+- Added a narrow QR return submit backend flow in `src-tauri/src/db/borrow.rs`:
+  - writes pending requests with `request_type = "return"`
+  - validates submitted assets against active employee loans
+  - writes `return_request.submit` audit logs
+  - blocks current borrow approve/reject actions from handling non-borrow requests
+  - keeps `list_pending_borrow_requests` borrow-only so the current admin UI is not polluted by hidden return requests
+- Added LAN endpoint coverage in `src-tauri/src/lan_server.rs`:
+  - `POST /api/return-requests`
+  - valid and invalid return-submit tests
+- Added/expanded Rust tests for:
+  - valid return submit
+  - unknown employee rejection
+  - duplicate asset-code rejection
+  - active-loan ownership validation
+  - borrow approve/reject guards on non-borrow requests
+  - audit logging
+  - queue filtering to exclude pending return requests
+
+## Verification
+- Ran `node ./scripts/run-with-shared-cargo-target.mjs cargo test --manifest-path src-tauri/Cargo.toml borrow -- --nocapture`
+- Ran `node ./scripts/run-with-shared-cargo-target.mjs cargo test --manifest-path src-tauri/Cargo.toml lan_server -- --nocapture`
+- Ran `npm run check:quality`
+- Ran `npm run test:tauri`
+- Result: passed
+  - targeted borrow tests: passed
+  - targeted LAN server tests: passed
+  - frontend lint/typecheck/build: passed
+  - Tauri quality verification: passed
+  - full Rust/Tauri tests: `49 passed, 0 failed`
+
+## Git History Added
+- `b93716e` - `feat: add request type to pending review model`
+- `6632d8e` - `docs: add qr return submit slice spec and plan`
+- `abfcd38` - `feat: add lan qr return submit endpoint`
+
+## Current State
+`codex/st-2-0-2-qr-return-v1` now has the first safe return-flow slice on top of `security`: return submit exists and is auditable, but desktop review remains borrow-only until the next visible review slice is designed.
 # Daily Log - 2026-04-01
 
 ## Objective
