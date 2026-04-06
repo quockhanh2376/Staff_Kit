@@ -379,7 +379,7 @@ function App() {
                 type="button"
               >
                 <ClipboardList size={18} />
-                <span>Borrow <span style={{ opacity: 0.55, fontWeight: 400 }}>/</span> Return</span>
+                <span>Borrow <span style={{ opacity: 0.55, fontWeight: 400 }}>/</span> Return</span>
               </button>
             )}
             <button
@@ -524,7 +524,7 @@ function App() {
               type="button"
             >
               <ClipboardList size={16} />
-              <span>Borrow <span style={{ opacity: 0.55, fontWeight: 400 }}>/</span> Return</span>
+              <span>Borrow <span style={{ opacity: 0.55, fontWeight: 400 }}>/</span> Return</span>
             </button>
           )}
           <button
