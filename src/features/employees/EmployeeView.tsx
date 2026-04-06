@@ -10,7 +10,6 @@ import {
 } from "lucide-react"
 import { useState, useCallback } from "react"
 import { staffApi } from "../../services/staff-api"
-import { readRawCellText } from "./useTableEdit"
 import type { EmployeeState } from "./useEmployeeState"
 import type { TableEditState } from "./useTableEdit"
 import type { ColumnState } from "../columns/useColumnState"
@@ -18,6 +17,7 @@ import type { StaffGroupKey } from "../../types/app"
 import { STAFF_GROUP_BUTTONS, DATE_COLUMN_KEYS } from "../../lib/constants"
 import { formatDate } from "../../lib/utils"
 import { formatEmployeeIdForDisplay } from "./employeeIdDisplay"
+import { collectDuplicateComputerEmployeeIds } from "./employeeTableRules"
 
 // ── Diacritic-insensitive highlight helper ─────────────────────────────────────
 function stripDiacritics(str: string): string {
@@ -107,24 +107,7 @@ export function EmployeeView({
             }
 
             // Build map: normalized computer value → list of employee IDs
-            const valueToIds = new Map<string, number[]>()
-            for (const emp of all) {
-                for (const key of computerKeys) {
-                    const raw = readRawCellText(emp, key).trim().toUpperCase()
-                    if (!raw) continue
-                    const existing = valueToIds.get(raw) ?? []
-                    existing.push(emp.id)
-                    valueToIds.set(raw, existing)
-                }
-            }
-
-            // Collect IDs that appear in any duplicate group
-            const dupIds = new Set<number>()
-            for (const ids of valueToIds.values()) {
-                if (ids.length > 1) ids.forEach((id) => dupIds.add(id))
-            }
-
-            setDuplicateEmpIds(dupIds)
+            setDuplicateEmpIds(collectDuplicateComputerEmployeeIds(all, computerKeys))
         } catch {
             // ignore
         } finally {

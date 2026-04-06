@@ -40,6 +40,7 @@ pub struct EmployeeRecord {
     pub client_year_of_services: Option<String>,
     pub start_date: Option<String>,
     pub computer_name: Option<String>,
+    pub stored_computer_name: Option<String>,
     pub notes: Option<String>,
     pub staff_group: String,
     pub dynamic_fields: HashMap<String, String>,
@@ -792,10 +793,11 @@ fn map_employee_row(row: &Row<'_>) -> rusqlite::Result<EmployeeRecord> {
         client_year_of_services: row.get(15)?,
         start_date: row.get(16)?,
         computer_name: row.get(17)?,
-        notes: row.get(18)?,
-        staff_group: row.get(19)?,
+        stored_computer_name: row.get(18)?,
+        notes: row.get(19)?,
+        staff_group: row.get(20)?,
         dynamic_fields: HashMap::new(),
-        updated_at: row.get(20)?,
+        updated_at: row.get(21)?,
     })
 }
 

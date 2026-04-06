@@ -248,6 +248,7 @@ export type EmployeeRecord = {
   clientYearOfServices: string | null
   startDate: string | null
   computerName: string | null
+  storedComputerName: string | null
   notes: string | null
   staffGroup: string
   dynamicFields: Record<string, string>

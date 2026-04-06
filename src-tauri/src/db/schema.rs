@@ -114,6 +114,7 @@ pub(super) const EMPLOYEE_SELECT_COLUMNS: &str = r#"
   e.client_year_of_services,
   COALESCE(e.asw_start_date, e.start_date) AS start_date,
   COALESCE(NULLIF(lc.computer_name, ''), e.computername) AS computer_name,
+  e.computername AS stored_computer_name,
   e.notes,
   CASE
     WHEN COALESCE(NULLIF(TRIM(e.staff_group), ''), 'employee_list') = 'internal_movent' THEN 'internal_movement'
