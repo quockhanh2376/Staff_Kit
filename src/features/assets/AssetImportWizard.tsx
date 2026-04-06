@@ -20,10 +20,13 @@ import {
     getAssetImportFieldLabel,
     getAssetImportMappingKeys,
     getAssetImportModeLabel,
+    getAssetImportOwnerFieldLabel,
+    getAssetImportOwnerFieldValue,
     getAssetImportReviewFieldKeys,
     getAssetImportRowFieldValue,
     getRequiredAssetImportMappingKeys,
     isAssetImportFieldEditable,
+    rowHasOwnerSnapshot,
 } from "./assetImportModeConfig"
 import { getAssetImportStatusMeta } from "./assetImportStatusMeta"
 import { buildAssetImportActionLabel } from "./assetImportMessages"
@@ -312,6 +315,13 @@ function ReviewBatchStep({ assetImport }: AssetImportWizardProps) {
     }
 
     const reviewFieldKeys = getAssetImportReviewFieldKeys(assetImport.currentImportMode)
+    const selectedRow = assetImport.selectedRow
+    const ownerFieldKeys = [
+        "submittedStaffId",
+        "submittedFullName",
+        "submittedTeam",
+        "submittedPhoneNumber",
+    ] as const
 
     return (
         <div className="space-y-5">
@@ -495,7 +505,7 @@ function ReviewBatchStep({ assetImport }: AssetImportWizardProps) {
                         <AlertCircle size={14} />
                         Focused Error Panel
                     </div>
-                    {!assetImport.selectedRow ? (
+                    {!selectedRow ? (
                         <div className="mt-4 rounded-[8px] border border-dashed border-[var(--border)] bg-[var(--surface-hover)]/25 p-4 text-sm text-[var(--text-secondary)]">
                             Select a row to inspect raw values and validation errors.
                         </div>
@@ -503,23 +513,23 @@ function ReviewBatchStep({ assetImport }: AssetImportWizardProps) {
                         <div className="mt-4 space-y-4">
                             <div className="rounded-[8px] border border-[var(--border)] bg-[var(--surface-hover)]/25 p-3">
                                 <div className="text-sm font-semibold text-[var(--text-primary)]">
-                                    Row {assetImport.selectedRow.rowNumber}
+                                    Row {selectedRow.rowNumber}
                                 </div>
                                 <div className="mt-1 text-xs text-[var(--text-secondary)]">
-                                    Status: {assetImport.selectedRow.status}
+                                    Status: {selectedRow.status}
                                 </div>
                             </div>
                             <div>
                                 <div className="mb-2 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
                                     Validation Errors
                                 </div>
-                                {assetImport.selectedRow.validationErrors.length === 0 ? (
+                                {selectedRow.validationErrors.length === 0 ? (
                                     <div className="rounded-[8px] border border-emerald-500/35 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300">
                                         No validation errors.
                                     </div>
                                 ) : (
                                     <div className="space-y-2">
-                                        {assetImport.selectedRow.validationErrors.map((error) => (
+                                        {selectedRow.validationErrors.map((error) => (
                                             <div
                                                 key={error}
                                                 className="rounded-[8px] border border-amber-400/35 bg-amber-400/10 px-3 py-2 text-xs text-amber-200"
@@ -529,6 +539,118 @@ function ReviewBatchStep({ assetImport }: AssetImportWizardProps) {
                                         ))}
                                     </div>
                                 )}
+                            </div>
+                            <div>
+                                <div className="mb-2 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
+                                    Owner Review
+                                </div>
+                                {!rowHasOwnerSnapshot(selectedRow) ? (
+                                    <div className="rounded-[8px] border border-[var(--border)] bg-[var(--surface-hover)]/25 px-3 py-2 text-xs text-[var(--text-secondary)]">
+                                        This row does not carry owner data. It will import as an in-stock serialized asset.
+                                    </div>
+                                ) : (
+                                    <div className="space-y-3">
+                                        <div className="rounded-[8px] border border-[var(--border)] bg-[var(--surface-hover)]/25 p-3">
+                                            <div className="text-xs font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
+                                                Match Status
+                                            </div>
+                                            <div className="mt-2 inline-flex rounded-[999px] border border-[var(--border)] px-2.5 py-1 text-[10px] uppercase tracking-[0.08em] text-[var(--text-primary)]">
+                                                {selectedRow.ownerMatchStatus.replaceAll("_", " ")}
+                                            </div>
+                                            {selectedRow.resolvedEmployeeId ? (
+                                                <div className="mt-3 space-y-1 text-xs text-[var(--text-secondary)]">
+                                                    <div>
+                                                        Employee ID:{" "}
+                                                        <span className="font-medium text-[var(--text-primary)]">
+                                                            {selectedRow.resolvedEmployeeId}
+                                                        </span>
+                                                    </div>
+                                                    <div>
+                                                        Vietnamese Name:{" "}
+                                                        <span className="font-medium text-[var(--text-primary)]">
+                                                            {selectedRow.resolvedFullName ?? "-"}
+                                                        </span>
+                                                    </div>
+                                                    <div>
+                                                        Client:{" "}
+                                                        <span className="font-medium text-[var(--text-primary)]">
+                                                            {selectedRow.resolvedTeamName ?? "-"}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <div className="mt-3 text-xs text-amber-200">
+                                                    This row has no resolved employee yet, so it will stay out of the import count until Staff ID is corrected.
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <div className="grid gap-3 md:grid-cols-2">
+                                            {ownerFieldKeys.map((fieldKey) => (
+                                                <div key={fieldKey}>
+                                                    <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
+                                                        {getAssetImportOwnerFieldLabel(fieldKey)}
+                                                    </label>
+                                                    <input
+                                                        className="form-input text-xs"
+                                                        value={getAssetImportOwnerFieldValue(selectedRow, fieldKey)}
+                                                        disabled={
+                                                            selectedRow.status === "imported" ||
+                                                            assetImport.isUpdatingRow === selectedRow.id
+                                                        }
+                                                        onChange={(event) => {
+                                                            void assetImport.handleUpdateRowField(
+                                                                selectedRow.id,
+                                                                fieldKey,
+                                                                event.target.value,
+                                                            )
+                                                        }}
+                                                    />
+                                                </div>
+                                            ))}
+                                        </div>
+
+                                        <div>
+                                            <div className="mb-2 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
+                                                Owner Warnings
+                                            </div>
+                                            {selectedRow.ownerWarnings.length === 0 ? (
+                                                <div className="rounded-[8px] border border-emerald-500/35 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300">
+                                                    Owner snapshot matches employee master or no owner warning is present.
+                                                </div>
+                                            ) : (
+                                                <div className="space-y-2">
+                                                    {selectedRow.ownerWarnings.map((warning) => (
+                                                        <div
+                                                            key={warning}
+                                                            className="rounded-[8px] border border-amber-400/35 bg-amber-400/10 px-3 py-2 text-xs text-amber-200"
+                                                        >
+                                                            {warning}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                            <div>
+                                <div className="mb-2 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
+                                    Raw Source Values
+                                </div>
+                                <div className="space-y-2">
+                                    {selectedRow.rawValues.map((item) => (
+                                        <div
+                                            key={`${item.header}-${item.value}`}
+                                            className="rounded-[8px] border border-[var(--border)] bg-[var(--surface-hover)]/25 px-3 py-2 text-xs"
+                                        >
+                                            <div className="font-medium text-[var(--text-primary)]">{item.header}</div>
+                                            <div className="mt-1 whitespace-pre-wrap text-[var(--text-secondary)]">
+                                                {item.value || "-"}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
                         </div>
                     )}

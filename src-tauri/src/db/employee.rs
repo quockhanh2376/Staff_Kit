@@ -174,6 +174,25 @@ struct EmployeeSortSpec {
     order_params: Vec<Value>,
 }
 
+const EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL: &str = r#"
+LEFT JOIN (
+    SELECT
+      laptop_names.employee_id_fk,
+      GROUP_CONCAT(laptop_names.computer_name, ',' || char(10)) AS computer_name
+    FROM (
+      SELECT
+        al.employee_id_fk,
+        'ASW' || a.asset_code AS computer_name
+      FROM asset_loans al
+      INNER JOIN assets a ON a.id = al.asset_id
+      WHERE al.returned_at IS NULL
+        AND lower(trim(COALESCE(a.asset_type, ''))) = 'laptop'
+      ORDER BY al.id ASC
+    ) laptop_names
+    GROUP BY laptop_names.employee_id_fk
+) lc ON lc.employee_id_fk = e.id
+"#;
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 pub fn list_employees(
@@ -396,7 +415,7 @@ pub(crate) fn load_employee_by_employee_id(
     employee_id: &str,
 ) -> Result<Option<EmployeeRecord>, String> {
     let sql = format!(
-        "SELECT {EMPLOYEE_SELECT_COLUMNS} FROM employees e LEFT JOIN teams t ON t.id = e.team_id WHERE e.employee_id = ?"
+        "SELECT {EMPLOYEE_SELECT_COLUMNS} FROM employees e LEFT JOIN teams t ON t.id = e.team_id {EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL} WHERE e.employee_id = ?"
     );
 
     let maybe_employee = conn
@@ -418,7 +437,7 @@ pub(crate) fn load_employees_by_email_normalized(
     email: &str,
 ) -> Result<Vec<EmployeeRecord>, String> {
     let sql = format!(
-        "SELECT {EMPLOYEE_SELECT_COLUMNS} FROM employees e LEFT JOIN teams t ON t.id = e.team_id WHERE lower(trim(COALESCE(e.email, ''))) = lower(trim(?))"
+        "SELECT {EMPLOYEE_SELECT_COLUMNS} FROM employees e LEFT JOIN teams t ON t.id = e.team_id {EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL} WHERE lower(trim(COALESCE(e.email, ''))) = lower(trim(?))"
     );
 
     let mut stmt = conn
@@ -585,15 +604,23 @@ fn query_employees(conn: &Connection, filters: EmployeeQuery) -> Result<Employee
     let limit = i64::from(filters.limit.unwrap_or(20).clamp(1, 5000));
     let offset = i64::from(filters.offset.unwrap_or(0));
 
-    let mut from_clause = " FROM employees e LEFT JOIN teams t ON t.id = e.team_id ".to_string();
+    let from_clause =
+        format!(" FROM employees e LEFT JOIN teams t ON t.id = e.team_id {EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL} ");
     let mut where_clauses: Vec<String> = Vec::new();
     let mut filter_params: Vec<Value> = Vec::new();
 
     if let Some(query) = normalize_optional_text(filters.query) {
+        let query_like = format!("%{}%", query.to_lowercase());
         if let Some(fts_query) = build_fts_query(&query) {
-            from_clause.push_str(" INNER JOIN employees_fts ON employees_fts.rowid = e.id ");
-            where_clauses.push("employees_fts MATCH ?".to_string());
+            where_clauses.push(
+                "(e.id IN (SELECT rowid FROM employees_fts WHERE employees_fts MATCH ?) OR lower(COALESCE(lc.computer_name, '')) LIKE ?)"
+                    .to_string(),
+            );
             filter_params.push(Value::Text(fts_query));
+            filter_params.push(Value::Text(query_like));
+        } else {
+            where_clauses.push("lower(COALESCE(lc.computer_name, '')) LIKE ?".to_string());
+            filter_params.push(Value::Text(query_like));
         }
     }
 
@@ -677,7 +704,7 @@ fn query_employees(conn: &Connection, filters: EmployeeQuery) -> Result<Employee
 
 fn load_employee_by_id(conn: &Connection, id: i64) -> Result<EmployeeRecord, String> {
     let sql = format!(
-        "SELECT {EMPLOYEE_SELECT_COLUMNS} FROM employees e LEFT JOIN teams t ON t.id = e.team_id WHERE e.id = ?"
+        "SELECT {EMPLOYEE_SELECT_COLUMNS} FROM employees e LEFT JOIN teams t ON t.id = e.team_id {EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL} WHERE e.id = ?"
     );
 
     let mut employee = conn
@@ -808,7 +835,7 @@ fn resolve_core_sort_expression(sort_key: &str) -> Option<&'static str> {
         "clientstartdate" => "COALESCE(e.client_start_date, '')",
         "contractenddate" => "COALESCE(e.contract_end_date, '')",
         "clientyearofservices" => "COALESCE(e.client_year_of_services, '') COLLATE NOCASE",
-        "computername" => "COALESCE(e.computername, '') COLLATE NOCASE",
+        "computername" => "COALESCE(NULLIF(lc.computer_name, ''), e.computername, '') COLLATE NOCASE",
         "notes" => "COALESCE(e.notes, '') COLLATE NOCASE",
         _ => return None,
     };
@@ -949,4 +976,157 @@ fn build_fts_query(raw: &str) -> Option<String> {
             .collect::<Vec<_>>()
             .join(" AND "),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::{params, Connection};
+
+    use crate::db::{apply_migrations, configure_connection};
+
+    use super::{query_employees, EmployeeQuery};
+
+    fn open_test_connection() -> Connection {
+        let conn = Connection::open_in_memory().expect("open in-memory sqlite database");
+        configure_connection(&conn).expect("configure sqlite pragmas");
+        apply_migrations(&conn).expect("apply migrations");
+        conn
+    }
+
+    fn seed_employee(conn: &Connection, employee_id: &str, full_name: &str) -> i64 {
+        conn.execute(
+            "INSERT OR IGNORE INTO teams(name) VALUES ('Examworks')",
+            [],
+        )
+        .expect("insert team");
+        let team_id: i64 = conn
+            .query_row("SELECT id FROM teams WHERE name = 'Examworks'", [], |row| row.get(0))
+            .expect("load team id");
+
+        conn.execute(
+            r#"
+            INSERT INTO employees(
+              employee_id,
+              full_name,
+              team_id,
+              staff_group,
+              updated_at
+            )
+            VALUES(?, ?, ?, 'employee_list', datetime('now'))
+            "#,
+            params![employee_id, full_name, team_id],
+        )
+        .expect("insert employee");
+
+        conn.last_insert_rowid()
+    }
+
+    fn seed_laptop_asset(conn: &Connection, asset_code: &str) -> i64 {
+        conn.execute(
+            r#"
+            INSERT INTO assets(asset_code, asset_type, display_name, status, created_at, updated_at)
+            VALUES(?, 'Laptop', ?, 'assigned', datetime('now'), datetime('now'))
+            "#,
+            params![asset_code, asset_code],
+        )
+        .expect("insert laptop asset");
+        conn.last_insert_rowid()
+    }
+
+    fn seed_active_loan(conn: &Connection, employee_row_id: i64, asset_id: i64) {
+        conn.execute(
+            r#"
+            INSERT INTO borrow_requests(
+              request_key,
+              employee_id_fk,
+              submitted_employee_id,
+              submitted_full_name,
+              status,
+              request_type,
+              submitted_at
+            )
+            VALUES(?, ?, 'ASWVN1302', 'Lư Thế Hùng', 'approved', 'borrow', datetime('now'))
+            "#,
+            params![format!("TEST-BR-{asset_id}"), employee_row_id],
+        )
+        .expect("insert synthetic borrow request");
+        let borrow_request_id = conn.last_insert_rowid();
+
+        conn.execute(
+            r#"
+            INSERT INTO asset_loans(
+              asset_id,
+              employee_id_fk,
+              borrow_request_id,
+              borrowed_at
+            )
+            VALUES(?, ?, ?, datetime('now'))
+            "#,
+            params![asset_id, employee_row_id, borrow_request_id],
+        )
+        .expect("insert active asset loan");
+    }
+
+    #[test]
+    fn query_employees_derives_computer_name_from_active_laptop_loans() {
+        let conn = open_test_connection();
+        let employee_row_id = seed_employee(&conn, "ASWVN1302", "Lư Thế Hùng");
+        let mac_asset_id = seed_laptop_asset(&conn, "VNMACPRO010");
+        let lap_asset_id = seed_laptop_asset(&conn, "VNLAP293");
+        seed_active_loan(&conn, employee_row_id, mac_asset_id);
+        seed_active_loan(&conn, employee_row_id, lap_asset_id);
+
+        let response = query_employees(
+            &conn,
+            EmployeeQuery {
+                query: None,
+                team_name: None,
+                staff_group: None,
+                sort_key: None,
+                sort_direction: None,
+                start_date_from: None,
+                start_date_to: None,
+                limit: Some(20),
+                offset: Some(0),
+            },
+        )
+        .expect("query employees");
+
+        let employee = response
+            .items
+            .iter()
+            .find(|item| item.employee_id == "ASWVN1302")
+            .expect("find seeded employee");
+        assert_eq!(
+            employee.computer_name.as_deref(),
+            Some("ASWVNMACPRO010,\nASWVNLAP293")
+        );
+    }
+
+    #[test]
+    fn query_employees_can_search_by_derived_laptop_computer_name() {
+        let conn = open_test_connection();
+        let employee_row_id = seed_employee(&conn, "ASWVN1302", "Lư Thế Hùng");
+        let lap_asset_id = seed_laptop_asset(&conn, "VNLAP293");
+        seed_active_loan(&conn, employee_row_id, lap_asset_id);
+
+        let response = query_employees(
+            &conn,
+            EmployeeQuery {
+                query: Some("ASWVNLAP293".to_string()),
+                team_name: None,
+                staff_group: None,
+                sort_key: None,
+                sort_direction: None,
+                start_date_from: None,
+                start_date_to: None,
+                limit: Some(20),
+                offset: Some(0),
+            },
+        )
+        .expect("search employees by derived computer name");
+
+        assert_eq!(response.total, 1);
+        assert_eq!(response.items[0].employee_id, "ASWVN1302");
+    }
 }

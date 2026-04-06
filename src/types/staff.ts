@@ -148,6 +148,16 @@ export type AssetImportRowRecord = {
   quantity: string | null
   warehouse: string | null
   notes: string | null
+  submittedStaffId: string | null
+  submittedFullName: string | null
+  submittedTeam: string | null
+  submittedPhoneNumber: string | null
+  resolvedEmployeeId: string | null
+  resolvedEmployeeRowId: number | null
+  resolvedFullName: string | null
+  resolvedTeamName: string | null
+  ownerMatchStatus: string
+  ownerWarnings: string[]
   validationErrors: string[]
   status: string
   isEdited: boolean
@@ -174,6 +184,10 @@ export type AssetImportRowUpdateInput = {
     | "quantity"
     | "warehouse"
     | "notes"
+    | "submittedStaffId"
+    | "submittedFullName"
+    | "submittedTeam"
+    | "submittedPhoneNumber"
   value?: string | null
 }
 

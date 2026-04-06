@@ -499,7 +499,24 @@ fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
         .collect::<Result<Vec<_>, _>>()
         .map_err(|err| format!("failed to collect asset_import_rows columns: {err}"))?;
 
-    for (column_name, column_type) in [("brand", "TEXT"), ("quantity", "TEXT"), ("warehouse", "TEXT")] {
+    for (column_name, column_type) in [
+        ("brand", "TEXT"),
+        ("quantity", "TEXT"),
+        ("warehouse", "TEXT"),
+        ("submitted_staff_id", "TEXT"),
+        ("submitted_full_name", "TEXT"),
+        ("submitted_team", "TEXT"),
+        ("submitted_phone_number", "TEXT"),
+        ("resolved_employee_id", "TEXT"),
+        (
+            "resolved_employee_row_id",
+            "INTEGER REFERENCES employees(id) ON UPDATE CASCADE ON DELETE SET NULL",
+        ),
+        ("resolved_full_name", "TEXT"),
+        ("resolved_team_name", "TEXT"),
+        ("owner_match_status", "TEXT NOT NULL DEFAULT 'not_applicable'"),
+        ("owner_warnings_json", "TEXT NOT NULL DEFAULT '[]'"),
+    ] {
         if existing_row_columns.iter().any(|name| name == column_name) {
             continue;
         }

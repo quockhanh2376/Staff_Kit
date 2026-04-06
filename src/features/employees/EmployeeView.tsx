@@ -407,7 +407,11 @@ export function EmployeeView({
                                                                         : rawCellValue
 
                                                                 return (
-                                                                    <span className={isEditable ? "cursor-cell select-none" : ""}>
+                                                                    <span
+                                                                        className={`${isEditable ? "cursor-cell select-none" : ""} ${
+                                                                            column.key === "computerName" ? "whitespace-pre-line" : ""
+                                                                        }`}
+                                                                    >
                                                                         {typeof displayCellValue === "string" && hasSearchMatch(displayCellValue, emp.searchTerm) ? (
                                                                             <HighlightText text={displayCellValue} query={emp.searchTerm} />
                                                                         ) : displayCellValue}

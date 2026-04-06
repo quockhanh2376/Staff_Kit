@@ -21,6 +21,7 @@ import {
     mergeAssetImportWizardMappings,
     toBackendAssetImportMapping,
     toBackendRowFieldKey,
+    type AssetImportOwnerFieldKey,
     type AssetImportWizardFieldKey,
     type AssetImportWizardMapping,
 } from "./assetImportModeConfig"
@@ -384,7 +385,7 @@ export function useAssetImportState({
     const handleUpdateRowField = useCallback(
         async (
             rowId: number,
-            fieldKey: AssetImportWizardFieldKey,
+            fieldKey: AssetImportWizardFieldKey | AssetImportOwnerFieldKey,
             value: string,
         ) => {
             const backendFieldKey = toBackendRowFieldKey(fieldKey)

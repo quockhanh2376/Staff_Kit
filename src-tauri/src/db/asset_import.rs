@@ -20,6 +20,13 @@ const ROW_STATUS_VALID: &str = "valid";
 const ROW_STATUS_ERROR: &str = "error";
 const ROW_STATUS_IMPORTED: &str = "imported";
 const ROW_STATUS_SKIPPED: &str = "skipped";
+const OWNER_MATCH_NOT_APPLICABLE: &str = "not_applicable";
+const OWNER_MATCH_MATCHED: &str = "matched";
+const OWNER_MATCH_WARNING: &str = "warning";
+const OWNER_MATCH_UNRESOLVED: &str = "unresolved";
+const IMPORT_BORROW_REQUEST_STATUS_APPROVED: &str = "approved";
+const IMPORT_BORROW_REQUEST_TYPE_BORROW: &str = "borrow";
+const IMPORT_ASSET_STATUS_ASSIGNED: &str = "assigned";
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -70,11 +77,22 @@ const DISPLAY_NAME_ALIASES: &[&str] = &[
     "description",
 ];
 const MODEL_ALIASES: &[&str] = &["model", "modelnumber", "modelno"];
-const SERIAL_NUMBER_ALIASES: &[&str] = &["serialnumber", "serial", "serialno", "serialnum", "sn"];
+const SERIAL_NUMBER_ALIASES: &[&str] = &[
+    "serialnumber",
+    "serrialnumber",
+    "serial",
+    "serialno",
+    "serialnum",
+    "sn",
+];
 const BRAND_ALIASES: &[&str] = &["brand", "maker", "vendor", "nhanhieu", "nhanhieu"];
 const QUANTITY_ALIASES: &[&str] = &["quantity", "qty", "soluong", "solg"];
 const WAREHOUSE_ALIASES: &[&str] = &["warehouse", "location", "stocklocation", "kho"];
 const NOTES_ALIASES: &[&str] = &["notes", "note", "remark", "remarks", "ghichu"];
+const OWNER_STAFF_ID_ALIASES: &[&str] = &["staffid", "eeid", "employeeid", "mãnhânviên", "manhanvien"];
+const OWNER_FULL_NAME_ALIASES: &[&str] = &["tênnhânviên", "tennhanvien", "vietnamesename", "fullname", "hoten", "họtên"];
+const OWNER_TEAM_ALIASES: &[&str] = &["team", "client", "clientpmd", "client(pmd)"];
+const OWNER_PHONE_NUMBER_ALIASES: &[&str] = &["phonenumber", "phone", "cellphone", "mobilenumber"];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -153,6 +171,10 @@ pub struct AssetImportRowSeedInput {
     pub quantity: Option<String>,
     pub warehouse: Option<String>,
     pub notes: Option<String>,
+    pub submitted_staff_id: Option<String>,
+    pub submitted_full_name: Option<String>,
+    pub submitted_team: Option<String>,
+    pub submitted_phone_number: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -192,6 +214,16 @@ pub struct AssetImportRowRecord {
     pub quantity: Option<String>,
     pub warehouse: Option<String>,
     pub notes: Option<String>,
+    pub submitted_staff_id: Option<String>,
+    pub submitted_full_name: Option<String>,
+    pub submitted_team: Option<String>,
+    pub submitted_phone_number: Option<String>,
+    pub resolved_employee_id: Option<String>,
+    pub resolved_employee_row_id: Option<i64>,
+    pub resolved_full_name: Option<String>,
+    pub resolved_team_name: Option<String>,
+    pub owner_match_status: String,
+    pub owner_warnings: Vec<String>,
     pub validation_errors: Vec<String>,
     pub status: String,
     pub is_edited: bool,
@@ -271,6 +303,10 @@ struct AssetImportRowState {
     asset_type: Option<String>,
     display_name: Option<String>,
     quantity: Option<String>,
+    submitted_staff_id: Option<String>,
+    submitted_full_name: Option<String>,
+    submitted_team: Option<String>,
+    submitted_phone_number: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -278,6 +314,25 @@ struct AssetImportBatchRowMeta {
     batch_id: i64,
     status: String,
     edited_fields: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct EmployeeOwnerLookup {
+    row_id: i64,
+    employee_id: String,
+    full_name: String,
+    team_name: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct OwnerResolutionState {
+    resolved_employee_id: Option<String>,
+    resolved_employee_row_id: Option<i64>,
+    resolved_full_name: Option<String>,
+    resolved_team_name: Option<String>,
+    owner_match_status: String,
+    owner_warnings: Vec<String>,
+    blocking_error: Option<String>,
 }
 
 pub fn inspect_asset_import_file(
@@ -469,6 +524,16 @@ pub(crate) fn create_asset_import_batch_seed_conn(
               quantity,
               warehouse,
               notes,
+              submitted_staff_id,
+              submitted_full_name,
+              submitted_team,
+              submitted_phone_number,
+              resolved_employee_id,
+              resolved_employee_row_id,
+              resolved_full_name,
+              resolved_team_name,
+              owner_match_status,
+              owner_warnings_json,
               validation_errors_json,
               status,
               edited,
@@ -476,7 +541,7 @@ pub(crate) fn create_asset_import_batch_seed_conn(
               created_at,
               updated_at
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, 0, '[]', datetime('now'), datetime('now'))
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, '[]', '[]', ?, 0, '[]', datetime('now'), datetime('now'))
             "#,
             params![
                 batch_id,
@@ -491,6 +556,11 @@ pub(crate) fn create_asset_import_batch_seed_conn(
                 normalize_optional_quantity_text(row.quantity),
                 normalize_optional_asset_text(row.warehouse),
                 normalize_optional_asset_text(row.notes),
+                normalize_optional_asset_text(row.submitted_staff_id),
+                normalize_optional_asset_text(row.submitted_full_name),
+                normalize_optional_asset_text(row.submitted_team),
+                normalize_optional_asset_text(row.submitted_phone_number),
+                OWNER_MATCH_NOT_APPLICABLE,
                 ROW_STATUS_VALID,
             ],
         )
@@ -643,6 +713,7 @@ pub(crate) fn update_asset_import_row_conn(
 
     let normalized_value = match field_key.as_str() {
         "assetCode" => normalize_asset_code(payload.value),
+        "submittedStaffId" => normalize_submitted_staff_id(payload.value),
         "quantity" => normalize_optional_quantity_text(payload.value),
         _ => normalize_optional_asset_text(payload.value),
     };
@@ -657,6 +728,10 @@ pub(crate) fn update_asset_import_row_conn(
         "quantity" => "quantity",
         "warehouse" => "warehouse",
         "notes" => "notes",
+        "submittedStaffId" => "submitted_staff_id",
+        "submittedFullName" => "submitted_full_name",
+        "submittedTeam" => "submitted_team",
+        "submittedPhoneNumber" => "submitted_phone_number",
         _ => return Err("unsupported asset import field".to_string()),
     };
 
@@ -750,6 +825,7 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
     let tx = conn
         .transaction()
         .map_err(|err| format!("failed to start asset import commit transaction: {err}"))?;
+    let reviewer_account_id = auth::get_active_local_account_id(&tx)?;
 
     revalidate_batch_tx(&tx, batch_id)?;
     let summary = load_batch_summary_tx(&tx, batch_id)?;
@@ -895,7 +971,14 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
               display_name,
               model,
               serial_number,
-              notes
+              notes,
+              submitted_staff_id,
+              submitted_full_name,
+              submitted_team,
+              submitted_phone_number,
+              resolved_employee_id,
+              resolved_employee_row_id,
+              resolved_full_name
             FROM asset_import_rows
             WHERE batch_id = ? AND status = ?
             ORDER BY row_number ASC, id ASC
@@ -913,6 +996,13 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
                 row.get::<_, Option<String>>(4)?,
                 row.get::<_, Option<String>>(5)?,
                 row.get::<_, Option<String>>(6)?,
+                row.get::<_, Option<String>>(7)?,
+                row.get::<_, Option<String>>(8)?,
+                row.get::<_, Option<String>>(9)?,
+                row.get::<_, Option<String>>(10)?,
+                row.get::<_, Option<String>>(11)?,
+                row.get::<_, Option<i64>>(12)?,
+                row.get::<_, Option<String>>(13)?,
             ))
         })
         .map_err(|err| format!("failed to query valid asset import rows: {err}"))?
@@ -923,14 +1013,33 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
 
     if rows
         .iter()
-        .any(|(_, asset_code, _, _, _, _, _)| asset_code.as_deref().is_none())
+        .any(|(row_id, asset_code, _, _, _, _, _, _, _, _, _, _, _, _)| {
+            let _ = row_id;
+            asset_code.as_deref().is_none()
+        })
     {
         return Err(
             "Serialized asset code generation lands in the next slice. Review can proceed, but import stays blocked until codes are assigned.".to_string(),
         );
     }
 
-    for (row_id, asset_code, asset_type, display_name, model, serial_number, notes) in rows {
+    for (
+        row_id,
+        asset_code,
+        asset_type,
+        display_name,
+        model,
+        serial_number,
+        notes,
+        submitted_staff_id,
+        submitted_full_name,
+        submitted_team,
+        submitted_phone_number,
+        resolved_employee_id,
+        resolved_employee_row_id,
+        resolved_full_name,
+    ) in rows
+    {
         let record = asset::create_asset_tx(
             &tx,
             &AssetUpsertInput {
@@ -942,6 +1051,34 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
                 notes,
             },
         )?;
+
+        let requires_owner_resolution = submitted_staff_id.is_some()
+            || submitted_full_name.is_some()
+            || submitted_team.is_some()
+            || submitted_phone_number.is_some();
+
+        if requires_owner_resolution {
+            let employee_row_id = resolved_employee_row_id.ok_or_else(|| {
+                format!("row {row_id} cannot import assigned laptop without a resolved employee")
+            })?;
+            let employee_id = resolved_employee_id
+                .as_deref()
+                .ok_or_else(|| format!("row {row_id} is missing resolved employee id"))?;
+            let full_name = resolved_full_name
+                .as_deref()
+                .or(submitted_full_name.as_deref())
+                .ok_or_else(|| format!("row {row_id} is missing resolved employee name"))?;
+
+            create_owner_aware_import_loan_tx(
+                &tx,
+                record.id,
+                record.asset_code.as_str(),
+                employee_row_id,
+                employee_id,
+                full_name,
+                reviewer_account_id,
+            )?;
+        }
 
         tx.execute(
             r#"
@@ -1382,8 +1519,26 @@ fn build_row_seed_from_raw_values(
         notes: mapping
             .notes_index
             .and_then(|index| mapped_value(&raw_values, index)),
+        submitted_staff_id: find_value_by_header_alias(&raw_values, OWNER_STAFF_ID_ALIASES)
+            .and_then(|value| normalize_submitted_staff_id(Some(value))),
+        submitted_full_name: find_value_by_header_alias(&raw_values, OWNER_FULL_NAME_ALIASES)
+            .and_then(|value| normalize_optional_asset_text(Some(value))),
+        submitted_team: find_value_by_header_alias(&raw_values, OWNER_TEAM_ALIASES)
+            .and_then(|value| normalize_optional_asset_text(Some(value))),
+        submitted_phone_number: find_value_by_header_alias(&raw_values, OWNER_PHONE_NUMBER_ALIASES)
+            .and_then(|value| normalize_optional_asset_text(Some(value))),
         raw_values,
     }
+}
+
+fn find_value_by_header_alias(raw_values: &[AssetImportRawValue], aliases: &[&str]) -> Option<String> {
+    raw_values
+        .iter()
+        .find(|item| {
+            let normalized = normalize_header_key(item.header.as_str());
+            aliases.iter().any(|alias| normalized == normalize_header_key(alias))
+        })
+        .map(|item| item.value.clone())
 }
 
 fn mapped_value(raw_values: &[AssetImportRawValue], index: usize) -> Option<String> {
@@ -1619,6 +1774,10 @@ fn normalize_asset_code(value: Option<String>) -> Option<String> {
     normalize_optional_text(value).map(|item| item.to_uppercase())
 }
 
+fn normalize_submitted_staff_id(value: Option<String>) -> Option<String> {
+    normalize_optional_text(value).map(|item| item.to_uppercase())
+}
+
 fn normalize_optional_asset_text(value: Option<String>) -> Option<String> {
     normalize_optional_text(value)
 }
@@ -1644,11 +1803,139 @@ fn normalize_import_field_key(value: &str) -> Result<String, String> {
         | "serialNumber"
         | "quantity"
         | "warehouse"
-        | "notes" => {
+        | "notes"
+        | "submittedStaffId"
+        | "submittedFullName"
+        | "submittedTeam"
+        | "submittedPhoneNumber" => {
             Ok(value.trim().to_string())
         }
         _ => Err(format!("unsupported asset import field '{value}'")),
     }
+}
+
+fn extract_numeric_suffix(value: &str) -> Option<String> {
+    let digits = value
+        .chars()
+        .filter(|ch| ch.is_ascii_digit())
+        .collect::<String>();
+    if digits.is_empty() {
+        None
+    } else {
+        Some(digits)
+    }
+}
+
+fn normalize_compare_text(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_alphanumeric())
+        .flat_map(|ch| ch.to_lowercase())
+        .collect::<String>()
+}
+
+fn asset_import_request_key_exists_tx(
+    tx: &Transaction<'_>,
+    request_key: &str,
+) -> Result<bool, String> {
+    tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM borrow_requests WHERE request_key = ?)",
+        params![request_key],
+        |row| row.get::<_, i64>(0),
+    )
+    .map(|value| value > 0)
+    .map_err(|err| format!("failed to check owner-aware import borrow request key: {err}"))
+}
+
+fn generate_asset_import_request_key_tx(tx: &Transaction<'_>) -> Result<String, String> {
+    for _ in 0..16 {
+        let suffix = rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(10)
+            .map(char::from)
+            .collect::<String>()
+            .to_uppercase();
+        let request_key = format!("AIBR-{suffix}");
+        if !asset_import_request_key_exists_tx(tx, request_key.as_str())? {
+            return Ok(request_key);
+        }
+    }
+
+    Err("failed to generate a unique asset-import borrow request key".to_string())
+}
+
+fn create_owner_aware_import_loan_tx(
+    tx: &Transaction<'_>,
+    asset_id: i64,
+    asset_code: &str,
+    employee_row_id: i64,
+    employee_id: &str,
+    full_name: &str,
+    reviewer_account_id: Option<i64>,
+) -> Result<(), String> {
+    let request_key = generate_asset_import_request_key_tx(tx)?;
+    tx.execute(
+        r#"
+        INSERT INTO borrow_requests(
+          request_key,
+          employee_id_fk,
+          submitted_employee_id,
+          submitted_full_name,
+          status,
+          request_type,
+          submit_source_ip,
+          decided_by_account_id,
+          submitted_at,
+          decided_at
+        )
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+        "#,
+        params![
+            request_key,
+            employee_row_id,
+            employee_id,
+            full_name,
+            IMPORT_BORROW_REQUEST_STATUS_APPROVED,
+            IMPORT_BORROW_REQUEST_TYPE_BORROW,
+            Some("asset_import_wizard"),
+            reviewer_account_id,
+        ],
+    )
+    .map_err(humanize_sqlite_error)?;
+
+    let request_id = tx.last_insert_rowid();
+
+    tx.execute(
+        r#"
+        INSERT INTO borrow_request_items(
+          borrow_request_id,
+          asset_id,
+          asset_code_snapshot
+        )
+        VALUES(?, ?, ?)
+        "#,
+        params![request_id, asset_id, asset_code],
+    )
+    .map_err(humanize_sqlite_error)?;
+
+    asset::set_asset_status_tx(tx, asset_id, IMPORT_ASSET_STATUS_ASSIGNED)?;
+
+    tx.execute(
+        r#"
+        INSERT INTO asset_loans(
+          asset_id,
+          employee_id_fk,
+          borrow_request_id,
+          approved_by_account_id,
+          borrowed_at
+        )
+        VALUES(?, ?, ?, ?, datetime('now'))
+        "#,
+        params![asset_id, employee_row_id, request_id, reviewer_account_id],
+    )
+    .map_err(humanize_sqlite_error)?;
+
+    Ok(())
 }
 
 fn normalize_header_key(value: &str) -> String {
@@ -1715,9 +2002,155 @@ fn generate_batch_key_tx(tx: &Transaction<'_>) -> Result<String, String> {
     Err("failed to generate a unique asset import batch key".to_string())
 }
 
+fn load_employee_owner_lookup_tx(
+    tx: &Transaction<'_>,
+) -> Result<HashMap<String, Vec<EmployeeOwnerLookup>>, String> {
+    let mut stmt = tx
+        .prepare(
+            r#"
+            SELECT
+              e.id,
+              e.employee_id,
+              e.full_name,
+              t.name
+            FROM employees e
+            LEFT JOIN teams t ON t.id = e.team_id
+            ORDER BY e.id ASC
+            "#,
+        )
+        .map_err(|err| format!("failed to prepare employee owner lookup query: {err}"))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(EmployeeOwnerLookup {
+                row_id: row.get(0)?,
+                employee_id: row.get(1)?,
+                full_name: row.get(2)?,
+                team_name: row.get(3)?,
+            })
+        })
+        .map_err(|err| format!("failed to query employee owner lookup rows: {err}"))?;
+
+    let mut items: HashMap<String, Vec<EmployeeOwnerLookup>> = HashMap::new();
+    for row in rows {
+        let item = row.map_err(|err| format!("failed to read employee owner lookup row: {err}"))?;
+        let Some(suffix) = extract_numeric_suffix(item.employee_id.as_str()) else {
+            continue;
+        };
+        items.entry(suffix).or_default().push(item);
+    }
+    Ok(items)
+}
+
+fn row_requires_owner_resolution(row: &AssetImportRowState) -> bool {
+    row.submitted_staff_id.is_some()
+        || row.submitted_full_name.is_some()
+        || row.submitted_team.is_some()
+        || row.submitted_phone_number.is_some()
+}
+
+fn resolve_owner_state(
+    row: &AssetImportRowState,
+    employee_lookup: &HashMap<String, Vec<EmployeeOwnerLookup>>,
+) -> OwnerResolutionState {
+    if !row_requires_owner_resolution(row) {
+        return OwnerResolutionState {
+            resolved_employee_id: None,
+            resolved_employee_row_id: None,
+            resolved_full_name: None,
+            resolved_team_name: None,
+            owner_match_status: OWNER_MATCH_NOT_APPLICABLE.to_string(),
+            owner_warnings: Vec::new(),
+            blocking_error: None,
+        };
+    }
+
+    let Some(submitted_staff_id) = row.submitted_staff_id.as_deref() else {
+        return OwnerResolutionState {
+            resolved_employee_id: None,
+            resolved_employee_row_id: None,
+            resolved_full_name: None,
+            resolved_team_name: None,
+            owner_match_status: OWNER_MATCH_UNRESOLVED.to_string(),
+            owner_warnings: Vec::new(),
+            blocking_error: Some("employee owner could not be resolved because StaffID is missing".to_string()),
+        };
+    };
+
+    let Some(staff_suffix) = extract_numeric_suffix(submitted_staff_id) else {
+        return OwnerResolutionState {
+            resolved_employee_id: None,
+            resolved_employee_row_id: None,
+            resolved_full_name: None,
+            resolved_team_name: None,
+            owner_match_status: OWNER_MATCH_UNRESOLVED.to_string(),
+            owner_warnings: Vec::new(),
+            blocking_error: Some("employee owner could not be resolved from StaffID".to_string()),
+        };
+    };
+
+    let Some(candidates) = employee_lookup.get(staff_suffix.as_str()) else {
+        return OwnerResolutionState {
+            resolved_employee_id: None,
+            resolved_employee_row_id: None,
+            resolved_full_name: None,
+            resolved_team_name: None,
+            owner_match_status: OWNER_MATCH_UNRESOLVED.to_string(),
+            owner_warnings: Vec::new(),
+            blocking_error: Some(format!(
+                "employee owner '{}' was not found in employee master",
+                submitted_staff_id
+            )),
+        };
+    };
+
+    if candidates.len() != 1 {
+        return OwnerResolutionState {
+            resolved_employee_id: None,
+            resolved_employee_row_id: None,
+            resolved_full_name: None,
+            resolved_team_name: None,
+            owner_match_status: OWNER_MATCH_UNRESOLVED.to_string(),
+            owner_warnings: Vec::new(),
+            blocking_error: Some(format!(
+                "employee owner '{}' matched multiple employees in employee master",
+                submitted_staff_id
+            )),
+        };
+    }
+
+    let candidate = &candidates[0];
+    let mut owner_warnings = Vec::new();
+    if let Some(submitted_name) = row.submitted_full_name.as_deref() {
+        if normalize_compare_text(submitted_name) != normalize_compare_text(candidate.full_name.as_str()) {
+            owner_warnings.push("submitted employee name does not match employee master".to_string());
+        }
+    }
+    if let Some(submitted_team) = row.submitted_team.as_deref() {
+        let candidate_team = candidate.team_name.as_deref().unwrap_or_default();
+        if normalize_compare_text(submitted_team) != normalize_compare_text(candidate_team) {
+            owner_warnings.push("submitted team does not match employee master".to_string());
+        }
+    }
+
+    OwnerResolutionState {
+        resolved_employee_id: Some(candidate.employee_id.clone()),
+        resolved_employee_row_id: Some(candidate.row_id),
+        resolved_full_name: Some(candidate.full_name.clone()),
+        resolved_team_name: candidate.team_name.clone(),
+        owner_match_status: if owner_warnings.is_empty() {
+            OWNER_MATCH_MATCHED.to_string()
+        } else {
+            OWNER_MATCH_WARNING.to_string()
+        },
+        owner_warnings,
+        blocking_error: None,
+    }
+}
+
 fn revalidate_batch_tx(tx: &Transaction<'_>, batch_id: i64) -> Result<(), String> {
     let rows = load_batch_row_states_tx(tx, batch_id)?;
     let existing_asset_codes = load_existing_asset_codes_tx(tx)?;
+    let employee_lookup = load_employee_owner_lookup_tx(tx)?;
 
     let mut duplicate_counts: HashMap<String, usize> = HashMap::new();
     for row in rows
@@ -1744,8 +2177,12 @@ fn revalidate_batch_tx(tx: &Transaction<'_>, batch_id: i64) -> Result<(), String
             continue;
         }
 
-        let validation_errors =
+        let owner_state = resolve_owner_state(row, &employee_lookup);
+        let mut validation_errors =
             validate_staged_row(row, &duplicate_asset_codes, &existing_asset_codes);
+        if let Some(blocking_error) = owner_state.blocking_error.as_ref() {
+            validation_errors.push(blocking_error.clone());
+        }
         let next_status = if row.status == ROW_STATUS_SKIPPED {
             ROW_STATUS_SKIPPED
         } else if validation_errors.is_empty() {
@@ -1758,12 +2195,28 @@ fn revalidate_batch_tx(tx: &Transaction<'_>, batch_id: i64) -> Result<(), String
             r#"
             UPDATE asset_import_rows
             SET
+              resolved_employee_id = ?,
+              resolved_employee_row_id = ?,
+              resolved_full_name = ?,
+              resolved_team_name = ?,
+              owner_match_status = ?,
+              owner_warnings_json = ?,
               validation_errors_json = ?,
               status = ?,
               updated_at = datetime('now')
             WHERE id = ?
             "#,
-            params![to_json(&validation_errors)?, next_status, row.id],
+            params![
+                owner_state.resolved_employee_id,
+                owner_state.resolved_employee_row_id,
+                owner_state.resolved_full_name,
+                owner_state.resolved_team_name,
+                owner_state.owner_match_status,
+                to_json(&owner_state.owner_warnings)?,
+                to_json(&validation_errors)?,
+                next_status,
+                row.id
+            ],
         )
         .map_err(humanize_sqlite_error)?;
     }
@@ -1825,7 +2278,18 @@ fn load_batch_row_states_tx(
     let mut stmt = tx
         .prepare(
             r#"
-            SELECT r.id, r.status, b.import_type, r.asset_code, r.asset_type, r.display_name, r.quantity
+            SELECT
+              r.id,
+              r.status,
+              b.import_type,
+              r.asset_code,
+              r.asset_type,
+              r.display_name,
+              r.quantity,
+              r.submitted_staff_id,
+              r.submitted_full_name,
+              r.submitted_team,
+              r.submitted_phone_number
             FROM asset_import_rows r
             INNER JOIN asset_import_batches b ON b.id = r.batch_id
             WHERE r.batch_id = ?
@@ -1843,6 +2307,10 @@ fn load_batch_row_states_tx(
                 asset_type: row.get(4)?,
                 display_name: row.get(5)?,
                 quantity: row.get(6)?,
+                submitted_staff_id: row.get(7)?,
+                submitted_full_name: row.get(8)?,
+                submitted_team: row.get(9)?,
+                submitted_phone_number: row.get(10)?,
             })
         })
         .map_err(|err| format!("failed to query staged asset rows: {err}"))?;
@@ -1993,7 +2461,11 @@ fn load_asset_import_rows_for_batch(
             r#"
             SELECT
               id, batch_id, row_number, raw_row_json, asset_code, asset_type, display_name, brand, model,
-              serial_number, quantity, warehouse, notes, validation_errors_json, status, edited, edited_fields_json, imported_asset_id
+              serial_number, quantity, warehouse, notes,
+              submitted_staff_id, submitted_full_name, submitted_team, submitted_phone_number,
+              resolved_employee_id, resolved_employee_row_id, resolved_full_name, resolved_team_name,
+              owner_match_status, owner_warnings_json,
+              validation_errors_json, status, edited, edited_fields_json, imported_asset_id
             FROM asset_import_rows
             WHERE batch_id = ?
             ORDER BY row_number ASC, id ASC
@@ -2019,7 +2491,11 @@ fn load_asset_import_row_record_conn(
         r#"
         SELECT
           id, batch_id, row_number, raw_row_json, asset_code, asset_type, display_name, brand, model,
-          serial_number, quantity, warehouse, notes, validation_errors_json, status, edited, edited_fields_json, imported_asset_id
+          serial_number, quantity, warehouse, notes,
+          submitted_staff_id, submitted_full_name, submitted_team, submitted_phone_number,
+          resolved_employee_id, resolved_employee_row_id, resolved_full_name, resolved_team_name,
+          owner_match_status, owner_warnings_json,
+          validation_errors_json, status, edited, edited_fields_json, imported_asset_id
         FROM asset_import_rows
         WHERE id = ?
         "#,
@@ -2046,11 +2522,21 @@ fn map_asset_import_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AssetImport
         quantity: row.get(10)?,
         warehouse: row.get(11)?,
         notes: row.get(12)?,
-        validation_errors: from_json_row(Some(row.get(13)?))?,
-        status: row.get(14)?,
-        is_edited: row.get::<_, i64>(15)? > 0,
-        edited_fields: from_json_row(Some(row.get(16)?))?,
-        imported_asset_id: row.get(17)?,
+        submitted_staff_id: row.get(13)?,
+        submitted_full_name: row.get(14)?,
+        submitted_team: row.get(15)?,
+        submitted_phone_number: row.get(16)?,
+        resolved_employee_id: row.get(17)?,
+        resolved_employee_row_id: row.get(18)?,
+        resolved_full_name: row.get(19)?,
+        resolved_team_name: row.get(20)?,
+        owner_match_status: row.get(21)?,
+        owner_warnings: from_json_row(Some(row.get(22)?))?,
+        validation_errors: from_json_row(Some(row.get(23)?))?,
+        status: row.get(24)?,
+        is_edited: row.get::<_, i64>(25)? > 0,
+        edited_fields: from_json_row(Some(row.get(26)?))?,
+        imported_asset_id: row.get(27)?,
     })
 }
 
@@ -2224,6 +2710,10 @@ mod tests {
             quantity: None,
             warehouse: Some("HCM".to_string()),
             notes: Some("Initial import".to_string()),
+            submitted_staff_id: None,
+            submitted_full_name: None,
+            submitted_team: None,
+            submitted_phone_number: None,
         }
     }
 
@@ -2273,6 +2763,10 @@ mod tests {
             quantity: None,
             warehouse: Some("HCM".to_string()),
             notes: Some("Initial import".to_string()),
+            submitted_staff_id: None,
+            submitted_full_name: None,
+            submitted_team: None,
+            submitted_phone_number: None,
         }
     }
 
@@ -2319,6 +2813,10 @@ mod tests {
             quantity: Some(quantity.to_string()),
             warehouse: Some("HCM".to_string()),
             notes: Some("Initial import".to_string()),
+            submitted_staff_id: None,
+            submitted_full_name: None,
+            submitted_team: None,
+            submitted_phone_number: None,
         }
     }
 
@@ -2336,6 +2834,107 @@ mod tests {
             headers: sample_headers(),
             mapping: sample_mapping(),
             rows,
+        }
+    }
+
+    fn seed_employee(
+        conn: &Connection,
+        employee_id: &str,
+        full_name: &str,
+        team_name: &str,
+        staff_group: &str,
+    ) -> i64 {
+        conn.execute(
+            "INSERT OR IGNORE INTO teams(name) VALUES (?)",
+            params![team_name],
+        )
+        .expect("insert team");
+        let team_id: i64 = conn
+            .query_row(
+                "SELECT id FROM teams WHERE name = ?",
+                params![team_name],
+                |row| row.get(0),
+            )
+            .expect("load team id");
+
+        conn.execute(
+            r#"
+            INSERT INTO employees(
+              employee_id,
+              full_name,
+              team_id,
+              staff_group,
+              updated_at
+            )
+            VALUES(?, ?, ?, ?, datetime('now'))
+            "#,
+            params![employee_id, full_name, team_id, staff_group],
+        )
+        .expect("insert employee");
+
+        conn.last_insert_rowid()
+    }
+
+    fn owner_row(
+        row_number: i64,
+        submitted_staff_id: &str,
+        submitted_full_name: &str,
+        submitted_team: &str,
+        asset_code: &str,
+    ) -> AssetImportRowSeedInput {
+        AssetImportRowSeedInput {
+            row_number,
+            raw_values: vec![
+                AssetImportRawValue {
+                    header: "StaffID".to_string(),
+                    value: submitted_staff_id.to_string(),
+                },
+                AssetImportRawValue {
+                    header: "Tên Nhân Viên".to_string(),
+                    value: submitted_full_name.to_string(),
+                },
+                AssetImportRawValue {
+                    header: "Team".to_string(),
+                    value: submitted_team.to_string(),
+                },
+                AssetImportRawValue {
+                    header: "Phone Number".to_string(),
+                    value: "0900000000".to_string(),
+                },
+                AssetImportRawValue {
+                    header: "Assetcode".to_string(),
+                    value: asset_code.to_string(),
+                },
+                AssetImportRawValue {
+                    header: "Category".to_string(),
+                    value: "Laptop".to_string(),
+                },
+                AssetImportRawValue {
+                    header: "Asset Name".to_string(),
+                    value: format!("ASW{asset_code}"),
+                },
+                AssetImportRawValue {
+                    header: "Model".to_string(),
+                    value: "Dell Latitude 7440".to_string(),
+                },
+                AssetImportRawValue {
+                    header: "Serrial Number".to_string(),
+                    value: format!("SN-{row_number:03}"),
+                },
+            ],
+            asset_code: Some(asset_code.to_string()),
+            asset_type: Some("Laptop".to_string()),
+            display_name: Some(format!("ASW{asset_code}")),
+            brand: Some("Dell".to_string()),
+            model: Some("Dell Latitude 7440".to_string()),
+            serial_number: Some(format!("SN-{row_number:03}")),
+            quantity: None,
+            warehouse: Some("HCM".to_string()),
+            notes: Some("Issued laptop".to_string()),
+            submitted_staff_id: Some(submitted_staff_id.to_string()),
+            submitted_full_name: Some(submitted_full_name.to_string()),
+            submitted_team: Some(submitted_team.to_string()),
+            submitted_phone_number: Some("0900000000".to_string()),
         }
     }
 
@@ -2663,5 +3262,214 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn create_batch_resolves_laptop_owner_by_staff_id_suffix_and_keeps_team_mismatch_as_warning() {
+        let mut conn = open_test_connection();
+        seed_employee(
+            &conn,
+            "ASWVN729",
+            "Trần Tú Linh",
+            "Consolidated Operations Group Limited",
+            "internal_movement",
+        );
+
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            sample_batch(
+                AssetImportMode::Serialized,
+                vec![owner_row(2, "ASW729", "TRẦN TÚ LINH", "COG", "VNLAP512")],
+            ),
+        )
+        .expect("create owner-aware laptop batch");
+
+        assert_eq!(batch.summary.valid_rows, 1);
+        assert_eq!(batch.summary.error_rows, 0);
+        assert_eq!(batch.rows[0].status, "valid");
+        assert_eq!(batch.rows[0].resolved_employee_id.as_deref(), Some("ASWVN729"));
+        assert_eq!(
+            batch.rows[0].resolved_full_name.as_deref(),
+            Some("Trần Tú Linh")
+        );
+        assert_eq!(batch.rows[0].owner_match_status.as_str(), "warning");
+        assert!(
+            !batch.rows[0].owner_warnings.is_empty(),
+            "team mismatch should surface as a warning, not a blocking error"
+        );
+    }
+
+    #[test]
+    fn create_batch_marks_laptop_rows_without_resolved_employee_as_errors() {
+        let mut conn = open_test_connection();
+
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            sample_batch(
+                AssetImportMode::Serialized,
+                vec![owner_row(2, "ASWVN9999", "Unknown User", "Unknown Team", "VNLAP999")],
+            ),
+        )
+        .expect("create unresolved owner batch");
+
+        assert_eq!(batch.summary.valid_rows, 0);
+        assert_eq!(batch.summary.error_rows, 1);
+        assert_eq!(batch.rows[0].status, "error");
+        assert!(batch.rows[0].resolved_employee_id.is_none());
+        assert!(
+            batch.rows[0]
+                .validation_errors
+                .iter()
+                .any(|item| item.contains("employee")),
+            "unresolved owner rows should be blocked from import"
+        );
+    }
+
+    #[test]
+    fn owner_rows_revalidate_after_inline_staff_id_fix() {
+        let mut conn = open_test_connection();
+        seed_employee(
+            &conn,
+            "ASWVN1302",
+            "LÆ° Tháº¿ HÃ¹ng",
+            "Examworks",
+            "employee_list",
+        );
+
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            sample_batch(
+                AssetImportMode::Serialized,
+                vec![owner_row(2, "ASWVN9999", "LÆ° Tháº¿ HÃ¹ng", "Examworks", "VNLAP777")],
+            ),
+        )
+        .expect("create unresolved owner batch");
+
+        assert_eq!(batch.rows[0].status, "error");
+
+        let updated = update_asset_import_row_conn(
+            &mut conn,
+            AssetImportRowUpdateInput {
+                row_id: batch.rows[0].id,
+                field_key: "submittedStaffId".to_string(),
+                value: Some("1302".to_string()),
+            },
+        )
+        .expect("fix submitted staff id inline");
+
+        assert_eq!(updated.status, "valid");
+        assert_eq!(updated.resolved_employee_id.as_deref(), Some("ASWVN1302"));
+        assert!(updated.validation_errors.is_empty());
+    }
+
+    #[test]
+    fn import_valid_rows_creates_active_loan_for_resolved_laptop_owner_rows() {
+        let mut conn = open_test_connection();
+        let employee_row_id = seed_employee(
+            &conn,
+            "ASWVN1302",
+            "Lư Thế Hùng",
+            "Examworks",
+            "onboarding",
+        );
+
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            sample_batch(
+                AssetImportMode::Serialized,
+                vec![owner_row(2, "ASW1302", "Lư Thế Hùng", "ExamWorks", "VNLAP235")],
+            ),
+        )
+        .expect("create resolved owner batch");
+
+        let result = import_asset_import_batch_valid_rows_conn(&mut conn, batch.summary.id)
+            .expect("import resolved laptop owner row");
+
+        assert_eq!(result.imported_count, 1);
+
+        let asset_row = conn
+            .query_row(
+                "SELECT id, status FROM assets WHERE asset_code = 'VNLAP235'",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+            )
+            .expect("load imported laptop asset");
+        assert_eq!(asset_row.1, "assigned");
+
+        let active_loan = conn
+            .query_row(
+                "SELECT employee_id_fk FROM asset_loans WHERE asset_id = ? AND returned_at IS NULL",
+                params![asset_row.0],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("load active asset loan");
+        assert_eq!(active_loan, employee_row_id);
+    }
+
+    #[test]
+    fn import_valid_rows_keeps_available_rows_in_stock_when_owner_data_is_absent() {
+        let mut conn = open_test_connection();
+
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            sample_batch(
+                AssetImportMode::Serialized,
+                vec![AssetImportRowSeedInput {
+                    row_number: 2,
+                    raw_values: vec![
+                        AssetImportRawValue {
+                            header: "Assetcode".to_string(),
+                            value: "VNLAP600".to_string(),
+                        },
+                        AssetImportRawValue {
+                            header: "Category".to_string(),
+                            value: "Laptop".to_string(),
+                        },
+                        AssetImportRawValue {
+                            header: "Asset Name".to_string(),
+                            value: "ASWVNLAP600".to_string(),
+                        },
+                    ],
+                    asset_code: Some("VNLAP600".to_string()),
+                    asset_type: Some("Laptop".to_string()),
+                    display_name: Some("ASWVNLAP600".to_string()),
+                    brand: Some("Dell".to_string()),
+                    model: Some("Latitude 5440".to_string()),
+                    serial_number: None,
+                    quantity: None,
+                    warehouse: Some("HCM".to_string()),
+                    notes: Some("Warehouse import".to_string()),
+                    submitted_staff_id: None,
+                    submitted_full_name: None,
+                    submitted_team: None,
+                    submitted_phone_number: None,
+                }],
+            ),
+        )
+        .expect("create available laptop batch");
+
+        let result = import_asset_import_batch_valid_rows_conn(&mut conn, batch.summary.id)
+            .expect("import available row");
+
+        assert_eq!(result.imported_count, 1);
+
+        let asset_row = conn
+            .query_row(
+                "SELECT status, serial_number FROM assets WHERE asset_code = 'VNLAP600'",
+                [],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+            )
+            .expect("load available imported asset");
+        assert_eq!(asset_row.0, "in_stock");
+        assert_eq!(asset_row.1, None);
+
+        let active_loan_count = conn
+            .query_row(
+                "SELECT COUNT(*) FROM asset_loans WHERE asset_id = (SELECT id FROM assets WHERE asset_code = 'VNLAP600') AND returned_at IS NULL",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("count active loans");
+        assert_eq!(active_loan_count, 0);
     }
 }
