@@ -294,7 +294,6 @@ CREATE TABLE IF NOT EXISTS asset_import_rows (
 CREATE TABLE IF NOT EXISTS borrow_requests (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   request_key TEXT NOT NULL UNIQUE,
-  request_type TEXT NOT NULL DEFAULT 'borrow',
   employee_id_fk INTEGER NOT NULL REFERENCES employees(id) ON UPDATE CASCADE ON DELETE RESTRICT,
   submitted_employee_id TEXT NOT NULL,
   submitted_full_name TEXT NOT NULL,

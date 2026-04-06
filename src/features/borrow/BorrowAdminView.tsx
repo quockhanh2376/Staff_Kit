@@ -2,6 +2,14 @@ import { CheckCircle2, LoaderCircle, RefreshCw, Smartphone, XCircle } from "luci
 import { QRCodeSVG } from "qrcode.react"
 import type { AuthState } from "../auth/useAuthState"
 import type { BorrowState } from "./useBorrowState"
+import {
+  buildBorrowReviewEmptyQueueMessage,
+  buildBorrowReviewHeaderDescription,
+  buildBorrowReviewHeading,
+  buildBorrowReviewRejectPlaceholder,
+  getBorrowReviewApproveActionLabel,
+  getBorrowReviewRejectActionLabel,
+} from "./borrowReviewCopy"
 
 type BorrowAdminViewProps = {
   auth: AuthState
@@ -9,12 +17,14 @@ type BorrowAdminViewProps = {
 }
 
 export function BorrowAdminView({ auth, borrow }: BorrowAdminViewProps) {
+  const selectedRequestType = borrow.selectedRequest?.requestType
+
   if (!auth.isAdminAccount) {
     return (
       <section className="px-4 py-7 md:px-8">
-        <h2 className="text-[30px] font-bold">Borrow Approval</h2>
+        <h2 className="text-[30px] font-bold">{buildBorrowReviewHeading()}</h2>
         <div className="mt-4 rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-4 text-sm text-[var(--text-secondary)]">
-          Admin access is required to review pending borrow requests.
+          Admin access is required to review pending borrow and return requests.
         </div>
       </section>
     )
@@ -26,9 +36,9 @@ export function BorrowAdminView({ auth, borrow }: BorrowAdminViewProps) {
     <section className="px-4 py-7 md:px-8">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="text-[30px] font-bold">Borrow Approval</h2>
+          <h2 className="text-[30px] font-bold">{buildBorrowReviewHeading()}</h2>
           <p className="mt-1 text-sm text-[var(--text-secondary)]">
-            Employees scan the fixed LAN QR on their phone, submit a pending request, then IT approves the exact asset items here.
+            {buildBorrowReviewHeaderDescription()}
           </p>
         </div>
         <button
@@ -128,7 +138,7 @@ export function BorrowAdminView({ auth, borrow }: BorrowAdminViewProps) {
 
             {!borrow.isLoadingQueue && borrow.pendingRequests.length === 0 && (
               <div className="rounded-[8px] border border-[var(--border)] bg-[var(--surface-hover)]/20 px-3 py-3 text-sm text-[var(--text-secondary)]">
-                No pending requests yet. Scan the QR on a phone to create the first request.
+                {buildBorrowReviewEmptyQueueMessage()}
               </div>
             )}
 
@@ -173,12 +183,12 @@ export function BorrowAdminView({ auth, borrow }: BorrowAdminViewProps) {
 
       <div className="mt-4 rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <div className="text-sm font-semibold text-[var(--text-primary)]">Request Detail</div>
-            <p className="mt-1 text-xs text-[var(--text-secondary)]">
-              Review the exact asset codes before approval. Reject when the employee selected the wrong item.
-            </p>
-          </div>
+            <div>
+              <div className="text-sm font-semibold text-[var(--text-primary)]">Request Detail</div>
+              <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                Review the exact asset codes before approval. Reject when the employee selected the wrong item for this borrow or return request.
+              </p>
+            </div>
           {borrow.selectedRequest && (
             <div className="flex items-center gap-2">
               {borrow.selectedRequest.requestType === "return" ? (
@@ -258,7 +268,7 @@ export function BorrowAdminView({ auth, borrow }: BorrowAdminViewProps) {
                 className="form-input mt-3 min-h-[160px] resize-y text-sm"
                 value={borrow.reviewNote}
                 onChange={(event) => borrow.setReviewNote(event.target.value)}
-                placeholder="Add a rejection note when the employee selected the wrong asset type or code."
+                placeholder={buildBorrowReviewRejectPlaceholder(selectedRequestType)}
                 disabled={borrow.isApproving || borrow.isRejecting}
               />
 
@@ -270,7 +280,7 @@ export function BorrowAdminView({ auth, borrow }: BorrowAdminViewProps) {
                   disabled={borrow.isApproving || borrow.isRejecting}
                 >
                   {borrow.isApproving ? <LoaderCircle className="animate-spin" size={15} /> : <CheckCircle2 size={15} />}
-                  {borrow.isApproving ? "Approving..." : "Approve Request"}
+                  {getBorrowReviewApproveActionLabel(selectedRequestType, borrow.isApproving)}
                 </button>
                 <button
                   className="inline-flex items-center gap-2 rounded-[8px] border border-red-400/50 bg-red-500/10 px-3 py-2 text-sm font-semibold text-red-200 disabled:opacity-50"
@@ -279,7 +289,7 @@ export function BorrowAdminView({ auth, borrow }: BorrowAdminViewProps) {
                   disabled={borrow.isApproving || borrow.isRejecting}
                 >
                   {borrow.isRejecting ? <LoaderCircle className="animate-spin" size={15} /> : <XCircle size={15} />}
-                  {borrow.isRejecting ? "Rejecting..." : "Reject With Note"}
+                  {getBorrowReviewRejectActionLabel(selectedRequestType, borrow.isRejecting)}
                 </button>
               </div>
             </div>
