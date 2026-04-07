@@ -374,6 +374,9 @@ CREATE INDEX IF NOT EXISTS idx_asset_category_prefixes_category_id
 CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_category_prefixes_active_value_unique
   ON asset_category_prefixes(prefix_value COLLATE NOCASE)
   WHERE is_active = 1;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_category_prefixes_one_active_primary_per_category
+  ON asset_category_prefixes(category_id)
+  WHERE is_active = 1 AND is_primary = 1;
 CREATE INDEX IF NOT EXISTS idx_assets_status ON assets(status);
 CREATE INDEX IF NOT EXISTS idx_stock_items_category_id ON stock_items(category_id);
 CREATE INDEX IF NOT EXISTS idx_asset_import_batches_status_created_at

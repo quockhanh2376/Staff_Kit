@@ -444,6 +444,9 @@ fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
         CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_category_prefixes_active_value_unique
           ON asset_category_prefixes(prefix_value COLLATE NOCASE)
           WHERE is_active = 1;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_category_prefixes_one_active_primary_per_category
+          ON asset_category_prefixes(category_id)
+          WHERE is_active = 1 AND is_primary = 1;
         CREATE INDEX IF NOT EXISTS idx_stock_items_category_id ON stock_items(category_id);
         "#,
     )
@@ -591,63 +594,86 @@ fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
 }
 
 fn ensure_seeded_asset_category_prefixes(conn: &Connection) -> Result<(), String> {
-    let mut category_stmt = conn
-        .prepare(
-            r#"
-            SELECT id, category_code, prefix_code
-            FROM asset_categories
-            WHERE prefix_code IS NOT NULL
-              AND trim(prefix_code) <> ''
-            "#,
-        )
-        .map_err(|err| format!("failed to prepare asset category prefix backfill query: {err}"))?;
+    conn.execute_batch("SAVEPOINT ensure_seeded_asset_category_prefixes;")
+        .map_err(|err| format!("failed to open asset category prefix savepoint: {err}"))?;
 
-    let seeded_rows = category_stmt
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-            ))
-        })
-        .map_err(|err| format!("failed to read asset category prefix backfill rows: {err}"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|err| format!("failed to collect asset category prefix backfill rows: {err}"))?;
-
-    for (category_id, _category_code, prefix_code) in seeded_rows {
-        asset::upsert_asset_category_prefix_conn(conn, category_id, prefix_code.as_str(), true, true)?;
-    }
-
-    for (category_code, active_prefixes) in [
-        ("laptop", &["VNLAP", "VNIMACPRO", "VNMACAIR", "VNMACPRO"][..]),
-        ("monitor", &["VNMON"][..]),
-    ] {
-        let category_id = conn
-            .query_row(
-                "SELECT id FROM asset_categories WHERE category_code = ? COLLATE NOCASE LIMIT 1",
-                params![category_code],
-                |row| row.get::<_, i64>(0),
+    let result = (|| {
+        let mut category_stmt = conn
+            .prepare(
+                r#"
+                SELECT id, category_code, prefix_code
+                FROM asset_categories
+                WHERE prefix_code IS NOT NULL
+                  AND trim(prefix_code) <> ''
+                "#,
             )
-            .map_err(|err| format!("failed to load seeded category '{category_code}' for prefixes: {err}"))?;
+            .map_err(|err| format!("failed to prepare asset category prefix backfill query: {err}"))?;
 
-        conn.execute(
-            "UPDATE asset_category_prefixes SET is_primary = 0, is_active = 0, updated_at = datetime('now') WHERE category_id = ?",
-            params![category_id],
-        )
-        .map_err(|err| format!("failed to reset prefixes for category '{category_code}': {err}"))?;
+        let seeded_rows = category_stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|err| format!("failed to read asset category prefix backfill rows: {err}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|err| format!("failed to collect asset category prefix backfill rows: {err}"))?;
 
-        for (index, prefix_value) in active_prefixes.iter().enumerate() {
+        for (category_id, _category_code, prefix_code) in seeded_rows {
             asset::upsert_asset_category_prefix_conn(
                 conn,
                 category_id,
-                prefix_value,
-                index == 0,
+                prefix_code.as_str(),
+                true,
                 true,
             )?;
         }
-    }
 
-    Ok(())
+        for (category_code, active_prefixes) in [
+            ("laptop", &["VNLAP", "VNIMACPRO", "VNMACAIR", "VNMACPRO"][..]),
+            ("monitor", &["VNMON"][..]),
+        ] {
+            let category_id = conn
+                .query_row(
+                    "SELECT id FROM asset_categories WHERE category_code = ? COLLATE NOCASE LIMIT 1",
+                    params![category_code],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(|err| format!("failed to load seeded category '{category_code}' for prefixes: {err}"))?;
+
+            conn.execute(
+                "UPDATE asset_category_prefixes SET is_primary = 0, is_active = 0, updated_at = datetime('now') WHERE category_id = ?",
+                params![category_id],
+            )
+            .map_err(|err| format!("failed to reset prefixes for category '{category_code}': {err}"))?;
+
+            for (index, prefix_value) in active_prefixes.iter().enumerate() {
+                asset::upsert_asset_category_prefix_conn(
+                    conn,
+                    category_id,
+                    prefix_value,
+                    index == 0,
+                    true,
+                )?;
+            }
+        }
+
+        Ok(())
+    })();
+
+    match result {
+        Ok(()) => conn
+            .execute_batch("RELEASE SAVEPOINT ensure_seeded_asset_category_prefixes;")
+            .map_err(|err| format!("failed to release asset category prefix savepoint: {err}")),
+        Err(err) => {
+            let _ = conn.execute_batch(
+                "ROLLBACK TO SAVEPOINT ensure_seeded_asset_category_prefixes; RELEASE SAVEPOINT ensure_seeded_asset_category_prefixes;",
+            );
+            Err(err)
+        }
+    }
 }
 
 fn ensure_borrow_request_columns(conn: &Connection) -> Result<(), String> {
@@ -1019,6 +1045,7 @@ mod tests {
 
         for table_name in [
             "asset_categories",
+            "asset_category_prefixes",
             "assets",
             "stock_items",
             "asset_import_batches",
@@ -1170,5 +1197,144 @@ mod tests {
             .expect("load migrated tablet prefix");
 
         assert_eq!(tablet_prefix, "ASWTABLET");
+    }
+
+    #[test]
+    fn ensure_seeded_asset_category_prefixes_rolls_back_if_reseed_hits_conflict() {
+        let conn = Connection::open_in_memory().expect("open in-memory sqlite database");
+        configure_connection(&conn).expect("configure sqlite pragmas");
+        apply_migrations(&conn).expect("apply database migrations");
+
+        let laptop_category_id = conn
+            .query_row(
+                "SELECT id FROM asset_categories WHERE category_code = 'laptop'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("load laptop category id");
+        let monitor_category_id = conn
+            .query_row(
+                "SELECT id FROM asset_categories WHERE category_code = 'monitor'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("load monitor category id");
+
+        conn.execute(
+            "UPDATE asset_category_prefixes SET is_active = 0, is_primary = 0, updated_at = datetime('now') WHERE category_id = ?",
+            params![laptop_category_id],
+        )
+        .expect("deactivate laptop prefixes for pre-seed state");
+        conn.execute(
+            "UPDATE asset_category_prefixes SET is_active = 1, is_primary = 0, updated_at = datetime('now') WHERE category_id = ? AND prefix_value = 'VNLAP'",
+            params![laptop_category_id],
+        )
+        .expect("keep one non-primary laptop prefix active");
+        conn.execute(
+            "UPDATE asset_category_prefixes SET is_active = 0, is_primary = 0, updated_at = datetime('now') WHERE category_id = ?",
+            params![monitor_category_id],
+        )
+        .expect("deactivate monitor prefixes to allow conflict setup");
+
+        conn.execute(
+            r#"
+            INSERT INTO asset_categories(
+              category_code,
+              category_name,
+              tracking_mode,
+              prefix_code,
+              qr_required,
+              is_active,
+              created_at,
+              updated_at
+            )
+            VALUES('conflict_category', 'Conflict Category', 'serialized', NULL, 0, 1, datetime('now'), datetime('now'))
+            "#,
+            [],
+        )
+        .expect("insert conflict category");
+
+        let conflict_category_id = conn
+            .query_row(
+                "SELECT id FROM asset_categories WHERE category_code = 'conflict_category'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("load conflict category id");
+
+        asset::upsert_asset_category_prefix_conn(&conn, conflict_category_id, "VNMON", true, true)
+            .expect("seed conflicting prefix");
+
+        let laptop_active_before = conn
+            .query_row(
+                r#"
+                SELECT COUNT(*)
+                FROM asset_category_prefixes p
+                INNER JOIN asset_categories c ON c.id = p.category_id
+                WHERE c.category_code = 'laptop'
+                  AND p.is_active = 1
+                "#,
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("count active laptop prefixes before conflict");
+        let laptop_primary_before = conn
+            .query_row(
+                r#"
+                SELECT COUNT(*)
+                FROM asset_category_prefixes p
+                INNER JOIN asset_categories c ON c.id = p.category_id
+                WHERE c.category_code = 'laptop'
+                  AND p.is_active = 1
+                  AND p.is_primary = 1
+                "#,
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("count active laptop primary prefixes before conflict");
+
+        let seed_error = ensure_seeded_asset_category_prefixes(&conn)
+            .expect_err("conflicting active prefix should abort reseed atomically");
+
+        let laptop_active_after = conn
+            .query_row(
+                r#"
+                SELECT COUNT(*)
+                FROM asset_category_prefixes p
+                INNER JOIN asset_categories c ON c.id = p.category_id
+                WHERE c.category_code = 'laptop'
+                  AND p.is_active = 1
+                "#,
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("count active laptop prefixes after rollback");
+        let laptop_primary_after = conn
+            .query_row(
+                r#"
+                SELECT COUNT(*)
+                FROM asset_category_prefixes p
+                INNER JOIN asset_categories c ON c.id = p.category_id
+                WHERE c.category_code = 'laptop'
+                  AND p.is_active = 1
+                  AND p.is_primary = 1
+                "#,
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("count active laptop primary prefixes after rollback");
+
+        assert!(
+            seed_error.contains("VNMON") || seed_error.to_lowercase().contains("unique"),
+            "expected conflict from active prefix uniqueness, got: {seed_error}"
+        );
+        assert_eq!(
+            laptop_active_after, laptop_active_before,
+            "laptop prefixes should stay unchanged when reseed fails"
+        );
+        assert_eq!(
+            laptop_primary_after, laptop_primary_before,
+            "laptop primary flags should stay unchanged when reseed fails"
+        );
     }
 }

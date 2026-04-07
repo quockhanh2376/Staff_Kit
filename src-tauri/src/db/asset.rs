@@ -256,8 +256,8 @@ pub(crate) fn load_asset_category_by_prefix_conn(
         INNER JOIN asset_categories c ON c.id = p.category_id
         WHERE p.is_active = 1
           AND c.is_active = 1
-          AND ? LIKE p.prefix_value || '%'
-        ORDER BY p.is_primary DESC, length(p.prefix_value) DESC, p.id ASC
+          AND substr(?, 1, length(p.prefix_value)) = p.prefix_value
+        ORDER BY length(p.prefix_value) DESC, p.is_primary DESC, p.id ASC
         LIMIT 1
         "#,
         params![normalized_code],
@@ -282,6 +282,9 @@ pub(crate) fn upsert_asset_category_prefix_conn(
     let Some(normalized_prefix) = normalize_asset_category_prefix(prefix_value) else {
         return Err("asset category prefix cannot be blank".to_string());
     };
+    if normalized_prefix.contains('%') || normalized_prefix.contains('_') {
+        return Err("asset category prefix cannot contain SQL wildcard characters (% or _)".to_string());
+    }
 
     let existing_id = conn
         .query_row(
@@ -926,6 +929,52 @@ mod tests {
     }
 
     #[test]
+    fn asset_category_prefix_lookup_prefers_longest_match_over_primary_flag() {
+        let conn = open_test_connection();
+
+        conn.execute(
+            r#"
+            INSERT INTO asset_categories(
+              category_code,
+              category_name,
+              tracking_mode,
+              prefix_code,
+              qr_required,
+              is_active,
+              created_at,
+              updated_at
+            )
+            VALUES('device_family', 'Device Family', 'serialized', 'VN', 0, 1, datetime('now'), datetime('now'))
+            "#,
+            [],
+        )
+        .expect("insert broader device category");
+
+        let device_category_id = conn
+            .query_row(
+                "SELECT id FROM asset_categories WHERE category_code = 'device_family'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("load broader device category id");
+        let laptop_category_id = conn
+            .query_row(
+                "SELECT id FROM asset_categories WHERE category_code = 'laptop'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("load laptop category id");
+
+        upsert_asset_category_prefix_conn(&conn, device_category_id, "VN", true, true)
+            .expect("seed shorter broad prefix");
+
+        let resolved =
+            load_asset_category_by_prefix_conn(&conn, "VNMACPRO003").expect("resolve longest prefix");
+
+        assert_eq!(resolved.as_ref().map(|record| record.id), Some(laptop_category_id));
+    }
+
+    #[test]
     fn asset_category_prefixes_reject_duplicate_active_values() {
         let conn = open_test_connection();
 
@@ -958,6 +1007,61 @@ mod tests {
         assert!(
             message.contains("unique") || message.contains("constraint"),
             "expected uniqueness error, got: {duplicate_error}"
+        );
+    }
+
+    #[test]
+    fn asset_category_prefixes_reject_sql_wildcard_characters() {
+        let conn = open_test_connection();
+        let mouse_category_id = conn
+            .query_row(
+                "SELECT id FROM asset_categories WHERE category_code = 'mouse'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("load mouse category id");
+
+        let wildcard_error = upsert_asset_category_prefix_conn(&conn, mouse_category_id, "VN%", false, true)
+            .expect_err("wildcard characters should be rejected");
+
+        assert!(
+            wildcard_error.contains("wildcard"),
+            "expected wildcard validation error, got: {wildcard_error}"
+        );
+    }
+
+    #[test]
+    fn asset_category_prefixes_reject_multiple_active_primary_values_per_category() {
+        let conn = open_test_connection();
+        let laptop_category_id = conn
+            .query_row(
+                "SELECT id FROM asset_categories WHERE category_code = 'laptop'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("load laptop category id");
+
+        let duplicate_primary_error = conn
+            .execute(
+                r#"
+                INSERT INTO asset_category_prefixes(
+                  category_id,
+                  prefix_value,
+                  is_primary,
+                  is_active,
+                  created_at,
+                  updated_at
+                )
+                VALUES(?, ?, 1, 1, datetime('now'), datetime('now'))
+                "#,
+                params![laptop_category_id, "VNLAPPRIMARY2"],
+            )
+            .expect_err("second active primary should be rejected");
+
+        let message = duplicate_primary_error.to_string().to_lowercase();
+        assert!(
+            message.contains("unique") || message.contains("constraint"),
+            "expected active primary uniqueness error, got: {duplicate_primary_error}"
         );
     }
 
