@@ -28,6 +28,7 @@ import {
 import {
     buildManualSerializedAssetCreatedMessage,
     buildManualSerializedAssetRequiredMessage,
+    shouldCloseAssetImportWizardAfterImport,
 } from "./assetImportCopy"
 
 type UseAssetImportStateOptions = {
@@ -443,11 +444,18 @@ export function useAssetImportState({
         try {
             setImportingRows(true)
             const result = await staffApi.importAssetImportBatchValidRows(activeBatchDetail.summary.id)
+            const shouldCloseWizard = shouldCloseAssetImportWizardAfterImport(
+                result.importedCount,
+                result.remainingErrorRows,
+            )
             setStatusMessage(
                 `Imported ${result.importedCount} valid row(s). ${result.remainingErrorRows} row(s) still need review.`,
             )
             await refreshActiveBatch()
             await loadBatchSummaries()
+            if (shouldCloseWizard) {
+                setWizardOpen(false)
+            }
             triggerReload()
         } catch (error) {
             setGlobalError(getErrorMessage(error))

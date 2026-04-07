@@ -16,6 +16,7 @@ import {
   parseAssetDashboardQuantityDraft,
   validateAssetCategoryDraft,
 } from "../src/features/assets/assetDashboardCopy.ts"
+import { shouldCloseAssetImportWizardAfterImport } from "../src/features/assets/assetImportCopy.ts"
 
 const serializedHeaders = [
   "Assetcode ",
@@ -96,9 +97,38 @@ assert.equal(
   "Dell Latitude 5540",
 )
 assert.equal(
+  formatAssetDashboardDisplayNameLines("VNMON709", null, null as never),
+  "Mon709",
+)
+assert.equal(
+  formatAssetDashboardDisplayNameLines("VNLAP293", null, null as never),
+  "VNLAP293",
+)
+assert.equal(
   formatAssetDashboardStatusLabel("awaiting_it_review"),
   "awaiting it review",
 )
+{
+  const originalReplaceAll = String.prototype.replaceAll
+  // Simulate older WebView runtimes that still lack String.prototype.replaceAll.
+  Object.defineProperty(String.prototype, "replaceAll", {
+    value: undefined,
+    configurable: true,
+    writable: true,
+  })
+  try {
+    assert.equal(
+      formatAssetDashboardStatusLabel("awaiting_it_review"),
+      "awaiting it review",
+    )
+  } finally {
+    Object.defineProperty(String.prototype, "replaceAll", {
+      value: originalReplaceAll,
+      configurable: true,
+      writable: true,
+    })
+  }
+}
 assert.equal(parseAssetDashboardQuantityDraft(""), null)
 assert.equal(parseAssetDashboardQuantityDraft(" 5 "), 5)
 assert.equal(parseAssetDashboardQuantityDraft("-1"), null)
@@ -173,5 +203,8 @@ assert.deepEqual(
   ),
   ["Prefix VNLAP is already active in another category."],
 )
+assert.equal(shouldCloseAssetImportWizardAfterImport(3, 0), true)
+assert.equal(shouldCloseAssetImportWizardAfterImport(0, 0), false)
+assert.equal(shouldCloseAssetImportWizardAfterImport(2, 1), false)
 
 console.log("asset-dashboard-formatting tests passed")

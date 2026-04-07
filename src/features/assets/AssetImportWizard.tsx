@@ -555,7 +555,7 @@ function ReviewBatchStep({ assetImport }: AssetImportWizardProps) {
                                                 Match Status
                                             </div>
                                             <div className="mt-2 inline-flex rounded-[999px] border border-[var(--border)] px-2.5 py-1 text-[10px] uppercase tracking-[0.08em] text-[var(--text-primary)]">
-                                                {selectedRow.ownerMatchStatus.replaceAll("_", " ")}
+                                                {String(selectedRow.ownerMatchStatus ?? "").split("_").join(" ")}
                                             </div>
                                             {selectedRow.resolvedEmployeeId ? (
                                                 <div className="mt-3 space-y-1 text-xs text-[var(--text-secondary)]">

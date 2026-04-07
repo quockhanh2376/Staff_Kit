@@ -1,3 +1,41 @@
+# Daily Log - 2026-04-07
+
+## Objective
+Stabilize the `Asset Dashboard` chunk after local Excel-import testing showed the Settings screen could fall into a black window state instead of returning cleanly to the Settings surface.
+
+## Work Completed
+- Reproduced the failure through the real local Tauri/WebView runtime instead of assuming a backend import issue.
+- Narrowed the crash path to the post-import Settings reload flow:
+  - import/stage action triggers `triggerReload()`
+  - Settings re-renders `Asset Dashboard` and `Asset Import Wizard`
+  - runtime crashes on string formatting that relied on `String.prototype.replaceAll`
+- Replaced the risky `replaceAll` calls in the dashboard/import render path with runtime-safe formatting:
+  - `src/features/assets/assetDashboardCopy.ts`
+  - `src/features/assets/AssetImportWizard.tsx`
+- Added a focused regression rail in `scripts/asset-dashboard-formatting.test.ts` that temporarily removes `String.prototype.replaceAll` to simulate the older WebView/runtime behavior seen on the local machine.
+- Tightened the import UX so the asset import wizard can close itself after a fully successful import with no remaining review rows:
+  - `src/features/assets/assetImportCopy.ts`
+  - `src/features/assets/useAssetImportState.ts`
+
+## Validation
+- Ran `node --experimental-strip-types scripts/asset-dashboard-formatting.test.ts`
+- Result: passed
+- Ran `npm run check:quality`
+- Result: passed
+  - ESLint: passed
+  - TypeScript build/typecheck: passed
+  - Vite production build: passed
+  - Tauri `cargo check`: passed
+
+## Current State
+The Chunk 4 branch no longer depends on `String.prototype.replaceAll` inside the Settings/import render path, so local WebView runtimes that lack that API should stay on the Settings surface after import instead of dropping into a black screen.
+
+## Next Suggested Focus
+- Re-test the full Excel import flow end-to-end on the local desktop app with real files after this fix is pushed.
+- If Settings stays stable, continue with review/merge of the stacked Asset Dashboard PRs.
+
+---
+
 # Daily Log - 2026-04-06
 
 ## Objective

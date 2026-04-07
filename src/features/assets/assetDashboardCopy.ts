@@ -87,14 +87,19 @@ export function formatAssetDashboardUsageLocationLabel(
 export function formatAssetDashboardDisplayNameLines(
   assetCode: string,
   displayNameShort: string | null,
-  displayName: string,
+  displayName: string | null | undefined,
 ): string {
-  const normalizedDisplayName = displayName.trim()
+  const normalizedAssetCode = normalizeDashboardText(assetCode)
+  const normalizedDisplayName = normalizeDashboardText(displayName)
   const shortName = resolveAssetDashboardDisplayNameShort(
     assetCode,
     displayNameShort,
     displayName,
-  )?.trim()
+  )
+
+  if (!normalizedDisplayName) {
+    return shortName || normalizedAssetCode || "\u2014"
+  }
 
   if (!shortName) {
     return normalizedDisplayName
@@ -127,7 +132,7 @@ export function formatAssetDashboardHolderLabel(
 }
 
 export function formatAssetDashboardStatusLabel(status: string): string {
-  return status.replaceAll("_", " ")
+  return String(status ?? "").split("_").join(" ")
 }
 
 export function parseAssetDashboardQuantityDraft(value: string): number | null {

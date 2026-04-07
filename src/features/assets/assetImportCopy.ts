@@ -61,3 +61,10 @@ export function buildManualSerializedAssetCreatedMessage(
 ): string {
   return `Created serialized asset ${assetCode} as a borrow-ready asset.`
 }
+
+export function shouldCloseAssetImportWizardAfterImport(
+  importedCount: number,
+  remainingErrorRows: number,
+): boolean {
+  return importedCount > 0 && remainingErrorRows === 0
+}
