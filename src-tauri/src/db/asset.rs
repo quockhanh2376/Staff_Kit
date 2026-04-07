@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
@@ -45,6 +47,48 @@ pub struct AssetCategoryRecord {
     pub prefix_code: Option<String>,
     pub qr_required: bool,
     pub is_active: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetCategoryPrefixRecord {
+    pub id: i64,
+    pub prefix_value: String,
+    pub is_primary: bool,
+    pub is_active: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetCategoryDetailRecord {
+    pub id: i64,
+    pub category_code: String,
+    pub category_name: String,
+    pub tracking_mode: String,
+    pub prefix_code: Option<String>,
+    pub qr_required: bool,
+    pub is_active: bool,
+    pub asset_count: i64,
+    pub stock_item_count: i64,
+    pub prefixes: Vec<AssetCategoryPrefixRecord>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetCategoryPrefixInput {
+    pub prefix_value: String,
+    pub is_primary: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetCategoryUpsertInput {
+    pub id: Option<i64>,
+    pub category_code: String,
+    pub category_name: String,
+    pub tracking_mode: String,
+    pub qr_required: bool,
+    pub prefixes: Vec<AssetCategoryPrefixInput>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -782,6 +826,43 @@ pub fn list_asset_categories(app: &AppHandle) -> Result<Vec<AssetCategoryRecord>
     list_asset_categories_conn(&conn)
 }
 
+pub fn list_asset_category_details(
+    app: &AppHandle,
+) -> Result<Vec<AssetCategoryDetailRecord>, String> {
+    let conn = open_runtime_connection(app)?;
+    list_asset_category_details_conn(&conn)
+}
+
+pub fn create_asset_category(
+    app: &AppHandle,
+    payload: AssetCategoryUpsertInput,
+) -> Result<AssetCategoryDetailRecord, String> {
+    if payload.id.is_some() {
+        return Err("createAssetCategory does not accept an id".to_string());
+    }
+    let conn = open_runtime_connection(app)?;
+    upsert_asset_category_conn(&conn, payload)
+}
+
+pub fn update_asset_category(
+    app: &AppHandle,
+    payload: AssetCategoryUpsertInput,
+) -> Result<AssetCategoryDetailRecord, String> {
+    if payload.id.is_none() {
+        return Err("updateAssetCategory requires an id".to_string());
+    }
+    let conn = open_runtime_connection(app)?;
+    upsert_asset_category_conn(&conn, payload)
+}
+
+pub fn deactivate_asset_category(
+    app: &AppHandle,
+    category_id: i64,
+) -> Result<AssetCategoryDetailRecord, String> {
+    let conn = open_runtime_connection(app)?;
+    deactivate_asset_category_conn(&conn, category_id)
+}
+
 pub fn get_asset_dashboard_summary(app: &AppHandle) -> Result<AssetDashboardSummary, String> {
     let conn = open_runtime_connection(app)?;
     get_asset_dashboard_summary_conn(&conn)
@@ -852,6 +933,378 @@ pub(crate) fn list_asset_categories_conn(
     }
 
     Ok(categories)
+}
+
+fn load_asset_category_prefix_records_conn(
+    conn: &Connection,
+    category_id: i64,
+) -> Result<Vec<AssetCategoryPrefixRecord>, String> {
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT
+              id,
+              prefix_value,
+              is_primary,
+              is_active
+            FROM asset_category_prefixes
+            WHERE category_id = ?
+              AND is_active = 1
+            ORDER BY is_primary DESC, prefix_value COLLATE NOCASE ASC, id ASC
+            "#,
+        )
+        .map_err(|err| format!("failed to prepare asset category prefix detail query: {err}"))?;
+
+    let rows = stmt
+        .query_map(params![category_id], |row| {
+            Ok(AssetCategoryPrefixRecord {
+                id: row.get(0)?,
+                prefix_value: row.get(1)?,
+                is_primary: row.get::<_, i64>(2)? > 0,
+                is_active: row.get::<_, i64>(3)? > 0,
+            })
+        })
+        .map_err(|err| format!("failed to query asset category prefixes: {err}"))?;
+
+    let mut prefixes = Vec::new();
+    for row in rows {
+        prefixes.push(row.map_err(|err| format!("failed to read asset category prefix row: {err}"))?);
+    }
+
+    Ok(prefixes)
+}
+
+fn load_asset_category_prefix_records_by_category_ids_conn(
+    conn: &Connection,
+    category_ids: &[i64],
+) -> Result<HashMap<i64, Vec<AssetCategoryPrefixRecord>>, String> {
+    if category_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let placeholders = vec!["?"; category_ids.len()].join(", ");
+    let sql = format!(
+        r#"
+        SELECT
+          category_id,
+          id,
+          prefix_value,
+          is_primary,
+          is_active
+        FROM asset_category_prefixes
+        WHERE is_active = 1
+          AND category_id IN ({placeholders})
+        ORDER BY
+          category_id ASC,
+          is_primary DESC,
+          prefix_value COLLATE NOCASE ASC,
+          id ASC
+        "#
+    );
+
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|err| format!("failed to prepare batched asset category prefix detail query: {err}"))?;
+
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(category_ids.iter()), |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                AssetCategoryPrefixRecord {
+                    id: row.get(1)?,
+                    prefix_value: row.get(2)?,
+                    is_primary: row.get::<_, i64>(3)? > 0,
+                    is_active: row.get::<_, i64>(4)? > 0,
+                },
+            ))
+        })
+        .map_err(|err| format!("failed to query batched asset category prefixes: {err}"))?;
+
+    let mut prefixes_by_category_id: HashMap<i64, Vec<AssetCategoryPrefixRecord>> = HashMap::new();
+    for row in rows {
+        let (category_id, prefix) =
+            row.map_err(|err| format!("failed to read batched asset category prefix row: {err}"))?;
+        prefixes_by_category_id
+            .entry(category_id)
+            .or_default()
+            .push(prefix);
+    }
+
+    Ok(prefixes_by_category_id)
+}
+
+fn load_asset_category_detail_by_id_conn(
+    conn: &Connection,
+    category_id: i64,
+) -> Result<AssetCategoryDetailRecord, String> {
+    let mut detail = conn
+        .query_row(
+            r#"
+            SELECT
+              c.id,
+              c.category_code,
+              c.category_name,
+              c.tracking_mode,
+              c.prefix_code,
+              c.qr_required,
+              c.is_active,
+              COALESCE((SELECT COUNT(*) FROM assets a WHERE a.category_id = c.id), 0),
+              COALESCE((SELECT COUNT(*) FROM stock_items si WHERE si.category_id = c.id), 0)
+            FROM asset_categories c
+            WHERE c.id = ?
+            "#,
+            params![category_id],
+            |row| {
+                Ok(AssetCategoryDetailRecord {
+                    id: row.get(0)?,
+                    category_code: row.get(1)?,
+                    category_name: row.get(2)?,
+                    tracking_mode: row.get(3)?,
+                    prefix_code: row.get(4)?,
+                    qr_required: row.get::<_, i64>(5)? > 0,
+                    is_active: row.get::<_, i64>(6)? > 0,
+                    asset_count: row.get(7)?,
+                    stock_item_count: row.get(8)?,
+                    prefixes: Vec::new(),
+                })
+            },
+        )
+        .optional()
+        .map_err(|err| format!("failed to load asset category detail: {err}"))?
+        .ok_or_else(|| format!("asset category with id {category_id} was not found"))?;
+
+    detail.prefixes = load_asset_category_prefix_records_conn(conn, category_id)?;
+    Ok(detail)
+}
+
+pub(crate) fn list_asset_category_details_conn(
+    conn: &Connection,
+) -> Result<Vec<AssetCategoryDetailRecord>, String> {
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT
+              c.id,
+              c.category_code,
+              c.category_name,
+              c.tracking_mode,
+              c.prefix_code,
+              c.qr_required,
+              c.is_active,
+              COALESCE((SELECT COUNT(*) FROM assets a WHERE a.category_id = c.id), 0),
+              COALESCE((SELECT COUNT(*) FROM stock_items si WHERE si.category_id = c.id), 0)
+            FROM asset_categories
+            c
+            ORDER BY
+              is_active DESC,
+              CASE tracking_mode WHEN 'serialized' THEN 0 ELSE 1 END,
+              category_name COLLATE NOCASE ASC,
+              id ASC
+            "#,
+        )
+        .map_err(|err| format!("failed to prepare asset category detail list query: {err}"))?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(AssetCategoryDetailRecord {
+                id: row.get(0)?,
+                category_code: row.get(1)?,
+                category_name: row.get(2)?,
+                tracking_mode: row.get(3)?,
+                prefix_code: row.get(4)?,
+                qr_required: row.get::<_, i64>(5)? > 0,
+                is_active: row.get::<_, i64>(6)? > 0,
+                asset_count: row.get(7)?,
+                stock_item_count: row.get(8)?,
+                prefixes: Vec::new(),
+            })
+        })
+        .map_err(|err| format!("failed to query asset category details: {err}"))?;
+
+    let mut details = Vec::new();
+    let mut category_ids = Vec::new();
+    for row in rows {
+        let detail =
+            row.map_err(|err| format!("failed to read asset category detail row: {err}"))?;
+        category_ids.push(detail.id);
+        details.push(detail);
+    }
+
+    let mut prefixes_by_category_id =
+        load_asset_category_prefix_records_by_category_ids_conn(conn, &category_ids)?;
+    for detail in &mut details {
+        detail.prefixes = prefixes_by_category_id.remove(&detail.id).unwrap_or_default();
+    }
+
+    Ok(details)
+}
+
+pub(crate) fn upsert_asset_category_conn(
+    conn: &Connection,
+    payload: AssetCategoryUpsertInput,
+) -> Result<AssetCategoryDetailRecord, String> {
+    let normalized_code = normalize_asset_category_code(payload.category_code)?;
+    let normalized_name = require_text(payload.category_name, "categoryName")?;
+    let normalized_tracking_mode = normalize_asset_tracking_mode(payload.tracking_mode)?;
+    let normalized_prefixes = normalize_asset_category_prefix_inputs(payload.prefixes)?;
+
+    with_asset_category_savepoint(conn, |conn| {
+        let category_id = if let Some(existing_id) = payload.id {
+            let existing_tracking_mode: String = conn
+                .query_row(
+                    "SELECT tracking_mode FROM asset_categories WHERE id = ?",
+                    params![existing_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|err| format!("failed to load asset category before update: {err}"))?
+                .ok_or_else(|| format!("asset category with id {existing_id} was not found"))?;
+
+            if existing_tracking_mode != normalized_tracking_mode {
+                let asset_count: i64 = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM assets WHERE category_id = ?",
+                        params![existing_id],
+                        |row| row.get(0),
+                    )
+                    .map_err(|err| format!("failed to inspect asset category asset references: {err}"))?;
+                let stock_item_count: i64 = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM stock_items WHERE category_id = ?",
+                        params![existing_id],
+                        |row| row.get(0),
+                    )
+                    .map_err(|err| format!("failed to inspect asset category stock references: {err}"))?;
+
+                if asset_count > 0 || stock_item_count > 0 {
+                    return Err("cannot change tracking mode for a category already referenced by assets or stock items".to_string());
+                }
+            }
+
+            conn.execute(
+                r#"
+                UPDATE asset_categories
+                SET
+                  category_code = ?,
+                  category_name = ?,
+                  tracking_mode = ?,
+                  qr_required = ?,
+                  updated_at = datetime('now')
+                WHERE id = ?
+                "#,
+                params![
+                    normalized_code.as_str(),
+                    normalized_name.as_str(),
+                    normalized_tracking_mode.as_str(),
+                    if payload.qr_required { 1_i64 } else { 0_i64 },
+                    existing_id
+                ],
+            )
+            .map_err(humanize_sqlite_error)?;
+
+            existing_id
+        } else {
+            conn.execute(
+                r#"
+                INSERT INTO asset_categories(
+                  category_code,
+                  category_name,
+                  tracking_mode,
+                  qr_required,
+                  is_active,
+                  created_at,
+                  updated_at
+                )
+                VALUES(?, ?, ?, ?, 1, datetime('now'), datetime('now'))
+                "#,
+                params![
+                    normalized_code.as_str(),
+                    normalized_name.as_str(),
+                    normalized_tracking_mode.as_str(),
+                    if payload.qr_required { 1_i64 } else { 0_i64 }
+                ],
+            )
+            .map_err(humanize_sqlite_error)?;
+
+            conn.last_insert_rowid()
+        };
+
+        conn.execute(
+            r#"
+            UPDATE asset_category_prefixes
+            SET
+              is_primary = 0,
+              is_active = 0,
+              updated_at = datetime('now')
+            WHERE category_id = ?
+            "#,
+            params![category_id],
+        )
+        .map_err(humanize_sqlite_error)?;
+
+        for prefix in &normalized_prefixes {
+            upsert_asset_category_prefix_conn(
+                conn,
+                category_id,
+                prefix.prefix_value.as_str(),
+                prefix.is_primary,
+                true,
+            )?;
+        }
+
+        let primary_prefix = normalized_prefixes
+            .iter()
+            .find(|prefix| prefix.is_primary)
+            .map(|prefix| prefix.prefix_value.as_str());
+
+        conn.execute(
+            "UPDATE asset_categories SET prefix_code = ?, is_active = 1, updated_at = datetime('now') WHERE id = ?",
+            params![primary_prefix, category_id],
+        )
+        .map_err(humanize_sqlite_error)?;
+
+        load_asset_category_detail_by_id_conn(conn, category_id)
+    })
+}
+
+pub(crate) fn deactivate_asset_category_conn(
+    conn: &Connection,
+    category_id: i64,
+) -> Result<AssetCategoryDetailRecord, String> {
+    with_asset_category_savepoint(conn, |conn| {
+        let changed = conn
+            .execute(
+                r#"
+                UPDATE asset_categories
+                SET
+                  is_active = 0,
+                  prefix_code = NULL,
+                  updated_at = datetime('now')
+                WHERE id = ?
+                "#,
+                params![category_id],
+            )
+            .map_err(humanize_sqlite_error)?;
+
+        if changed == 0 {
+            return Err(format!("asset category with id {category_id} was not found"));
+        }
+
+        conn.execute(
+            r#"
+            UPDATE asset_category_prefixes
+            SET
+              is_primary = 0,
+              is_active = 0,
+              updated_at = datetime('now')
+            WHERE category_id = ?
+            "#,
+            params![category_id],
+        )
+        .map_err(humanize_sqlite_error)?;
+
+        load_asset_category_detail_by_id_conn(conn, category_id)
+    })
 }
 
 pub(crate) fn get_asset_dashboard_summary_conn(
@@ -1709,5 +2162,313 @@ mod tests {
             }),
             "expected seeded mouse quantity category"
         );
+    }
+
+    #[test]
+    fn create_asset_category_supports_multiple_prefixes() {
+        let conn = open_test_connection();
+
+        let created = upsert_asset_category_conn(
+            &conn,
+            AssetCategoryUpsertInput {
+                id: None,
+                category_code: "dock".to_string(),
+                category_name: "Dock Station".to_string(),
+                tracking_mode: "serialized".to_string(),
+                qr_required: false,
+                prefixes: vec![
+                    AssetCategoryPrefixInput {
+                        prefix_value: "VNDOCK".to_string(),
+                        is_primary: true,
+                    },
+                    AssetCategoryPrefixInput {
+                        prefix_value: "DOCK".to_string(),
+                        is_primary: false,
+                    },
+                ],
+            },
+        )
+        .expect("create dock category");
+
+        assert_eq!(created.category_code, "dock");
+        assert_eq!(created.category_name, "Dock Station");
+        assert_eq!(created.tracking_mode, "serialized");
+        assert_eq!(
+            created
+                .prefixes
+                .iter()
+                .map(|prefix| (prefix.prefix_value.clone(), prefix.is_primary))
+                .collect::<Vec<_>>(),
+            vec![
+                ("VNDOCK".to_string(), true),
+                ("DOCK".to_string(), false),
+            ]
+        );
+    }
+
+    #[test]
+    fn list_asset_category_details_returns_prefixes_for_all_categories() {
+        let conn = open_test_connection();
+
+        upsert_asset_category_conn(
+            &conn,
+            AssetCategoryUpsertInput {
+                id: None,
+                category_code: "dock".to_string(),
+                category_name: "Dock Station".to_string(),
+                tracking_mode: "serialized".to_string(),
+                qr_required: false,
+                prefixes: vec![
+                    AssetCategoryPrefixInput {
+                        prefix_value: "VNDOCK".to_string(),
+                        is_primary: true,
+                    },
+                    AssetCategoryPrefixInput {
+                        prefix_value: "DOCK".to_string(),
+                        is_primary: false,
+                    },
+                ],
+            },
+        )
+        .expect("create dock category");
+
+        let details = list_asset_category_details_conn(&conn).expect("list category details");
+        let dock = details
+            .iter()
+            .find(|detail| detail.category_code == "dock")
+            .expect("dock detail should be present");
+        let laptop = details
+            .iter()
+            .find(|detail| detail.category_code == "laptop")
+            .expect("laptop detail should be present");
+
+        assert_eq!(
+            dock.prefixes
+                .iter()
+                .map(|prefix| prefix.prefix_value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["VNDOCK", "DOCK"]
+        );
+        assert!(
+            !laptop.prefixes.is_empty(),
+            "expected seeded laptop category to keep its prefixes"
+        );
+    }
+
+    #[test]
+    fn update_asset_category_changes_label_tracking_mode_and_prefixes() {
+        let conn = open_test_connection();
+
+        let created = upsert_asset_category_conn(
+            &conn,
+            AssetCategoryUpsertInput {
+                id: None,
+                category_code: "dock".to_string(),
+                category_name: "Dock Station".to_string(),
+                tracking_mode: "serialized".to_string(),
+                qr_required: false,
+                prefixes: vec![AssetCategoryPrefixInput {
+                    prefix_value: "VNDOCK".to_string(),
+                    is_primary: true,
+                }],
+            },
+        )
+        .expect("create dock category");
+
+        let updated = upsert_asset_category_conn(
+            &conn,
+            AssetCategoryUpsertInput {
+                id: Some(created.id),
+                category_code: "dock".to_string(),
+                category_name: "Docking Peripheral".to_string(),
+                tracking_mode: "quantity".to_string(),
+                qr_required: false,
+                prefixes: vec![
+                    AssetCategoryPrefixInput {
+                        prefix_value: "VNDOCK".to_string(),
+                        is_primary: false,
+                    },
+                    AssetCategoryPrefixInput {
+                        prefix_value: "VNHUB".to_string(),
+                        is_primary: true,
+                    },
+                ],
+            },
+        )
+        .expect("update dock category");
+
+        assert_eq!(updated.category_name, "Docking Peripheral");
+        assert_eq!(updated.tracking_mode, "quantity");
+        assert_eq!(updated.prefix_code.as_deref(), Some("VNHUB"));
+        assert_eq!(
+            updated
+                .prefixes
+                .iter()
+                .map(|prefix| (prefix.prefix_value.clone(), prefix.is_primary))
+                .collect::<Vec<_>>(),
+            vec![
+                ("VNHUB".to_string(), true),
+                ("VNDOCK".to_string(), false),
+            ]
+        );
+    }
+
+    #[test]
+    fn deactivate_asset_category_preserves_categories_referenced_by_assets_or_stock_items() {
+        let conn = open_test_connection();
+        let monitor_category_id = category_id(&conn, "monitor");
+        let mouse_category_id = category_id(&conn, "mouse");
+
+        conn.execute(
+            r#"
+            INSERT INTO assets(asset_code, category_id, asset_type, display_name, status, created_at, updated_at)
+            VALUES('VNMON888', ?, 'Monitor', 'Dell 24 Monitor', 'in_stock', datetime('now'), datetime('now'))
+            "#,
+            params![monitor_category_id],
+        )
+        .expect("seed monitor asset");
+
+        conn.execute(
+            r#"
+            INSERT INTO stock_items(
+              category_id, item_name, brand, model, warehouse, quantity_on_hand, assigned_quantity, note, created_at, updated_at
+            )
+            VALUES(?, 'Mouse Logi', 'Logitech', 'G102', 'HCM', 8, 2, NULL, datetime('now'), datetime('now'))
+            "#,
+            params![mouse_category_id],
+        )
+        .expect("seed mouse stock");
+
+        let deactivated_monitor =
+            deactivate_asset_category_conn(&conn, monitor_category_id).expect("deactivate monitor category");
+        let deactivated_mouse =
+            deactivate_asset_category_conn(&conn, mouse_category_id).expect("deactivate mouse category");
+
+        assert!(!deactivated_monitor.is_active);
+        assert!(!deactivated_mouse.is_active);
+        assert_eq!(
+            conn.query_row(
+                "SELECT is_active FROM asset_categories WHERE id = ?",
+                params![monitor_category_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("load monitor active flag"),
+            0
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT is_active FROM asset_categories WHERE id = ?",
+                params![mouse_category_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("load mouse active flag"),
+            0
+        );
+    }
+
+    #[test]
+    fn asset_category_upsert_rejects_duplicate_active_prefixes() {
+        let conn = open_test_connection();
+
+        let duplicate_error = upsert_asset_category_conn(
+            &conn,
+            AssetCategoryUpsertInput {
+                id: None,
+                category_code: "dock".to_string(),
+                category_name: "Dock Station".to_string(),
+                tracking_mode: "serialized".to_string(),
+                qr_required: false,
+                prefixes: vec![AssetCategoryPrefixInput {
+                    prefix_value: "VNLAP".to_string(),
+                    is_primary: true,
+                }],
+            },
+        )
+        .expect_err("duplicate laptop prefix should be rejected");
+
+        assert!(
+            duplicate_error.to_lowercase().contains("prefix"),
+            "expected duplicate prefix error, got: {duplicate_error}"
+        );
+    }
+}
+
+fn normalize_asset_category_code(value: String) -> Result<String, String> {
+    let raw = require_text(value, "categoryCode")?;
+    let normalized = raw.trim().to_ascii_lowercase().replace(' ', "_");
+    if normalized
+        .chars()
+        .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_' || ch == '-')
+    {
+        Ok(normalized)
+    } else {
+        Err("categoryCode can only contain letters, numbers, hyphen, underscore, and spaces".to_string())
+    }
+}
+
+fn normalize_asset_tracking_mode(value: String) -> Result<String, String> {
+    let normalized = require_text(value, "trackingMode")?.to_ascii_lowercase();
+    match normalized.as_str() {
+        "serialized" | "quantity" => Ok(normalized),
+        _ => Err("trackingMode must be either 'serialized' or 'quantity'".to_string()),
+    }
+}
+
+fn normalize_asset_category_prefix_inputs(
+    prefixes: Vec<AssetCategoryPrefixInput>,
+) -> Result<Vec<AssetCategoryPrefixInput>, String> {
+    let mut seen = HashSet::new();
+    let mut normalized_prefixes = Vec::with_capacity(prefixes.len());
+    let mut primary_count = 0_i32;
+
+    for prefix in prefixes {
+        let Some(normalized_prefix) = normalize_asset_category_prefix(&prefix.prefix_value) else {
+            return Err("asset category prefix cannot be blank".to_string());
+        };
+        if normalized_prefix.contains('%') || normalized_prefix.contains('_') {
+            return Err("asset category prefix cannot contain SQL wildcard characters (% or _)".to_string());
+        }
+        if !seen.insert(normalized_prefix.clone()) {
+            return Err(format!("duplicate prefix '{normalized_prefix}' in category payload"));
+        }
+        if prefix.is_primary {
+            primary_count += 1;
+        }
+        normalized_prefixes.push(AssetCategoryPrefixInput {
+            prefix_value: normalized_prefix,
+            is_primary: prefix.is_primary,
+        });
+    }
+
+    if primary_count > 1 {
+        return Err("asset category can only have one primary prefix".to_string());
+    }
+
+    if !normalized_prefixes.is_empty() && primary_count == 0 {
+        normalized_prefixes[0].is_primary = true;
+    }
+
+    Ok(normalized_prefixes)
+}
+
+fn with_asset_category_savepoint<T, F>(conn: &Connection, f: F) -> Result<T, String>
+where
+    F: FnOnce(&Connection) -> Result<T, String>,
+{
+    conn.execute_batch("SAVEPOINT asset_category_change")
+        .map_err(|err| format!("failed to start asset category savepoint: {err}"))?;
+
+    match f(conn) {
+        Ok(value) => {
+            conn.execute_batch("RELEASE SAVEPOINT asset_category_change")
+                .map_err(|err| format!("failed to release asset category savepoint: {err}"))?;
+            Ok(value)
+        }
+        Err(err) => {
+            let _ = conn.execute_batch(
+                "ROLLBACK TO SAVEPOINT asset_category_change; RELEASE SAVEPOINT asset_category_change",
+            );
+            Err(err)
+        }
     }
 }

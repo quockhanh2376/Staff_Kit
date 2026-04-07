@@ -8,11 +8,13 @@ import {
   resolveAssetDashboardDisplayNameShort,
 } from "../src/features/assets/assetImportModeConfig.ts"
 import {
+  buildAssetCategoryDraftFromDetail,
   buildAssetDashboardSummaryCards,
   formatAssetDashboardDisplayNameLines,
   formatAssetDashboardStatusLabel,
   formatAssetDashboardUsageLocationLabel,
   parseAssetDashboardQuantityDraft,
+  validateAssetCategoryDraft,
 } from "../src/features/assets/assetDashboardCopy.ts"
 
 const serializedHeaders = [
@@ -39,8 +41,8 @@ const quantityMapping = detectAssetImportWizardMapping(quantityHeaders, "quantit
 assert.equal(quantityMapping.assetCode, "Asset code")
 assert.equal(quantityMapping.quantity, "Quantity ")
 
-assert.equal(normalizeAssetDashboardUsageLocation(" Táº¡i CTY "), "office")
-assert.equal(normalizeAssetDashboardUsageLocation("táº¡i nhÃ "), "home")
+assert.equal(normalizeAssetDashboardUsageLocation(" Tại CTY "), "office")
+assert.equal(normalizeAssetDashboardUsageLocation("tại nhà"), "home")
 assert.equal(normalizeAssetDashboardUsageLocation(""), null)
 
 assert.equal(
@@ -81,8 +83,8 @@ assert.deepEqual(
   ],
 )
 
-assert.equal(formatAssetDashboardUsageLocationLabel(" Tại CTY "), "Tại CTY")
-assert.equal(formatAssetDashboardUsageLocationLabel("tại nhà"), "Tại Nhà")
+assert.equal(formatAssetDashboardUsageLocationLabel(" Táº¡i CTY "), "Tại CTY")
+assert.equal(formatAssetDashboardUsageLocationLabel("táº¡i nhÃ "), "Tại Nhà")
 assert.equal(formatAssetDashboardUsageLocationLabel(""), "—")
 
 assert.equal(
@@ -101,5 +103,75 @@ assert.equal(parseAssetDashboardQuantityDraft(""), null)
 assert.equal(parseAssetDashboardQuantityDraft(" 5 "), 5)
 assert.equal(parseAssetDashboardQuantityDraft("-1"), null)
 assert.equal(parseAssetDashboardQuantityDraft("4.5"), null)
+
+const categoryDraft = buildAssetCategoryDraftFromDetail({
+  id: 10,
+  categoryCode: "dock",
+  categoryName: "Dock Station",
+  trackingMode: "serialized",
+  prefixCode: "VNDOCK",
+  qrRequired: false,
+  isActive: true,
+  assetCount: 0,
+  stockItemCount: 0,
+  prefixes: [
+    {
+      id: 1,
+      prefixValue: "VNDOCK",
+      isPrimary: true,
+      isActive: true,
+    },
+  ],
+})
+
+assert.deepEqual(
+  validateAssetCategoryDraft(categoryDraft, []),
+  [],
+)
+assert.deepEqual(
+  validateAssetCategoryDraft(
+    {
+      ...categoryDraft,
+      prefixes: [
+        { prefixValue: "VNDOCK", isPrimary: true },
+        { prefixValue: "vnDock", isPrimary: false },
+      ],
+    },
+    [],
+  ),
+  ["Prefix values must stay unique inside the same category."],
+)
+assert.deepEqual(
+  validateAssetCategoryDraft(
+    {
+      ...categoryDraft,
+      prefixes: [
+        { prefixValue: "VNLAP", isPrimary: true },
+      ],
+    },
+    [
+      {
+        id: 1,
+        categoryCode: "laptop",
+        categoryName: "Laptop",
+        trackingMode: "serialized",
+        prefixCode: "VNLAP",
+        qrRequired: true,
+        isActive: true,
+        assetCount: 3,
+        stockItemCount: 0,
+        prefixes: [
+          {
+            id: 2,
+            prefixValue: "VNLAP",
+            isPrimary: true,
+            isActive: true,
+          },
+        ],
+      },
+    ],
+  ),
+  ["Prefix VNLAP is already active in another category."],
+)
 
 console.log("asset-dashboard-formatting tests passed")

@@ -1,10 +1,19 @@
-import type { AssetDashboardSummary } from "../../types/staff"
-import {
-  normalizeAssetDashboardUsageLocation,
-  resolveAssetDashboardDisplayNameShort,
-} from "./assetImportModeConfig.ts"
+import type {
+  AssetCategoryDetailRecord,
+  AssetCategoryPrefixInput,
+  AssetDashboardSummary,
+  AssetTrackingMode,
+} from "../../types/staff"
 
-export type AssetDashboardTabKey = "serialized" | "quantity"
+export type AssetDashboardTabKey = "serialized" | "quantity" | "categories"
+export type AssetCategoryDraft = {
+  id: number | null
+  categoryCode: string
+  categoryName: string
+  trackingMode: AssetTrackingMode
+  qrRequired: boolean
+  prefixes: AssetCategoryPrefixInput[]
+}
 
 type AssetDashboardSummaryCard = {
   key: keyof AssetDashboardSummary
@@ -43,13 +52,23 @@ export function getAssetDashboardDescription(): string {
 }
 
 export function getAssetDashboardTabLabel(tab: AssetDashboardTabKey): string {
-  return tab === "serialized" ? "Serialized" : "Quantity"
+  if (tab === "serialized") {
+    return "Serialized"
+  }
+  if (tab === "quantity") {
+    return "Quantity"
+  }
+  return "Categories"
 }
 
 export function getAssetDashboardEmptyStateLabel(tab: AssetDashboardTabKey): string {
-  return tab === "serialized"
-    ? "No serialized assets are available yet."
-    : "No quantity-tracked stock items are available yet."
+  if (tab === "serialized") {
+    return "No serialized assets are available yet."
+  }
+  if (tab === "quantity") {
+    return "No quantity-tracked stock items are available yet."
+  }
+  return "No asset categories are available yet."
 }
 
 export function formatAssetDashboardUsageLocationLabel(
@@ -119,4 +138,183 @@ export function parseAssetDashboardQuantityDraft(value: string): number | null {
 
   const parsed = Number(trimmed)
   return Number.isSafeInteger(parsed) ? parsed : null
+}
+
+export function buildEmptyAssetCategoryDraft(): AssetCategoryDraft {
+  return {
+    id: null,
+    categoryCode: "",
+    categoryName: "",
+    trackingMode: "serialized",
+    qrRequired: false,
+    prefixes: [
+      {
+        prefixValue: "",
+        isPrimary: true,
+      },
+    ],
+  }
+}
+
+export function buildAssetCategoryDraftFromDetail(
+  detail: AssetCategoryDetailRecord,
+): AssetCategoryDraft {
+  return {
+    id: detail.id,
+    categoryCode: detail.categoryCode,
+    categoryName: detail.categoryName,
+    trackingMode: detail.trackingMode,
+    qrRequired: detail.qrRequired,
+    prefixes:
+      detail.prefixes.length > 0
+        ? detail.prefixes.map((prefix) => ({
+            prefixValue: prefix.prefixValue,
+            isPrimary: prefix.isPrimary,
+          }))
+        : [
+            {
+              prefixValue: "",
+              isPrimary: true,
+            },
+          ],
+  }
+}
+
+function normalizeDraftPrefixValue(value: string): string {
+  return value.trim().toUpperCase()
+}
+
+export function validateAssetCategoryDraft(
+  draft: AssetCategoryDraft,
+  categoryDetails: AssetCategoryDetailRecord[],
+): string[] {
+  const errors: string[] = []
+  const normalizedCode = draft.categoryCode.trim()
+  const normalizedName = draft.categoryName.trim()
+  const activePrefixes = draft.prefixes
+    .map((prefix) => ({
+      prefixValue: normalizeDraftPrefixValue(prefix.prefixValue),
+      isPrimary: prefix.isPrimary,
+    }))
+    .filter((prefix) => prefix.prefixValue.length > 0)
+
+  if (!normalizedCode) {
+    errors.push("Category code is required.")
+  }
+  if (!normalizedName) {
+    errors.push("Category name is required.")
+  }
+
+  if (draft.prefixes.some((prefix) => prefix.prefixValue.trim().length === 0)) {
+    errors.push("Remove blank prefix rows or fill them before saving.")
+  }
+
+  const uniquePrefixes = new Set(activePrefixes.map((prefix) => prefix.prefixValue))
+  if (uniquePrefixes.size !== activePrefixes.length) {
+    errors.push("Prefix values must stay unique inside the same category.")
+  }
+
+  const primaryCount = activePrefixes.filter((prefix) => prefix.isPrimary).length
+  if (activePrefixes.length > 0 && primaryCount !== 1) {
+    errors.push("Select exactly one primary prefix.")
+  }
+
+  const conflictingPrefix = activePrefixes.find((draftPrefix) =>
+    categoryDetails.some(
+      (category) =>
+        category.id !== draft.id &&
+        category.isActive &&
+        category.prefixes.some(
+          (prefix) =>
+            prefix.isActive &&
+            prefix.prefixValue.toUpperCase() === draftPrefix.prefixValue,
+        ),
+    ),
+  )
+
+  if (conflictingPrefix) {
+    errors.push(`Prefix ${conflictingPrefix.prefixValue} is already active in another category.`)
+  }
+
+  return errors
+}
+
+type AssetDashboardUsageLocation = "office" | "home"
+
+function normalizeAssetDashboardUsageLocation(
+  value: string | null | undefined,
+): AssetDashboardUsageLocation | null {
+  const normalized = normalizeLookupKey(value ?? "")
+  if (!normalized) {
+    return null
+  }
+
+  if (
+    normalized === "office" ||
+    normalized === "onsite" ||
+    normalized === "taicty" ||
+    normalized === "taicongty" ||
+    normalized === "taicongtytai" ||
+    normalized === "taicongtycty"
+  ) {
+    return "office"
+  }
+
+  if (
+    normalized === "home" ||
+    normalized === "wfh" ||
+    normalized === "remote" ||
+    normalized === "tainha" ||
+    normalized === "tanha"
+  ) {
+    return "home"
+  }
+
+  return null
+}
+
+function resolveAssetDashboardDisplayNameShort(
+  assetCode: string,
+  displayNameShort: string | null | undefined,
+  displayName: string | null | undefined,
+): string {
+  const normalizedShort = normalizeDashboardText(displayNameShort)
+  if (normalizedShort) {
+    return normalizedShort
+  }
+
+  const derived = deriveDisplayNameShortFromAssetCode(assetCode)
+  if (derived) {
+    return derived
+  }
+
+  return normalizeDashboardText(displayName)
+}
+
+function normalizeLookupKey(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "")
+}
+
+function normalizeDashboardText(value: string | null | undefined): string {
+  const normalized = value?.trim().replace(/\s+/g, " ")
+  return normalized ?? ""
+}
+
+function deriveDisplayNameShortFromAssetCode(assetCode: string): string {
+  const normalized = assetCode.trim().toUpperCase()
+  if (!normalized) {
+    return ""
+  }
+
+  const monitorMatch = normalized.match(/^VNMON(\d+)$/)
+  if (monitorMatch) {
+    return `Mon${monitorMatch[1]}`
+  }
+
+  return ""
 }
