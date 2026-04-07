@@ -6,6 +6,8 @@ import type {
   BackupSettingsUpdateInput,
   BorrowLanSettings,
   BorrowLanSettingsUpdateInput,
+  AssetCategoryDetailRecord,
+  AssetCategoryUpsertInput,
   AssetCategoryRecord,
   AssetDashboardQuantityRecord,
   AssetDashboardSerializedRecord,
@@ -220,6 +222,42 @@ export const staffApi = {
     }),
 
   listAssetCategories: () => call<AssetCategoryRecord[]>("list_asset_categories"),
+
+  listAssetCategoryDetails: () =>
+    call<AssetCategoryDetailRecord[]>("list_asset_category_details"),
+
+  createAssetCategory: (payload: AssetCategoryUpsertInput) =>
+    call<AssetCategoryDetailRecord>("create_asset_category", {
+      payload: {
+        id: null,
+        categoryCode: payload.categoryCode,
+        categoryName: payload.categoryName,
+        trackingMode: payload.trackingMode,
+        qrRequired: payload.qrRequired,
+        prefixes: payload.prefixes.map((prefix) => ({
+          prefixValue: prefix.prefixValue,
+          isPrimary: prefix.isPrimary,
+        })),
+      },
+    }),
+
+  updateAssetCategory: (payload: AssetCategoryUpsertInput) =>
+    call<AssetCategoryDetailRecord>("update_asset_category", {
+      payload: {
+        id: payload.id ?? null,
+        categoryCode: payload.categoryCode,
+        categoryName: payload.categoryName,
+        trackingMode: payload.trackingMode,
+        qrRequired: payload.qrRequired,
+        prefixes: payload.prefixes.map((prefix) => ({
+          prefixValue: prefix.prefixValue,
+          isPrimary: prefix.isPrimary,
+        })),
+      },
+    }),
+
+  deactivateAssetCategory: (categoryId: number) =>
+    call<AssetCategoryDetailRecord>("deactivate_asset_category", { categoryId }),
 
   listPendingBorrowRequests: () =>
     call<BorrowRequestRecord[]>("list_pending_borrow_requests"),

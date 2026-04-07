@@ -369,6 +369,37 @@ fn list_asset_categories(app: tauri::AppHandle) -> Result<Vec<db::AssetCategoryR
 }
 
 #[tauri::command]
+fn list_asset_category_details(
+    app: tauri::AppHandle,
+) -> Result<Vec<db::AssetCategoryDetailRecord>, String> {
+    db::list_asset_category_details(&app)
+}
+
+#[tauri::command]
+fn create_asset_category(
+    app: tauri::AppHandle,
+    payload: db::AssetCategoryUpsertInput,
+) -> Result<db::AssetCategoryDetailRecord, String> {
+    db::create_asset_category(&app, payload)
+}
+
+#[tauri::command]
+fn update_asset_category(
+    app: tauri::AppHandle,
+    payload: db::AssetCategoryUpsertInput,
+) -> Result<db::AssetCategoryDetailRecord, String> {
+    db::update_asset_category(&app, payload)
+}
+
+#[tauri::command]
+fn deactivate_asset_category(
+    app: tauri::AppHandle,
+    category_id: i64,
+) -> Result<db::AssetCategoryDetailRecord, String> {
+    db::deactivate_asset_category(&app, category_id)
+}
+
+#[tauri::command]
 fn get_asset_dashboard_summary(
     app: tauri::AppHandle,
 ) -> Result<db::AssetDashboardSummary, String> {
@@ -473,6 +504,10 @@ pub fn run() {
             create_asset_manually,
             upsert_assets,
             list_asset_categories,
+            list_asset_category_details,
+            create_asset_category,
+            update_asset_category,
+            deactivate_asset_category,
             get_asset_dashboard_summary,
             list_asset_dashboard_serialized,
             list_asset_dashboard_quantity,

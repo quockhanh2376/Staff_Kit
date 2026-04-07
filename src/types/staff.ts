@@ -80,6 +80,40 @@ export type AssetCategoryRecord = {
   isActive: boolean
 }
 
+export type AssetCategoryPrefixRecord = {
+  id: number
+  prefixValue: string
+  isPrimary: boolean
+  isActive: boolean
+}
+
+export type AssetCategoryDetailRecord = {
+  id: number
+  categoryCode: string
+  categoryName: string
+  trackingMode: AssetTrackingMode
+  prefixCode: string | null
+  qrRequired: boolean
+  isActive: boolean
+  assetCount: number
+  stockItemCount: number
+  prefixes: AssetCategoryPrefixRecord[]
+}
+
+export type AssetCategoryPrefixInput = {
+  prefixValue: string
+  isPrimary: boolean
+}
+
+export type AssetCategoryUpsertInput = {
+  id?: number | null
+  categoryCode: string
+  categoryName: string
+  trackingMode: AssetTrackingMode
+  qrRequired: boolean
+  prefixes: AssetCategoryPrefixInput[]
+}
+
 export type AssetDashboardSummary = {
   totalSerializedAssets: number
   serializedInStock: number
