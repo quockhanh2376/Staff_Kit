@@ -57,12 +57,12 @@ export function formatAssetDashboardUsageLocationLabel(
 ): string {
   const normalized = normalizeAssetDashboardUsageLocation(usageLocation)
   if (normalized === "office") {
-    return "Tại CTY"
+    return "T\u1ea1i CTY"
   }
   if (normalized === "home") {
-    return "Tại Nhà"
+    return "T\u1ea1i Nh\u00e0"
   }
-  return "—"
+  return "\u2014"
 }
 
 export function formatAssetDashboardDisplayNameLines(
@@ -104,5 +104,19 @@ export function formatAssetDashboardHolderLabel(
   if (normalizedEmployeeId) {
     return normalizedEmployeeId
   }
-  return "—"
+  return "\u2014"
+}
+
+export function formatAssetDashboardStatusLabel(status: string): string {
+  return status.replaceAll("_", " ")
+}
+
+export function parseAssetDashboardQuantityDraft(value: string): number | null {
+  const trimmed = value.trim()
+  if (!/^\d+$/.test(trimmed)) {
+    return null
+  }
+
+  const parsed = Number(trimmed)
+  return Number.isSafeInteger(parsed) ? parsed : null
 }

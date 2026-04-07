@@ -13,10 +13,12 @@ import {
   buildAssetDashboardSummaryCards,
   formatAssetDashboardDisplayNameLines,
   formatAssetDashboardHolderLabel,
+  formatAssetDashboardStatusLabel,
   formatAssetDashboardUsageLocationLabel,
   getAssetDashboardDescription,
   getAssetDashboardEmptyStateLabel,
   getAssetDashboardTabLabel,
+  parseAssetDashboardQuantityDraft,
   type AssetDashboardTabKey,
 } from "./assetDashboardCopy"
 import { getAssetImportModeLabel } from "./assetImportModeConfig"
@@ -52,6 +54,14 @@ export function AssetDashboard({
     [assetDashboard.summary],
   )
 
+  const quantityRowsByStockItemId = useMemo(
+    () =>
+      new Map(
+        assetDashboard.quantityRows.map((row) => [row.stockItemId, row] as const),
+      ),
+    [assetDashboard.quantityRows],
+  )
+
   const quantityDrafts = useMemo(
     () =>
       Object.fromEntries(
@@ -71,21 +81,16 @@ export function AssetDashboard({
     fieldKey: "quantityOnHand" | "assignedQuantity",
     value: string,
   ) => {
+    const row = quantityRowsByStockItemId.get(stockItemId)
     setQuantityDraftOverrides((current) => ({
       ...current,
       [stockItemId]: {
         quantityOnHand:
           current[stockItemId]?.quantityOnHand ??
-          String(
-            assetDashboard.quantityRows.find((row) => row.stockItemId === stockItemId)
-              ?.quantityOnHand ?? 0,
-          ),
+          String(row?.quantityOnHand ?? 0),
         assignedQuantity:
           current[stockItemId]?.assignedQuantity ??
-          String(
-            assetDashboard.quantityRows.find((row) => row.stockItemId === stockItemId)
-              ?.assignedQuantity ?? 0,
-          ),
+          String(row?.assignedQuantity ?? 0),
         [fieldKey]: value,
       },
     }))
@@ -309,7 +314,7 @@ function SerializedDashboardTable({
                 </td>
                 <td className="px-3 py-3">
                   <span className="rounded-[999px] border border-[var(--border)] px-2 py-0.5 text-[11px] font-semibold capitalize text-[var(--text-primary)]">
-                    {row.status.replace("_", " ")}
+                    {formatAssetDashboardStatusLabel(row.status)}
                   </span>
                 </td>
                 <td className="px-3 py-3 text-[var(--text-secondary)]">
@@ -386,13 +391,11 @@ function QuantityDashboardTable({
                 quantityOnHand: String(row.quantityOnHand),
                 assignedQuantity: String(row.assignedQuantity),
               }
-              const parsedOnHand = Number(draft.quantityOnHand)
-              const parsedAssigned = Number(draft.assignedQuantity)
-              const hasValidDraft =
-                Number.isInteger(parsedOnHand) &&
-                Number.isInteger(parsedAssigned) &&
-                parsedOnHand >= 0 &&
-                parsedAssigned >= 0
+              const parsedOnHand = parseAssetDashboardQuantityDraft(draft.quantityOnHand)
+              const parsedAssigned = parseAssetDashboardQuantityDraft(
+                draft.assignedQuantity,
+              )
+              const hasValidDraft = parsedOnHand != null && parsedAssigned != null
               const isDirty =
                 draft.quantityOnHand !== String(row.quantityOnHand) ||
                 draft.assignedQuantity !== String(row.assignedQuantity)
@@ -409,6 +412,9 @@ function QuantityDashboardTable({
                     <input
                       className="form-input min-w-[110px] text-xs"
                       inputMode="numeric"
+                      min={0}
+                      step={1}
+                      type="number"
                       value={draft.quantityOnHand}
                       onChange={(event) =>
                         updateQuantityDraft(
@@ -424,6 +430,9 @@ function QuantityDashboardTable({
                     <input
                       className="form-input min-w-[110px] text-xs"
                       inputMode="numeric"
+                      min={0}
+                      step={1}
+                      type="number"
                       value={draft.assignedQuantity}
                       onChange={(event) =>
                         updateQuantityDraft(
@@ -440,6 +449,9 @@ function QuantityDashboardTable({
                     <button
                       className="rounded-[8px] border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)] disabled:opacity-50"
                       onClick={async () => {
+                        if (parsedOnHand == null || parsedAssigned == null) {
+                          return
+                        }
                         const updated = await assetDashboard.updateStockItemQuantity({
                           stockItemId: row.stockItemId,
                           quantityOnHand: parsedOnHand,
