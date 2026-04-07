@@ -369,6 +369,35 @@ fn list_asset_categories(app: tauri::AppHandle) -> Result<Vec<db::AssetCategoryR
 }
 
 #[tauri::command]
+fn get_asset_dashboard_summary(
+    app: tauri::AppHandle,
+) -> Result<db::AssetDashboardSummary, String> {
+    db::get_asset_dashboard_summary(&app)
+}
+
+#[tauri::command]
+fn list_asset_dashboard_serialized(
+    app: tauri::AppHandle,
+) -> Result<Vec<db::AssetDashboardSerializedRecord>, String> {
+    db::list_asset_dashboard_serialized(&app)
+}
+
+#[tauri::command]
+fn list_asset_dashboard_quantity(
+    app: tauri::AppHandle,
+) -> Result<Vec<db::AssetDashboardQuantityRecord>, String> {
+    db::list_asset_dashboard_quantity(&app)
+}
+
+#[tauri::command]
+fn update_stock_item_quantity(
+    app: tauri::AppHandle,
+    payload: db::StockItemQuantityUpdateInput,
+) -> Result<db::AssetDashboardQuantityRecord, String> {
+    db::update_stock_item_quantity(&app, payload)
+}
+
+#[tauri::command]
 fn list_pending_borrow_requests(
     app: tauri::AppHandle,
 ) -> Result<Vec<db::BorrowRequestRecord>, String> {
@@ -444,6 +473,10 @@ pub fn run() {
             create_asset_manually,
             upsert_assets,
             list_asset_categories,
+            get_asset_dashboard_summary,
+            list_asset_dashboard_serialized,
+            list_asset_dashboard_quantity,
+            update_stock_item_quantity,
             list_pending_borrow_requests,
             get_borrow_request_detail,
             approve_borrow_request,

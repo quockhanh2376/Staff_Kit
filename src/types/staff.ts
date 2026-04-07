@@ -44,12 +44,15 @@ export type BorrowLanSettingsUpdateInput = {
 
 export type AssetSeedItemInput = {
   assetCode: string
+  categoryId?: number | null
   assetType: string
   displayName: string
   displayNameShort?: string | null
+  brand?: string | null
   model?: string | null
   serialNumber?: string | null
   usageLocation?: string | null
+  warehouse?: string | null
   notes?: string | null
 }
 
@@ -75,6 +78,48 @@ export type AssetCategoryRecord = {
   prefixCode: string | null
   qrRequired: boolean
   isActive: boolean
+}
+
+export type AssetDashboardSummary = {
+  totalSerializedAssets: number
+  serializedInStock: number
+  serializedAssigned: number
+  totalQuantityOnHand: number
+  totalQuantityAssigned: number
+}
+
+export type AssetDashboardSerializedRecord = {
+  assetId: number
+  assetCode: string
+  categoryCode: string | null
+  categoryName: string | null
+  displayName: string
+  displayNameShort: string | null
+  model: string | null
+  serialNumber: string | null
+  usageLocation: string | null
+  status: string
+  holderEmployeeId: string | null
+  holderFullName: string | null
+}
+
+export type AssetDashboardQuantityRecord = {
+  stockItemId: number
+  categoryCode: string
+  categoryName: string
+  itemName: string
+  brand: string | null
+  model: string | null
+  warehouse: string | null
+  quantityOnHand: number
+  assignedQuantity: number
+  note: string | null
+}
+
+export type StockItemQuantityUpdateInput = {
+  stockItemId: number
+  quantityOnHand: number
+  assignedQuantity: number
 }
 
 export type AssetImportFieldMapping = {
