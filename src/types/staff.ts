@@ -46,8 +46,10 @@ export type AssetSeedItemInput = {
   assetCode: string
   assetType: string
   displayName: string
+  displayNameShort?: string | null
   model?: string | null
   serialNumber?: string | null
+  usageLocation?: string | null
   notes?: string | null
 }
 
@@ -79,9 +81,11 @@ export type AssetImportFieldMapping = {
   assetCode?: string | null
   assetType?: string | null
   displayName?: string | null
+  displayNameShort?: string | null
   brand?: string | null
   model?: string | null
   serialNumber?: string | null
+  usageLocation?: string | null
   quantity?: string | null
   warehouse?: string | null
   notes?: string | null
@@ -142,9 +146,11 @@ export type AssetImportRowRecord = {
   assetCode: string | null
   assetType: string | null
   displayName: string | null
+  displayNameShort?: string | null
   brand: string | null
   model: string | null
   serialNumber: string | null
+  usageLocation?: string | null
   quantity: string | null
   warehouse: string | null
   notes: string | null
@@ -178,9 +184,11 @@ export type AssetImportRowUpdateInput = {
     | "assetCode"
     | "assetType"
     | "displayName"
+    | "displayNameShort"
     | "brand"
     | "model"
     | "serialNumber"
+    | "usageLocation"
     | "quantity"
     | "warehouse"
     | "notes"

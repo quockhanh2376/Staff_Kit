@@ -6,12 +6,15 @@ import type {
 } from "../../types/staff"
 
 export type AssetImportWizardFieldKey =
+    | "assetCode"
     | "category"
     | "assetName"
     | "itemName"
     | "brand"
     | "model"
     | "serialNumber"
+    | "usageLocation"
+    | "displayNameShort"
     | "quantity"
     | "warehouse"
     | "note"
@@ -27,6 +30,7 @@ export type AssetImportWizardMapping = Partial<
 >
 
 const SERIALIZED_MAPPING_KEYS = [
+    "assetCode",
     "category",
     "assetName",
     "brand",
@@ -37,6 +41,7 @@ const SERIALIZED_MAPPING_KEYS = [
 ] as const satisfies readonly AssetImportWizardFieldKey[]
 
 const QUANTITY_MAPPING_KEYS = [
+    "assetCode",
     "itemName",
     "category",
     "brand",
@@ -58,6 +63,7 @@ const QUANTITY_REQUIRED_KEYS = [
 ] as const satisfies readonly AssetImportWizardFieldKey[]
 
 const EDITABLE_FIELD_KEYS = new Set<AssetImportWizardFieldKey>([
+    "assetCode",
     "category",
     "assetName",
     "itemName",
@@ -70,12 +76,15 @@ const EDITABLE_FIELD_KEYS = new Set<AssetImportWizardFieldKey>([
 ])
 
 const FIELD_LABELS: Record<AssetImportWizardFieldKey, string> = {
+    assetCode: "Asset Code",
     category: "Category",
     assetName: "Asset Name",
     itemName: "Item Name",
     brand: "Brand",
     model: "Model",
     serialNumber: "Serial Number",
+    usageLocation: "Usage Location",
+    displayNameShort: "Display Name Short",
     quantity: "Quantity",
     warehouse: "Warehouse",
     note: "Note",
@@ -101,16 +110,24 @@ const MODE_LABELS: Record<AssetImportMode, string> = {
 }
 
 const FIELD_ALIASES: Record<AssetImportWizardFieldKey, string[]> = {
+    assetCode: ["assetcode", "asset code", "asset_code", "asset-code", "assetid", "asset id"],
     category: ["category", "asset category", "asset_type", "asset type", "type", "loai tai san", "loaitaisan"],
     assetName: ["asset_name", "asset name", "display name", "display_name", "name", "assetname", "ten tai san", "tentaisan"],
     itemName: ["item_name", "item name", "name", "display name", "display_name", "asset name", "asset_name"],
     brand: ["brand", "maker", "vendor", "nhan hieu", "nhanhieu"],
     model: ["model", "model number", "model_number", "model no", "model_no"],
-    serialNumber: ["serial_number", "serial number", "serialnumber", "serial", "serial no", "serial_no", "sn"],
+    serialNumber: ["serial_number", "serial number", "serrial number", "serialnumber", "serial", "serial no", "serial_no", "sn"],
+    usageLocation: ["usage location", "usuage location", "usage_location", "usuage_location"],
+    displayNameShort: ["display name short", "display_name_short", "short name", "display short name"],
     quantity: ["quantity", "qty", "so luong", "soluong"],
     warehouse: ["warehouse", "location", "stock location", "kho"],
     note: ["note", "notes", "remark", "remarks", "ghi chu", "ghichu"],
 }
+
+const DASHBOARD_FIELD_KEYS = [
+    "usageLocation",
+    "displayNameShort",
+] as const satisfies readonly AssetImportWizardFieldKey[]
 
 export function getAssetImportModeLabel(mode: AssetImportMode): string {
     return MODE_LABELS[mode]
@@ -170,6 +187,18 @@ export function detectAssetImportWizardMapping(
         }
     }
 
+    for (const fieldKey of DASHBOARD_FIELD_KEYS) {
+        const matched = headers.find((header) => {
+            const normalizedHeader = normalizeHeader(header)
+            return FIELD_ALIASES[fieldKey].some(
+                (alias) => normalizeHeader(alias) === normalizedHeader,
+            )
+        })
+        if (matched) {
+            mapping[fieldKey] = matched
+        }
+    }
+
     return mapping
 }
 
@@ -200,6 +229,7 @@ export function convertBackendMappingToWizardMapping(
 ): AssetImportWizardMapping {
     if (mode === "quantity") {
         return {
+            assetCode: mapping.assetCode ?? null,
             itemName: mapping.displayName ?? null,
             category: mapping.assetType ?? null,
             brand: mapping.brand ?? null,
@@ -207,15 +237,20 @@ export function convertBackendMappingToWizardMapping(
             quantity: mapping.quantity ?? null,
             warehouse: mapping.warehouse ?? null,
             note: mapping.notes ?? null,
+            usageLocation: mapping.usageLocation ?? null,
+            displayNameShort: mapping.displayNameShort ?? null,
         }
     }
 
     return {
+        assetCode: mapping.assetCode ?? null,
         category: mapping.assetType ?? null,
         assetName: mapping.displayName ?? null,
         brand: mapping.brand ?? null,
         model: mapping.model ?? null,
         serialNumber: mapping.serialNumber ?? null,
+        usageLocation: mapping.usageLocation ?? null,
+        displayNameShort: mapping.displayNameShort ?? null,
         warehouse: mapping.warehouse ?? null,
         note: mapping.notes ?? null,
     }
@@ -230,6 +265,7 @@ export function toBackendAssetImportMapping(
 
     if (mode === "quantity") {
         return {
+            assetCode: mapping.assetCode ?? null,
             assetType: mapping.category ?? null,
             displayName: mapping.itemName ?? null,
             brand: mapping.brand ?? null,
@@ -237,15 +273,20 @@ export function toBackendAssetImportMapping(
             quantity: mapping.quantity ?? null,
             warehouse: mapping.warehouse ?? null,
             notes: mapping.note ?? null,
+            usageLocation: mapping.usageLocation ?? null,
+            displayNameShort: mapping.displayNameShort ?? null,
         }
     }
 
     return {
+        assetCode: mapping.assetCode ?? null,
         assetType: mapping.category ?? null,
         displayName: mapping.assetName ?? null,
         brand: mapping.brand ?? null,
         model: mapping.model ?? null,
         serialNumber: mapping.serialNumber ?? null,
+        usageLocation: mapping.usageLocation ?? null,
+        displayNameShort: mapping.displayNameShort ?? null,
         warehouse: mapping.warehouse ?? null,
         notes: mapping.note ?? null,
     }
@@ -279,6 +320,8 @@ export function getAssetImportRowFieldValue(
     mapping: AssetImportWizardMapping,
 ): string {
     switch (fieldKey) {
+        case "assetCode":
+            return row.assetCode ?? findRawValue(row.rawValues, mapping.assetCode)
         case "category":
             return row.assetType ?? findRawValue(row.rawValues, mapping.category)
         case "assetName":
@@ -290,6 +333,18 @@ export function getAssetImportRowFieldValue(
             return row.model ?? ""
         case "serialNumber":
             return row.serialNumber ?? ""
+        case "usageLocation":
+            return (
+                normalizeAssetDashboardUsageLocation(
+                    row.usageLocation ?? findRawValue(row.rawValues, mapping.usageLocation),
+                ) ?? ""
+            )
+        case "displayNameShort":
+            return resolveAssetDashboardDisplayNameShort(
+                row.assetCode ?? "",
+                row.displayNameShort,
+                row.displayName,
+            )
         case "quantity":
             return row.quantity ?? findRawValue(row.rawValues, mapping.quantity)
         case "warehouse":
@@ -346,6 +401,7 @@ export function formatDerivedComputerNames(assetCodes: readonly string[]): strin
 export function toBackendRowFieldKey(
     fieldKey: AssetImportWizardFieldKey | AssetImportOwnerFieldKey,
 ):
+    | "assetCode"
     | "assetType"
     | "displayName"
     | "brand"
@@ -360,6 +416,8 @@ export function toBackendRowFieldKey(
     | "submittedPhoneNumber"
     | null {
     switch (fieldKey) {
+        case "assetCode":
+            return "assetCode"
         case "category":
             return "assetType"
         case "assetName":
@@ -385,9 +443,63 @@ export function toBackendRowFieldKey(
             return "submittedTeam"
         case "submittedPhoneNumber":
             return "submittedPhoneNumber"
+        case "displayNameShort":
+            return null
         default:
             return null
     }
+}
+
+export type AssetDashboardUsageLocation = "office" | "home"
+
+export function normalizeAssetDashboardUsageLocation(
+    value: string | null | undefined,
+): AssetDashboardUsageLocation | null {
+    const normalized = normalizeLookupKey(value ?? "")
+    if (!normalized) {
+        return null
+    }
+
+    if (
+        normalized === "office" ||
+        normalized === "onsite" ||
+        normalized === "taicty" ||
+        normalized === "taicongty" ||
+        normalized === "taicongtytai" ||
+        normalized === "taicongtycty"
+    ) {
+        return "office"
+    }
+
+    if (
+        normalized === "home" ||
+        normalized === "wfh" ||
+        normalized === "remote" ||
+        normalized === "tainha" ||
+        normalized === "tanha"
+    ) {
+        return "home"
+    }
+
+    return null
+}
+
+export function resolveAssetDashboardDisplayNameShort(
+    assetCode: string,
+    displayNameShort: string | null | undefined,
+    displayName: string | null | undefined,
+): string {
+    const normalizedShort = normalizeDashboardText(displayNameShort)
+    if (normalizedShort) {
+        return normalizedShort
+    }
+
+    const derived = deriveDisplayNameShortFromAssetCode(assetCode)
+    if (derived) {
+        return derived
+    }
+
+    return normalizeDashboardText(displayName)
 }
 
 function findRawValue(
@@ -432,4 +544,23 @@ function normalizeLookupKey(value: string): string {
         .trim()
         .toLowerCase()
         .replace(/[^a-z0-9]/g, "")
+}
+
+function normalizeDashboardText(value: string | null | undefined): string {
+    const normalized = value?.trim().replace(/\s+/g, " ")
+    return normalized ?? ""
+}
+
+function deriveDisplayNameShortFromAssetCode(assetCode: string): string {
+    const normalized = assetCode.trim().toUpperCase()
+    if (!normalized) {
+        return ""
+    }
+
+    const monitorMatch = normalized.match(/^VNMON(\d+)$/)
+    if (monitorMatch) {
+        return `Mon${monitorMatch[1]}`
+    }
+
+    return ""
 }

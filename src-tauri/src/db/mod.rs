@@ -520,9 +520,11 @@ fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
         .map_err(|err| format!("failed to collect asset_import_rows columns: {err}"))?;
 
     for (column_name, column_type) in [
+        ("display_name_short", "TEXT"),
         ("brand", "TEXT"),
         ("quantity", "TEXT"),
         ("warehouse", "TEXT"),
+        ("usage_location", "TEXT"),
         ("submitted_staff_id", "TEXT"),
         ("submitted_full_name", "TEXT"),
         ("submitted_team", "TEXT"),
@@ -1158,6 +1160,46 @@ mod tests {
               created_at TEXT NOT NULL DEFAULT (datetime('now')),
               updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
+
+            CREATE TABLE asset_import_batches (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              batch_key TEXT NOT NULL UNIQUE,
+              source_file_name TEXT NOT NULL,
+              source_file_path TEXT NOT NULL,
+              source_file_type TEXT NOT NULL,
+              sheet_name TEXT,
+              header_row INTEGER NOT NULL DEFAULT 1,
+              headers_json TEXT NOT NULL,
+              mapping_json TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'pending_review',
+              total_rows INTEGER NOT NULL DEFAULT 0,
+              valid_rows INTEGER NOT NULL DEFAULT 0,
+              error_rows INTEGER NOT NULL DEFAULT 0,
+              imported_rows INTEGER NOT NULL DEFAULT 0,
+              skipped_rows INTEGER NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL DEFAULT (datetime('now')),
+              updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE asset_import_rows (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              batch_id INTEGER NOT NULL REFERENCES asset_import_batches(id) ON DELETE CASCADE,
+              row_number INTEGER NOT NULL,
+              raw_row_json TEXT NOT NULL,
+              asset_code TEXT,
+              asset_type TEXT,
+              display_name TEXT,
+              model TEXT,
+              serial_number TEXT,
+              notes TEXT,
+              validation_errors_json TEXT NOT NULL DEFAULT '[]',
+              status TEXT NOT NULL DEFAULT 'valid',
+              edited INTEGER NOT NULL DEFAULT 0,
+              edited_fields_json TEXT NOT NULL DEFAULT '[]',
+              created_at TEXT NOT NULL DEFAULT (datetime('now')),
+              updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+              UNIQUE(batch_id, row_number)
+            );
             "#,
         )
         .expect("create legacy asset tables");
@@ -1171,6 +1213,18 @@ mod tests {
         assert!(
             column_exists(&conn, "assets", "usage_location"),
             "expected assets.usage_location to be added for legacy databases"
+        );
+        assert!(
+            column_exists(&conn, "asset_import_batches", "import_type"),
+            "expected asset_import_batches.import_type to be added for legacy databases"
+        );
+        assert!(
+            column_exists(&conn, "asset_import_rows", "display_name_short"),
+            "expected asset_import_rows.display_name_short to be added for legacy databases"
+        );
+        assert!(
+            column_exists(&conn, "asset_import_rows", "usage_location"),
+            "expected asset_import_rows.usage_location to be added for legacy databases"
         );
         assert!(
             table_exists(&conn, "asset_category_prefixes"),

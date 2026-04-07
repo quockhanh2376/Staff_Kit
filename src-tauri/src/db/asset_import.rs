@@ -88,6 +88,12 @@ const SERIAL_NUMBER_ALIASES: &[&str] = &[
 const BRAND_ALIASES: &[&str] = &["brand", "maker", "vendor", "nhanhieu", "nhanhieu"];
 const QUANTITY_ALIASES: &[&str] = &["quantity", "qty", "soluong", "solg"];
 const WAREHOUSE_ALIASES: &[&str] = &["warehouse", "location", "stocklocation", "kho"];
+const USAGE_LOCATION_ALIASES: &[&str] = &[
+    "usagelocation",
+    "usuagelocation",
+    "usageplace",
+    "workinglocation",
+];
 const NOTES_ALIASES: &[&str] = &["notes", "note", "remark", "remarks", "ghichu"];
 const OWNER_STAFF_ID_ALIASES: &[&str] = &["staffid", "eeid", "employeeid", "mãnhânviên", "manhanvien"];
 const OWNER_FULL_NAME_ALIASES: &[&str] = &["tênnhânviên", "tennhanvien", "vietnamesename", "fullname", "hoten", "họtên"];
@@ -107,6 +113,7 @@ pub struct AssetImportFieldMapping {
     pub asset_code: Option<String>,
     pub asset_type: Option<String>,
     pub display_name: Option<String>,
+    pub usage_location: Option<String>,
     pub brand: Option<String>,
     pub model: Option<String>,
     pub serial_number: Option<String>,
@@ -165,11 +172,13 @@ pub struct AssetImportRowSeedInput {
     pub asset_code: Option<String>,
     pub asset_type: Option<String>,
     pub display_name: Option<String>,
+    pub display_name_short: Option<String>,
     pub brand: Option<String>,
     pub model: Option<String>,
     pub serial_number: Option<String>,
     pub quantity: Option<String>,
     pub warehouse: Option<String>,
+    pub usage_location: Option<String>,
     pub notes: Option<String>,
     pub submitted_staff_id: Option<String>,
     pub submitted_full_name: Option<String>,
@@ -208,11 +217,13 @@ pub struct AssetImportRowRecord {
     pub asset_code: Option<String>,
     pub asset_type: Option<String>,
     pub display_name: Option<String>,
+    pub display_name_short: Option<String>,
     pub brand: Option<String>,
     pub model: Option<String>,
     pub serial_number: Option<String>,
     pub quantity: Option<String>,
     pub warehouse: Option<String>,
+    pub usage_location: Option<String>,
     pub notes: Option<String>,
     pub submitted_staff_id: Option<String>,
     pub submitted_full_name: Option<String>,
@@ -273,6 +284,7 @@ struct AssetImportResolvedMapping {
     asset_code_index: Option<usize>,
     asset_type_index: usize,
     display_name_index: usize,
+    usage_location_index: Option<usize>,
     brand_index: Option<usize>,
     model_index: Option<usize>,
     serial_number_index: Option<usize>,
@@ -306,7 +318,6 @@ struct AssetImportRowState {
     submitted_staff_id: Option<String>,
     submitted_full_name: Option<String>,
     submitted_team: Option<String>,
-    submitted_phone_number: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -518,11 +529,13 @@ pub(crate) fn create_asset_import_batch_seed_conn(
               asset_code,
               asset_type,
               display_name,
+              display_name_short,
               brand,
               model,
               serial_number,
               quantity,
               warehouse,
+              usage_location,
               notes,
               submitted_staff_id,
               submitted_full_name,
@@ -541,7 +554,7 @@ pub(crate) fn create_asset_import_batch_seed_conn(
               created_at,
               updated_at
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, '[]', '[]', ?, 0, '[]', datetime('now'), datetime('now'))
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, '[]', '[]', ?, 0, '[]', datetime('now'), datetime('now'))
             "#,
             params![
                 batch_id,
@@ -550,11 +563,13 @@ pub(crate) fn create_asset_import_batch_seed_conn(
                 normalize_asset_code(row.asset_code),
                 normalize_optional_asset_text(row.asset_type),
                 normalize_optional_asset_text(row.display_name),
+                normalize_optional_asset_text(row.display_name_short),
                 normalize_optional_asset_text(row.brand),
                 normalize_optional_asset_text(row.model),
                 normalize_optional_asset_text(row.serial_number),
                 normalize_optional_quantity_text(row.quantity),
                 normalize_optional_asset_text(row.warehouse),
+                normalize_usage_location(row.usage_location),
                 normalize_optional_asset_text(row.notes),
                 normalize_optional_asset_text(row.submitted_staff_id),
                 normalize_optional_asset_text(row.submitted_full_name),
@@ -714,6 +729,7 @@ pub(crate) fn update_asset_import_row_conn(
     let normalized_value = match field_key.as_str() {
         "assetCode" => normalize_asset_code(payload.value),
         "submittedStaffId" => normalize_submitted_staff_id(payload.value),
+        "usageLocation" => normalize_usage_location(payload.value),
         "quantity" => normalize_optional_quantity_text(payload.value),
         _ => normalize_optional_asset_text(payload.value),
     };
@@ -722,11 +738,13 @@ pub(crate) fn update_asset_import_row_conn(
         "assetCode" => "asset_code",
         "assetType" => "asset_type",
         "displayName" => "display_name",
+        "displayNameShort" => "display_name_short",
         "brand" => "brand",
         "model" => "model",
         "serialNumber" => "serial_number",
         "quantity" => "quantity",
         "warehouse" => "warehouse",
+        "usageLocation" => "usage_location",
         "notes" => "notes",
         "submittedStaffId" => "submitted_staff_id",
         "submittedFullName" => "submitted_full_name",
@@ -969,8 +987,12 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
               asset_code,
               asset_type,
               display_name,
+              display_name_short,
+              brand,
               model,
               serial_number,
+              warehouse,
+              usage_location,
               notes,
               submitted_staff_id,
               submitted_full_name,
@@ -1001,8 +1023,12 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
                 row.get::<_, Option<String>>(9)?,
                 row.get::<_, Option<String>>(10)?,
                 row.get::<_, Option<String>>(11)?,
-                row.get::<_, Option<i64>>(12)?,
+                row.get::<_, Option<String>>(12)?,
                 row.get::<_, Option<String>>(13)?,
+                row.get::<_, Option<String>>(14)?,
+                row.get::<_, Option<String>>(15)?,
+                row.get::<_, Option<i64>>(16)?,
+                row.get::<_, Option<String>>(17)?,
             ))
         })
         .map_err(|err| format!("failed to query valid asset import rows: {err}"))?
@@ -1013,14 +1039,12 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
 
     if rows
         .iter()
-        .any(|(row_id, asset_code, _, _, _, _, _, _, _, _, _, _, _, _)| {
+        .any(|(row_id, asset_code, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _)| {
             let _ = row_id;
             asset_code.as_deref().is_none()
         })
     {
-        return Err(
-            "Serialized asset code generation lands in the next slice. Review can proceed, but import stays blocked until codes are assigned.".to_string(),
-        );
+        return Err("serialized asset rows require assetCode before import".to_string());
     }
 
     for (
@@ -1028,38 +1052,57 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
         asset_code,
         asset_type,
         display_name,
+        display_name_short,
+        brand,
         model,
         serial_number,
+        warehouse,
+        usage_location,
         notes,
         submitted_staff_id,
         submitted_full_name,
-        submitted_team,
-        submitted_phone_number,
+        _submitted_team,
+        _submitted_phone_number,
         resolved_employee_id,
         resolved_employee_row_id,
         resolved_full_name,
     ) in rows
     {
+        let category_value = asset_type
+            .clone()
+            .ok_or_else(|| format!("row {row_id} is missing assetType"))?;
+        let category = asset::load_asset_category_by_code_or_name_tx(&tx, category_value.as_str())?
+            .ok_or_else(|| format!("asset category '{category_value}' was not found"))?;
+
+        if category.tracking_mode != AssetImportMode::Serialized.as_str() {
+            return Err(format!(
+                "asset category '{}' is not configured for serialized assets",
+                category_value
+            ));
+        }
+
         let record = asset::create_asset_tx(
             &tx,
             &AssetUpsertInput {
                 asset_code: asset_code.unwrap_or_default(),
                 asset_type: asset_type.unwrap_or_default(),
                 display_name: display_name.unwrap_or_default(),
+                display_name_short,
+                brand,
                 model,
                 serial_number,
+                category_id: Some(category.id),
+                usage_location,
+                warehouse,
                 notes,
             },
         )?;
 
-        let requires_owner_resolution = submitted_staff_id.is_some()
-            || submitted_full_name.is_some()
-            || submitted_team.is_some()
-            || submitted_phone_number.is_some();
+        let requires_owner_resolution = submitted_staff_id.is_some();
 
         if requires_owner_resolution {
             let employee_row_id = resolved_employee_row_id.ok_or_else(|| {
-                format!("row {row_id} cannot import assigned laptop without a resolved employee")
+                format!("row {row_id} cannot import assigned asset without a resolved employee")
             })?;
             let employee_id = resolved_employee_id
                 .as_deref()
@@ -1494,13 +1537,23 @@ fn build_row_seed_from_raw_values(
     row_number: i64,
     mapping: &AssetImportResolvedMapping,
 ) -> AssetImportRowSeedInput {
+    let asset_code = mapping
+        .asset_code_index
+        .and_then(|index| mapped_value(&raw_values, index));
+    let asset_type = mapped_value(&raw_values, mapping.asset_type_index);
+    let display_name = mapped_value(&raw_values, mapping.display_name_index);
+    let display_name_short = derive_display_name_short(
+        asset_type.as_deref(),
+        display_name.as_deref(),
+        asset_code.as_deref(),
+    );
+
     AssetImportRowSeedInput {
         row_number,
-        asset_code: mapping
-            .asset_code_index
-            .and_then(|index| mapped_value(&raw_values, index)),
-        asset_type: mapped_value(&raw_values, mapping.asset_type_index),
-        display_name: mapped_value(&raw_values, mapping.display_name_index),
+        asset_code,
+        asset_type,
+        display_name,
+        display_name_short,
         brand: mapping
             .brand_index
             .and_then(|index| mapped_value(&raw_values, index)),
@@ -1516,6 +1569,9 @@ fn build_row_seed_from_raw_values(
         warehouse: mapping
             .warehouse_index
             .and_then(|index| mapped_value(&raw_values, index)),
+        usage_location: mapping
+            .usage_location_index
+            .and_then(|index| mapped_usage_location_value(&raw_values, index)),
         notes: mapping
             .notes_index
             .and_then(|index| mapped_value(&raw_values, index)),
@@ -1555,6 +1611,13 @@ fn mapped_quantity_value(raw_values: &[AssetImportRawValue], index: usize) -> Op
         .and_then(|value| normalize_optional_quantity_text(Some(value)))
 }
 
+fn mapped_usage_location_value(raw_values: &[AssetImportRawValue], index: usize) -> Option<String> {
+    raw_values
+        .get(index)
+        .map(|item| item.value.clone())
+        .and_then(|value| normalize_usage_location(Some(value)))
+}
+
 fn resolve_mapping(
     headers: &[String],
     import_type: AssetImportMode,
@@ -1584,6 +1647,10 @@ fn resolve_mapping(
                 &header_indices,
                 merged.display_name.as_deref(),
             )?,
+            usage_location_index: resolve_optional_header_index(
+                &header_indices,
+                merged.usage_location.as_deref(),
+            ),
             brand_index: resolve_optional_header_index(&header_indices, merged.brand.as_deref()),
             model_index: resolve_optional_header_index(&header_indices, merged.model.as_deref()),
             serial_number_index: resolve_optional_header_index(
@@ -1647,6 +1714,12 @@ fn detect_field_mapping(headers: &[String]) -> AssetImportFieldMapping {
             mapping.display_name = Some(header.clone());
             continue;
         }
+        if mapping.usage_location.is_none()
+            && USAGE_LOCATION_ALIASES.contains(&normalized.as_str())
+        {
+            mapping.usage_location = Some(header.clone());
+            continue;
+        }
         if mapping.brand.is_none() && BRAND_ALIASES.contains(&normalized.as_str()) {
             mapping.brand = Some(header.clone());
             continue;
@@ -1684,6 +1757,8 @@ fn merge_field_mapping(
         asset_type: normalized_mapping_choice(override_mapping.asset_type).or(detected.asset_type),
         display_name: normalized_mapping_choice(override_mapping.display_name)
             .or(detected.display_name),
+        usage_location: normalized_mapping_choice(override_mapping.usage_location)
+            .or(detected.usage_location),
         brand: normalized_mapping_choice(override_mapping.brand).or(detected.brand),
         model: normalized_mapping_choice(override_mapping.model).or(detected.model),
         serial_number: normalized_mapping_choice(override_mapping.serial_number)
@@ -1731,6 +1806,7 @@ fn mapping_score(mapping: &AssetImportFieldMapping) -> i64 {
     .count() as i64;
     let optional_matches = [
         mapping.asset_code.as_ref(),
+        mapping.usage_location.as_ref(),
         mapping.brand.as_ref(),
         mapping.model.as_ref(),
         mapping.serial_number.as_ref(),
@@ -1798,11 +1874,13 @@ fn normalize_import_field_key(value: &str) -> Result<String, String> {
         "assetCode"
         | "assetType"
         | "displayName"
+        | "displayNameShort"
         | "brand"
         | "model"
         | "serialNumber"
         | "quantity"
         | "warehouse"
+        | "usageLocation"
         | "notes"
         | "submittedStaffId"
         | "submittedFullName"
@@ -2043,9 +2121,6 @@ fn load_employee_owner_lookup_tx(
 
 fn row_requires_owner_resolution(row: &AssetImportRowState) -> bool {
     row.submitted_staff_id.is_some()
-        || row.submitted_full_name.is_some()
-        || row.submitted_team.is_some()
-        || row.submitted_phone_number.is_some()
 }
 
 fn resolve_owner_state(
@@ -2288,8 +2363,7 @@ fn load_batch_row_states_tx(
               r.quantity,
               r.submitted_staff_id,
               r.submitted_full_name,
-              r.submitted_team,
-              r.submitted_phone_number
+              r.submitted_team
             FROM asset_import_rows r
             INNER JOIN asset_import_batches b ON b.id = r.batch_id
             WHERE r.batch_id = ?
@@ -2310,7 +2384,6 @@ fn load_batch_row_states_tx(
                 submitted_staff_id: row.get(7)?,
                 submitted_full_name: row.get(8)?,
                 submitted_team: row.get(9)?,
-                submitted_phone_number: row.get(10)?,
             })
         })
         .map_err(|err| format!("failed to query staged asset rows: {err}"))?;
@@ -2460,8 +2533,8 @@ fn load_asset_import_rows_for_batch(
         .prepare(
             r#"
             SELECT
-              id, batch_id, row_number, raw_row_json, asset_code, asset_type, display_name, brand, model,
-              serial_number, quantity, warehouse, notes,
+              id, batch_id, row_number, raw_row_json, asset_code, asset_type, display_name, display_name_short,
+              brand, model, serial_number, quantity, warehouse, usage_location, notes,
               submitted_staff_id, submitted_full_name, submitted_team, submitted_phone_number,
               resolved_employee_id, resolved_employee_row_id, resolved_full_name, resolved_team_name,
               owner_match_status, owner_warnings_json,
@@ -2490,8 +2563,8 @@ fn load_asset_import_row_record_conn(
     conn.query_row(
         r#"
         SELECT
-          id, batch_id, row_number, raw_row_json, asset_code, asset_type, display_name, brand, model,
-          serial_number, quantity, warehouse, notes,
+          id, batch_id, row_number, raw_row_json, asset_code, asset_type, display_name, display_name_short,
+          brand, model, serial_number, quantity, warehouse, usage_location, notes,
           submitted_staff_id, submitted_full_name, submitted_team, submitted_phone_number,
           resolved_employee_id, resolved_employee_row_id, resolved_full_name, resolved_team_name,
           owner_match_status, owner_warnings_json,
@@ -2516,28 +2589,74 @@ fn map_asset_import_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AssetImport
         asset_code: row.get(4)?,
         asset_type: row.get(5)?,
         display_name: row.get(6)?,
-        brand: row.get(7)?,
-        model: row.get(8)?,
-        serial_number: row.get(9)?,
-        quantity: row.get(10)?,
-        warehouse: row.get(11)?,
-        notes: row.get(12)?,
-        submitted_staff_id: row.get(13)?,
-        submitted_full_name: row.get(14)?,
-        submitted_team: row.get(15)?,
-        submitted_phone_number: row.get(16)?,
-        resolved_employee_id: row.get(17)?,
-        resolved_employee_row_id: row.get(18)?,
-        resolved_full_name: row.get(19)?,
-        resolved_team_name: row.get(20)?,
-        owner_match_status: row.get(21)?,
-        owner_warnings: from_json_row(Some(row.get(22)?))?,
-        validation_errors: from_json_row(Some(row.get(23)?))?,
-        status: row.get(24)?,
-        is_edited: row.get::<_, i64>(25)? > 0,
-        edited_fields: from_json_row(Some(row.get(26)?))?,
-        imported_asset_id: row.get(27)?,
+        display_name_short: row.get(7)?,
+        brand: row.get(8)?,
+        model: row.get(9)?,
+        serial_number: row.get(10)?,
+        quantity: row.get(11)?,
+        warehouse: row.get(12)?,
+        usage_location: row.get(13)?,
+        notes: row.get(14)?,
+        submitted_staff_id: row.get(15)?,
+        submitted_full_name: row.get(16)?,
+        submitted_team: row.get(17)?,
+        submitted_phone_number: row.get(18)?,
+        resolved_employee_id: row.get(19)?,
+        resolved_employee_row_id: row.get(20)?,
+        resolved_full_name: row.get(21)?,
+        resolved_team_name: row.get(22)?,
+        owner_match_status: row.get(23)?,
+        owner_warnings: from_json_row(Some(row.get(24)?))?,
+        validation_errors: from_json_row(Some(row.get(25)?))?,
+        status: row.get(26)?,
+        is_edited: row.get::<_, i64>(27)? > 0,
+        edited_fields: from_json_row(Some(row.get(28)?))?,
+        imported_asset_id: row.get(29)?,
     })
+}
+
+fn normalize_usage_location(value: Option<String>) -> Option<String> {
+    let normalized = normalize_optional_text(value)?;
+    let uppercase = normalized.to_uppercase();
+    if uppercase.contains("TẠI CTY")
+        || uppercase.contains("TAI CTY")
+        || uppercase.contains("CÔNG TY")
+        || uppercase.contains("CONG TY")
+        || uppercase.contains("OFFICE")
+    {
+        return Some("office".to_string());
+    }
+    if uppercase.contains("TẠI NHÀ")
+        || uppercase.contains("TAI NHA")
+        || uppercase.contains(" NHÀ")
+        || uppercase.contains("HOME")
+    {
+        return Some("home".to_string());
+    }
+    None
+}
+
+fn derive_display_name_short(
+    asset_type: Option<&str>,
+    display_name: Option<&str>,
+    asset_code: Option<&str>,
+) -> Option<String> {
+    let normalized_type = asset_type.map(normalize_compare_text).unwrap_or_default();
+    if normalized_type != "monitor" {
+        return None;
+    }
+
+    if let Some(display_name) = normalize_optional_asset_text(display_name.map(str::to_string)) {
+        return Some(display_name);
+    }
+
+    let asset_code = normalize_asset_code(asset_code.map(str::to_string))?;
+    let suffix = asset_code.trim_start_matches("VNMON");
+    if suffix.is_empty() {
+        extract_numeric_suffix(asset_code.as_str()).map(|digits| format!("Mon{digits}"))
+    } else {
+        Some(format!("Mon{suffix}"))
+    }
 }
 
 fn load_asset_import_row_meta_tx(
@@ -2600,7 +2719,8 @@ mod tests {
 
     use super::{
         create_asset_import_batch_seed_conn, import_asset_import_batch_valid_rows_conn,
-        load_asset_import_batch_detail_conn, update_asset_import_row_conn,
+        load_asset_import_batch_detail_conn, parse_asset_import_source,
+        update_asset_import_row_conn,
         AssetImportBatchSeedInput, AssetImportFieldMapping, AssetImportMode,
         AssetImportRawValue, AssetImportRowSeedInput, AssetImportRowUpdateInput,
     };
@@ -2620,6 +2740,20 @@ mod tests {
         std::env::temp_dir().join(format!("staff-kit-{test_name}-{unique}.sqlite3"))
     }
 
+    fn temp_csv_path(test_name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("staff-kit-{test_name}-{unique}.csv"))
+    }
+
+    fn write_temp_csv(test_name: &str, rows: &[&str]) -> PathBuf {
+        let path = temp_csv_path(test_name);
+        fs::write(&path, rows.join("\n")).expect("write temp csv");
+        path
+    }
+
     fn seed_asset(conn: &Connection, asset_code: &str) {
         conn.execute(
             r#"
@@ -2636,6 +2770,7 @@ mod tests {
             asset_code: Some("Asset Code".to_string()),
             asset_type: Some("Asset Type".to_string()),
             display_name: Some("Display Name".to_string()),
+            usage_location: None,
             brand: Some("Brand".to_string()),
             model: Some("Model".to_string()),
             serial_number: Some("Serial Number".to_string()),
@@ -2704,11 +2839,13 @@ mod tests {
             asset_code: Some(asset_code.to_string()),
             asset_type: Some(asset_type.to_string()),
             display_name: Some(display_name.to_string()),
+            display_name_short: None,
             brand: Some("Dell".to_string()),
             model: Some("7440".to_string()),
             serial_number: Some(format!("SN-{row_number:03}")),
             quantity: None,
             warehouse: Some("HCM".to_string()),
+            usage_location: None,
             notes: Some("Initial import".to_string()),
             submitted_staff_id: None,
             submitted_full_name: None,
@@ -2757,11 +2894,13 @@ mod tests {
             asset_code: None,
             asset_type: Some(asset_type.to_string()),
             display_name: Some(display_name.to_string()),
+            display_name_short: None,
             brand: Some("Dell".to_string()),
             model: Some("7440".to_string()),
             serial_number: Some(format!("SN-{row_number:03}")),
             quantity: None,
             warehouse: Some("HCM".to_string()),
+            usage_location: None,
             notes: Some("Initial import".to_string()),
             submitted_staff_id: None,
             submitted_full_name: None,
@@ -2807,11 +2946,13 @@ mod tests {
             asset_code: None,
             asset_type: Some(asset_type.to_string()),
             display_name: Some(display_name.to_string()),
+            display_name_short: None,
             brand: Some("Logitech".to_string()),
             model: None,
             serial_number: None,
             quantity: Some(quantity.to_string()),
             warehouse: Some("HCM".to_string()),
+            usage_location: None,
             notes: Some("Initial import".to_string()),
             submitted_staff_id: None,
             submitted_full_name: None,
@@ -2875,6 +3016,64 @@ mod tests {
         conn.last_insert_rowid()
     }
 
+    fn monitor_owner_row(
+        row_number: i64,
+        submitted_staff_id: &str,
+        submitted_full_name: &str,
+        asset_code: &str,
+        usage_location: Option<&str>,
+        display_name: &str,
+    ) -> AssetImportRowSeedInput {
+        AssetImportRowSeedInput {
+            row_number,
+            raw_values: vec![
+                AssetImportRawValue {
+                    header: "StaffID".to_string(),
+                    value: submitted_staff_id.to_string(),
+                },
+                AssetImportRawValue {
+                    header: "TÃªn NhÃ¢n ViÃªn".to_string(),
+                    value: submitted_full_name.to_string(),
+                },
+                AssetImportRawValue {
+                    header: "Asset code".to_string(),
+                    value: asset_code.to_string(),
+                },
+                AssetImportRawValue {
+                    header: "Category".to_string(),
+                    value: "Monitor".to_string(),
+                },
+                AssetImportRawValue {
+                    header: "Usuage Location".to_string(),
+                    value: usage_location.unwrap_or_default().to_string(),
+                },
+                AssetImportRawValue {
+                    header: "Asset Name".to_string(),
+                    value: display_name.to_string(),
+                },
+                AssetImportRawValue {
+                    header: "Model".to_string(),
+                    value: "LG 27".to_string(),
+                },
+            ],
+            asset_code: Some(asset_code.to_string()),
+            asset_type: Some("Monitor".to_string()),
+            display_name: Some(display_name.to_string()),
+            display_name_short: Some(display_name.to_string()),
+            brand: Some("LG".to_string()),
+            model: Some("LG 27".to_string()),
+            serial_number: None,
+            quantity: None,
+            warehouse: None,
+            usage_location: usage_location.map(str::to_string),
+            notes: Some("Monitor import".to_string()),
+            submitted_staff_id: Some(submitted_staff_id.to_string()),
+            submitted_full_name: Some(submitted_full_name.to_string()),
+            submitted_team: None,
+            submitted_phone_number: None,
+        }
+    }
+
     fn owner_row(
         row_number: i64,
         submitted_staff_id: &str,
@@ -2925,17 +3124,113 @@ mod tests {
             asset_code: Some(asset_code.to_string()),
             asset_type: Some("Laptop".to_string()),
             display_name: Some(format!("ASW{asset_code}")),
+            display_name_short: None,
             brand: Some("Dell".to_string()),
             model: Some("Dell Latitude 7440".to_string()),
             serial_number: Some(format!("SN-{row_number:03}")),
             quantity: None,
             warehouse: Some("HCM".to_string()),
+            usage_location: None,
             notes: Some("Issued laptop".to_string()),
             submitted_staff_id: Some(submitted_staff_id.to_string()),
             submitted_full_name: Some(submitted_full_name.to_string()),
             submitted_team: Some(submitted_team.to_string()),
             submitted_phone_number: Some("0900000000".to_string()),
         }
+    }
+
+    #[test]
+    fn parse_csv_source_preserves_asset_list_owner_snapshot_and_raw_adapter_column() {
+        let csv_path = write_temp_csv(
+            "asset-list-serialized",
+            &[
+                "StaffID,Tên Nhân Viên,Team,Phone Number,Assetcode,Category,Computer Name,Asset Name,Model,Serrial Number,Adapter number,Note",
+                "ASW1302,Lư Thế Hùng,ExamWorks,0909154452,VNLAP235,Laptop,ASWVNLAP235,ASWVNLAP235,Dell Latitude 3520,7900LG3,7900LG3,",
+                ",,,,VNLAP502,Laptop,ASWVNLAP502,ASWVNLAP502,Lenovo E16,,,",
+            ],
+        );
+
+        let parsed = parse_asset_import_source(
+            csv_path.as_path(),
+            AssetImportMode::Serialized,
+            None,
+            None,
+        )
+        .expect("parse asset list style csv");
+
+        assert_eq!(parsed.auto_mapping.asset_code.as_deref(), Some("Assetcode"));
+        assert_eq!(
+            parsed.auto_mapping.serial_number.as_deref(),
+            Some("Serrial Number")
+        );
+        assert_eq!(parsed.rows.len(), 2);
+        assert_eq!(parsed.rows[0].submitted_staff_id.as_deref(), Some("ASW1302"));
+        assert_eq!(parsed.rows[1].submitted_staff_id, None);
+        assert_eq!(parsed.rows[0].asset_code.as_deref(), Some("VNLAP235"));
+        assert!(
+            parsed.rows[0]
+                .raw_values
+                .iter()
+                .any(|item| item.header == "Adapter number" && item.value == "7900LG3")
+        );
+
+        let _ = fs::remove_file(csv_path);
+    }
+
+    #[test]
+    fn parse_csv_source_normalizes_monitor_usage_location_and_short_name() {
+        let csv_path = write_temp_csv(
+            "monitor-serialized",
+            &[
+                "StaffID,Tên Nhân Viên,Team,Phone Number,Asset code,Category,Usuage Location,Asset Name,Model,Serrial Number,Adapter number,Note",
+                "ASWVN1134,TRẦN GIA THÀNH,,,VNMON709,Monitor,Tại CTY (Vui Lòng Bảo Quản Cẩn Thận), Mon709 ,LG 27,,,",
+            ],
+        );
+
+        let parsed = parse_asset_import_source(
+            csv_path.as_path(),
+            AssetImportMode::Serialized,
+            None,
+            None,
+        )
+        .expect("parse monitor style csv");
+
+        assert_eq!(
+            parsed.auto_mapping.usage_location.as_deref(),
+            Some("Usuage Location")
+        );
+        assert_eq!(parsed.rows[0].usage_location.as_deref(), Some("office"));
+        assert_eq!(parsed.rows[0].display_name.as_deref(), Some("Mon709"));
+        assert_eq!(parsed.rows[0].display_name_short.as_deref(), Some("Mon709"));
+
+        let _ = fs::remove_file(csv_path);
+    }
+
+    #[test]
+    fn parse_csv_source_stages_quantity_rows_from_quantity_header_with_trailing_space() {
+        let csv_path = write_temp_csv(
+            "mouse-key-quantity",
+            &[
+                "Assetcode,Category,Asset Name,Model,Quantity ,Note",
+                "VNMouse,Mouse,Mouse Logi,Logitech G102,50,",
+            ],
+        );
+
+        let parsed =
+            parse_asset_import_source(csv_path.as_path(), AssetImportMode::Quantity, None, None)
+                .expect("parse quantity style csv");
+
+        assert_eq!(parsed.auto_mapping.asset_code.as_deref(), Some("Assetcode"));
+        assert_eq!(parsed.auto_mapping.quantity.as_deref(), Some("Quantity"));
+        assert_eq!(parsed.rows[0].quantity.as_deref(), Some("50"));
+        assert!(
+            parsed.rows[0]
+                .raw_values
+                .iter()
+                .any(|item| item.header == "Quantity" && item.value == "50")
+        );
+
+        let _ = fs::remove_file(csv_path);
     }
 
     #[test]
@@ -3216,7 +3511,7 @@ mod tests {
         let error = import_asset_import_batch_valid_rows_conn(&mut conn, batch.summary.id)
             .expect_err("serialized batch import should stay blocked until codes exist");
 
-        assert!(error.contains("Serialized asset code generation lands in the next slice"));
+        assert!(error.contains("serialized asset rows require assetCode before import"));
     }
 
     #[test]
@@ -3407,6 +3702,73 @@ mod tests {
     }
 
     #[test]
+    fn import_valid_rows_creates_active_loan_for_resolved_monitor_owner_rows_and_persists_dashboard_metadata() {
+        let mut conn = open_test_connection();
+        let employee_row_id = seed_employee(
+            &conn,
+            "ASWVN1134",
+            "Tran Gia Thanh",
+            "Examworks",
+            "internal_movement",
+        );
+
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            sample_batch(
+                AssetImportMode::Serialized,
+                vec![monitor_owner_row(
+                    2,
+                    "ASWVN1134",
+                    "Tran Gia Thanh",
+                    "VNMON709",
+                    Some("office"),
+                    "Mon709",
+                )],
+            ),
+        )
+        .expect("create resolved monitor owner batch");
+
+        let result = import_asset_import_batch_valid_rows_conn(&mut conn, batch.summary.id)
+            .expect("import resolved monitor owner row");
+
+        assert_eq!(result.imported_count, 1);
+
+        let asset_row = conn
+            .query_row(
+                r#"
+                SELECT a.status, a.display_name_short, a.usage_location, c.category_code, a.id
+                FROM assets a
+                LEFT JOIN asset_categories c ON c.id = a.category_id
+                WHERE a.asset_code = 'VNMON709'
+                "#,
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, i64>(4)?,
+                    ))
+                },
+            )
+            .expect("load imported monitor asset");
+        assert_eq!(asset_row.0, "assigned");
+        assert_eq!(asset_row.1.as_deref(), Some("Mon709"));
+        assert_eq!(asset_row.2.as_deref(), Some("office"));
+        assert_eq!(asset_row.3.as_deref(), Some("monitor"));
+
+        let active_loan = conn
+            .query_row(
+                "SELECT employee_id_fk FROM asset_loans WHERE asset_id = ? AND returned_at IS NULL",
+                params![asset_row.4],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("load active monitor loan");
+        assert_eq!(active_loan, employee_row_id);
+    }
+
+    #[test]
     fn import_valid_rows_keeps_available_rows_in_stock_when_owner_data_is_absent() {
         let mut conn = open_test_connection();
 
@@ -3433,11 +3795,13 @@ mod tests {
                     asset_code: Some("VNLAP600".to_string()),
                     asset_type: Some("Laptop".to_string()),
                     display_name: Some("ASWVNLAP600".to_string()),
+                    display_name_short: None,
                     brand: Some("Dell".to_string()),
                     model: Some("Latitude 5440".to_string()),
                     serial_number: None,
                     quantity: None,
                     warehouse: Some("HCM".to_string()),
+                    usage_location: None,
                     notes: Some("Warehouse import".to_string()),
                     submitted_staff_id: None,
                     submitted_full_name: None,
