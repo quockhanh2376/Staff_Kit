@@ -1077,4 +1077,98 @@ mod tests {
             "expected idx_assets_category_id to exist after migration"
         );
     }
+
+    #[test]
+    fn apply_migrations_backfills_legacy_category_prefixes_and_dashboard_asset_columns() {
+        let conn = Connection::open_in_memory().expect("open in-memory sqlite database");
+        configure_connection(&conn).expect("configure sqlite pragmas");
+
+        conn.execute_batch(
+            r#"
+            CREATE TABLE asset_categories (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              category_code TEXT NOT NULL UNIQUE,
+              category_name TEXT NOT NULL,
+              tracking_mode TEXT NOT NULL,
+              prefix_code TEXT,
+              qr_required INTEGER NOT NULL DEFAULT 0,
+              is_active INTEGER NOT NULL DEFAULT 1,
+              created_at TEXT NOT NULL DEFAULT (datetime('now')),
+              updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            INSERT INTO asset_categories(
+              category_code,
+              category_name,
+              tracking_mode,
+              prefix_code,
+              qr_required,
+              is_active,
+              created_at,
+              updated_at
+            )
+            VALUES(
+              'tablet',
+              'Tablet',
+              'serialized',
+              'ASWTABLET',
+              0,
+              1,
+              datetime('now'),
+              datetime('now')
+            );
+
+            CREATE TABLE assets (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              asset_code TEXT NOT NULL UNIQUE,
+              category_id INTEGER REFERENCES asset_categories(id) ON UPDATE CASCADE ON DELETE SET NULL,
+              asset_type TEXT NOT NULL,
+              display_name TEXT NOT NULL,
+              model TEXT,
+              serial_number TEXT,
+              notes TEXT,
+              status TEXT NOT NULL DEFAULT 'in_stock',
+              created_at TEXT NOT NULL DEFAULT (datetime('now')),
+              updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            "#,
+        )
+        .expect("create legacy asset tables");
+
+        apply_migrations(&conn).expect("apply migrations to legacy asset schema");
+
+        assert!(
+            column_exists(&conn, "assets", "display_name_short"),
+            "expected assets.display_name_short to be added for legacy databases"
+        );
+        assert!(
+            column_exists(&conn, "assets", "usage_location"),
+            "expected assets.usage_location to be added for legacy databases"
+        );
+        assert!(
+            table_exists(&conn, "asset_category_prefixes"),
+            "expected asset_category_prefixes table to exist after migration"
+        );
+        assert!(
+            index_exists(&conn, "idx_asset_category_prefixes_active_value_unique"),
+            "expected active prefix uniqueness index to exist after migration"
+        );
+
+        let tablet_prefix = conn
+            .query_row(
+                r#"
+                SELECT p.prefix_value
+                FROM asset_category_prefixes p
+                INNER JOIN asset_categories c ON c.id = p.category_id
+                WHERE c.category_code = 'tablet'
+                  AND p.is_active = 1
+                LIMIT 1
+                "#,
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("load migrated tablet prefix");
+
+        assert_eq!(tablet_prefix, "ASWTABLET");
+    }
 }
