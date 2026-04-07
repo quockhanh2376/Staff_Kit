@@ -4,10 +4,6 @@ import type {
   AssetDashboardSummary,
   AssetTrackingMode,
 } from "../../types/staff"
-import {
-  normalizeAssetDashboardUsageLocation,
-  resolveAssetDashboardDisplayNameShort,
-} from "./assetImportModeConfig.ts"
 
 export type AssetDashboardTabKey = "serialized" | "quantity" | "categories"
 export type AssetCategoryDraft = {
@@ -241,4 +237,84 @@ export function validateAssetCategoryDraft(
   }
 
   return errors
+}
+
+type AssetDashboardUsageLocation = "office" | "home"
+
+function normalizeAssetDashboardUsageLocation(
+  value: string | null | undefined,
+): AssetDashboardUsageLocation | null {
+  const normalized = normalizeLookupKey(value ?? "")
+  if (!normalized) {
+    return null
+  }
+
+  if (
+    normalized === "office" ||
+    normalized === "onsite" ||
+    normalized === "taicty" ||
+    normalized === "taicongty" ||
+    normalized === "taicongtytai" ||
+    normalized === "taicongtycty"
+  ) {
+    return "office"
+  }
+
+  if (
+    normalized === "home" ||
+    normalized === "wfh" ||
+    normalized === "remote" ||
+    normalized === "tainha" ||
+    normalized === "tanha"
+  ) {
+    return "home"
+  }
+
+  return null
+}
+
+function resolveAssetDashboardDisplayNameShort(
+  assetCode: string,
+  displayNameShort: string | null | undefined,
+  displayName: string | null | undefined,
+): string {
+  const normalizedShort = normalizeDashboardText(displayNameShort)
+  if (normalizedShort) {
+    return normalizedShort
+  }
+
+  const derived = deriveDisplayNameShortFromAssetCode(assetCode)
+  if (derived) {
+    return derived
+  }
+
+  return normalizeDashboardText(displayName)
+}
+
+function normalizeLookupKey(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "")
+}
+
+function normalizeDashboardText(value: string | null | undefined): string {
+  const normalized = value?.trim().replace(/\s+/g, " ")
+  return normalized ?? ""
+}
+
+function deriveDisplayNameShortFromAssetCode(assetCode: string): string {
+  const normalized = assetCode.trim().toUpperCase()
+  if (!normalized) {
+    return ""
+  }
+
+  const monitorMatch = normalized.match(/^VNMON(\d+)$/)
+  if (monitorMatch) {
+    return `Mon${monitorMatch[1]}`
+  }
+
+  return ""
 }

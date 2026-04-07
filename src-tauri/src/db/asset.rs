@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
@@ -974,6 +974,65 @@ fn load_asset_category_prefix_records_conn(
     Ok(prefixes)
 }
 
+fn load_asset_category_prefix_records_by_category_ids_conn(
+    conn: &Connection,
+    category_ids: &[i64],
+) -> Result<HashMap<i64, Vec<AssetCategoryPrefixRecord>>, String> {
+    if category_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let placeholders = vec!["?"; category_ids.len()].join(", ");
+    let sql = format!(
+        r#"
+        SELECT
+          category_id,
+          id,
+          prefix_value,
+          is_primary,
+          is_active
+        FROM asset_category_prefixes
+        WHERE is_active = 1
+          AND category_id IN ({placeholders})
+        ORDER BY
+          category_id ASC,
+          is_primary DESC,
+          prefix_value COLLATE NOCASE ASC,
+          id ASC
+        "#
+    );
+
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|err| format!("failed to prepare batched asset category prefix detail query: {err}"))?;
+
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(category_ids.iter()), |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                AssetCategoryPrefixRecord {
+                    id: row.get(1)?,
+                    prefix_value: row.get(2)?,
+                    is_primary: row.get::<_, i64>(3)? > 0,
+                    is_active: row.get::<_, i64>(4)? > 0,
+                },
+            ))
+        })
+        .map_err(|err| format!("failed to query batched asset category prefixes: {err}"))?;
+
+    let mut prefixes_by_category_id: HashMap<i64, Vec<AssetCategoryPrefixRecord>> = HashMap::new();
+    for row in rows {
+        let (category_id, prefix) =
+            row.map_err(|err| format!("failed to read batched asset category prefix row: {err}"))?;
+        prefixes_by_category_id
+            .entry(category_id)
+            .or_default()
+            .push(prefix);
+    }
+
+    Ok(prefixes_by_category_id)
+}
+
 fn load_asset_category_detail_by_id_conn(
     conn: &Connection,
     category_id: i64,
@@ -1024,8 +1083,18 @@ pub(crate) fn list_asset_category_details_conn(
     let mut stmt = conn
         .prepare(
             r#"
-            SELECT id
+            SELECT
+              c.id,
+              c.category_code,
+              c.category_name,
+              c.tracking_mode,
+              c.prefix_code,
+              c.qr_required,
+              c.is_active,
+              COALESCE((SELECT COUNT(*) FROM assets a WHERE a.category_id = c.id), 0),
+              COALESCE((SELECT COUNT(*) FROM stock_items si WHERE si.category_id = c.id), 0)
             FROM asset_categories
+            c
             ORDER BY
               is_active DESC,
               CASE tracking_mode WHEN 'serialized' THEN 0 ELSE 1 END,
@@ -1036,13 +1105,35 @@ pub(crate) fn list_asset_category_details_conn(
         .map_err(|err| format!("failed to prepare asset category detail list query: {err}"))?;
 
     let rows = stmt
-        .query_map([], |row| row.get::<_, i64>(0))
-        .map_err(|err| format!("failed to query asset category detail ids: {err}"))?;
+        .query_map([], |row| {
+            Ok(AssetCategoryDetailRecord {
+                id: row.get(0)?,
+                category_code: row.get(1)?,
+                category_name: row.get(2)?,
+                tracking_mode: row.get(3)?,
+                prefix_code: row.get(4)?,
+                qr_required: row.get::<_, i64>(5)? > 0,
+                is_active: row.get::<_, i64>(6)? > 0,
+                asset_count: row.get(7)?,
+                stock_item_count: row.get(8)?,
+                prefixes: Vec::new(),
+            })
+        })
+        .map_err(|err| format!("failed to query asset category details: {err}"))?;
 
     let mut details = Vec::new();
+    let mut category_ids = Vec::new();
     for row in rows {
-        let category_id = row.map_err(|err| format!("failed to read asset category detail id: {err}"))?;
-        details.push(load_asset_category_detail_by_id_conn(conn, category_id)?);
+        let detail =
+            row.map_err(|err| format!("failed to read asset category detail row: {err}"))?;
+        category_ids.push(detail.id);
+        details.push(detail);
+    }
+
+    let mut prefixes_by_category_id =
+        load_asset_category_prefix_records_by_category_ids_conn(conn, &category_ids)?;
+    for detail in &mut details {
+        detail.prefixes = prefixes_by_category_id.remove(&detail.id).unwrap_or_default();
     }
 
     Ok(details)
@@ -2112,6 +2203,55 @@ mod tests {
                 ("VNDOCK".to_string(), true),
                 ("DOCK".to_string(), false),
             ]
+        );
+    }
+
+    #[test]
+    fn list_asset_category_details_returns_prefixes_for_all_categories() {
+        let conn = open_test_connection();
+
+        upsert_asset_category_conn(
+            &conn,
+            AssetCategoryUpsertInput {
+                id: None,
+                category_code: "dock".to_string(),
+                category_name: "Dock Station".to_string(),
+                tracking_mode: "serialized".to_string(),
+                qr_required: false,
+                prefixes: vec![
+                    AssetCategoryPrefixInput {
+                        prefix_value: "VNDOCK".to_string(),
+                        is_primary: true,
+                    },
+                    AssetCategoryPrefixInput {
+                        prefix_value: "DOCK".to_string(),
+                        is_primary: false,
+                    },
+                ],
+            },
+        )
+        .expect("create dock category");
+
+        let details = list_asset_category_details_conn(&conn).expect("list category details");
+        let dock = details
+            .iter()
+            .find(|detail| detail.category_code == "dock")
+            .expect("dock detail should be present");
+        let laptop = details
+            .iter()
+            .find(|detail| detail.category_code == "laptop")
+            .expect("laptop detail should be present");
+
+        assert_eq!(
+            dock.prefixes
+                .iter()
+                .map(|prefix| prefix.prefix_value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["VNDOCK", "DOCK"]
+        );
+        assert!(
+            !laptop.prefixes.is_empty(),
+            "expected seeded laptop category to keep its prefixes"
         );
     }
 
