@@ -217,15 +217,27 @@ CREATE TABLE IF NOT EXISTS asset_categories (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS asset_category_prefixes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  category_id INTEGER NOT NULL REFERENCES asset_categories(id) ON UPDATE CASCADE ON DELETE CASCADE,
+  prefix_value TEXT NOT NULL,
+  is_primary INTEGER NOT NULL DEFAULT 0,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS assets (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   asset_code TEXT NOT NULL UNIQUE,
   category_id INTEGER REFERENCES asset_categories(id) ON UPDATE CASCADE ON DELETE SET NULL,
   asset_type TEXT NOT NULL,
   display_name TEXT NOT NULL,
+  display_name_short TEXT,
   brand TEXT,
   model TEXT,
   serial_number TEXT,
+  usage_location TEXT,
   warehouse TEXT,
   notes TEXT,
   status TEXT NOT NULL DEFAULT 'in_stock',
@@ -276,11 +288,13 @@ CREATE TABLE IF NOT EXISTS asset_import_rows (
   asset_code TEXT,
   asset_type TEXT,
   display_name TEXT,
+  display_name_short TEXT,
   brand TEXT,
   model TEXT,
   serial_number TEXT,
   quantity TEXT,
   warehouse TEXT,
+  usage_location TEXT,
   notes TEXT,
   submitted_staff_id TEXT,
   submitted_full_name TEXT,
@@ -357,6 +371,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_local_accounts_display_name_unique
   ON app_local_accounts(display_name COLLATE NOCASE);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_categories_code_unique
   ON asset_categories(category_code COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_asset_category_prefixes_category_id
+  ON asset_category_prefixes(category_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_category_prefixes_active_value_unique
+  ON asset_category_prefixes(prefix_value COLLATE NOCASE)
+  WHERE is_active = 1;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_category_prefixes_one_active_primary_per_category
+  ON asset_category_prefixes(category_id)
+  WHERE is_active = 1 AND is_primary = 1;
 CREATE INDEX IF NOT EXISTS idx_assets_status ON assets(status);
 CREATE INDEX IF NOT EXISTS idx_stock_items_category_id ON stock_items(category_id);
 CREATE INDEX IF NOT EXISTS idx_asset_import_batches_status_created_at

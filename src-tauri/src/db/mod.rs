@@ -413,6 +413,16 @@ fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
           updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
+        CREATE TABLE IF NOT EXISTS asset_category_prefixes (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          category_id INTEGER NOT NULL REFERENCES asset_categories(id) ON UPDATE CASCADE ON DELETE CASCADE,
+          prefix_value TEXT NOT NULL,
+          is_primary INTEGER NOT NULL DEFAULT 0,
+          is_active INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
         CREATE TABLE IF NOT EXISTS stock_items (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           category_id INTEGER NOT NULL REFERENCES asset_categories(id) ON UPDATE CASCADE ON DELETE RESTRICT,
@@ -429,6 +439,14 @@ fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
 
         CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_categories_code_unique
           ON asset_categories(category_code COLLATE NOCASE);
+        CREATE INDEX IF NOT EXISTS idx_asset_category_prefixes_category_id
+          ON asset_category_prefixes(category_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_category_prefixes_active_value_unique
+          ON asset_category_prefixes(prefix_value COLLATE NOCASE)
+          WHERE is_active = 1;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_category_prefixes_one_active_primary_per_category
+          ON asset_category_prefixes(category_id)
+          WHERE is_active = 1 AND is_primary = 1;
         CREATE INDEX IF NOT EXISTS idx_stock_items_category_id ON stock_items(category_id);
         "#,
     )
@@ -448,8 +466,10 @@ fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
             "category_id",
             "INTEGER REFERENCES asset_categories(id) ON UPDATE CASCADE ON DELETE SET NULL",
         ),
+        ("display_name_short", "TEXT"),
         ("brand", "TEXT"),
         ("warehouse", "TEXT"),
+        ("usage_location", "TEXT"),
     ] {
         if existing.iter().any(|name| name == column_name) {
             continue;
@@ -500,9 +520,11 @@ fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
         .map_err(|err| format!("failed to collect asset_import_rows columns: {err}"))?;
 
     for (column_name, column_type) in [
+        ("display_name_short", "TEXT"),
         ("brand", "TEXT"),
         ("quantity", "TEXT"),
         ("warehouse", "TEXT"),
+        ("usage_location", "TEXT"),
         ("submitted_staff_id", "TEXT"),
         ("submitted_full_name", "TEXT"),
         ("submitted_team", "TEXT"),
@@ -529,8 +551,8 @@ fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
     }
 
     for (category_code, category_name, tracking_mode, prefix_code, qr_required) in [
-        ("laptop", "Laptop", "serialized", Some("ASWVNLAP"), 1_i64),
-        ("monitor", "Monitor", "serialized", Some("ASWVNMON"), 1_i64),
+        ("laptop", "Laptop", "serialized", Some("VNLAP"), 1_i64),
+        ("monitor", "Monitor", "serialized", Some("VNMON"), 1_i64),
         ("mouse", "Mouse", "quantity", None, 0_i64),
         ("keyboard", "Keyboard", "quantity", None, 0_i64),
         ("headset", "Headset", "quantity", None, 0_i64),
@@ -568,7 +590,92 @@ fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
         .map_err(|err| format!("failed to seed asset category '{category_code}': {err}"))?;
     }
 
+    ensure_seeded_asset_category_prefixes(conn)?;
+
     Ok(())
+}
+
+fn ensure_seeded_asset_category_prefixes(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch("SAVEPOINT ensure_seeded_asset_category_prefixes;")
+        .map_err(|err| format!("failed to open asset category prefix savepoint: {err}"))?;
+
+    let result = (|| {
+        let mut category_stmt = conn
+            .prepare(
+                r#"
+                SELECT id, category_code, prefix_code
+                FROM asset_categories
+                WHERE prefix_code IS NOT NULL
+                  AND trim(prefix_code) <> ''
+                "#,
+            )
+            .map_err(|err| format!("failed to prepare asset category prefix backfill query: {err}"))?;
+
+        let seeded_rows = category_stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|err| format!("failed to read asset category prefix backfill rows: {err}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|err| format!("failed to collect asset category prefix backfill rows: {err}"))?;
+
+        for (category_id, _category_code, prefix_code) in seeded_rows {
+            asset::upsert_asset_category_prefix_conn(
+                conn,
+                category_id,
+                prefix_code.as_str(),
+                true,
+                true,
+            )?;
+        }
+
+        for (category_code, active_prefixes) in [
+            ("laptop", &["VNLAP", "VNIMACPRO", "VNMACAIR", "VNMACPRO"][..]),
+            ("monitor", &["VNMON"][..]),
+        ] {
+            let category_id = conn
+                .query_row(
+                    "SELECT id FROM asset_categories WHERE category_code = ? COLLATE NOCASE LIMIT 1",
+                    params![category_code],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(|err| format!("failed to load seeded category '{category_code}' for prefixes: {err}"))?;
+
+            conn.execute(
+                "UPDATE asset_category_prefixes SET is_primary = 0, is_active = 0, updated_at = datetime('now') WHERE category_id = ?",
+                params![category_id],
+            )
+            .map_err(|err| format!("failed to reset prefixes for category '{category_code}': {err}"))?;
+
+            for (index, prefix_value) in active_prefixes.iter().enumerate() {
+                asset::upsert_asset_category_prefix_conn(
+                    conn,
+                    category_id,
+                    prefix_value,
+                    index == 0,
+                    true,
+                )?;
+            }
+        }
+
+        Ok(())
+    })();
+
+    match result {
+        Ok(()) => conn
+            .execute_batch("RELEASE SAVEPOINT ensure_seeded_asset_category_prefixes;")
+            .map_err(|err| format!("failed to release asset category prefix savepoint: {err}")),
+        Err(err) => {
+            let _ = conn.execute_batch(
+                "ROLLBACK TO SAVEPOINT ensure_seeded_asset_category_prefixes; RELEASE SAVEPOINT ensure_seeded_asset_category_prefixes;",
+            );
+            Err(err)
+        }
+    }
 }
 
 fn ensure_borrow_request_columns(conn: &Connection) -> Result<(), String> {
@@ -940,6 +1047,7 @@ mod tests {
 
         for table_name in [
             "asset_categories",
+            "asset_category_prefixes",
             "assets",
             "stock_items",
             "asset_import_batches",
@@ -996,6 +1104,291 @@ mod tests {
         assert!(
             index_exists(&conn, "idx_assets_category_id"),
             "expected idx_assets_category_id to exist after migration"
+        );
+    }
+
+    #[test]
+    fn apply_migrations_backfills_legacy_category_prefixes_and_dashboard_asset_columns() {
+        let conn = Connection::open_in_memory().expect("open in-memory sqlite database");
+        configure_connection(&conn).expect("configure sqlite pragmas");
+
+        conn.execute_batch(
+            r#"
+            CREATE TABLE asset_categories (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              category_code TEXT NOT NULL UNIQUE,
+              category_name TEXT NOT NULL,
+              tracking_mode TEXT NOT NULL,
+              prefix_code TEXT,
+              qr_required INTEGER NOT NULL DEFAULT 0,
+              is_active INTEGER NOT NULL DEFAULT 1,
+              created_at TEXT NOT NULL DEFAULT (datetime('now')),
+              updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            INSERT INTO asset_categories(
+              category_code,
+              category_name,
+              tracking_mode,
+              prefix_code,
+              qr_required,
+              is_active,
+              created_at,
+              updated_at
+            )
+            VALUES(
+              'tablet',
+              'Tablet',
+              'serialized',
+              'ASWTABLET',
+              0,
+              1,
+              datetime('now'),
+              datetime('now')
+            );
+
+            CREATE TABLE assets (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              asset_code TEXT NOT NULL UNIQUE,
+              category_id INTEGER REFERENCES asset_categories(id) ON UPDATE CASCADE ON DELETE SET NULL,
+              asset_type TEXT NOT NULL,
+              display_name TEXT NOT NULL,
+              model TEXT,
+              serial_number TEXT,
+              notes TEXT,
+              status TEXT NOT NULL DEFAULT 'in_stock',
+              created_at TEXT NOT NULL DEFAULT (datetime('now')),
+              updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE asset_import_batches (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              batch_key TEXT NOT NULL UNIQUE,
+              source_file_name TEXT NOT NULL,
+              source_file_path TEXT NOT NULL,
+              source_file_type TEXT NOT NULL,
+              sheet_name TEXT,
+              header_row INTEGER NOT NULL DEFAULT 1,
+              headers_json TEXT NOT NULL,
+              mapping_json TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'pending_review',
+              total_rows INTEGER NOT NULL DEFAULT 0,
+              valid_rows INTEGER NOT NULL DEFAULT 0,
+              error_rows INTEGER NOT NULL DEFAULT 0,
+              imported_rows INTEGER NOT NULL DEFAULT 0,
+              skipped_rows INTEGER NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL DEFAULT (datetime('now')),
+              updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE asset_import_rows (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              batch_id INTEGER NOT NULL REFERENCES asset_import_batches(id) ON DELETE CASCADE,
+              row_number INTEGER NOT NULL,
+              raw_row_json TEXT NOT NULL,
+              asset_code TEXT,
+              asset_type TEXT,
+              display_name TEXT,
+              model TEXT,
+              serial_number TEXT,
+              notes TEXT,
+              validation_errors_json TEXT NOT NULL DEFAULT '[]',
+              status TEXT NOT NULL DEFAULT 'valid',
+              edited INTEGER NOT NULL DEFAULT 0,
+              edited_fields_json TEXT NOT NULL DEFAULT '[]',
+              created_at TEXT NOT NULL DEFAULT (datetime('now')),
+              updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+              UNIQUE(batch_id, row_number)
+            );
+            "#,
+        )
+        .expect("create legacy asset tables");
+
+        apply_migrations(&conn).expect("apply migrations to legacy asset schema");
+
+        assert!(
+            column_exists(&conn, "assets", "display_name_short"),
+            "expected assets.display_name_short to be added for legacy databases"
+        );
+        assert!(
+            column_exists(&conn, "assets", "usage_location"),
+            "expected assets.usage_location to be added for legacy databases"
+        );
+        assert!(
+            column_exists(&conn, "asset_import_batches", "import_type"),
+            "expected asset_import_batches.import_type to be added for legacy databases"
+        );
+        assert!(
+            column_exists(&conn, "asset_import_rows", "display_name_short"),
+            "expected asset_import_rows.display_name_short to be added for legacy databases"
+        );
+        assert!(
+            column_exists(&conn, "asset_import_rows", "usage_location"),
+            "expected asset_import_rows.usage_location to be added for legacy databases"
+        );
+        assert!(
+            table_exists(&conn, "asset_category_prefixes"),
+            "expected asset_category_prefixes table to exist after migration"
+        );
+        assert!(
+            index_exists(&conn, "idx_asset_category_prefixes_active_value_unique"),
+            "expected active prefix uniqueness index to exist after migration"
+        );
+
+        let tablet_prefix = conn
+            .query_row(
+                r#"
+                SELECT p.prefix_value
+                FROM asset_category_prefixes p
+                INNER JOIN asset_categories c ON c.id = p.category_id
+                WHERE c.category_code = 'tablet'
+                  AND p.is_active = 1
+                LIMIT 1
+                "#,
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("load migrated tablet prefix");
+
+        assert_eq!(tablet_prefix, "ASWTABLET");
+    }
+
+    #[test]
+    fn ensure_seeded_asset_category_prefixes_rolls_back_if_reseed_hits_conflict() {
+        let conn = Connection::open_in_memory().expect("open in-memory sqlite database");
+        configure_connection(&conn).expect("configure sqlite pragmas");
+        apply_migrations(&conn).expect("apply database migrations");
+
+        let laptop_category_id = conn
+            .query_row(
+                "SELECT id FROM asset_categories WHERE category_code = 'laptop'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("load laptop category id");
+        let monitor_category_id = conn
+            .query_row(
+                "SELECT id FROM asset_categories WHERE category_code = 'monitor'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("load monitor category id");
+
+        conn.execute(
+            "UPDATE asset_category_prefixes SET is_active = 0, is_primary = 0, updated_at = datetime('now') WHERE category_id = ?",
+            params![laptop_category_id],
+        )
+        .expect("deactivate laptop prefixes for pre-seed state");
+        conn.execute(
+            "UPDATE asset_category_prefixes SET is_active = 1, is_primary = 0, updated_at = datetime('now') WHERE category_id = ? AND prefix_value = 'VNLAP'",
+            params![laptop_category_id],
+        )
+        .expect("keep one non-primary laptop prefix active");
+        conn.execute(
+            "UPDATE asset_category_prefixes SET is_active = 0, is_primary = 0, updated_at = datetime('now') WHERE category_id = ?",
+            params![monitor_category_id],
+        )
+        .expect("deactivate monitor prefixes to allow conflict setup");
+
+        conn.execute(
+            r#"
+            INSERT INTO asset_categories(
+              category_code,
+              category_name,
+              tracking_mode,
+              prefix_code,
+              qr_required,
+              is_active,
+              created_at,
+              updated_at
+            )
+            VALUES('conflict_category', 'Conflict Category', 'serialized', NULL, 0, 1, datetime('now'), datetime('now'))
+            "#,
+            [],
+        )
+        .expect("insert conflict category");
+
+        let conflict_category_id = conn
+            .query_row(
+                "SELECT id FROM asset_categories WHERE category_code = 'conflict_category'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("load conflict category id");
+
+        asset::upsert_asset_category_prefix_conn(&conn, conflict_category_id, "VNMON", true, true)
+            .expect("seed conflicting prefix");
+
+        let laptop_active_before = conn
+            .query_row(
+                r#"
+                SELECT COUNT(*)
+                FROM asset_category_prefixes p
+                INNER JOIN asset_categories c ON c.id = p.category_id
+                WHERE c.category_code = 'laptop'
+                  AND p.is_active = 1
+                "#,
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("count active laptop prefixes before conflict");
+        let laptop_primary_before = conn
+            .query_row(
+                r#"
+                SELECT COUNT(*)
+                FROM asset_category_prefixes p
+                INNER JOIN asset_categories c ON c.id = p.category_id
+                WHERE c.category_code = 'laptop'
+                  AND p.is_active = 1
+                  AND p.is_primary = 1
+                "#,
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("count active laptop primary prefixes before conflict");
+
+        let seed_error = ensure_seeded_asset_category_prefixes(&conn)
+            .expect_err("conflicting active prefix should abort reseed atomically");
+
+        let laptop_active_after = conn
+            .query_row(
+                r#"
+                SELECT COUNT(*)
+                FROM asset_category_prefixes p
+                INNER JOIN asset_categories c ON c.id = p.category_id
+                WHERE c.category_code = 'laptop'
+                  AND p.is_active = 1
+                "#,
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("count active laptop prefixes after rollback");
+        let laptop_primary_after = conn
+            .query_row(
+                r#"
+                SELECT COUNT(*)
+                FROM asset_category_prefixes p
+                INNER JOIN asset_categories c ON c.id = p.category_id
+                WHERE c.category_code = 'laptop'
+                  AND p.is_active = 1
+                  AND p.is_primary = 1
+                "#,
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("count active laptop primary prefixes after rollback");
+
+        assert!(
+            seed_error.contains("VNMON") || seed_error.to_lowercase().contains("unique"),
+            "expected conflict from active prefix uniqueness, got: {seed_error}"
+        );
+        assert_eq!(
+            laptop_active_after, laptop_active_before,
+            "laptop prefixes should stay unchanged when reseed fails"
+        );
+        assert_eq!(
+            laptop_primary_after, laptop_primary_before,
+            "laptop primary flags should stay unchanged when reseed fails"
         );
     }
 }
