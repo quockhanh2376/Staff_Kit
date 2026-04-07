@@ -23,6 +23,7 @@ import { useImportState } from "./features/import/useImportState"
 import { useTeamState } from "./features/teams/useTeamState"
 import { useBorrowState } from "./features/borrow/useBorrowState"
 import { useAssetImportState } from "./features/assets/useAssetImportState"
+import { useAssetDashboardState } from "./features/assets/useAssetDashboardState"
 import { useSettingsState } from "./features/settings/useSettingsState"
 
 // Feature views
@@ -234,6 +235,13 @@ function App() {
     reloadToken,
     setGlobalError,
     triggerReload,
+  })
+
+  const assetDashboard = useAssetDashboardState({
+    dbReady,
+    isAuthenticated,
+    reloadToken,
+    setGlobalError,
   })
 
   // ── Bootstrap database ───────────────────────────────────────────────────────
@@ -497,6 +505,7 @@ function App() {
               auth={auth}
               settings={settings}
               assetImport={assetImport}
+              assetDashboard={assetDashboard}
               importState={imp}
               employeeGroupCounts={emp.employeeGroupCounts}
               dbStatus={dbStatus}

@@ -6,7 +6,12 @@ import type {
   BackupSettingsUpdateInput,
   BorrowLanSettings,
   BorrowLanSettingsUpdateInput,
+  AssetCategoryDetailRecord,
+  AssetCategoryUpsertInput,
   AssetCategoryRecord,
+  AssetDashboardQuantityRecord,
+  AssetDashboardSerializedRecord,
+  AssetDashboardSummary,
   SnapshotInfo,
   AssetImportBatchCreateInput,
   AssetImportBatchDetail,
@@ -19,6 +24,7 @@ import type {
   AssetImportRowUpdateInput,
   AssetRecord,
   AssetSeedItemInput,
+  StockItemQuantityUpdateInput,
   EmployeeColumnDefinition,
   EmployeeGroupCounts,
   EmployeeColumnUpsertInput,
@@ -163,16 +169,37 @@ export const staffApi = {
   deleteAssetImportBatch: (batchId: number) =>
     call<boolean>("delete_asset_import_batch", { batchId }),
 
+  getAssetDashboardSummary: () =>
+    call<AssetDashboardSummary>("get_asset_dashboard_summary"),
+
+  listAssetDashboardSerialized: () =>
+    call<AssetDashboardSerializedRecord[]>("list_asset_dashboard_serialized"),
+
+  listAssetDashboardQuantity: () =>
+    call<AssetDashboardQuantityRecord[]>("list_asset_dashboard_quantity"),
+
+  updateStockItemQuantity: (payload: StockItemQuantityUpdateInput) =>
+    call<AssetDashboardQuantityRecord>("update_stock_item_quantity", {
+      payload: {
+        stockItemId: payload.stockItemId,
+        quantityOnHand: payload.quantityOnHand,
+        assignedQuantity: payload.assignedQuantity,
+      },
+    }),
+
   createAssetManually: (payload: AssetSeedItemInput) =>
     call<AssetRecord>("create_asset_manually", {
       payload: {
         assetCode: payload.assetCode,
+        categoryId: payload.categoryId ?? null,
         assetType: payload.assetType,
         displayName: payload.displayName,
         displayNameShort: payload.displayNameShort ?? null,
+        brand: payload.brand ?? null,
         model: payload.model ?? null,
         serialNumber: payload.serialNumber ?? null,
         usageLocation: payload.usageLocation ?? null,
+        warehouse: payload.warehouse ?? null,
         notes: payload.notes ?? null,
       },
     }),
@@ -181,17 +208,56 @@ export const staffApi = {
     call<AssetRecord[]>("upsert_assets", {
       payload: payload.map((item) => ({
         assetCode: item.assetCode,
+        categoryId: item.categoryId ?? null,
         assetType: item.assetType,
         displayName: item.displayName,
         displayNameShort: item.displayNameShort ?? null,
+        brand: item.brand ?? null,
         model: item.model ?? null,
         serialNumber: item.serialNumber ?? null,
         usageLocation: item.usageLocation ?? null,
+        warehouse: item.warehouse ?? null,
         notes: item.notes ?? null,
       })),
     }),
 
   listAssetCategories: () => call<AssetCategoryRecord[]>("list_asset_categories"),
+
+  listAssetCategoryDetails: () =>
+    call<AssetCategoryDetailRecord[]>("list_asset_category_details"),
+
+  createAssetCategory: (payload: AssetCategoryUpsertInput) =>
+    call<AssetCategoryDetailRecord>("create_asset_category", {
+      payload: {
+        id: null,
+        categoryCode: payload.categoryCode,
+        categoryName: payload.categoryName,
+        trackingMode: payload.trackingMode,
+        qrRequired: payload.qrRequired,
+        prefixes: payload.prefixes.map((prefix) => ({
+          prefixValue: prefix.prefixValue,
+          isPrimary: prefix.isPrimary,
+        })),
+      },
+    }),
+
+  updateAssetCategory: (payload: AssetCategoryUpsertInput) =>
+    call<AssetCategoryDetailRecord>("update_asset_category", {
+      payload: {
+        id: payload.id ?? null,
+        categoryCode: payload.categoryCode,
+        categoryName: payload.categoryName,
+        trackingMode: payload.trackingMode,
+        qrRequired: payload.qrRequired,
+        prefixes: payload.prefixes.map((prefix) => ({
+          prefixValue: prefix.prefixValue,
+          isPrimary: prefix.isPrimary,
+        })),
+      },
+    }),
+
+  deactivateAssetCategory: (categoryId: number) =>
+    call<AssetCategoryDetailRecord>("deactivate_asset_category", { categoryId }),
 
   listPendingBorrowRequests: () =>
     call<BorrowRequestRecord[]>("list_pending_borrow_requests"),
