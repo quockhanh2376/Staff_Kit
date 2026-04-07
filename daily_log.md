@@ -1,6 +1,132 @@
 # Daily Log - 2026-04-06
 
 ## Objective
+Implement Chunk 1 of the `Asset Dashboard` plan by laying the schema and category foundation before touching workbook parsing or dashboard UI.
+
+## Work Completed
+- Created isolated branch/worktree `codex/asset-dashboard-chunk-1` from `origin/main` to keep the dashboard implementation separate from the root workspace docs checkpoint.
+- Followed the Chunk 1 TDD path:
+  - wrote a failing rail for `assets.display_name_short` and `assets.usage_location`
+  - wrote a failing rail for the new `asset_category_prefixes` model and seeded laptop/monitor prefix families
+  - verified both failures before implementation
+- Extended the asset schema and migrations with:
+  - `assets.display_name_short`
+  - `assets.usage_location`
+  - new `asset_category_prefixes` child table
+  - active-prefix uniqueness index
+- Migrated the category foundation so `Laptop` stays one logical category while supporting multiple code families:
+  - `VNLAP`
+  - `VNMACPRO`
+  - `VNIMACPRO`
+  - `VNMACAIR`
+- Seeded monitor prefix coverage with `VNMON`.
+- Added backend helpers for:
+  - prefix normalization
+  - category lookup by asset-code prefix
+  - idempotent prefix upsert/update during seeding and future CRUD
+- Committed the Chunk 1 slice as `cd977d8` with message:
+  - `feat: add asset dashboard schema foundation`
+
+## Validation
+- Ran `cargo test --manifest-path src-tauri/Cargo.toml --lib assets_table_persists_dashboard_metadata_columns -- --nocapture` and confirmed the expected red failure before adding the new asset columns.
+- Ran `cargo test --manifest-path src-tauri/Cargo.toml --lib seeded_asset_category_prefixes_cover_laptop_family_and_monitor_codes -- --nocapture` and confirmed the expected red failure before adding the prefix table.
+- Re-ran `cargo test --manifest-path src-tauri/Cargo.toml asset:: -- --nocapture` after implementation.
+- Result: `7 passed, 0 failed`.
+
+## Current State
+The repository now has the schema primitives required for the Asset Dashboard slice: monitor-specific asset metadata and multi-prefix category recognition. This is the backend base layer needed before generalizing workbook parsing for `AssetList.xlsx`, `Monitor.xlsx`, and `Mouse-Key.xlsx`.
+
+## Next Suggested Focus
+- Start Chunk 2 from `docs/superpowers/plans/2026-04-06-asset-import-dashboard.md`.
+- Extend workbook parsing/staging for the three real file shapes.
+- Keep raw source values intact while threading `usage_location` and `display_name_short` into staged rows.
+
+---
+
+# Daily Log - 2026-04-06
+
+## Objective
+Convert `Asset-import-dashboard-context.md` into the official dashboard design documents so the next coding slice can start from a spec-first, execution-ready baseline.
+
+## Work Completed
+- Re-read `E:\Staff_Kit\Asset-import-dashboard-context.md` against the current `v2.0.3` codebase instead of treating the context file as a greenfield plan.
+- Promoted the dashboard idea into the official spec at `docs/superpowers/specs/2026-04-06-asset-import-dashboard-design.md`.
+- Wrote the matching implementation plan at `docs/superpowers/plans/2026-04-06-asset-import-dashboard.md`.
+- Corrected the most important architecture point before coding:
+  - serialized inventory remains in `assets + asset_loans`
+  - quantity inventory remains in `stock_items`
+  - the dashboard is a read/operate surface on top of those tables, not a second asset system
+- Locked the first execution order to:
+  - schema and category-prefix foundation
+  - workbook import expansion for `AssetList.xlsx`, `Monitor.xlsx`, and `Mouse-Key.xlsx`
+  - dashboard read APIs and Settings UI
+  - category management and hardening
+
+## Current State
+The dashboard slice now has an approved spec plus an execution-ready plan that matches the current repository reality. Coding can begin from the schema/category chunk without reopening earlier import decisions or reinterpreting the context file from scratch.
+
+## Next Suggested Focus
+- Start implementation from `docs/superpowers/plans/2026-04-06-asset-import-dashboard.md`.
+- Keep serialized and quantity inventory as separate sources of truth while expanding dashboard coverage.
+- Extract new dashboard state/helpers into focused files instead of growing `AssetImportWizard.tsx` and `useAssetImportState.ts` further.
+
+---
+
+# Daily Log - 2026-04-06
+
+## Objective
+Load the `Asset Import Dashboard` context into NotebookLM and prepare the project to start that slice from a clean design-first checkpoint.
+
+## Work Completed
+- Re-read `E:\Staff_Kit\Asset-import-dashboard-context.md` after the file was saved with real content.
+- Confirmed the new context defines the next product direction as an `Asset Dashboard` inside Settings, with:
+  - three Excel import structures
+  - dashboard summary cards and detail tables
+  - stock tracking integration with Borrow / Return
+  - later category-management UI
+- Captured the implementation shape from the context into the project progress log so NotebookLM reflects the new starting point.
+- Flagged the main engineering constraints before coding:
+  - `AssetImportWizard.tsx` and `useAssetImportState.ts` are already large and should be split while dashboard work grows
+  - the context still contains one mojibake string in `Usage Location` (`Tại NHÃ€`) that should be normalized before final UI copy
+  - stock mutation rules must stay aligned with the existing Borrow / Return approval flow instead of bypassing it
+
+## Current State
+The dashboard slice is now staged as the next implementation track after `v2.0.3`. NotebookLM has the release baseline plus this new dashboard context checkpoint, so design and execution can begin from the current mainline without reopening earlier asset-import history.
+
+## Next Suggested Focus
+- Start with backend schema/category groundwork and import-pipeline changes before adding dashboard UI.
+- Split the work into:
+  - category/schema foundations
+  - import + stock integration
+  - dashboard UI + category management UI
+- Convert the context file into a formal spec/implementation plan before writing code.
+
+---
+
+# Daily Log - 2026-04-06
+
+## Objective
+Start the `Asset Import Dashboard` preparation slice from `Asset-import-dashboard-context.md` and sync the kickoff status into NotebookLM before implementation begins.
+
+## Work Completed
+- Checked the requested source file at `E:\Staff_Kit\Asset-import-dashboard-context.md`.
+- Confirmed the file currently exists on disk but is empty (`0 bytes`), so it is not a usable implementation context yet.
+- Deliberately did not upload the empty file to NotebookLM to avoid polluting the `Staff_Kit` notebook with a blank source.
+- Paused implementation preparation until the dashboard context file is saved with real content.
+
+## Current State
+The project is ready to start the next slice, but the requested context source is still blank on disk. NotebookLM progress tracking will resume from this checkpoint once the file content is available.
+
+## Next Suggested Focus
+- Save the real dashboard context content into `Asset-import-dashboard-context.md`.
+- Re-run the upload step to NotebookLM.
+- Then start the design and execution prep for the dashboard slice from that saved source.
+
+---
+
+# Daily Log - 2026-04-06
+
+## Objective
 Ship `Staff Kit 2.0.3` as the first complete owner-aware asset import release on top of the stabilized Borrow / Return mainline.
 
 ## Work Completed
