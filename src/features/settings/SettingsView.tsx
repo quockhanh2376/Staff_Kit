@@ -3,6 +3,7 @@ import type { AuthState } from "../auth/useAuthState"
 import type { SettingsState } from "./useSettingsState"
 import type { ImportState } from "../import/useImportState"
 import type { AssetImportState } from "../assets/useAssetImportState"
+import type { AssetDashboardState } from "../assets/useAssetDashboardState"
 import type { StaffGroupKey } from "../../types/app"
 import { STAFF_GROUP_BUTTONS, DEFAULT_NEW_ACCOUNT_PASSWORD } from "../../lib/constants"
 import { getGroupCount } from "../../lib/utils"
@@ -16,12 +17,14 @@ import {
 } from "../assets/assetImportCopy"
 import { getAssetImportModeLabel } from "../assets/assetImportModeConfig"
 import { getAssetImportSummaryLabel } from "../assets/assetImportStatusMeta"
+import { AssetDashboard } from "../assets/AssetDashboard"
 
 type SettingsViewProps = {
     auth: AuthState
     settings: SettingsState
     importState: ImportState
     assetImport: AssetImportState
+    assetDashboard: AssetDashboardState
     employeeGroupCounts: {
         employeeList: number
         onboarding: number
@@ -38,6 +41,7 @@ export function SettingsView({
     settings,
     importState,
     assetImport,
+    assetDashboard,
     employeeGroupCounts,
     dbStatus,
     setGlobalError,
@@ -704,6 +708,12 @@ export function SettingsView({
                     </div>
                 </div>
             </div>{/* end lg:grid-cols-2 */}
+
+            <AssetDashboard
+                auth={auth}
+                assetDashboard={assetDashboard}
+                assetImport={assetImport}
+            />
 
 
 

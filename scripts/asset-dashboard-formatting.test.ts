@@ -7,6 +7,11 @@ import {
   normalizeAssetDashboardUsageLocation,
   resolveAssetDashboardDisplayNameShort,
 } from "../src/features/assets/assetImportModeConfig.ts"
+import {
+  buildAssetDashboardSummaryCards,
+  formatAssetDashboardDisplayNameLines,
+  formatAssetDashboardUsageLocationLabel,
+} from "../src/features/assets/assetDashboardCopy.ts"
 
 const serializedHeaders = [
   "Assetcode ",
@@ -54,6 +59,37 @@ assert.equal(buildDerivedComputerName(" vnmacpro003 "), "ASWVNMACPRO003")
 assert.equal(
   formatDerivedComputerNames(["VNMACPRO010", "VNLAP293"]),
   "ASWVNMACPRO010,\nASWVNLAP293",
+)
+
+const summaryCards = buildAssetDashboardSummaryCards({
+  totalSerializedAssets: 12,
+  serializedInStock: 8,
+  serializedAssigned: 4,
+  totalQuantityOnHand: 55,
+  totalQuantityAssigned: 9,
+})
+assert.deepEqual(
+  summaryCards.map((card) => [card.label, card.value]),
+  [
+    ["Total Serialized", 12],
+    ["Serialized In Stock", 8],
+    ["Serialized Assigned", 4],
+    ["Qty On Hand", 55],
+    ["Qty Assigned", 9],
+  ],
+)
+
+assert.equal(formatAssetDashboardUsageLocationLabel(" Táº¡i CTY "), "Tại CTY")
+assert.equal(formatAssetDashboardUsageLocationLabel("táº¡i nhÃ "), "Tại Nhà")
+assert.equal(formatAssetDashboardUsageLocationLabel(""), "—")
+
+assert.equal(
+  formatAssetDashboardDisplayNameLines("VNMON709", null, "Dell 24 Monitor"),
+  "Mon709\nDell 24 Monitor",
+)
+assert.equal(
+  formatAssetDashboardDisplayNameLines("VNLAP293", null, "Dell Latitude 5540"),
+  "Dell Latitude 5540",
 )
 
 console.log("asset-dashboard-formatting tests passed")
