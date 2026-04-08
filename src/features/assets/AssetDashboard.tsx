@@ -46,6 +46,26 @@ type QuantityDraftMap = Record<
   }
 >
 
+const dashboardShellClass =
+  "mt-4 rounded-[16px] border border-slate-800 bg-[#161b22] p-4 text-slate-300 shadow-[0_18px_42px_rgba(0,0,0,0.22)]"
+const dashboardSurfaceClass =
+  "rounded-[12px] border border-slate-800 bg-[#1c2128]"
+const dashboardInnerSurfaceClass =
+  "rounded-[10px] border border-slate-800 bg-[#0d1117]"
+const dashboardPrimaryButtonClass =
+  "inline-flex items-center gap-2 rounded-[10px] border border-emerald-500/70 bg-emerald-500 px-3 py-2 text-xs font-semibold text-[#03130d] transition hover:bg-emerald-400 disabled:opacity-50"
+const dashboardSecondaryButtonClass =
+  "inline-flex items-center gap-2 rounded-[10px] border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-100 transition hover:bg-slate-700 disabled:opacity-50"
+const dashboardLabelClass =
+  "text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400"
+const dashboardMutedTextClass = "text-slate-400"
+const dashboardInputClass =
+  "w-full rounded-[10px] border border-slate-800 bg-[#0d1117] px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 outline-none transition focus:border-emerald-500/45"
+const dashboardTableShellClass =
+  "overflow-hidden rounded-[12px] border border-slate-800 bg-[#0d1117]"
+const dashboardTableHeadClass =
+  "bg-[#1c2128] text-[11px] uppercase tracking-[0.08em] text-slate-400"
+
 export function AssetDashboard({
   auth,
   assetDashboard,
@@ -250,21 +270,21 @@ export function AssetDashboard({
   }
 
   return (
-    <div className="mt-4 rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-4">
+    <div className={dashboardShellClass}>
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="max-w-3xl">
-          <div className="flex items-center gap-2 text-sm font-semibold text-[var(--text-primary)]">
-            <Boxes size={16} />
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
+            <Boxes size={16} className="text-emerald-400" />
             Asset Dashboard
           </div>
-          <p className="mt-1 text-sm text-[var(--text-secondary)]">
+          <p className={`mt-1 text-sm ${dashboardMutedTextClass}`}>
             {getAssetDashboardDescription()}
           </p>
         </div>
 
         <div className="flex flex-wrap gap-2">
           <button
-            className="inline-flex items-center gap-2 rounded-[8px] border border-[var(--border)] px-3 py-2 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)] disabled:opacity-50"
+            className={dashboardSecondaryButtonClass}
             onClick={() => void assetDashboard.refreshDashboard()}
             type="button"
             disabled={assetDashboard.isRefreshingDashboard || assetDashboard.isLoadingDashboard}
@@ -282,7 +302,7 @@ export function AssetDashboard({
               : "Refresh"}
           </button>
           <button
-            className="inline-flex items-center gap-2 rounded-[8px] border border-[var(--border)] px-3 py-2 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)] disabled:opacity-50"
+            className={dashboardSecondaryButtonClass}
             onClick={() => setActiveTab("categories")}
             type="button"
             disabled={!auth.isAdminAccount}
@@ -291,7 +311,7 @@ export function AssetDashboard({
             Manage Categories
           </button>
           <button
-            className="inline-flex items-center gap-2 rounded-[8px] bg-[var(--primary)] px-3 py-2 text-xs font-semibold text-[#00131c] disabled:opacity-50"
+            className={dashboardPrimaryButtonClass}
             onClick={assetImport.openImportWizard}
             type="button"
             disabled={!auth.canImportData}
@@ -300,7 +320,7 @@ export function AssetDashboard({
             Open Import Wizard
           </button>
           <button
-            className="inline-flex items-center gap-2 rounded-[8px] border border-[var(--border)] px-3 py-2 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)] disabled:opacity-50"
+            className={dashboardSecondaryButtonClass}
             onClick={assetImport.openManualAssetPanel}
             type="button"
             disabled={!auth.isAdminAccount}
@@ -312,22 +332,22 @@ export function AssetDashboard({
       </div>
 
       {assetDashboard.statusMessage && (
-        <div className="mt-4 rounded-[8px] border border-[var(--primary)]/35 bg-[var(--primary)]/8 px-3 py-2 text-xs text-[var(--text-primary)]">
+        <div className="mt-4 rounded-[10px] border border-emerald-500/35 bg-emerald-500/8 px-3 py-2 text-xs text-emerald-100">
           {assetDashboard.statusMessage}
         </div>
       )}
 
       {assetImport.activeBatchSummary && (
-        <div className="mt-4 rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/25 p-3">
+        <div className={`mt-4 p-3 ${dashboardSurfaceClass}`}>
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <div className="text-xs font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
+              <div className={dashboardLabelClass}>
                 Active Import Batch
               </div>
-              <div className="mt-1 text-sm text-[var(--text-primary)]">
+              <div className="mt-1 text-sm text-slate-100">
                 {assetImport.activeBatchSummary.batchKey} - {assetImport.activeBatchSummary.sourceFileName}
               </div>
-              <div className="mt-1 text-[11px] text-[var(--text-secondary)]">
+              <div className={`mt-1 text-[11px] ${dashboardMutedTextClass}`}>
                 {getAssetImportModeLabel(assetImport.activeBatchSummary.importType)} -{" "}
                 {getAssetImportSummaryLabel("valid")} {assetImport.activeBatchSummary.validRows} -{" "}
                 {getAssetImportSummaryLabel("errors")} {assetImport.activeBatchSummary.errorRows} -{" "}
@@ -335,7 +355,7 @@ export function AssetDashboard({
               </div>
             </div>
             <button
-              className="rounded-[8px] border border-[var(--border)] px-3 py-2 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)]"
+              className={dashboardSecondaryButtonClass}
               onClick={() => void assetImport.openBatchDetail(assetImport.activeBatchSummary!.id)}
               type="button"
             >
@@ -350,35 +370,35 @@ export function AssetDashboard({
           ? Array.from({ length: 5 }, (_, index) => (
               <div
                 key={index}
-                className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/20 p-4"
+                className={`p-4 ${dashboardInnerSurfaceClass}`}
               >
-                <div className="h-3 w-24 animate-pulse rounded bg-[var(--surface-hover)]" />
-                <div className="mt-3 h-8 w-16 animate-pulse rounded bg-[var(--surface-hover)]" />
+                <div className="h-3 w-24 animate-pulse rounded bg-slate-800" />
+                <div className="mt-3 h-8 w-16 animate-pulse rounded bg-slate-800" />
               </div>
             ))
           : summaryCards.map((card) => (
               <div
                 key={card.key}
-                className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/20 p-4"
+                className={`p-4 ${dashboardInnerSurfaceClass}`}
               >
-                <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
+                <div className={dashboardLabelClass}>
                   {card.label}
                 </div>
-                <div className="mt-2 text-[26px] font-bold text-[var(--text-primary)]">
+                <div className="mt-2 text-[26px] font-bold text-slate-100">
                   {card.value}
                 </div>
               </div>
             ))}
       </div>
 
-      <div className="mt-5 flex flex-wrap gap-2 border-b border-[var(--border)] pb-3">
+      <div className="mt-5 flex flex-wrap gap-2 border-b border-slate-800 pb-3">
         {(["serialized", "quantity", "categories"] as const).map((tab) => (
           <button
             key={tab}
             className={`rounded-[999px] border px-3 py-1.5 text-xs font-semibold transition ${
               activeTab === tab
-                ? "border-[var(--primary)]/45 bg-[var(--primary)]/10 text-[var(--primary)]"
-                : "border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"
+                ? "border-emerald-500/45 bg-emerald-500/10 text-emerald-300"
+                : "border-slate-700 bg-slate-800 text-slate-400 hover:bg-slate-700"
             }`}
             onClick={() => setActiveTab(tab)}
             type="button"
@@ -429,7 +449,7 @@ function SerializedDashboardTable({
 }) {
   if (assetDashboard.isLoadingDashboard && assetDashboard.serializedRows.length === 0) {
     return (
-      <div className="flex items-center gap-2 rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/20 px-4 py-4 text-sm text-[var(--text-secondary)]">
+      <div className={`flex items-center gap-2 px-4 py-4 text-sm ${dashboardInnerSurfaceClass} ${dashboardMutedTextClass}`}>
         <LoaderCircle className="animate-spin" size={16} />
         Loading serialized assets...
       </div>
@@ -438,17 +458,17 @@ function SerializedDashboardTable({
 
   if (assetDashboard.serializedRows.length === 0) {
     return (
-      <div className="rounded-[10px] border border-dashed border-[var(--border)] bg-[var(--surface-hover)]/20 px-4 py-8 text-center text-sm text-[var(--text-secondary)]">
+      <div className={`rounded-[12px] border border-dashed border-slate-700 bg-[#0d1117] px-4 py-8 text-center text-sm ${dashboardMutedTextClass}`}>
         {getAssetDashboardEmptyStateLabel("serialized")}
       </div>
     )
   }
 
   return (
-    <div className="overflow-hidden rounded-[10px] border border-[var(--border)]">
+    <div className={dashboardTableShellClass}>
       <div className="overflow-x-auto">
         <table className="min-w-full text-left text-sm">
-          <thead className="bg-[var(--surface-hover)]/25 text-xs uppercase tracking-[0.04em] text-[var(--text-secondary)]">
+          <thead className={dashboardTableHeadClass}>
             <tr>
               <th className="px-3 py-3 font-semibold">Asset Code</th>
               <th className="px-3 py-3 font-semibold">Category</th>
@@ -462,14 +482,14 @@ function SerializedDashboardTable({
           </thead>
           <tbody>
             {assetDashboard.serializedRows.map((row) => (
-              <tr key={row.assetId} className="border-t border-[var(--border)] align-top">
-                <td className="whitespace-nowrap px-3 py-3 font-semibold text-[var(--text-primary)]">
+              <tr key={row.assetId} className="border-t border-slate-800 align-top">
+                <td className="whitespace-nowrap px-3 py-3 font-semibold text-slate-100">
                   {row.assetCode}
                 </td>
-                <td className="px-3 py-3 text-[var(--text-secondary)]">
+                <td className={`px-3 py-3 ${dashboardMutedTextClass}`}>
                   {row.categoryName ?? row.categoryCode ?? "—"}
                 </td>
-                <td className="px-3 py-3 text-[var(--text-primary)]">
+                <td className="px-3 py-3 text-slate-100">
                   <div className="whitespace-pre-line">
                     {formatAssetDashboardDisplayNameLines(
                       row.assetCode,
@@ -478,17 +498,17 @@ function SerializedDashboardTable({
                     )}
                   </div>
                 </td>
-                <td className="px-3 py-3 text-[var(--text-secondary)]">{row.model ?? "—"}</td>
-                <td className="px-3 py-3 text-[var(--text-secondary)]">{row.serialNumber ?? "—"}</td>
-                <td className="px-3 py-3 text-[var(--text-secondary)]">
+                <td className={`px-3 py-3 ${dashboardMutedTextClass}`}>{row.model ?? "—"}</td>
+                <td className={`px-3 py-3 ${dashboardMutedTextClass}`}>{row.serialNumber ?? "—"}</td>
+                <td className={`px-3 py-3 ${dashboardMutedTextClass}`}>
                   {formatAssetDashboardUsageLocationLabel(row.usageLocation)}
                 </td>
                 <td className="px-3 py-3">
-                  <span className="rounded-[999px] border border-[var(--border)] px-2 py-0.5 text-[11px] font-semibold capitalize text-[var(--text-primary)]">
+                  <span className="rounded-[999px] border border-slate-700 bg-slate-900/70 px-2 py-0.5 text-[11px] font-semibold capitalize text-slate-100">
                     {formatAssetDashboardStatusLabel(row.status)}
                   </span>
                 </td>
-                <td className="px-3 py-3 text-[var(--text-secondary)]">
+                <td className={`px-3 py-3 ${dashboardMutedTextClass}`}>
                   <div className="whitespace-pre-line">
                     {formatAssetDashboardHolderLabel(
                       row.holderFullName,
@@ -524,7 +544,7 @@ function QuantityDashboardTable({
 }) {
   if (assetDashboard.isLoadingDashboard && assetDashboard.quantityRows.length === 0) {
     return (
-      <div className="flex items-center gap-2 rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/20 px-4 py-4 text-sm text-[var(--text-secondary)]">
+      <div className={`flex items-center gap-2 px-4 py-4 text-sm ${dashboardInnerSurfaceClass} ${dashboardMutedTextClass}`}>
         <LoaderCircle className="animate-spin" size={16} />
         Loading quantity stock...
       </div>
@@ -533,17 +553,17 @@ function QuantityDashboardTable({
 
   if (assetDashboard.quantityRows.length === 0) {
     return (
-      <div className="rounded-[10px] border border-dashed border-[var(--border)] bg-[var(--surface-hover)]/20 px-4 py-8 text-center text-sm text-[var(--text-secondary)]">
+      <div className={`rounded-[12px] border border-dashed border-slate-700 bg-[#0d1117] px-4 py-8 text-center text-sm ${dashboardMutedTextClass}`}>
         {getAssetDashboardEmptyStateLabel("quantity")}
       </div>
     )
   }
 
   return (
-    <div className="overflow-hidden rounded-[10px] border border-[var(--border)]">
+    <div className={dashboardTableShellClass}>
       <div className="overflow-x-auto">
         <table className="min-w-full text-left text-sm">
-          <thead className="bg-[var(--surface-hover)]/25 text-xs uppercase tracking-[0.04em] text-[var(--text-secondary)]">
+          <thead className={dashboardTableHeadClass}>
             <tr>
               <th className="px-3 py-3 font-semibold">Category</th>
               <th className="px-3 py-3 font-semibold">Item Name</th>
@@ -571,15 +591,15 @@ function QuantityDashboardTable({
               const isSaving = assetDashboard.isUpdatingStockItemId === row.stockItemId
 
               return (
-                <tr key={row.stockItemId} className="border-t border-[var(--border)] align-top">
-                  <td className="px-3 py-3 text-[var(--text-secondary)]">{row.categoryName}</td>
-                  <td className="px-3 py-3 font-semibold text-[var(--text-primary)]">{row.itemName}</td>
-                  <td className="px-3 py-3 text-[var(--text-secondary)]">{row.brand ?? "—"}</td>
-                  <td className="px-3 py-3 text-[var(--text-secondary)]">{row.model ?? "—"}</td>
-                  <td className="px-3 py-3 text-[var(--text-secondary)]">{row.warehouse ?? "—"}</td>
+                <tr key={row.stockItemId} className="border-t border-slate-800 align-top">
+                  <td className={`px-3 py-3 ${dashboardMutedTextClass}`}>{row.categoryName}</td>
+                  <td className="px-3 py-3 font-semibold text-slate-100">{row.itemName}</td>
+                  <td className={`px-3 py-3 ${dashboardMutedTextClass}`}>{row.brand ?? "—"}</td>
+                  <td className={`px-3 py-3 ${dashboardMutedTextClass}`}>{row.model ?? "—"}</td>
+                  <td className={`px-3 py-3 ${dashboardMutedTextClass}`}>{row.warehouse ?? "—"}</td>
                   <td className="px-3 py-3">
                     <input
-                      className="form-input min-w-[110px] text-xs"
+                      className={`${dashboardInputClass} min-w-[110px] text-xs`}
                       inputMode="numeric"
                       min={0}
                       step={1}
@@ -597,7 +617,7 @@ function QuantityDashboardTable({
                   </td>
                   <td className="px-3 py-3">
                     <input
-                      className="form-input min-w-[110px] text-xs"
+                      className={`${dashboardInputClass} min-w-[110px] text-xs`}
                       inputMode="numeric"
                       min={0}
                       step={1}
@@ -613,10 +633,10 @@ function QuantityDashboardTable({
                       disabled={!auth.isAdminAccount || isSaving}
                     />
                   </td>
-                  <td className="px-3 py-3 text-[var(--text-secondary)]">{row.note ?? "—"}</td>
+                  <td className={`px-3 py-3 ${dashboardMutedTextClass}`}>{row.note ?? "—"}</td>
                   <td className="px-3 py-3">
                     <button
-                      className="rounded-[8px] border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)] disabled:opacity-50"
+                      className={dashboardSecondaryButtonClass}
                       onClick={async () => {
                         if (parsedOnHand == null || parsedAssigned == null) {
                           return
@@ -690,18 +710,18 @@ function CategoryManagementPanel({
 
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,360px)_minmax(0,1fr)]">
-      <div className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/15 p-4">
+      <div className={`p-4 ${dashboardSurfaceClass}`}>
         <div className="flex items-center justify-between gap-3">
           <div>
-            <div className="text-sm font-semibold text-[var(--text-primary)]">
+            <div className="text-sm font-semibold text-slate-100">
               Category List
             </div>
-            <div className="mt-1 text-xs text-[var(--text-secondary)]">
+            <div className={`mt-1 text-xs ${dashboardMutedTextClass}`}>
               IT can change labels, tracking mode, and workbook prefixes here.
             </div>
           </div>
           <button
-            className="inline-flex items-center gap-2 rounded-[8px] border border-[var(--border)] px-3 py-2 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)] disabled:opacity-50"
+            className={dashboardSecondaryButtonClass}
             onClick={openNewCategoryDraft}
             type="button"
             disabled={!auth.isAdminAccount}
@@ -712,12 +732,12 @@ function CategoryManagementPanel({
         </div>
 
         {assetDashboard.isLoadingCategories && assetDashboard.categoryDetails.length === 0 ? (
-          <div className="mt-4 flex items-center gap-2 rounded-[10px] border border-[var(--border)] bg-[var(--surface)] px-4 py-4 text-sm text-[var(--text-secondary)]">
+          <div className={`mt-4 flex items-center gap-2 px-4 py-4 text-sm ${dashboardInnerSurfaceClass} ${dashboardMutedTextClass}`}>
             <LoaderCircle className="animate-spin" size={16} />
             Loading categories...
           </div>
         ) : assetDashboard.categoryDetails.length === 0 ? (
-          <div className="mt-4 rounded-[10px] border border-dashed border-[var(--border)] bg-[var(--surface)] px-4 py-8 text-center text-sm text-[var(--text-secondary)]">
+          <div className={`mt-4 rounded-[12px] border border-dashed border-slate-700 bg-[#0d1117] px-4 py-8 text-center text-sm ${dashboardMutedTextClass}`}>
             {getAssetDashboardEmptyStateLabel("categories")}
           </div>
         ) : (
@@ -741,40 +761,40 @@ function CategoryManagementPanel({
                   key={detail.id}
                   className={`w-full rounded-[10px] border px-3 py-3 text-left transition ${
                     isSelected
-                      ? "border-[var(--primary)]/45 bg-[var(--primary)]/10"
-                      : "border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-hover)]"
+                      ? "border-emerald-500/45 bg-emerald-500/10"
+                      : "border-slate-800 bg-[#0d1117] hover:bg-slate-900"
                   }`}
                   onClick={() => openExistingCategoryDraft(detail)}
                   type="button"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <div className="text-sm font-semibold text-[var(--text-primary)]">
+                      <div className="text-sm font-semibold text-slate-100">
                         {detail.categoryName}
                       </div>
-                      <div className="mt-1 text-[11px] uppercase tracking-[0.06em] text-[var(--text-secondary)]">
+                      <div className={`mt-1 text-[11px] uppercase tracking-[0.06em] ${dashboardMutedTextClass}`}>
                         {detail.categoryCode}
                       </div>
                     </div>
                     <div className="flex flex-wrap justify-end gap-1">
-                      <span className="rounded-[999px] border border-[var(--border)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.05em] text-[var(--text-secondary)]">
+                      <span className="rounded-[999px] border border-slate-700 bg-slate-900/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.05em] text-slate-400">
                         {detail.trackingMode}
                       </span>
                       <span
                         className={`rounded-[999px] border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.05em] ${
                           detail.isActive
                             ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-300"
-                            : "border-[var(--border)] text-[var(--text-secondary)]"
+                            : "border-slate-700 text-slate-400"
                         }`}
                       >
                         {detail.isActive ? "Active" : "Inactive"}
                       </span>
                     </div>
                   </div>
-                  <div className="mt-3 text-xs text-[var(--text-secondary)]">
+                  <div className={`mt-3 text-xs ${dashboardMutedTextClass}`}>
                     Prefixes: {prefixSummary}
                   </div>
-                  <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-[var(--text-secondary)]">
+                  <div className={`mt-2 flex flex-wrap gap-3 text-[11px] ${dashboardMutedTextClass}`}>
                     <span>Assets: {detail.assetCount}</span>
                     <span>Stock items: {detail.stockItemCount}</span>
                     <span>QR required: {detail.qrRequired ? "Yes" : "No"}</span>
@@ -786,20 +806,20 @@ function CategoryManagementPanel({
         )}
       </div>
 
-      <div className="rounded-[10px] border border-[var(--border)] bg-[var(--surface)] p-4">
+      <div className={`p-4 ${dashboardSurfaceClass}`}>
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div>
-            <div className="flex items-center gap-2 text-sm font-semibold text-[var(--text-primary)]">
+            <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
               <PencilLine size={16} />
               {categoryDraft.id == null ? "Create Category" : "Edit Category"}
             </div>
-            <div className="mt-1 text-xs text-[var(--text-secondary)]">
+            <div className={`mt-1 text-xs ${dashboardMutedTextClass}`}>
               Prefixes drive workbook recognition. One prefix must stay primary.
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
             <button
-              className="rounded-[8px] border border-[var(--border)] px-3 py-2 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)]"
+              className={dashboardSecondaryButtonClass}
               onClick={resetCategoryDraft}
               type="button"
             >
@@ -821,7 +841,7 @@ function CategoryManagementPanel({
               </button>
             )}
             <button
-              className="rounded-[8px] bg-[var(--primary)] px-3 py-2 text-xs font-semibold text-[#00131c] disabled:opacity-50"
+              className={dashboardPrimaryButtonClass}
               onClick={() => void saveCategoryDraft()}
               type="button"
               disabled={
@@ -836,28 +856,28 @@ function CategoryManagementPanel({
         </div>
 
         <div className="mt-4 grid gap-4 md:grid-cols-2">
-          <label className="flex flex-col gap-1 text-xs text-[var(--text-secondary)]">
+          <label className={`flex flex-col gap-1 text-xs ${dashboardMutedTextClass}`}>
             Category Code
             <input
-              className="form-input"
+              className={dashboardInputClass}
               value={categoryDraft.categoryCode}
               onChange={(event) => updateCategoryDraft("categoryCode", event.target.value)}
               disabled={!auth.isAdminAccount}
             />
           </label>
-          <label className="flex flex-col gap-1 text-xs text-[var(--text-secondary)]">
+          <label className={`flex flex-col gap-1 text-xs ${dashboardMutedTextClass}`}>
             Category Name
             <input
-              className="form-input"
+              className={dashboardInputClass}
               value={categoryDraft.categoryName}
               onChange={(event) => updateCategoryDraft("categoryName", event.target.value)}
               disabled={!auth.isAdminAccount}
             />
           </label>
-          <label className="flex flex-col gap-1 text-xs text-[var(--text-secondary)]">
+          <label className={`flex flex-col gap-1 text-xs ${dashboardMutedTextClass}`}>
             Tracking Mode
             <select
-              className="form-input"
+              className={dashboardInputClass}
               value={categoryDraft.trackingMode}
               onChange={(event) =>
                 updateCategoryDraft(
@@ -871,7 +891,7 @@ function CategoryManagementPanel({
               <option value="quantity">Quantity</option>
             </select>
           </label>
-          <label className="flex items-center gap-2 pt-6 text-xs text-[var(--text-secondary)]">
+          <label className={`flex items-center gap-2 pt-6 text-xs ${dashboardMutedTextClass}`}>
             <input
               checked={categoryDraft.qrRequired}
               onChange={(event) => updateCategoryDraft("qrRequired", event.target.checked)}
@@ -888,16 +908,16 @@ function CategoryManagementPanel({
           </div>
         )}
 
-        <div className="mt-5 rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/15 p-4">
+        <div className={`mt-5 p-4 ${dashboardInnerSurfaceClass}`}>
           <div className="flex items-center justify-between gap-3">
             <div>
-              <div className="text-sm font-semibold text-[var(--text-primary)]">Prefixes</div>
-              <div className="mt-1 text-xs text-[var(--text-secondary)]">
+              <div className="text-sm font-semibold text-slate-100">Prefixes</div>
+              <div className={`mt-1 text-xs ${dashboardMutedTextClass}`}>
                 Add every workbook prefix that should map into this category.
               </div>
             </div>
             <button
-              className="rounded-[8px] border border-[var(--border)] px-3 py-2 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)] disabled:opacity-50"
+              className={dashboardSecondaryButtonClass}
               onClick={addCategoryPrefix}
               type="button"
               disabled={!auth.isAdminAccount}
@@ -910,12 +930,12 @@ function CategoryManagementPanel({
             {categoryDraft.prefixes.map((prefix, index) => (
               <div
                 key={`${categoryDraft.id ?? "new"}-${index}`}
-                className="grid gap-3 rounded-[10px] border border-[var(--border)] bg-[var(--surface)] px-3 py-3 md:grid-cols-[minmax(0,1fr)_120px_52px]"
+                className="grid gap-3 rounded-[10px] border border-slate-800 bg-slate-950/70 px-3 py-3 md:grid-cols-[minmax(0,1fr)_120px_52px]"
               >
-                <label className="flex flex-col gap-1 text-xs text-[var(--text-secondary)]">
+                <label className={`flex flex-col gap-1 text-xs ${dashboardMutedTextClass}`}>
                   Prefix Value
                   <input
-                    className="form-input"
+                    className={dashboardInputClass}
                     value={prefix.prefixValue}
                     onChange={(event) =>
                       updateCategoryPrefix(index, "prefixValue", event.target.value)
@@ -923,7 +943,7 @@ function CategoryManagementPanel({
                     disabled={!auth.isAdminAccount}
                   />
                 </label>
-                <label className="flex items-center gap-2 pt-6 text-xs text-[var(--text-secondary)]">
+                <label className={`flex items-center gap-2 pt-6 text-xs ${dashboardMutedTextClass}`}>
                   <input
                     checked={prefix.isPrimary}
                     onChange={() => updateCategoryPrefix(index, "isPrimary", true)}
@@ -935,7 +955,7 @@ function CategoryManagementPanel({
                 </label>
                 <div className="flex items-end justify-end">
                   <button
-                    className="inline-flex h-10 w-10 items-center justify-center rounded-[8px] border border-[var(--border)] text-[var(--text-secondary)] transition hover:bg-[var(--surface-hover)] disabled:opacity-50"
+                    className="inline-flex h-10 w-10 items-center justify-center rounded-[8px] border border-slate-700 bg-slate-900 text-slate-400 transition hover:bg-slate-800 disabled:opacity-50"
                     onClick={() => removeCategoryPrefix(index)}
                     type="button"
                     disabled={!auth.isAdminAccount || categoryDraft.prefixes.length === 1}
@@ -949,8 +969,8 @@ function CategoryManagementPanel({
         </div>
 
         {selectedCategoryDetail && (
-          <div className="mt-4 rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/15 p-4 text-xs text-[var(--text-secondary)]">
-            <div className="font-semibold text-[var(--text-primary)]">Current usage</div>
+          <div className={`mt-4 p-4 text-xs ${dashboardInnerSurfaceClass} ${dashboardMutedTextClass}`}>
+            <div className="font-semibold text-slate-100">Current usage</div>
             <div className="mt-2 flex flex-wrap gap-4">
               <span>Assets: {selectedCategoryDetail.assetCount}</span>
               <span>Stock items: {selectedCategoryDetail.stockItemCount}</span>

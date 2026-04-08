@@ -1,4 +1,21 @@
-import { KeyRound, LoaderCircle, PencilLine, Trash2, Upload, UserRoundCheck } from "lucide-react"
+import {
+    AlertTriangle,
+    CheckCircle2,
+    ChevronDown,
+    ChevronUp,
+    Database,
+    DownloadCloud,
+    History,
+    KeyRound,
+    LoaderCircle,
+    MoveRight,
+    PencilLine,
+    RotateCcw,
+    Save,
+    Trash2,
+    Upload,
+    UserRoundCheck,
+} from "lucide-react"
 import type { AuthState } from "../auth/useAuthState"
 import type { SettingsState } from "./useSettingsState"
 import type { ImportState } from "../import/useImportState"
@@ -8,6 +25,7 @@ import type { StaffGroupKey } from "../../types/app"
 import { STAFF_GROUP_BUTTONS, DEFAULT_NEW_ACCOUNT_PASSWORD } from "../../lib/constants"
 import { getGroupCount } from "../../lib/utils"
 import { AssetDashboard } from "../assets/AssetDashboard"
+import { useIdleCollapse } from "./useIdleCollapse"
 
 type SettingsViewProps = {
     auth: AuthState
@@ -26,6 +44,21 @@ type SettingsViewProps = {
     triggerReload: () => void
 }
 
+const settingsCardClass =
+    "rounded-[16px] border border-slate-800 bg-[#161b22] p-4 text-slate-300 shadow-[0_18px_42px_rgba(0,0,0,0.22)]"
+const settingsSubCardClass = "rounded-[12px] border border-slate-800 bg-[#1c2128] p-3"
+const settingsLabelClass =
+    "text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400"
+const settingsInputClass =
+    "w-full rounded-[10px] border border-slate-800 bg-[#0d1117] px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 outline-none transition focus:border-emerald-500/50"
+const settingsSecondaryButtonClass =
+    "inline-flex items-center justify-center gap-2 rounded-[10px] border border-slate-700 bg-slate-800 px-3 py-2 text-sm font-semibold text-slate-100 transition hover:bg-slate-700 disabled:opacity-50"
+const settingsPrimaryButtonClass =
+    "inline-flex items-center justify-center gap-2 rounded-[10px] border border-emerald-500/70 bg-emerald-500 px-3 py-2 text-sm font-semibold text-[#03130d] transition hover:bg-emerald-400 disabled:opacity-50"
+const settingsMutedTextClass = "text-slate-400"
+const settingsPanelHeadingClass =
+    "text-sm font-semibold uppercase tracking-[0.08em] text-slate-100"
+
 export function SettingsView({
     auth,
     settings,
@@ -38,53 +71,54 @@ export function SettingsView({
     triggerReload,
 }: SettingsViewProps) {
     const imp = importState
+    const databaseBackupCard = useIdleCollapse(60000)
 
     return (
-        <section className="px-4 py-7 md:px-8">
-            <h2 className="text-[30px] font-bold">Settings</h2>
+        <section className="bg-[#0f141b] px-4 py-7 text-slate-300 md:px-8">
+            <h2 className="text-[30px] font-bold text-slate-100">Settings</h2>
             <div className="mt-4 grid gap-4 lg:grid-cols-2">
                 {/* Admin Portal — 2-column: left = user mgmt, right = import */}
-                <div className="rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-4">
-                    <div className="text-sm font-semibold text-[var(--text-primary)]">Admin Portal (Local Accounts)</div>
+                <div className={settingsCardClass}>
+                    <div className="text-lg font-semibold text-slate-100">Admin Portal (Local Accounts)</div>
 
                     <div className="mt-4 grid gap-6 md:grid-cols-2">
                         {/* LEFT — user management */}
                         <div className="flex flex-col gap-3">
                             {/* Create account */}
-                            <div className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/25 p-3">
-                                <div className="mb-2 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
+                            <div className={settingsSubCardClass}>
+                                <div className={`mb-2 ${settingsLabelClass}`}>
                                     Create Local User
                                 </div>
                                 <div className="grid gap-2 sm:grid-cols-2">
                                     <input
-                                        className="form-input"
+                                        className={settingsInputClass}
                                         placeholder="Display name..."
                                         value={auth.newAccountName}
                                         onChange={(event) => auth.setNewAccountName(event.target.value)}
                                         disabled={auth.isMutatingAccounts}
                                     />
                                     <input
-                                        className="form-input"
+                                        className={settingsInputClass}
                                         placeholder="Username..."
                                         value={auth.newAccountUsername}
                                         onChange={(event) => auth.setNewAccountUsername(event.target.value)}
                                         disabled={auth.isMutatingAccounts}
                                     />
                                     <input
-                                        className="form-input"
+                                        className={`${settingsInputClass} sm:col-span-2`}
                                         placeholder="Recovery code (optional)..."
                                         value={auth.newAccountRecoveryCode}
                                         onChange={(event) => auth.setNewAccountRecoveryCode(event.target.value)}
                                         disabled={auth.isMutatingAccounts}
                                     />
                                 </div>
-                                <div className="mt-2 text-xs text-[var(--text-secondary)]">
+                                <div className={`mt-2 text-xs ${settingsMutedTextClass}`}>
                                     Default password for every new user:{" "}
-                                    <span className="font-semibold text-[var(--text-primary)]">{DEFAULT_NEW_ACCOUNT_PASSWORD}</span>
+                                    <span className="font-semibold text-slate-100">{DEFAULT_NEW_ACCOUNT_PASSWORD}</span>
                                 </div>
                                 <div className="mt-2 flex flex-wrap items-center gap-2">
                                     <select
-                                        className="rounded-[8px] border border-[var(--border)] bg-[var(--surface)] px-2 py-2 text-sm"
+                                        className={`${settingsInputClass} w-auto min-w-[160px]`}
                                         value={auth.newAccountRole}
                                         onChange={(event) =>
                                             auth.setNewAccountRole(event.target.value === "admin" ? "admin" : "user")
@@ -95,7 +129,7 @@ export function SettingsView({
                                         <option value="admin">Admin</option>
                                     </select>
                                     <button
-                                        className="rounded-[8px] bg-[var(--primary)] px-3 py-2 text-sm font-semibold text-[#00131c] disabled:opacity-50"
+                                        className={settingsPrimaryButtonClass}
                                         onClick={() => void auth.handleCreateAccount(setGlobalError, triggerReload)}
                                         type="button"
                                         disabled={
@@ -112,25 +146,25 @@ export function SettingsView({
                             {/* Account list */}
                             <div className="space-y-2">
                                 {auth.isLoadingAccounts && (
-                                    <div className="text-xs text-[var(--text-secondary)]">Loading accounts...</div>
+                                    <div className={`text-xs ${settingsMutedTextClass}`}>Loading accounts...</div>
                                 )}
                                 {auth.accounts.map((account) => {
                                     const isActive = auth.activeAccountId === account.id
                                     return (
                                         <div
                                             key={account.id}
-                                            className={`rounded-[8px] border px-3 py-2 ${isActive
-                                                ? "border-[var(--primary)]/60 bg-[var(--primary)]/10"
-                                                : "border-[var(--border)] bg-[var(--surface-hover)]/25"
+                                            className={`rounded-[12px] border px-3 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)] ${isActive
+                                                ? "border-emerald-500/55 bg-emerald-500/10"
+                                                : "border-slate-800 bg-[#1c2128]"
                                                 }`}
                                         >
                                             <div className="flex flex-wrap items-center gap-2">
-                                                <div className="text-sm font-semibold text-[var(--text-primary)]">{account.displayName}</div>
-                                                <span className="rounded-[999px] border border-[var(--border)] px-2 py-0.5 text-[10px] uppercase tracking-[0.06em] text-[var(--text-secondary)]">
+                                                <div className="text-sm font-semibold text-slate-100">{account.displayName}</div>
+                                                <span className="rounded-[999px] border border-slate-700 bg-slate-900/60 px-2 py-0.5 text-[10px] uppercase tracking-[0.06em] text-slate-400">
                                                     {account.role}
                                                 </span>
                                                 {isActive && (
-                                                    <span className="rounded-[999px] border border-[var(--primary)]/45 px-2 py-0.5 text-[10px] uppercase tracking-[0.06em] text-[var(--primary)]">
+                                                    <span className="rounded-[999px] border border-emerald-500/45 bg-emerald-500/12 px-2 py-0.5 text-[10px] uppercase tracking-[0.06em] text-emerald-300">
                                                         active
                                                     </span>
                                                 )}
@@ -194,22 +228,22 @@ export function SettingsView({
                                                     </button>
                                                 </div>
                                             </div>
-                                            <div className="mt-1 text-[11px] text-[var(--text-secondary)]">
+                                            <div className={`mt-1 text-[11px] ${settingsMutedTextClass}`}>
                                                 Username: {account.username}
                                             </div>
-                                            <div className="mt-0.5 text-[11px] text-[var(--text-secondary)]">
+                                            <div className={`mt-0.5 text-[11px] ${settingsMutedTextClass}`}>
                                                 Profile ID: {account.accountKey}
                                             </div>
 
                                             {/* Inline edit panel */}
                                             {auth.editingAccountId === account.id && (
-                                                <div className="mt-3 rounded-[8px] border border-[var(--primary)]/40 bg-[var(--primary)]/5 p-3">
-                                                    <div className="mb-2 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">Edit Account</div>
+                                                <div className="mt-3 rounded-[12px] border border-emerald-500/35 bg-emerald-500/8 p-3">
+                                                    <div className={`mb-2 ${settingsLabelClass}`}>Edit Account</div>
                                                     <div className="grid gap-2 sm:grid-cols-2">
                                                         <div>
-                                                            <label className="mb-1 block text-[11px] text-[var(--text-secondary)]">Display Name</label>
+                                                            <label className={`mb-1 block ${settingsMutedTextClass}`}>Display Name</label>
                                                             <input
-                                                                className="form-input text-xs"
+                                                                className={`${settingsInputClass} text-xs`}
                                                                 value={auth.editDraftName}
                                                                 onChange={(e) => auth.setEditDraftName(e.target.value)}
                                                                 disabled={auth.isMutatingAccounts}
@@ -217,9 +251,9 @@ export function SettingsView({
                                                             />
                                                         </div>
                                                         <div>
-                                                            <label className="mb-1 block text-[11px] text-[var(--text-secondary)]">Username</label>
+                                                            <label className={`mb-1 block ${settingsMutedTextClass}`}>Username</label>
                                                             <input
-                                                                className="form-input text-xs"
+                                                                className={`${settingsInputClass} text-xs`}
                                                                 value={auth.editDraftUsername}
                                                                 onChange={(e) => auth.setEditDraftUsername(e.target.value)}
                                                                 disabled={auth.isMutatingAccounts}
@@ -227,14 +261,14 @@ export function SettingsView({
                                                         </div>
                                                     </div>
                                                     <div className="mt-2">
-                                                        <label className="mb-1 block text-[11px] text-[var(--text-secondary)]">Role</label>
+                                                        <label className={`mb-1 block ${settingsMutedTextClass}`}>Role</label>
                                                         {account.isSuperAdmin ? (
-                                                            <div className="rounded-[8px] border border-[var(--border)] bg-[var(--surface-hover)] px-2 py-1.5 text-xs text-[var(--text-secondary)]">
+                                                            <div className="rounded-[10px] border border-slate-700 bg-[#0d1117] px-2 py-1.5 text-xs text-slate-400">
                                                                 🔑 Super Admin (locked — only adman)
                                                             </div>
                                                         ) : (
                                                             <select
-                                                                className="rounded-[8px] border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-xs"
+                                                                className={`${settingsInputClass} text-xs`}
                                                                 value={auth.editDraftRole}
                                                                 onChange={(e) =>
                                                                     auth.setEditDraftRole(e.target.value === "admin" ? "admin" : "user")
@@ -248,7 +282,7 @@ export function SettingsView({
                                                     </div>
                                                     <div className="mt-3 flex gap-2">
                                                         <button
-                                                            className="rounded-[8px] bg-[var(--primary)] px-3 py-1.5 text-xs font-semibold text-[#00131c] disabled:opacity-50"
+                                                            className={`${settingsPrimaryButtonClass} px-3 py-1.5 text-xs`}
                                                             onClick={() => void auth.handleEditSave(setGlobalError, triggerReload)}
                                                             type="button"
                                                             disabled={auth.isMutatingAccounts || !auth.editDraftName.trim() || !auth.editDraftUsername.trim()}
@@ -256,7 +290,7 @@ export function SettingsView({
                                                             {auth.isMutatingAccounts ? "Saving..." : "Save Changes"}
                                                         </button>
                                                         <button
-                                                            className="rounded-[8px] border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"
+                                                            className={`${settingsSecondaryButtonClass} px-3 py-1.5 text-xs`}
                                                             onClick={auth.handleEditCancel}
                                                             type="button"
                                                             disabled={auth.isMutatingAccounts}
@@ -274,15 +308,15 @@ export function SettingsView({
 
                         {/* RIGHT — Import Excel (admin only) */}
                         <div className="flex flex-col gap-4">
-                            <div className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/25 p-3">
+                            <div className={settingsSubCardClass}>
                                 {auth.canImportData ? (
                                     <>
-                                        <div className="text-xs text-[var(--text-secondary)]">
+                                        <div className={`text-xs ${settingsMutedTextClass}`}>
                                             Import target:{" "}
-                                            <span className="font-semibold text-[var(--text-primary)]">{imp.importTargetGroupLabel}</span>
+                                            <span className="font-semibold text-slate-100">{imp.importTargetGroupLabel}</span>
                                         </div>
                                         <button
-                                            className="mt-3 inline-flex items-center gap-2 rounded-[8px] bg-[var(--primary)] px-3 py-2 text-sm font-semibold text-[#00131c] disabled:opacity-50"
+                                            className={`mt-3 ${settingsPrimaryButtonClass}`}
                                             onClick={() => void imp.handlePickImportFiles()}
                                             type="button"
                                             disabled={imp.isImporting}
@@ -296,33 +330,33 @@ export function SettingsView({
                                         </button>
                                     </>
                                 ) : (
-                                    <p className="mt-2 text-xs text-[var(--text-secondary)] opacity-60">
+                                    <p className={`mt-2 text-xs ${settingsMutedTextClass} opacity-60`}>
                                         🔒 Admin access required.
                                     </p>
                                 )}
                             </div>
 
                             {/* Import target group selector — visible to all, read-only for standard users */}
-                            <div className="grid grid-cols-2 gap-2 text-sm text-[var(--text-secondary)]">
+                            <div className={`grid grid-cols-2 gap-2 text-sm ${settingsMutedTextClass}`}>
                                 {STAFF_GROUP_BUTTONS.map((item) => {
                                     const isSelected = imp.importTargetGroup === item.key
                                     return (
                                         <button
                                             key={item.key}
-                                            className={`rounded-[10px] border px-3 py-2 text-left transition ${isSelected
-                                                ? "border-[var(--primary)]/55 bg-[var(--primary)]/10"
-                                                : "border-[var(--border)] bg-[var(--surface)] hover:border-[var(--primary)]/35"
+                                            className={`rounded-[12px] border px-3 py-2 text-left transition ${isSelected
+                                                ? "border-emerald-500/55 bg-emerald-500/10"
+                                                : "border-slate-800 bg-[#1c2128] hover:border-emerald-500/35"
                                                 } ${!auth.canImportData ? "pointer-events-none opacity-60" : ""}`}
                                             onClick={() => auth.canImportData && imp.setImportTargetGroup(item.key as StaffGroupKey)}
                                             type="button"
                                             disabled={!auth.canImportData}
                                         >
-                                            <div className="text-xs uppercase tracking-[0.06em]">{item.label}</div>
-                                            <div className="mt-1 text-[18px] font-semibold text-[var(--text-primary)]">
+                                            <div className={`text-xs uppercase tracking-[0.06em] ${settingsMutedTextClass}`}>{item.label}</div>
+                                            <div className="mt-1 text-[18px] font-semibold text-slate-100">
                                                 {getGroupCount(employeeGroupCounts as Parameters<typeof getGroupCount>[0], item.key)}
                                             </div>
                                             {isSelected && (
-                                                <div className="mt-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--primary)]">
+                                                <div className="mt-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-emerald-300">
                                                     Import Target
                                                 </div>
                                             )}
@@ -337,11 +371,243 @@ export function SettingsView({
 
 
 
-                {/* Database & Backup — 2-column card */}
+                <div
+                    {...databaseBackupCard.bindActivityHandlers}
+                    className="self-start overflow-hidden rounded-[16px] border border-slate-800 bg-[#161b22] text-sm text-slate-300 shadow-[0_18px_42px_rgba(0,0,0,0.22)]"
+                >
+                    <div
+                        className={`cursor-pointer bg-[#1c2128] px-4 py-4 transition-colors hover:bg-[#222a35] ${databaseBackupCard.isExpanded ? "border-b border-slate-800" : ""}`}
+                        onClick={() => databaseBackupCard.setExpanded((current) => !current)}
+                    >
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="flex min-w-0 items-center gap-2">
+                                <Database size={20} className="shrink-0 text-emerald-400" />
+                                <div className="text-xl font-semibold text-slate-100">Database & Backup</div>
+                                <span className="ml-1 inline-flex items-center justify-center rounded-[8px] border border-slate-700 bg-slate-800 p-1 text-slate-400">
+                                    {databaseBackupCard.isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                                </span>
+                            </div>
+                            <div className="flex w-full gap-2 sm:w-auto">
+                                <button
+                                    className={`sm:flex-none ${settingsSecondaryButtonClass} flex-1`}
+                                    onClick={(event) => {
+                                        event.stopPropagation()
+                                        void settings.handleRestoreFromFile()
+                                    }}
+                                    type="button"
+                                >
+                                    <RotateCcw size={15} />
+                                    Restore
+                                </button>
+                                <button
+                                    className={`sm:flex-none ${settingsPrimaryButtonClass} flex-1`}
+                                    onClick={(event) => {
+                                        event.stopPropagation()
+                                        void settings.handleBackupNow()
+                                    }}
+                                    type="button"
+                                    disabled={settings.isBackingUpData || settings.isSavingBackupSettings}
+                                >
+                                    {settings.isBackingUpData ? (
+                                        <LoaderCircle className="animate-spin" size={15} />
+                                    ) : (
+                                        <DownloadCloud size={15} />
+                                    )}
+                                    {settings.isBackingUpData ? "Backing up..." : "Backup"}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div
+                        className={`origin-top overflow-hidden transition-[max-height,opacity] duration-300 ease-out ${databaseBackupCard.isExpanded ? "max-h-[1200px] opacity-100" : "max-h-0 opacity-0"}`}
+                    >
+                        <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.95fr)]">
+                            <div className="space-y-5">
+                                <div>
+                                    <div className={`mb-1.5 ${settingsLabelClass}`}>
+                                        Database Path
+                                    </div>
+                                    <div className="cursor-default truncate rounded-[10px] border border-slate-800 bg-[#0d1117] px-3 py-2 text-sm font-medium text-slate-100">
+                                        {dbStatus?.dbPath || "-"}
+                                    </div>
+                                </div>
+
+                                <div className="space-y-3 rounded-[12px] border border-slate-800 bg-[#1c2128] p-3">
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <div className={settingsPanelHeadingClass}>
+                                            DB Location
+                                        </div>
+                                        <span className="inline-flex items-center gap-1 rounded-[999px] border border-slate-700 bg-slate-900/70 px-2 py-0.5 text-[10px] font-semibold text-slate-300">
+                                            <AlertTriangle size={12} />
+                                            Only one person should edit
+                                        </span>
+                                    </div>
+                                    <div className="flex flex-col gap-2 sm:flex-row">
+                                        <input
+                                            className={`${settingsInputClass} min-w-0 font-mono text-sm`}
+                                            value={settings.dbCustomPathInput}
+                                            onChange={(event) => settings.setDbCustomPathInput(event.target.value)}
+                                            placeholder="D:\\OneDrive - Company\\StaffKit"
+                                            disabled={settings.isMovingDb}
+                                        />
+                                        {settings.dbMovePending ? (
+                                            <div className="flex gap-2">
+                                                <button
+                                                    className="inline-flex items-center gap-1 rounded-[10px] border border-emerald-500/45 bg-emerald-500/12 px-3 py-2 text-sm font-semibold text-emerald-300 transition hover:bg-emerald-500/20 disabled:opacity-50"
+                                                    onClick={() => void settings.handleMoveDatabase()}
+                                                    type="button"
+                                                    disabled={settings.isMovingDb}
+                                                >
+                                                    <MoveRight size={15} />
+                                                    {settings.isMovingDb ? "Moving..." : "Confirm Move"}
+                                                </button>
+                                                <button
+                                                    className={settingsSecondaryButtonClass}
+                                                    onClick={settings.handleMoveDatabaseCancel}
+                                                    type="button"
+                                                >
+                                                    Cancel
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <button
+                                                className={settingsSecondaryButtonClass}
+                                                onClick={() => void settings.handleMoveDatabase()}
+                                                type="button"
+                                                disabled={settings.isMovingDb || !settings.dbCustomPathInput.trim()}
+                                            >
+                                                <MoveRight size={15} />
+                                                Move
+                                            </button>
+                                        )}
+                                    </div>
+                                    {settings.dbPathMessage && (
+                                        <div className="rounded-[10px] border border-emerald-500/28 bg-emerald-500/8 px-3 py-2 text-xs text-emerald-100">
+                                            {settings.dbPathMessage}
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="space-y-3">
+                                    <div className={settingsLabelClass}>
+                                        Backup Settings
+                                    </div>
+                                    <input
+                                        className={`${settingsInputClass} font-mono text-sm`}
+                                        value={settings.backupDirectoryInput}
+                                        onChange={(event) => settings.setBackupDirectoryInput(event.target.value)}
+                                        placeholder="D:\\MGdrive\\Backupdata"
+                                        disabled={settings.isSavingBackupSettings || settings.isBackingUpData}
+                                    />
+                                    <label className="group flex items-start gap-2 text-sm text-slate-400">
+                                        <span className="relative mt-0.5 flex shrink-0 items-center justify-center">
+                                            <input
+                                                type="checkbox"
+                                                className="peer sr-only"
+                                                checked={settings.backupAutoEnabled}
+                                                onChange={(event) => settings.setBackupAutoEnabled(event.target.checked)}
+                                                disabled={settings.isSavingBackupSettings || settings.isBackingUpData}
+                                            />
+                                            <span className="flex h-4 w-4 items-center justify-center rounded-[5px] border border-slate-700 bg-[#0d1117] text-transparent transition peer-checked:border-emerald-500 peer-checked:bg-emerald-500 peer-checked:text-[#03130d]">
+                                                <CheckCircle2 size={12} />
+                                            </span>
+                                        </span>
+                                        <span className="leading-snug transition-colors group-hover:text-slate-200">
+                                            7 versions and delete after 400 days
+                                        </span>
+                                    </label>
+                                    <button
+                                        className={settingsSecondaryButtonClass}
+                                        onClick={() => void settings.handleSaveBackupSettings()}
+                                        type="button"
+                                        disabled={settings.isSavingBackupSettings || settings.isBackingUpData}
+                                    >
+                                        <Save size={15} />
+                                        {settings.isSavingBackupSettings ? "Saving..." : "Save Settings"}
+                                    </button>
+                                    {settings.backupStatusMessage && (
+                                        <div className="rounded-[10px] border border-emerald-500/28 bg-emerald-500/8 px-3 py-2 text-xs text-emerald-100">
+                                            {settings.backupStatusMessage}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="overflow-hidden rounded-[12px] border border-slate-800 bg-[#1c2128]">
+                                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 px-3 py-3">
+                                    <div className="flex items-center gap-2">
+                                        <History size={15} className="text-slate-400" />
+                                        <div className={settingsPanelHeadingClass}>
+                                            Snapshot History ({settings.snapshots.length || 7})
+                                        </div>
+                                    </div>
+                                    <button
+                                        className="inline-flex items-center gap-1 rounded-[10px] border border-slate-700 bg-[#0d1117] px-2.5 py-1.5 text-xs font-semibold text-slate-100 transition hover:bg-slate-800"
+                                        onClick={() => void settings.handleCreateSnapshot()}
+                                        type="button"
+                                    >
+                                        <Save size={13} />
+                                        Save Snapshot
+                                    </button>
+                                </div>
+                                <div className="space-y-2 px-3 pb-3 pt-2">
+                                    <div className="text-[11px] leading-relaxed text-slate-400">
+                                        Auto-created before each import and when closing the app. Click Restore to roll back.
+                                    </div>
+                                    {settings.snapshotMessage && (
+                                        <div className="rounded-[10px] border border-emerald-500/28 bg-emerald-500/8 px-3 py-2 text-xs text-emerald-100">
+                                            {settings.snapshotMessage}
+                                        </div>
+                                    )}
+                                    {settings.isLoadingSnapshots ? (
+                                        <div className="py-10 text-center text-xs text-slate-400">Loading...</div>
+                                    ) : settings.snapshots.length === 0 ? (
+                                        <div className="py-10 text-center text-xs text-slate-400">
+                                            No snapshots yet. Import or close the app to create one.
+                                        </div>
+                                    ) : (
+                                        <div
+                                            className="max-h-[300px] space-y-2 overflow-y-auto pr-1"
+                                            onScroll={databaseBackupCard.notifyActivity}
+                                        >
+                                            {settings.snapshots.map((snap) => (
+                                                <div
+                                                    key={snap.filename}
+                                                    className="flex items-center justify-between gap-3 rounded-[10px] border border-slate-800 bg-[#0d1117] px-3 py-2"
+                                                >
+                                                    <div className="min-w-0 flex-1">
+                                                        <div className="truncate text-sm font-semibold text-slate-100">
+                                                            {snap.timestamp}
+                                                        </div>
+                                                        <div className="text-[11px] text-slate-400">
+                                                            {snap.label} · {snap.sizeMb.toFixed(1)} MB
+                                                        </div>
+                                                    </div>
+                                                    <button
+                                                        className="inline-flex shrink-0 items-center gap-1 rounded-[10px] border border-emerald-500/45 bg-emerald-500/10 px-3 py-1.5 text-sm font-semibold text-emerald-300 transition hover:bg-emerald-500/18 disabled:opacity-40"
+                                                        onClick={() => void settings.handleRestoreSnapshot(snap.filename)}
+                                                        type="button"
+                                                        disabled={!!settings.isRestoringSnapshot}
+                                                    >
+                                                        <RotateCcw size={13} />
+                                                        {settings.isRestoringSnapshot === snap.filename ? "Restoring..." : "Restore"}
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {settings.backupSettings?.retentionFiles === -1 ? (
                 <div className="rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-4 text-sm text-[var(--text-secondary)]">
                     {/* Header */}
                     <div className="mb-3 flex items-center justify-between gap-2">
-                        <div className="text-sm font-semibold text-[var(--text-primary)]">Database &amp; Backup</div>
+                        <div className="text-sm font-semibold text-[var(--text-primary)]">Database & Backup</div>
                         <div className="flex gap-2">
                             <button
                                 className="inline-flex items-center gap-2 rounded-[8px] border border-[var(--border)] bg-[var(--surface-hover)] px-3 py-2 text-xs font-semibold text-[var(--text-primary)] transition hover:brightness-110 disabled:opacity-50"
@@ -439,9 +705,7 @@ export function SettingsView({
                                     onChange={(e) => settings.setBackupAutoEnabled(e.target.checked)}
                                     disabled={settings.isSavingBackupSettings || settings.isBackingUpData}
                                 />
-                                Auto backup every {settings.backupSettings?.autoBackupIntervalDays ?? 7} days, keep{" "}
-                                {settings.backupSettings?.retentionFiles ?? 7} files, delete after{" "}
-                                {settings.backupSettings?.autoBackupRetentionDays ?? 400} days
+                                7 versions and delete after 400 days
                             </label>
                             <button
                                 className="rounded-[8px] border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)] disabled:opacity-50"
@@ -514,6 +778,7 @@ export function SettingsView({
                         </div>
                     </div>
                 </div>
+                ) : null}
             </div>{/* end lg:grid-cols-2 */}
 
             <AssetDashboard
