@@ -14,7 +14,6 @@ import {
     Save,
     Trash2,
     Upload,
-    UserRoundCheck,
 } from "lucide-react"
 import type { AuthState } from "../auth/useAuthState"
 import type { SettingsState } from "./useSettingsState"
@@ -174,18 +173,6 @@ export function SettingsView({
                                                     </span>
                                                 )}
                                                 <div className="ml-auto flex items-center gap-2">
-                                                    <button
-                                                        className="action-icon-button"
-                                                        onClick={() =>
-                                                            void auth.handleActivateAccount(account.id, setGlobalError, triggerReload)
-                                                        }
-                                                        type="button"
-                                                        disabled={auth.isMutatingAccounts || auth.isLoadingAccounts}
-                                                        aria-label={`Use ${account.displayName}`}
-                                                        title={`Use ${account.displayName}`}
-                                                    >
-                                                        <UserRoundCheck size={15} />
-                                                    </button>
                                                     <button
                                                         className="action-icon-button"
                                                         onClick={() => auth.handleStartEdit(account)}
@@ -553,7 +540,7 @@ export function SettingsView({
                                 </div>
                                 <div className="space-y-2 px-3 pb-3 pt-2">
                                     <div className="text-[11px] leading-relaxed text-slate-400">
-                                        Auto-created before each import and when closing the app. Click Restore to roll back.
+                                        Auto Save and Restore Back
                                     </div>
                                     {settings.snapshotMessage && (
                                         <div className="rounded-[10px] border border-emerald-500/28 bg-emerald-500/8 px-3 py-2 text-xs text-emerald-100">
