@@ -10,6 +10,10 @@ const dbLocationBlock = settingsView.slice(
     settingsView.indexOf("DB Location"),
     settingsView.indexOf("DB Location") + 500,
 )
+const adminPortalBlock = settingsView.slice(
+    settingsView.indexOf("Admin Portal"),
+    settingsView.indexOf("Database & Backup"),
+)
 
 assert.match(columnsDrawer, /className="action-icon-button"/)
 assert.match(columnsDrawer, /className="action-icon-button action-icon-button-danger"/)
@@ -23,6 +27,16 @@ assert.match(settingsView, /Trash2 size=\{15\}/)
 assert.doesNotMatch(settingsView, /UserRoundCheck size=\{15\}/)
 assert.doesNotMatch(settingsView, /aria-label=\{`Use /)
 assert.doesNotMatch(settingsView, /title=\{`Use /)
+assert.match(adminPortalBlock, /Users size=\{20\}/)
+assert.match(settingsView, /const adminPortalCard = useIdleCollapse\(60000\)/)
+assert.match(adminPortalBlock, /cursor-pointer bg-\[#1c2128\]/)
+assert.match(adminPortalBlock, /Preparing import\.\.\." : "Import"/)
+assert.match(adminPortalBlock, />\s*TO:\s*</)
+assert.match(settingsView, /Employee List/)
+assert.match(settingsView, /Onboarding/)
+assert.match(settingsView, /Offboarding/)
+assert.match(settingsView, /Movement/)
+assert.doesNotMatch(adminPortalBlock, /mt-4 grid gap-6 md:grid-cols-2/)
 assert.doesNotMatch(settingsView, />\s*Import Excel\s*<\/div>/)
 assert.doesNotMatch(
     settingsView,
