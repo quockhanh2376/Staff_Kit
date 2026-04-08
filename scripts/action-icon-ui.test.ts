@@ -15,5 +15,14 @@ assert.match(settingsView, /className="action-icon-button"/)
 assert.match(settingsView, /UserRoundCheck size=\{15\}/)
 assert.match(settingsView, /KeyRound size=\{15\}/)
 assert.match(settingsView, /Trash2 size=\{15\}/)
+assert.doesNotMatch(settingsView, />\s*Import Excel\s*<\/div>/)
+assert.doesNotMatch(
+    settingsView,
+    /Select one or multiple Excel files, then choose the columns before importing into app data\./,
+)
+assert.doesNotMatch(settingsView, /SQLite status:/)
+assert.doesNotMatch(settingsView, /SQLite version:/)
+assert.doesNotMatch(settingsView, /Manage local accounts in this app\. Column layout is saved per account profile\./)
+assert.doesNotMatch(settingsView, /Point to a SharePoint \/ OneDrive synced folder to share data across the team\./)
 
 console.log("action-icon-ui tests passed")

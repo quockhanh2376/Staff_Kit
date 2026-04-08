@@ -56,9 +56,6 @@ export function SettingsView({
                 {/* Admin Portal — 2-column: left = user mgmt, right = import */}
                 <div className="rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-4">
                     <div className="text-sm font-semibold text-[var(--text-primary)]">Admin Portal (Local Accounts)</div>
-                    <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                        Manage local accounts in this app. Column layout is saved per account profile.
-                    </p>
 
                     <div className="mt-4 grid gap-6 md:grid-cols-2">
                         {/* LEFT — user management */}
@@ -288,15 +285,9 @@ export function SettingsView({
                         {/* RIGHT — Import Excel (admin only) */}
                         <div className="flex flex-col gap-4">
                             <div className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/25 p-3">
-                                <div className="mb-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
-                                    Import Excel
-                                </div>
                                 {auth.canImportData ? (
                                     <>
-                                        <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                                            Select one or multiple Excel files, then choose the columns before importing into app data.
-                                        </p>
-                                        <div className="mt-2 text-xs text-[var(--text-secondary)]">
+                                        <div className="text-xs text-[var(--text-secondary)]">
                                             Import target:{" "}
                                             <span className="font-semibold text-[var(--text-primary)]">{imp.importTargetGroupLabel}</span>
                                         </div>
@@ -549,14 +540,6 @@ export function SettingsView({
                         {/* ── Left: DB info + Shared path + Backup settings ── */}
                         <div className="space-y-3">
                             <div>
-                                <span className="font-semibold text-[var(--text-primary)]">SQLite status:</span>{" "}
-                                {dbStatus?.initialized ? "initialized" : "not initialized"}
-                            </div>
-                            <div>
-                                <span className="font-semibold text-[var(--text-primary)]">SQLite version:</span>{" "}
-                                {dbStatus?.sqliteVersion || "-"}
-                            </div>
-                            <div>
                                 <span className="font-semibold text-[var(--text-primary)]">Database path:</span>
                                 <div className="mt-1 break-all text-xs">{dbStatus?.dbPath || "-"}</div>
                             </div>
@@ -566,9 +549,6 @@ export function SettingsView({
                                 <div className="mb-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
                                     Shared DB Location
                                 </div>
-                                <p className="mb-2 text-[11px] text-[var(--text-secondary)]">
-                                    Point to a SharePoint / OneDrive synced folder to share data across the team.
-                                </p>
                                 <div className="mb-2 rounded-[6px] border border-amber-400/40 bg-amber-400/10 px-2 py-1.5 text-[11px] text-amber-300">
                                     ⚠️ Only one person should edit at a time.
                                 </div>
