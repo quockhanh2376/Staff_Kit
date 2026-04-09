@@ -1,3 +1,50 @@
+# Daily Log - 2026-04-09
+
+## Objective
+Consolidate the `Settings` and auth surfaces into one compact visual system on `main`, then checkpoint that UI state into NotebookLM so future work starts from the current product shell instead of the older mixed styling.
+
+## Work Completed
+- Merged the compact `Admin Portal` line into `main` and kept the card behavior consistent with the new `Database & Backup` pattern:
+  - compact header with icon + chevron
+  - idle auto-collapse after `60s`
+  - click header to reopen
+  - import target moved into the card as a compact `Import + TO:` toolbar
+- Restyled `Login` and `Forgot Password` to match the newer compact system while keeping the shared app shell:
+  - dark mode: `#0d1117` background, `#161b22` card surface, slate borders, emerald primary action
+  - light mode: matching compact structure with the same hierarchy and action emphasis
+- Tightened `Settings` copy and reduced noise:
+  - removed redundant helper text from `Admin Portal`, `Import`, and `Database & Backup`
+  - moved Borrow LAN controls out of `Settings` and into `Borrow / Return Review`
+  - removed the local-account quick-switch button so account testing now goes through real login/logout
+- Compacted `Database & Backup` into the new tone:
+  - unified background/text/input/button surfaces
+  - neutralized the old amber DB-location block while keeping the warning copy
+  - snapshot helper copy shortened to `Auto Save and Restore Back`
+  - backup retention copy shortened to `7 versions and delete after 400 days`
+- Final header polish on `main`:
+  - `Database & Backup` renamed to `Data-Backup`
+  - `Admin Portal (Local Accounts)` reduced to `Admin Portal`
+  - both card headers now share the same height/padding rhythm
+
+## Validation
+- Ran `node --experimental-strip-types scripts/action-icon-ui.test.ts`
+- Result: passed
+- Ran `npm run check:frontend`
+- Result: passed
+  - ESLint: passed
+  - TypeScript build/typecheck: passed
+  - Vite production build: passed
+
+## Current State
+`main` now uses a compact, consistent Settings/auth shell: `Admin Portal`, `Data-Backup`, `AssetDashboard`, `Login`, and `Forgot Password` all follow the same dark/light visual language, and the card headers/controls are tighter and easier to scan.
+
+## Next Suggested Focus
+- Manual visual QA on desktop for `Settings`, `Login`, and `Forgot Password` in both dark and light modes.
+- Continue replacing older copy/layout leftovers so the rest of the Settings area follows the same compact pattern.
+- Introduce role-specific capability gating only after the visual shell is fully stable.
+
+---
+
 # Daily Log - 2026-04-07
 
 ## Objective
