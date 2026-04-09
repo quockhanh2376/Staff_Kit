@@ -1,7 +1,9 @@
 import { useMemo, useState } from "react"
 import {
+  ArrowUpDown,
   Boxes,
   FileSpreadsheet,
+  GripVertical,
   LoaderCircle,
   PencilLine,
   PlusCircle,
@@ -17,7 +19,6 @@ import {
   buildAssetCategoryDraftFromDetail,
   buildAssetDashboardSummaryCards,
   buildEmptyAssetCategoryDraft,
-  formatAssetDashboardDisplayNameLines,
   formatAssetDashboardHolderLabel,
   formatAssetDashboardStatusLabel,
   formatAssetDashboardUsageLocationLabel,
@@ -31,8 +32,15 @@ import {
 } from "./assetDashboardCopy"
 import { getAssetImportModeLabel } from "./assetImportModeConfig"
 import { getAssetImportSummaryLabel } from "./assetImportStatusMeta"
+import {
+  resolveSerializedAssetComputerName,
+  resolveSerializedAssetName,
+  type SerializedAssetColumnKey,
+} from "./serializedAssetGridConfig"
+import { useSerializedAssetGridState } from "./useSerializedAssetGridState"
 
 type AssetDashboardProps = {
+  activeUserScope: string
   auth: Pick<AuthState, "canImportData" | "isAdminAccount">
   assetDashboard: AssetDashboardState
   assetImport: AssetImportState
@@ -67,6 +75,7 @@ const dashboardTableHeadClass =
   "bg-[#1c2128] text-[11px] uppercase tracking-[0.08em] text-slate-400"
 
 export function AssetDashboard({
+  activeUserScope,
   auth,
   assetDashboard,
   assetImport,
@@ -410,7 +419,11 @@ export function AssetDashboard({
 
       <div className="mt-4">
         {activeTab === "serialized" ? (
-          <SerializedDashboardTable assetDashboard={assetDashboard} />
+          <SerializedDashboardTable
+            key={activeUserScope}
+            activeUserScope={activeUserScope}
+            assetDashboard={assetDashboard}
+          />
         ) : activeTab === "quantity" ? (
           <QuantityDashboardTable
             auth={auth}
@@ -443,10 +456,28 @@ export function AssetDashboard({
 }
 
 function SerializedDashboardTable({
+  activeUserScope,
   assetDashboard,
 }: {
+  activeUserScope: string
   assetDashboard: AssetDashboardState
 }) {
+  const {
+    orderedColumns,
+    sortedRows,
+    effectiveWidths,
+    sort,
+    draggingColumnKey,
+    toggleSort,
+    handleHeaderDragStart,
+    handleHeaderDrop,
+    beginColumnResize,
+    setDraggingColumnKey,
+  } = useSerializedAssetGridState({
+    activeUserScope,
+    rows: assetDashboard.serializedRows,
+  })
+
   if (assetDashboard.isLoadingDashboard && assetDashboard.serializedRows.length === 0) {
     return (
       <div className={`flex items-center gap-2 px-4 py-4 text-sm ${dashboardInnerSurfaceClass} ${dashboardMutedTextClass}`}>
@@ -467,26 +498,80 @@ function SerializedDashboardTable({
   return (
     <div className={dashboardTableShellClass}>
       <div className="overflow-x-auto">
-        <table className="min-w-full text-left text-sm">
+        <table className="min-w-max text-left text-sm">
           <thead className={dashboardTableHeadClass}>
             <tr>
-              <th className="px-3 py-3 font-semibold">Asset Code</th>
-              <th className="px-3 py-3 font-semibold">Category</th>
-              <th className="px-3 py-3 font-semibold">Display</th>
-              <th className="px-3 py-3 font-semibold">Model</th>
-              <th className="px-3 py-3 font-semibold">Serial</th>
-              <th className="px-3 py-3 font-semibold">Usage</th>
-              <th className="px-3 py-3 font-semibold">Status</th>
-              <th className="px-3 py-3 font-semibold">Holder</th>
+              {orderedColumns.map((column) => {
+                const sortIndicator =
+                  sort.key !== column.key ? (
+                    <ArrowUpDown size={12} />
+                  ) : sort.direction === "asc" ? (
+                    <span className="text-[10px]">ASC</span>
+                  ) : (
+                    <span className="text-[10px]">DESC</span>
+                  )
+
+                return (
+                  <th
+                    key={column.key}
+                    className={`group relative border-r border-slate-800 last:border-r-0 ${
+                      draggingColumnKey === column.key ? "bg-slate-800/85" : ""
+                    }`}
+                    style={{
+                      minWidth: column.minWidth,
+                      width: effectiveWidths[column.key],
+                    }}
+                    draggable
+                    onDragStart={() => handleHeaderDragStart(column.key)}
+                    onDragOver={(event) => event.preventDefault()}
+                    onDrop={() => handleHeaderDrop(column.key)}
+                    onDragEnd={() => setDraggingColumnKey(null)}
+                  >
+                    <button
+                      className="flex w-full items-center gap-2 px-3 py-3 pr-5 text-left font-semibold"
+                      onClick={() => toggleSort(column.key)}
+                      type="button"
+                    >
+                      <GripVertical
+                        size={12}
+                        className="shrink-0 text-slate-600 transition group-hover:text-slate-500"
+                      />
+                      <span className="truncate">{column.label}</span>
+                      <span className="ml-auto inline-flex shrink-0 items-center text-slate-500">
+                        {sortIndicator}
+                      </span>
+                    </button>
+                    <span
+                      className="absolute inset-y-0 right-0 flex w-3 cursor-col-resize items-center justify-center"
+                      onMouseDown={(event) => beginColumnResize(column.key, event)}
+                    >
+                      <span className="h-5 w-px bg-slate-700 transition group-hover:bg-emerald-400/60" />
+                    </span>
+                  </th>
+                )
+              })}
             </tr>
           </thead>
           <tbody>
-            {assetDashboard.serializedRows.map((row) => (
+            {sortedRows.map((row) => (
               <tr key={row.assetId} className="border-t border-slate-800 align-top">
-                <td className="whitespace-nowrap px-3 py-3 font-semibold text-slate-100">
-                  {row.assetCode}
-                </td>
-                <td className={`px-3 py-3 ${dashboardMutedTextClass}`}>
+                {orderedColumns.map((column) => (
+                  <td
+                    key={`${row.assetId}-${column.key}`}
+                    className={`px-3 py-3 align-top ${
+                      column.key === "id" || column.key === "assetName"
+                        ? "font-semibold text-slate-100"
+                        : dashboardMutedTextClass
+                    }`}
+                    style={{
+                      minWidth: column.minWidth,
+                      width: effectiveWidths[column.key],
+                    }}
+                  >
+                    {renderSerializedCellValue(column.key, row)}
+                  </td>
+                ))}
+                {/*
                   {row.categoryName ?? row.categoryCode ?? "—"}
                 </td>
                 <td className="px-3 py-3 text-slate-100">
@@ -516,6 +601,7 @@ function SerializedDashboardTable({
                     )}
                   </div>
                 </td>
+                */}
               </tr>
             ))}
           </tbody>
@@ -523,6 +609,52 @@ function SerializedDashboardTable({
       </div>
     </div>
   )
+}
+
+function renderSerializedCellValue(
+  columnKey: SerializedAssetColumnKey,
+  row: AssetDashboardState["serializedRows"][number],
+) {
+  switch (columnKey) {
+    case "id":
+      return <span className="whitespace-nowrap">{row.assetCode}</span>
+    case "category":
+      return row.categoryName ?? row.categoryCode ?? "\u2014"
+    case "computerName":
+      return (
+        <span className="whitespace-nowrap text-slate-100">
+          {resolveSerializedAssetComputerName(row.assetCode, row.computerName) || "\u2014"}
+        </span>
+      )
+    case "assetName":
+      return resolveSerializedAssetName(
+        row.assetCode,
+        row.displayName,
+        row.displayNameShort,
+      ) || "\u2014"
+    case "model":
+      return row.model ?? "\u2014"
+    case "serialNumber":
+      return row.serialNumber ?? "\u2014"
+    case "adapterNumber":
+      return row.adapterNumber ?? "\u2014"
+    case "usageLocation":
+      return formatAssetDashboardUsageLocationLabel(row.usageLocation)
+    case "note":
+      return row.notes ?? "\u2014"
+    case "status":
+      return (
+        <span className="rounded-[999px] border border-slate-700 bg-slate-900/70 px-2 py-0.5 text-[11px] font-semibold capitalize text-slate-100">
+          {formatAssetDashboardStatusLabel(row.status)}
+        </span>
+      )
+    case "holder":
+      return (
+        <div className="whitespace-pre-line">
+          {formatAssetDashboardHolderLabel(row.holderFullName, row.holderEmployeeId)}
+        </div>
+      )
+  }
 }
 
 function QuantityDashboardTable({

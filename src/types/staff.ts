@@ -127,11 +127,14 @@ export type AssetDashboardSerializedRecord = {
   assetCode: string
   categoryCode: string | null
   categoryName: string | null
+  computerName: string | null
   displayName: string
   displayNameShort: string | null
   model: string | null
   serialNumber: string | null
+  adapterNumber: string | null
   usageLocation: string | null
+  notes: string | null
   status: string
   holderEmployeeId: string | null
   holderFullName: string | null
@@ -160,10 +163,12 @@ export type AssetImportFieldMapping = {
   assetCode?: string | null
   assetType?: string | null
   displayName?: string | null
+  computerName?: string | null
   displayNameShort?: string | null
   brand?: string | null
   model?: string | null
   serialNumber?: string | null
+  adapterNumber?: string | null
   usageLocation?: string | null
   quantity?: string | null
   warehouse?: string | null
@@ -226,9 +231,11 @@ export type AssetImportRowRecord = {
   assetType: string | null
   displayName: string | null
   displayNameShort?: string | null
+  computerName?: string | null
   brand: string | null
   model: string | null
   serialNumber: string | null
+  adapterNumber?: string | null
   usageLocation?: string | null
   quantity: string | null
   warehouse: string | null
@@ -264,9 +271,11 @@ export type AssetImportRowUpdateInput = {
     | "assetType"
     | "displayName"
     | "displayNameShort"
+    | "computerName"
     | "brand"
     | "model"
     | "serialNumber"
+    | "adapterNumber"
     | "usageLocation"
     | "quantity"
     | "warehouse"

@@ -16,10 +16,12 @@ pub struct AssetUpsertInput {
     pub asset_type: String,
     pub display_name: String,
     pub display_name_short: Option<String>,
+    pub computer_name: Option<String>,
     pub brand: Option<String>,
     pub model: Option<String>,
     pub serial_number: Option<String>,
     pub usage_location: Option<String>,
+    pub adapter_number: Option<String>,
     pub warehouse: Option<String>,
     pub notes: Option<String>,
 }
@@ -108,11 +110,14 @@ pub struct AssetDashboardSerializedRecord {
     pub asset_code: String,
     pub category_code: Option<String>,
     pub category_name: Option<String>,
+    pub computer_name: Option<String>,
     pub display_name: String,
     pub display_name_short: Option<String>,
     pub model: Option<String>,
     pub serial_number: Option<String>,
+    pub adapter_number: Option<String>,
     pub usage_location: Option<String>,
+    pub notes: Option<String>,
     pub status: String,
     pub holder_employee_id: Option<String>,
     pub holder_full_name: Option<String>,
@@ -229,10 +234,12 @@ fn insert_asset_stmt(
     asset_type: &str,
     display_name: &str,
     display_name_short: Option<&str>,
+    computer_name: Option<&str>,
     brand: Option<&str>,
     model: Option<&str>,
     serial_number: Option<&str>,
     usage_location: Option<&str>,
+    adapter_number: Option<&str>,
     warehouse: Option<&str>,
     notes: Option<&str>,
 ) -> Result<i64, String> {
@@ -245,17 +252,19 @@ fn insert_asset_stmt(
               asset_type,
               display_name,
               display_name_short,
+              computer_name,
               brand,
               model,
               serial_number,
               usage_location,
+              adapter_number,
               warehouse,
               notes,
               status,
               created_at,
               updated_at
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'in_stock', datetime('now'), datetime('now'))
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'in_stock', datetime('now'), datetime('now'))
             "#,
             params![
                 asset_code,
@@ -263,10 +272,12 @@ fn insert_asset_stmt(
                 asset_type,
                 display_name,
                 display_name_short,
+                computer_name,
                 brand,
                 model,
                 serial_number,
                 usage_location,
+                adapter_number,
                 warehouse,
                 notes
             ],
@@ -462,10 +473,12 @@ pub(crate) fn create_asset_tx(
     let asset_type = require_text(input.asset_type.clone(), "assetType")?;
     let display_name = require_text(input.display_name.clone(), "displayName")?;
     let display_name_short = normalize_optional_text(input.display_name_short.clone());
+    let computer_name = normalize_optional_text(input.computer_name.clone());
     let brand = normalize_optional_text(input.brand.clone());
     let model = normalize_optional_text(input.model.clone());
     let serial_number = normalize_optional_text(input.serial_number.clone());
     let usage_location = normalize_optional_text(input.usage_location.clone());
+    let adapter_number = normalize_optional_text(input.adapter_number.clone());
     let warehouse = normalize_optional_text(input.warehouse.clone());
     let notes = normalize_optional_text(input.notes.clone());
 
@@ -476,10 +489,12 @@ pub(crate) fn create_asset_tx(
         asset_type.as_str(),
         display_name.as_str(),
         display_name_short.as_deref(),
+        computer_name.as_deref(),
         brand.as_deref(),
         model.as_deref(),
         serial_number.as_deref(),
         usage_location.as_deref(),
+        adapter_number.as_deref(),
         warehouse.as_deref(),
         notes.as_deref(),
     )?;
@@ -568,10 +583,12 @@ pub(crate) fn upsert_assets_conn(
         let asset_type = require_text(input.asset_type, "assetType")?;
         let display_name = require_text(input.display_name, "displayName")?;
         let display_name_short = normalize_optional_text(input.display_name_short);
+        let computer_name = normalize_optional_text(input.computer_name);
         let brand = normalize_optional_text(input.brand);
         let model = normalize_optional_text(input.model);
         let serial_number = normalize_optional_text(input.serial_number);
         let usage_location = normalize_optional_text(input.usage_location);
+        let adapter_number = normalize_optional_text(input.adapter_number);
         let warehouse = normalize_optional_text(input.warehouse);
         let notes = normalize_optional_text(input.notes);
 
@@ -583,26 +600,30 @@ pub(crate) fn upsert_assets_conn(
               asset_type,
               display_name,
               display_name_short,
+              computer_name,
               brand,
               model,
               serial_number,
               usage_location,
+              adapter_number,
               warehouse,
               notes,
               status,
               created_at,
               updated_at
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'in_stock', datetime('now'), datetime('now'))
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'in_stock', datetime('now'), datetime('now'))
             ON CONFLICT(asset_code) DO UPDATE SET
               category_id = excluded.category_id,
               asset_type = excluded.asset_type,
               display_name = excluded.display_name,
               display_name_short = excluded.display_name_short,
+              computer_name = excluded.computer_name,
               brand = excluded.brand,
               model = excluded.model,
               serial_number = excluded.serial_number,
               usage_location = excluded.usage_location,
+              adapter_number = excluded.adapter_number,
               warehouse = excluded.warehouse,
               notes = excluded.notes,
               updated_at = datetime('now')
@@ -613,10 +634,12 @@ pub(crate) fn upsert_assets_conn(
                 asset_type.as_str(),
                 display_name.as_str(),
                 display_name_short.as_deref(),
+                computer_name.as_deref(),
                 brand.as_deref(),
                 model.as_deref(),
                 serial_number.as_deref(),
                 usage_location.as_deref(),
+                adapter_number.as_deref(),
                 warehouse.as_deref(),
                 notes.as_deref(),
             ],
@@ -1344,11 +1367,14 @@ pub(crate) fn list_asset_dashboard_serialized_conn(
               a.asset_code,
               c.category_code,
               c.category_name,
+              a.computer_name,
               a.display_name,
               a.display_name_short,
               a.model,
               a.serial_number,
+              a.adapter_number,
               a.usage_location,
+              a.notes,
               a.status,
               e.employee_id,
               e.full_name
@@ -1373,14 +1399,17 @@ pub(crate) fn list_asset_dashboard_serialized_conn(
                 asset_code: row.get(1)?,
                 category_code: row.get(2)?,
                 category_name: row.get(3)?,
-                display_name: row.get(4)?,
-                display_name_short: row.get(5)?,
-                model: row.get(6)?,
-                serial_number: row.get(7)?,
-                usage_location: row.get(8)?,
-                status: row.get(9)?,
-                holder_employee_id: row.get(10)?,
-                holder_full_name: row.get(11)?,
+                computer_name: row.get(4)?,
+                display_name: row.get(5)?,
+                display_name_short: row.get(6)?,
+                model: row.get(7)?,
+                serial_number: row.get(8)?,
+                adapter_number: row.get(9)?,
+                usage_location: row.get(10)?,
+                notes: row.get(11)?,
+                status: row.get(12)?,
+                holder_employee_id: row.get(13)?,
+                holder_full_name: row.get(14)?,
             })
         })
         .map_err(|err| format!("failed to query serialized dashboard rows: {err}"))?;
@@ -1624,10 +1653,12 @@ mod tests {
                 asset_type: "Laptop".to_string(),
                 display_name: "Dell Latitude".to_string(),
                 display_name_short: None,
+                computer_name: None,
                 brand: None,
                 model: Some("7440".to_string()),
                 serial_number: Some("SN-001".to_string()),
                 usage_location: None,
+                adapter_number: None,
                 warehouse: None,
                 notes: Some("Seed import".to_string()),
             }],
@@ -1651,10 +1682,12 @@ mod tests {
                 asset_type: "Laptop".to_string(),
                 display_name: "Dell Latitude".to_string(),
                 display_name_short: None,
+                computer_name: None,
                 brand: None,
                 model: None,
                 serial_number: None,
                 usage_location: None,
+                adapter_number: None,
                 warehouse: None,
                 notes: None,
             }],
@@ -1675,10 +1708,12 @@ mod tests {
                 asset_type: "Laptop".to_string(),
                 display_name: "Dell Latitude 7450".to_string(),
                 display_name_short: None,
+                computer_name: None,
                 brand: None,
                 model: Some("7450".to_string()),
                 serial_number: Some("SN-001".to_string()),
                 usage_location: None,
+                adapter_number: None,
                 warehouse: None,
                 notes: Some("Updated metadata".to_string()),
             }],
@@ -1703,32 +1738,46 @@ mod tests {
               asset_type,
               display_name,
               display_name_short,
+              computer_name,
               usage_location,
+              adapter_number,
               status,
               created_at,
               updated_at
             )
-            VALUES(?, ?, ?, ?, ?, 'assigned', datetime('now'), datetime('now'))
+            VALUES(?, ?, ?, ?, ?, ?, ?, 'assigned', datetime('now'), datetime('now'))
             "#,
-            params!["VNMON709", "Monitor", "Dell 24 Monitor", "Mon709", "office"],
+            params![
+                "VNMON709",
+                "Monitor",
+                "Dell 24 Monitor",
+                "Mon709",
+                "ASWVNMON709",
+                "office",
+                "ADP-709",
+            ],
         )
         .expect("insert asset with dashboard metadata");
 
         let stored = conn
             .query_row(
-                "SELECT display_name_short, usage_location FROM assets WHERE asset_code = ?",
+                "SELECT display_name_short, computer_name, usage_location, adapter_number FROM assets WHERE asset_code = ?",
                 params!["VNMON709"],
                 |row| {
                     Ok((
                         row.get::<_, Option<String>>(0)?,
                         row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<String>>(3)?,
                     ))
                 },
             )
             .expect("load stored dashboard metadata");
 
         assert_eq!(stored.0.as_deref(), Some("Mon709"));
-        assert_eq!(stored.1.as_deref(), Some("office"));
+        assert_eq!(stored.1.as_deref(), Some("ASWVNMON709"));
+        assert_eq!(stored.2.as_deref(), Some("office"));
+        assert_eq!(stored.3.as_deref(), Some("ADP-709"));
     }
 
     #[test]
@@ -1787,10 +1836,12 @@ mod tests {
                     asset_type: "Monitor".to_string(),
                     display_name: "Monitor LG".to_string(),
                     display_name_short: Some("Mon709".to_string()),
+                    computer_name: Some("ASWVNMON709".to_string()),
                     brand: Some("LG".to_string()),
                     model: Some("LG 27".to_string()),
                     serial_number: Some("MON-SN-709".to_string()),
                     usage_location: Some("office".to_string()),
+                    adapter_number: Some("ADP-709".to_string()),
                     warehouse: None,
                     notes: None,
                 },
@@ -1800,10 +1851,12 @@ mod tests {
                     asset_type: "Laptop".to_string(),
                     display_name: "Dell Latitude 5440".to_string(),
                     display_name_short: None,
+                    computer_name: Some("ASWVNLAP050".to_string()),
                     brand: Some("Dell".to_string()),
                     model: Some("5440".to_string()),
                     serial_number: Some("LAP-SN-050".to_string()),
                     usage_location: None,
+                    adapter_number: Some("LAP-ADP-050".to_string()),
                     warehouse: Some("HCM".to_string()),
                     notes: None,
                 },
@@ -1839,13 +1892,17 @@ mod tests {
             .expect("find laptop row");
 
         assert_eq!(monitor.category_code.as_deref(), Some("monitor"));
+        assert_eq!(monitor.computer_name.as_deref(), Some("ASWVNMON709"));
         assert_eq!(monitor.display_name_short.as_deref(), Some("Mon709"));
+        assert_eq!(monitor.adapter_number.as_deref(), Some("ADP-709"));
         assert_eq!(monitor.usage_location.as_deref(), Some("office"));
         assert_eq!(monitor.holder_employee_id.as_deref(), Some("ASWVN1302"));
         assert_eq!(monitor.holder_full_name.as_deref(), Some("Le The Hung"));
         assert_eq!(monitor.status, "assigned");
 
         assert_eq!(laptop.category_code.as_deref(), Some("laptop"));
+        assert_eq!(laptop.computer_name.as_deref(), Some("ASWVNLAP050"));
+        assert_eq!(laptop.adapter_number.as_deref(), Some("LAP-ADP-050"));
         assert!(laptop.holder_employee_id.is_none());
         assert!(laptop.usage_location.is_none());
     }

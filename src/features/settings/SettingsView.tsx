@@ -29,6 +29,7 @@ import { useIdleCollapse } from "./useIdleCollapse"
 
 type SettingsViewProps = {
     auth: AuthState
+    activeUserScope: string
     settings: SettingsState
     importState: ImportState
     assetImport: AssetImportState
@@ -69,6 +70,7 @@ const settingsCardHeaderTitleClass =
 
 export function SettingsView({
     auth,
+    activeUserScope,
     settings,
     importState,
     assetImport,
@@ -859,6 +861,7 @@ export function SettingsView({
             </div>{/* end lg:grid-cols-2 */}
 
             <AssetDashboard
+                activeUserScope={activeUserScope}
                 auth={auth}
                 assetDashboard={assetDashboard}
                 assetImport={assetImport}
