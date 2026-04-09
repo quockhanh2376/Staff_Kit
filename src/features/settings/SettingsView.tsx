@@ -62,6 +62,10 @@ const adminPortalImportOptions: Array<{ key: StaffGroupKey; label: string }> = [
     { key: "offboarding", label: "Offboarding" },
     { key: "internal_movement", label: "Movement" },
 ]
+const settingsCardHeaderClass =
+    "min-h-[68px] bg-[#1c2128] px-4 py-4"
+const settingsCardHeaderTitleClass =
+    "flex min-h-[36px] min-w-0 items-center gap-2 text-xl font-semibold text-slate-100"
 
 export function SettingsView({
     auth,
@@ -88,13 +92,13 @@ export function SettingsView({
                     className="self-start overflow-hidden rounded-[16px] border border-slate-800 bg-[#161b22] text-sm text-slate-300 shadow-[0_18px_42px_rgba(0,0,0,0.22)]"
                 >
                     <div
-                        className={`cursor-pointer bg-[#1c2128] px-4 py-4 transition-colors hover:bg-[#222a35] ${adminPortalCard.isExpanded ? "border-b border-slate-800" : ""}`}
+                        className={`cursor-pointer transition-colors hover:bg-[#222a35] ${settingsCardHeaderClass} ${adminPortalCard.isExpanded ? "border-b border-slate-800" : ""}`}
                         onClick={() => adminPortalCard.setExpanded((current) => !current)}
                     >
                         <div className="flex items-center justify-between gap-3">
-                            <div className="flex min-w-0 items-center gap-2">
+                            <div className={settingsCardHeaderTitleClass}>
                                 <Users size={20} className="shrink-0 text-emerald-400" />
-                                <div className="text-xl font-semibold text-slate-100">Admin Portal</div>
+                                <div>Admin Portal</div>
                                 <span className="ml-1 inline-flex items-center justify-center rounded-[8px] border border-slate-700 bg-slate-800 p-1 text-slate-400">
                                     {adminPortalCard.isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                                 </span>
@@ -449,13 +453,13 @@ export function SettingsView({
                     className="self-start overflow-hidden rounded-[16px] border border-slate-800 bg-[#161b22] text-sm text-slate-300 shadow-[0_18px_42px_rgba(0,0,0,0.22)]"
                 >
                     <div
-                        className={`cursor-pointer bg-[#1c2128] px-4 py-4 transition-colors hover:bg-[#222a35] ${databaseBackupCard.isExpanded ? "border-b border-slate-800" : ""}`}
+                        className={`cursor-pointer transition-colors hover:bg-[#222a35] ${settingsCardHeaderClass} ${databaseBackupCard.isExpanded ? "border-b border-slate-800" : ""}`}
                         onClick={() => databaseBackupCard.setExpanded((current) => !current)}
                     >
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                            <div className="flex min-w-0 items-center gap-2">
+                            <div className={settingsCardHeaderTitleClass}>
                                 <Database size={20} className="shrink-0 text-emerald-400" />
-                                <div className="text-xl font-semibold text-slate-100">Database & Backup</div>
+                                <div>Data-Backup</div>
                                 <span className="ml-1 inline-flex items-center justify-center rounded-[8px] border border-slate-700 bg-slate-800 p-1 text-slate-400">
                                     {databaseBackupCard.isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                                 </span>

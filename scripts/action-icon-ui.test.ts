@@ -12,7 +12,7 @@ const dbLocationBlock = settingsView.slice(
 )
 const adminPortalBlock = settingsView.slice(
     settingsView.indexOf("Admin Portal"),
-    settingsView.indexOf("Database & Backup"),
+    settingsView.indexOf("Data-Backup"),
 )
 
 assert.match(columnsDrawer, /className="action-icon-button"/)
@@ -29,7 +29,7 @@ assert.doesNotMatch(settingsView, /aria-label=\{`Use /)
 assert.doesNotMatch(settingsView, /title=\{`Use /)
 assert.match(adminPortalBlock, /Users size=\{20\}/)
 assert.match(settingsView, /const adminPortalCard = useIdleCollapse\(60000\)/)
-assert.match(adminPortalBlock, /cursor-pointer bg-\[#1c2128\]/)
+assert.match(adminPortalBlock, /settingsCardHeaderClass/)
 assert.match(adminPortalBlock, /Preparing import\.\.\." : "Import"/)
 assert.match(adminPortalBlock, />\s*TO:\s*</)
 assert.match(settingsView, /Employee List/)
@@ -55,11 +55,13 @@ assert.doesNotMatch(settingsView, /Save Borrow LAN Settings/)
 assert.doesNotMatch(settingsView, /Refresh LAN IP/)
 assert.match(borrowAdminView, /Save Borrow LAN Settings/)
 assert.match(borrowAdminView, /Refresh LAN IP/)
-assert.match(settingsView, /Database & Backup/)
+assert.match(settingsView, /Data-Backup/)
+assert.doesNotMatch(settingsView, /Admin Portal \(Local Accounts\)/)
 assert.match(settingsView, /useIdleCollapse/)
 assert.match(settingsView, /60000/)
 assert.match(settingsView, /ChevronUp/)
 assert.match(settingsView, /ChevronDown/)
+assert.match(settingsView, /min-h-\[68px\]/)
 assert.match(settingsView, /self-start/)
 assert.match(settingsView, /bg-\[#161b22\]/)
 assert.match(settingsView, /bg-\[#1c2128\]/)
