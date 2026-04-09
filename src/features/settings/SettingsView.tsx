@@ -14,7 +14,7 @@ import {
     Save,
     Trash2,
     Upload,
-    UserRoundCheck,
+    Users,
 } from "lucide-react"
 import type { AuthState } from "../auth/useAuthState"
 import type { SettingsState } from "./useSettingsState"
@@ -44,8 +44,6 @@ type SettingsViewProps = {
     triggerReload: () => void
 }
 
-const settingsCardClass =
-    "rounded-[16px] border border-slate-800 bg-[#161b22] p-4 text-slate-300 shadow-[0_18px_42px_rgba(0,0,0,0.22)]"
 const settingsSubCardClass = "rounded-[12px] border border-slate-800 bg-[#1c2128] p-3"
 const settingsLabelClass =
     "text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400"
@@ -58,6 +56,12 @@ const settingsPrimaryButtonClass =
 const settingsMutedTextClass = "text-slate-400"
 const settingsPanelHeadingClass =
     "text-sm font-semibold uppercase tracking-[0.08em] text-slate-100"
+const adminPortalImportOptions: Array<{ key: StaffGroupKey; label: string }> = [
+    { key: "employee_list", label: "Employee List" },
+    { key: "onboarding", label: "Onboarding" },
+    { key: "offboarding", label: "Offboarding" },
+    { key: "internal_movement", label: "Movement" },
+]
 
 export function SettingsView({
     auth,
@@ -71,6 +75,7 @@ export function SettingsView({
     triggerReload,
 }: SettingsViewProps) {
     const imp = importState
+    const adminPortalCard = useIdleCollapse(60000)
     const databaseBackupCard = useIdleCollapse(60000)
 
     return (
@@ -78,12 +83,78 @@ export function SettingsView({
             <h2 className="text-[30px] font-bold text-slate-100">Settings</h2>
             <div className="mt-4 grid gap-4 lg:grid-cols-2">
                 {/* Admin Portal — 2-column: left = user mgmt, right = import */}
-                <div className={settingsCardClass}>
-                    <div className="text-lg font-semibold text-slate-100">Admin Portal (Local Accounts)</div>
+                <div
+                    {...adminPortalCard.bindActivityHandlers}
+                    className="self-start overflow-hidden rounded-[16px] border border-slate-800 bg-[#161b22] text-sm text-slate-300 shadow-[0_18px_42px_rgba(0,0,0,0.22)]"
+                >
+                    <div
+                        className={`cursor-pointer bg-[#1c2128] px-4 py-4 transition-colors hover:bg-[#222a35] ${adminPortalCard.isExpanded ? "border-b border-slate-800" : ""}`}
+                        onClick={() => adminPortalCard.setExpanded((current) => !current)}
+                    >
+                        <div className="flex items-center justify-between gap-3">
+                            <div className="flex min-w-0 items-center gap-2">
+                                <Users size={20} className="shrink-0 text-emerald-400" />
+                                <div className="text-xl font-semibold text-slate-100">Admin Portal</div>
+                                <span className="ml-1 inline-flex items-center justify-center rounded-[8px] border border-slate-700 bg-slate-800 p-1 text-slate-400">
+                                    {adminPortalCard.isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
 
-                    <div className="mt-4 grid gap-6 md:grid-cols-2">
+                    <div
+                        className={`origin-top overflow-hidden transition-[max-height,opacity] duration-300 ease-out ${adminPortalCard.isExpanded ? "max-h-[1400px] opacity-100" : "max-h-0 opacity-0"}`}
+                    >
+                        <div className="space-y-4 p-4">
+                            <div className="border-b border-slate-800 pb-4">
+                                <div className="inline-flex max-w-full flex-wrap overflow-hidden rounded-[10px] border border-emerald-500/45 bg-[#0d1117] shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+                                    <button
+                                        className="inline-flex items-center gap-2 border-r border-emerald-500/35 bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-[#03130d] transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+                                        onClick={() => void imp.handlePickImportFiles()}
+                                        type="button"
+                                        disabled={!auth.canImportData || imp.isImporting}
+                                    >
+                                        {imp.isImporting ? (
+                                            <LoaderCircle className="animate-spin" size={15} />
+                                        ) : (
+                                            <Upload size={15} />
+                                        )}
+                                        {imp.isImporting ? "Preparing import..." : "Import"}
+                                    </button>
+                                    <div className="relative flex min-w-0 items-center gap-2 px-3 py-2.5">
+                                        <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+                                            TO:
+                                        </span>
+                                        <select
+                                            className="min-w-[180px] appearance-none bg-transparent pr-6 text-sm font-semibold text-slate-100 outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                                            value={imp.importTargetGroup}
+                                            onChange={(event) =>
+                                                imp.setImportTargetGroup(event.target.value as StaffGroupKey)
+                                            }
+                                            disabled={!auth.canImportData || imp.isImporting}
+                                        >
+                                            {adminPortalImportOptions.map((item) => (
+                                                <option key={item.key} value={item.key} className="bg-[#1c2128] text-slate-100">
+                                                    {item.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <ChevronDown
+                                            size={14}
+                                            className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-500"
+                                        />
+                                    </div>
+                                </div>
+                                {!auth.canImportData && (
+                                    <div className="mt-2 text-xs text-slate-500">
+                                        Admin access required for import.
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="grid gap-4 xl:grid-cols-[minmax(0,0.92fr)_minmax(320px,1.08fr)]">
                         {/* LEFT — user management */}
-                        <div className="flex flex-col gap-3">
+                                <div className="space-y-4">
                             {/* Create account */}
                             <div className={settingsSubCardClass}>
                                 <div className={`mb-2 ${settingsLabelClass}`}>
@@ -143,8 +214,18 @@ export function SettingsView({
                                 </div>
                             </div>
 
-                            {/* Account list */}
-                            <div className="space-y-2">
+                                </div>
+
+                                <div className="overflow-hidden rounded-[12px] border border-slate-800 bg-[#1c2128]">
+                                    <div className="border-b border-slate-800 px-3 py-3">
+                                        <div className={settingsPanelHeadingClass}>
+                                            Accounts ({auth.accounts.length})
+                                        </div>
+                                    </div>
+                                    <div
+                                        className="max-h-[360px] space-y-2 overflow-y-auto px-3 pb-3 pt-3"
+                                        onScroll={adminPortalCard.notifyActivity}
+                                    >
                                 {auth.isLoadingAccounts && (
                                     <div className={`text-xs ${settingsMutedTextClass}`}>Loading accounts...</div>
                                 )}
@@ -174,18 +255,6 @@ export function SettingsView({
                                                     </span>
                                                 )}
                                                 <div className="ml-auto flex items-center gap-2">
-                                                    <button
-                                                        className="action-icon-button"
-                                                        onClick={() =>
-                                                            void auth.handleActivateAccount(account.id, setGlobalError, triggerReload)
-                                                        }
-                                                        type="button"
-                                                        disabled={auth.isMutatingAccounts || auth.isLoadingAccounts}
-                                                        aria-label={`Use ${account.displayName}`}
-                                                        title={`Use ${account.displayName}`}
-                                                    >
-                                                        <UserRoundCheck size={15} />
-                                                    </button>
                                                     <button
                                                         className="action-icon-button"
                                                         onClick={() => auth.handleStartEdit(account)}
@@ -307,7 +376,8 @@ export function SettingsView({
                         </div>
 
                         {/* RIGHT — Import Excel (admin only) */}
-                        <div className="flex flex-col gap-4">
+                        {settings.backupSettings?.retentionFiles === -999 ? (
+                        <div>
                             <div className={settingsSubCardClass}>
                                 {auth.canImportData ? (
                                     <>
@@ -363,6 +433,9 @@ export function SettingsView({
                                         </button>
                                     )
                                 })}
+                            </div>
+                        </div>
+                        ) : null}
                             </div>
                         </div>
                     </div>
@@ -553,7 +626,7 @@ export function SettingsView({
                                 </div>
                                 <div className="space-y-2 px-3 pb-3 pt-2">
                                     <div className="text-[11px] leading-relaxed text-slate-400">
-                                        Auto-created before each import and when closing the app. Click Restore to roll back.
+                                        Auto Save and Restore Back
                                     </div>
                                     {settings.snapshotMessage && (
                                         <div className="rounded-[10px] border border-emerald-500/28 bg-emerald-500/8 px-3 py-2 text-xs text-emerald-100">

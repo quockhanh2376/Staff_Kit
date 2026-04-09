@@ -10,6 +10,10 @@ const dbLocationBlock = settingsView.slice(
     settingsView.indexOf("DB Location"),
     settingsView.indexOf("DB Location") + 500,
 )
+const adminPortalBlock = settingsView.slice(
+    settingsView.indexOf("Admin Portal"),
+    settingsView.indexOf("Database & Backup"),
+)
 
 assert.match(columnsDrawer, /className="action-icon-button"/)
 assert.match(columnsDrawer, /className="action-icon-button action-icon-button-danger"/)
@@ -18,9 +22,21 @@ assert.match(teamView, /PencilLine size=\{15\}/)
 assert.match(teamView, /Trash2 size=\{15\}/)
 assert.doesNotMatch(teamView, />\s*Rename\s*</)
 assert.match(settingsView, /className="action-icon-button"/)
-assert.match(settingsView, /UserRoundCheck size=\{15\}/)
 assert.match(settingsView, /KeyRound size=\{15\}/)
 assert.match(settingsView, /Trash2 size=\{15\}/)
+assert.doesNotMatch(settingsView, /UserRoundCheck size=\{15\}/)
+assert.doesNotMatch(settingsView, /aria-label=\{`Use /)
+assert.doesNotMatch(settingsView, /title=\{`Use /)
+assert.match(adminPortalBlock, /Users size=\{20\}/)
+assert.match(settingsView, /const adminPortalCard = useIdleCollapse\(60000\)/)
+assert.match(adminPortalBlock, /cursor-pointer bg-\[#1c2128\]/)
+assert.match(adminPortalBlock, /Preparing import\.\.\." : "Import"/)
+assert.match(adminPortalBlock, />\s*TO:\s*</)
+assert.match(settingsView, /Employee List/)
+assert.match(settingsView, /Onboarding/)
+assert.match(settingsView, /Offboarding/)
+assert.match(settingsView, /Movement/)
+assert.doesNotMatch(adminPortalBlock, /mt-4 grid gap-6 md:grid-cols-2/)
 assert.doesNotMatch(settingsView, />\s*Import Excel\s*<\/div>/)
 assert.doesNotMatch(
     settingsView,
@@ -30,6 +46,8 @@ assert.doesNotMatch(settingsView, /SQLite status:/)
 assert.doesNotMatch(settingsView, /SQLite version:/)
 assert.match(settingsView, /7 versions and delete after 400 days/)
 assert.doesNotMatch(settingsView, /Auto backup every 7 days, keep 7 files, delete after 400 days/)
+assert.match(settingsView, /Auto Save and Restore Back/)
+assert.doesNotMatch(settingsView, /Auto-created before each import and when closing the app\. Click Restore to roll back\./)
 assert.doesNotMatch(settingsView, /Manage local accounts in this app\. Column layout is saved per account profile\./)
 assert.doesNotMatch(settingsView, /Point to a SharePoint \/ OneDrive synced folder to share data across the team\./)
 assert.doesNotMatch(settingsView, /Borrow LAN &amp; Asset Import/)
