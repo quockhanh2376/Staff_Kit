@@ -106,6 +106,10 @@ assert.deepEqual(
 const appSource = readFileSync("src/App.tsx", "utf8")
 const settingsViewSource = readFileSync("src/features/settings/SettingsView.tsx", "utf8")
 const assetDashboardSource = readFileSync("src/features/assets/AssetDashboard.tsx", "utf8")
+const serializedGridHookSource = readFileSync(
+  "src/features/assets/useSerializedAssetGridState.ts",
+  "utf8",
+)
 
 assert.match(appSource, /activeUserScope=\{activeUserScope\}/)
 assert.match(settingsViewSource, /activeUserScope: string/)
@@ -115,5 +119,57 @@ assert.match(assetDashboardSource, /renderSerializedCellValue/)
 assert.match(assetDashboardSource, /orderedColumns\.map\(\(column\) => \(/)
 assert.doesNotMatch(assetDashboardSource, />\s*Display\s*</)
 assert.doesNotMatch(assetDashboardSource, />\s*Usage\s*</)
+assert.match(serializedGridHookSource, /const handleMouseUp = \(\) => \{/)
+assert.match(serializedGridHookSource, /storageKeys\.widths/)
+
+const tieRows: AssetDashboardSerializedRecord[] = [
+  {
+    assetId: 10,
+    assetCode: "VNLAP010",
+    categoryCode: "laptop",
+    categoryName: "Laptop",
+    computerName: "ASWVNLAP010",
+    displayName: "Lenovo E14",
+    displayNameShort: null,
+    model: "Lenovo E14",
+    serialNumber: "SN-010",
+    adapterNumber: null,
+    usageLocation: null,
+    notes: null,
+    status: "assigned",
+    holderEmployeeId: null,
+    holderFullName: null,
+  },
+  {
+    assetId: 11,
+    assetCode: "VNLAP011",
+    categoryCode: "laptop",
+    categoryName: "Laptop",
+    computerName: "ASWVNLAP011",
+    displayName: "Lenovo E14",
+    displayNameShort: null,
+    model: "Lenovo E14",
+    serialNumber: "SN-011",
+    adapterNumber: null,
+    usageLocation: null,
+    notes: null,
+    status: "assigned",
+    holderEmployeeId: null,
+    holderFullName: null,
+  },
+]
+
+assert.deepEqual(
+  sortSerializedAssetRows(tieRows, { key: "assetName", direction: "asc" }).map(
+    (row) => row.assetId,
+  ),
+  [10, 11],
+)
+assert.deepEqual(
+  sortSerializedAssetRows(tieRows, { key: "assetName", direction: "desc" }).map(
+    (row) => row.assetId,
+  ),
+  [10, 11],
+)
 
 console.log("serialized-asset-grid tests passed")

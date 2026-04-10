@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import type { MouseEvent as ReactMouseEvent } from "react"
 import type { AssetDashboardSerializedRecord } from "../../types/staff"
 import {
@@ -46,6 +46,7 @@ export function useSerializedAssetGridState({
     startX: number
     startWidth: number
   } | null>(null)
+  const latestColumnWidthsRef = useRef<WidthMap>(columnWidths)
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -55,11 +56,8 @@ export function useSerializedAssetGridState({
   }, [columnOrder, storageKeys.order])
 
   useEffect(() => {
-    if (typeof window === "undefined") {
-      return
-    }
-    window.localStorage.setItem(storageKeys.widths, JSON.stringify(columnWidths))
-  }, [columnWidths, storageKeys.widths])
+    latestColumnWidthsRef.current = columnWidths
+  }, [columnWidths])
 
   useEffect(() => {
     if (!resizeState) {
@@ -74,13 +72,23 @@ export function useSerializedAssetGridState({
         definition.minWidth,
         Math.min(MAX_COLUMN_WIDTH, Math.round(resizeState.startWidth + delta)),
       )
-      setColumnWidths((current) => ({
-        ...current,
-        [resizeState.key]: nextWidth,
-      }))
+      setColumnWidths((current) => {
+        const nextWidths = {
+          ...current,
+          [resizeState.key]: nextWidth,
+        }
+        latestColumnWidthsRef.current = nextWidths
+        return nextWidths
+      })
     }
 
     const handleMouseUp = () => {
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(
+          storageKeys.widths,
+          JSON.stringify(latestColumnWidthsRef.current),
+        )
+      }
       setResizeState(null)
     }
 
@@ -93,7 +101,7 @@ export function useSerializedAssetGridState({
       window.removeEventListener("mouseup", handleMouseUp)
       document.body.classList.remove("column-resize-active")
     }
-  }, [resizeState])
+  }, [resizeState, storageKeys.widths])
 
   const orderedColumns = useMemo(
     () => reconcileColumnOrder(columnOrder).map((key) => SERIALIZED_ASSET_COLUMN_MAP[key]),

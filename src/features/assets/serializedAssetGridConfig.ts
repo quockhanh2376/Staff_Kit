@@ -137,7 +137,7 @@ export function sortSerializedAssetRows(
       return compared * direction
     }
 
-    return (left.assetId - right.assetId) * direction
+    return left.assetId - right.assetId
   })
 }
 
