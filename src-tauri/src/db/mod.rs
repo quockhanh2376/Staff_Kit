@@ -467,9 +467,11 @@ fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
             "INTEGER REFERENCES asset_categories(id) ON UPDATE CASCADE ON DELETE SET NULL",
         ),
         ("display_name_short", "TEXT"),
+        ("computer_name", "TEXT"),
         ("brand", "TEXT"),
         ("warehouse", "TEXT"),
         ("usage_location", "TEXT"),
+        ("adapter_number", "TEXT"),
     ] {
         if existing.iter().any(|name| name == column_name) {
             continue;
@@ -521,8 +523,10 @@ fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
 
     for (column_name, column_type) in [
         ("display_name_short", "TEXT"),
+        ("computer_name", "TEXT"),
         ("brand", "TEXT"),
         ("quantity", "TEXT"),
+        ("adapter_number", "TEXT"),
         ("warehouse", "TEXT"),
         ("usage_location", "TEXT"),
         ("submitted_staff_id", "TEXT"),
@@ -1211,8 +1215,16 @@ mod tests {
             "expected assets.display_name_short to be added for legacy databases"
         );
         assert!(
+            column_exists(&conn, "assets", "computer_name"),
+            "expected assets.computer_name to be added for legacy databases"
+        );
+        assert!(
             column_exists(&conn, "assets", "usage_location"),
             "expected assets.usage_location to be added for legacy databases"
+        );
+        assert!(
+            column_exists(&conn, "assets", "adapter_number"),
+            "expected assets.adapter_number to be added for legacy databases"
         );
         assert!(
             column_exists(&conn, "asset_import_batches", "import_type"),

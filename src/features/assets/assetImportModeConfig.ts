@@ -8,11 +8,13 @@ import type {
 export type AssetImportWizardFieldKey =
     | "assetCode"
     | "category"
+    | "computerName"
     | "assetName"
     | "itemName"
     | "brand"
     | "model"
     | "serialNumber"
+    | "adapterNumber"
     | "usageLocation"
     | "displayNameShort"
     | "quantity"
@@ -32,10 +34,12 @@ export type AssetImportWizardMapping = Partial<
 const SERIALIZED_MAPPING_KEYS = [
     "assetCode",
     "category",
+    "computerName",
     "assetName",
     "brand",
     "model",
     "serialNumber",
+    "adapterNumber",
     "warehouse",
     "note",
 ] as const satisfies readonly AssetImportWizardFieldKey[]
@@ -65,11 +69,13 @@ const QUANTITY_REQUIRED_KEYS = [
 const EDITABLE_FIELD_KEYS = new Set<AssetImportWizardFieldKey>([
     "assetCode",
     "category",
+    "computerName",
     "assetName",
     "itemName",
     "brand",
     "model",
     "serialNumber",
+    "adapterNumber",
     "quantity",
     "warehouse",
     "note",
@@ -78,11 +84,13 @@ const EDITABLE_FIELD_KEYS = new Set<AssetImportWizardFieldKey>([
 const FIELD_LABELS: Record<AssetImportWizardFieldKey, string> = {
     assetCode: "Asset Code",
     category: "Category",
+    computerName: "Computer Name",
     assetName: "Asset Name",
     itemName: "Item Name",
     brand: "Brand",
     model: "Model",
     serialNumber: "Serial Number",
+    adapterNumber: "Adapter Number",
     usageLocation: "Usage Location",
     displayNameShort: "Display Name Short",
     quantity: "Quantity",
@@ -112,11 +120,13 @@ const MODE_LABELS: Record<AssetImportMode, string> = {
 const FIELD_ALIASES: Record<AssetImportWizardFieldKey, string[]> = {
     assetCode: ["assetcode", "asset code", "asset_code", "asset-code", "assetid", "asset id"],
     category: ["category", "asset category", "asset_type", "asset type", "type", "loai tai san", "loaitaisan"],
+    computerName: ["computer name", "computer_name", "computername", "computer", "pc name", "pc_name", "hostname"],
     assetName: ["asset_name", "asset name", "display name", "display_name", "name", "assetname", "ten tai san", "tentaisan"],
     itemName: ["item_name", "item name", "name", "display name", "display_name", "asset name", "asset_name"],
     brand: ["brand", "maker", "vendor", "nhan hieu", "nhanhieu"],
     model: ["model", "model number", "model_number", "model no", "model_no"],
     serialNumber: ["serial_number", "serial number", "serrial number", "serialnumber", "serial", "serial no", "serial_no", "sn"],
+    adapterNumber: ["adapter number", "adapter_number", "adapternumber", "adapter", "adapter no", "adapter_no"],
     usageLocation: ["usage location", "usuage location", "usage_location", "usuage_location"],
     displayNameShort: ["display name short", "display_name_short", "short name", "display short name"],
     quantity: ["quantity", "qty", "so luong", "soluong"],
@@ -125,6 +135,8 @@ const FIELD_ALIASES: Record<AssetImportWizardFieldKey, string[]> = {
 }
 
 const DASHBOARD_FIELD_KEYS = [
+    "computerName",
+    "adapterNumber",
     "usageLocation",
     "displayNameShort",
 ] as const satisfies readonly AssetImportWizardFieldKey[]
@@ -232,8 +244,10 @@ export function convertBackendMappingToWizardMapping(
             assetCode: mapping.assetCode ?? null,
             itemName: mapping.displayName ?? null,
             category: mapping.assetType ?? null,
+            computerName: mapping.computerName ?? null,
             brand: mapping.brand ?? null,
             model: mapping.model ?? null,
+            adapterNumber: mapping.adapterNumber ?? null,
             quantity: mapping.quantity ?? null,
             warehouse: mapping.warehouse ?? null,
             note: mapping.notes ?? null,
@@ -245,10 +259,12 @@ export function convertBackendMappingToWizardMapping(
     return {
         assetCode: mapping.assetCode ?? null,
         category: mapping.assetType ?? null,
+        computerName: mapping.computerName ?? null,
         assetName: mapping.displayName ?? null,
         brand: mapping.brand ?? null,
         model: mapping.model ?? null,
         serialNumber: mapping.serialNumber ?? null,
+        adapterNumber: mapping.adapterNumber ?? null,
         usageLocation: mapping.usageLocation ?? null,
         displayNameShort: mapping.displayNameShort ?? null,
         warehouse: mapping.warehouse ?? null,
@@ -268,8 +284,10 @@ export function toBackendAssetImportMapping(
             assetCode: mapping.assetCode ?? null,
             assetType: mapping.category ?? null,
             displayName: mapping.itemName ?? null,
+            computerName: mapping.computerName ?? null,
             brand: mapping.brand ?? null,
             model: mapping.model ?? null,
+            adapterNumber: mapping.adapterNumber ?? null,
             quantity: mapping.quantity ?? null,
             warehouse: mapping.warehouse ?? null,
             notes: mapping.note ?? null,
@@ -282,9 +300,11 @@ export function toBackendAssetImportMapping(
         assetCode: mapping.assetCode ?? null,
         assetType: mapping.category ?? null,
         displayName: mapping.assetName ?? null,
+        computerName: mapping.computerName ?? null,
         brand: mapping.brand ?? null,
         model: mapping.model ?? null,
         serialNumber: mapping.serialNumber ?? null,
+        adapterNumber: mapping.adapterNumber ?? null,
         usageLocation: mapping.usageLocation ?? null,
         displayNameShort: mapping.displayNameShort ?? null,
         warehouse: mapping.warehouse ?? null,
@@ -327,12 +347,16 @@ export function getAssetImportRowFieldValue(
         case "assetName":
         case "itemName":
             return row.displayName ?? findRawValue(row.rawValues, mapping[fieldKey])
+        case "computerName":
+            return row.computerName ?? findRawValue(row.rawValues, mapping.computerName)
         case "brand":
             return row.brand ?? findRawValue(row.rawValues, mapping.brand)
         case "model":
             return row.model ?? ""
         case "serialNumber":
             return row.serialNumber ?? ""
+        case "adapterNumber":
+            return row.adapterNumber ?? findRawValue(row.rawValues, mapping.adapterNumber)
         case "usageLocation":
             return (
                 normalizeAssetDashboardUsageLocation(
@@ -404,9 +428,11 @@ export function toBackendRowFieldKey(
     | "assetCode"
     | "assetType"
     | "displayName"
+    | "computerName"
     | "brand"
     | "model"
     | "serialNumber"
+    | "adapterNumber"
     | "quantity"
     | "warehouse"
     | "notes"
@@ -423,12 +449,16 @@ export function toBackendRowFieldKey(
         case "assetName":
         case "itemName":
             return "displayName"
+        case "computerName":
+            return "computerName"
         case "brand":
             return "brand"
         case "model":
             return "model"
         case "serialNumber":
             return "serialNumber"
+        case "adapterNumber":
+            return "adapterNumber"
         case "quantity":
             return "quantity"
         case "warehouse":

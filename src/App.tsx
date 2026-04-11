@@ -504,6 +504,7 @@ function App() {
           {activeView === "settings" && (
             <SettingsView
               auth={auth}
+              activeUserScope={activeUserScope}
               settings={settings}
               assetImport={assetImport}
               assetDashboard={assetDashboard}

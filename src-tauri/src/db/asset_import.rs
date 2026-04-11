@@ -76,6 +76,7 @@ const DISPLAY_NAME_ALIASES: &[&str] = &[
     "tentaisan",
     "description",
 ];
+const COMPUTER_NAME_ALIASES: &[&str] = &["computername", "computer", "pcname", "hostname"];
 const MODEL_ALIASES: &[&str] = &["model", "modelnumber", "modelno"];
 const SERIAL_NUMBER_ALIASES: &[&str] = &[
     "serialnumber",
@@ -85,6 +86,7 @@ const SERIAL_NUMBER_ALIASES: &[&str] = &[
     "serialnum",
     "sn",
 ];
+const ADAPTER_NUMBER_ALIASES: &[&str] = &["adapternumber", "adapter", "adapterno", "adapterserial"];
 const BRAND_ALIASES: &[&str] = &["brand", "maker", "vendor", "nhanhieu", "nhanhieu"];
 const QUANTITY_ALIASES: &[&str] = &["quantity", "qty", "soluong", "solg"];
 const WAREHOUSE_ALIASES: &[&str] = &["warehouse", "location", "stocklocation", "kho"];
@@ -113,10 +115,12 @@ pub struct AssetImportFieldMapping {
     pub asset_code: Option<String>,
     pub asset_type: Option<String>,
     pub display_name: Option<String>,
+    pub computer_name: Option<String>,
     pub usage_location: Option<String>,
     pub brand: Option<String>,
     pub model: Option<String>,
     pub serial_number: Option<String>,
+    pub adapter_number: Option<String>,
     pub quantity: Option<String>,
     pub warehouse: Option<String>,
     pub notes: Option<String>,
@@ -173,9 +177,11 @@ pub struct AssetImportRowSeedInput {
     pub asset_type: Option<String>,
     pub display_name: Option<String>,
     pub display_name_short: Option<String>,
+    pub computer_name: Option<String>,
     pub brand: Option<String>,
     pub model: Option<String>,
     pub serial_number: Option<String>,
+    pub adapter_number: Option<String>,
     pub quantity: Option<String>,
     pub warehouse: Option<String>,
     pub usage_location: Option<String>,
@@ -218,9 +224,11 @@ pub struct AssetImportRowRecord {
     pub asset_type: Option<String>,
     pub display_name: Option<String>,
     pub display_name_short: Option<String>,
+    pub computer_name: Option<String>,
     pub brand: Option<String>,
     pub model: Option<String>,
     pub serial_number: Option<String>,
+    pub adapter_number: Option<String>,
     pub quantity: Option<String>,
     pub warehouse: Option<String>,
     pub usage_location: Option<String>,
@@ -284,10 +292,12 @@ struct AssetImportResolvedMapping {
     asset_code_index: Option<usize>,
     asset_type_index: usize,
     display_name_index: usize,
+    computer_name_index: Option<usize>,
     usage_location_index: Option<usize>,
     brand_index: Option<usize>,
     model_index: Option<usize>,
     serial_number_index: Option<usize>,
+    adapter_number_index: Option<usize>,
     quantity_index: Option<usize>,
     warehouse_index: Option<usize>,
     notes_index: Option<usize>,
@@ -530,9 +540,11 @@ pub(crate) fn create_asset_import_batch_seed_conn(
               asset_type,
               display_name,
               display_name_short,
+              computer_name,
               brand,
               model,
               serial_number,
+              adapter_number,
               quantity,
               warehouse,
               usage_location,
@@ -554,7 +566,7 @@ pub(crate) fn create_asset_import_batch_seed_conn(
               created_at,
               updated_at
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, '[]', '[]', ?, 0, '[]', datetime('now'), datetime('now'))
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, '[]', '[]', ?, 0, '[]', datetime('now'), datetime('now'))
             "#,
             params![
                 batch_id,
@@ -564,9 +576,11 @@ pub(crate) fn create_asset_import_batch_seed_conn(
                 normalize_optional_asset_text(row.asset_type),
                 normalize_optional_asset_text(row.display_name),
                 normalize_optional_asset_text(row.display_name_short),
+                normalize_optional_asset_text(row.computer_name),
                 normalize_optional_asset_text(row.brand),
                 normalize_optional_asset_text(row.model),
                 normalize_optional_asset_text(row.serial_number),
+                normalize_optional_asset_text(row.adapter_number),
                 normalize_optional_quantity_text(row.quantity),
                 normalize_optional_asset_text(row.warehouse),
                 normalize_usage_location(row.usage_location),
@@ -739,9 +753,11 @@ pub(crate) fn update_asset_import_row_conn(
         "assetType" => "asset_type",
         "displayName" => "display_name",
         "displayNameShort" => "display_name_short",
+        "computerName" => "computer_name",
         "brand" => "brand",
         "model" => "model",
         "serialNumber" => "serial_number",
+        "adapterNumber" => "adapter_number",
         "quantity" => "quantity",
         "warehouse" => "warehouse",
         "usageLocation" => "usage_location",
@@ -988,9 +1004,11 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
               asset_type,
               display_name,
               display_name_short,
+              computer_name,
               brand,
               model,
               serial_number,
+              adapter_number,
               warehouse,
               usage_location,
               notes,
@@ -1027,8 +1045,10 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
                 row.get::<_, Option<String>>(13)?,
                 row.get::<_, Option<String>>(14)?,
                 row.get::<_, Option<String>>(15)?,
-                row.get::<_, Option<i64>>(16)?,
+                row.get::<_, Option<String>>(16)?,
                 row.get::<_, Option<String>>(17)?,
+                row.get::<_, Option<i64>>(18)?,
+                row.get::<_, Option<String>>(19)?,
             ))
         })
         .map_err(|err| format!("failed to query valid asset import rows: {err}"))?
@@ -1039,7 +1059,7 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
 
     if rows
         .iter()
-        .any(|(row_id, asset_code, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _)| {
+        .any(|(row_id, asset_code, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _)| {
             let _ = row_id;
             asset_code.as_deref().is_none()
         })
@@ -1053,9 +1073,11 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
         asset_type,
         display_name,
         display_name_short,
+        computer_name,
         brand,
         model,
         serial_number,
+        adapter_number,
         warehouse,
         usage_location,
         notes,
@@ -1088,11 +1110,13 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
                 asset_type: asset_type.unwrap_or_default(),
                 display_name: display_name.unwrap_or_default(),
                 display_name_short,
+                computer_name,
                 brand,
                 model,
                 serial_number,
                 category_id: Some(category.id),
                 usage_location,
+                adapter_number,
                 warehouse,
                 notes,
             },
@@ -1547,6 +1571,15 @@ fn build_row_seed_from_raw_values(
         display_name.as_deref(),
         asset_code.as_deref(),
     );
+    let computer_name = mapping
+        .computer_name_index
+        .and_then(|index| mapped_value(&raw_values, index))
+        .or_else(|| {
+            asset_code
+                .as_ref()
+                .map(|value| format!("ASW{}", value.trim().to_ascii_uppercase()))
+        })
+        .and_then(|value| normalize_optional_asset_text(Some(value)));
 
     AssetImportRowSeedInput {
         row_number,
@@ -1554,6 +1587,7 @@ fn build_row_seed_from_raw_values(
         asset_type,
         display_name,
         display_name_short,
+        computer_name,
         brand: mapping
             .brand_index
             .and_then(|index| mapped_value(&raw_values, index)),
@@ -1562,6 +1596,9 @@ fn build_row_seed_from_raw_values(
             .and_then(|index| mapped_value(&raw_values, index)),
         serial_number: mapping
             .serial_number_index
+            .and_then(|index| mapped_value(&raw_values, index)),
+        adapter_number: mapping
+            .adapter_number_index
             .and_then(|index| mapped_value(&raw_values, index)),
         quantity: mapping
             .quantity_index
@@ -1647,6 +1684,10 @@ fn resolve_mapping(
                 &header_indices,
                 merged.display_name.as_deref(),
             )?,
+            computer_name_index: resolve_optional_header_index(
+                &header_indices,
+                merged.computer_name.as_deref(),
+            ),
             usage_location_index: resolve_optional_header_index(
                 &header_indices,
                 merged.usage_location.as_deref(),
@@ -1656,6 +1697,10 @@ fn resolve_mapping(
             serial_number_index: resolve_optional_header_index(
                 &header_indices,
                 merged.serial_number.as_deref(),
+            ),
+            adapter_number_index: resolve_optional_header_index(
+                &header_indices,
+                merged.adapter_number.as_deref(),
             ),
             quantity_index: resolve_optional_header_index(
                 &header_indices,
@@ -1714,6 +1759,10 @@ fn detect_field_mapping(headers: &[String]) -> AssetImportFieldMapping {
             mapping.display_name = Some(header.clone());
             continue;
         }
+        if mapping.computer_name.is_none() && COMPUTER_NAME_ALIASES.contains(&normalized.as_str()) {
+            mapping.computer_name = Some(header.clone());
+            continue;
+        }
         if mapping.usage_location.is_none()
             && USAGE_LOCATION_ALIASES.contains(&normalized.as_str())
         {
@@ -1730,6 +1779,12 @@ fn detect_field_mapping(headers: &[String]) -> AssetImportFieldMapping {
         }
         if mapping.serial_number.is_none() && SERIAL_NUMBER_ALIASES.contains(&normalized.as_str()) {
             mapping.serial_number = Some(header.clone());
+            continue;
+        }
+        if mapping.adapter_number.is_none()
+            && ADAPTER_NUMBER_ALIASES.contains(&normalized.as_str())
+        {
+            mapping.adapter_number = Some(header.clone());
             continue;
         }
         if mapping.quantity.is_none() && QUANTITY_ALIASES.contains(&normalized.as_str()) {
@@ -1757,12 +1812,16 @@ fn merge_field_mapping(
         asset_type: normalized_mapping_choice(override_mapping.asset_type).or(detected.asset_type),
         display_name: normalized_mapping_choice(override_mapping.display_name)
             .or(detected.display_name),
+        computer_name: normalized_mapping_choice(override_mapping.computer_name)
+            .or(detected.computer_name),
         usage_location: normalized_mapping_choice(override_mapping.usage_location)
             .or(detected.usage_location),
         brand: normalized_mapping_choice(override_mapping.brand).or(detected.brand),
         model: normalized_mapping_choice(override_mapping.model).or(detected.model),
         serial_number: normalized_mapping_choice(override_mapping.serial_number)
             .or(detected.serial_number),
+        adapter_number: normalized_mapping_choice(override_mapping.adapter_number)
+            .or(detected.adapter_number),
         quantity: normalized_mapping_choice(override_mapping.quantity).or(detected.quantity),
         warehouse: normalized_mapping_choice(override_mapping.warehouse).or(detected.warehouse),
         notes: normalized_mapping_choice(override_mapping.notes).or(detected.notes),
@@ -1806,10 +1865,12 @@ fn mapping_score(mapping: &AssetImportFieldMapping) -> i64 {
     .count() as i64;
     let optional_matches = [
         mapping.asset_code.as_ref(),
+        mapping.computer_name.as_ref(),
         mapping.usage_location.as_ref(),
         mapping.brand.as_ref(),
         mapping.model.as_ref(),
         mapping.serial_number.as_ref(),
+        mapping.adapter_number.as_ref(),
         mapping.quantity.as_ref(),
         mapping.warehouse.as_ref(),
         mapping.notes.as_ref(),
@@ -1875,9 +1936,11 @@ fn normalize_import_field_key(value: &str) -> Result<String, String> {
         | "assetType"
         | "displayName"
         | "displayNameShort"
+        | "computerName"
         | "brand"
         | "model"
         | "serialNumber"
+        | "adapterNumber"
         | "quantity"
         | "warehouse"
         | "usageLocation"
@@ -2534,7 +2597,7 @@ fn load_asset_import_rows_for_batch(
             r#"
             SELECT
               id, batch_id, row_number, raw_row_json, asset_code, asset_type, display_name, display_name_short,
-              brand, model, serial_number, quantity, warehouse, usage_location, notes,
+              computer_name, brand, model, serial_number, adapter_number, quantity, warehouse, usage_location, notes,
               submitted_staff_id, submitted_full_name, submitted_team, submitted_phone_number,
               resolved_employee_id, resolved_employee_row_id, resolved_full_name, resolved_team_name,
               owner_match_status, owner_warnings_json,
@@ -2564,7 +2627,7 @@ fn load_asset_import_row_record_conn(
         r#"
         SELECT
           id, batch_id, row_number, raw_row_json, asset_code, asset_type, display_name, display_name_short,
-          brand, model, serial_number, quantity, warehouse, usage_location, notes,
+          computer_name, brand, model, serial_number, adapter_number, quantity, warehouse, usage_location, notes,
           submitted_staff_id, submitted_full_name, submitted_team, submitted_phone_number,
           resolved_employee_id, resolved_employee_row_id, resolved_full_name, resolved_team_name,
           owner_match_status, owner_warnings_json,
@@ -2590,28 +2653,30 @@ fn map_asset_import_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AssetImport
         asset_type: row.get(5)?,
         display_name: row.get(6)?,
         display_name_short: row.get(7)?,
-        brand: row.get(8)?,
-        model: row.get(9)?,
-        serial_number: row.get(10)?,
-        quantity: row.get(11)?,
-        warehouse: row.get(12)?,
-        usage_location: row.get(13)?,
-        notes: row.get(14)?,
-        submitted_staff_id: row.get(15)?,
-        submitted_full_name: row.get(16)?,
-        submitted_team: row.get(17)?,
-        submitted_phone_number: row.get(18)?,
-        resolved_employee_id: row.get(19)?,
-        resolved_employee_row_id: row.get(20)?,
-        resolved_full_name: row.get(21)?,
-        resolved_team_name: row.get(22)?,
-        owner_match_status: row.get(23)?,
-        owner_warnings: from_json_row(Some(row.get(24)?))?,
-        validation_errors: from_json_row(Some(row.get(25)?))?,
-        status: row.get(26)?,
-        is_edited: row.get::<_, i64>(27)? > 0,
-        edited_fields: from_json_row(Some(row.get(28)?))?,
-        imported_asset_id: row.get(29)?,
+        computer_name: row.get(8)?,
+        brand: row.get(9)?,
+        model: row.get(10)?,
+        serial_number: row.get(11)?,
+        adapter_number: row.get(12)?,
+        quantity: row.get(13)?,
+        warehouse: row.get(14)?,
+        usage_location: row.get(15)?,
+        notes: row.get(16)?,
+        submitted_staff_id: row.get(17)?,
+        submitted_full_name: row.get(18)?,
+        submitted_team: row.get(19)?,
+        submitted_phone_number: row.get(20)?,
+        resolved_employee_id: row.get(21)?,
+        resolved_employee_row_id: row.get(22)?,
+        resolved_full_name: row.get(23)?,
+        resolved_team_name: row.get(24)?,
+        owner_match_status: row.get(25)?,
+        owner_warnings: from_json_row(Some(row.get(26)?))?,
+        validation_errors: from_json_row(Some(row.get(27)?))?,
+        status: row.get(28)?,
+        is_edited: row.get::<_, i64>(29)? > 0,
+        edited_fields: from_json_row(Some(row.get(30)?))?,
+        imported_asset_id: row.get(31)?,
     })
 }
 
@@ -2770,10 +2835,12 @@ mod tests {
             asset_code: Some("Asset Code".to_string()),
             asset_type: Some("Asset Type".to_string()),
             display_name: Some("Display Name".to_string()),
+            computer_name: None,
             usage_location: None,
             brand: Some("Brand".to_string()),
             model: Some("Model".to_string()),
             serial_number: Some("Serial Number".to_string()),
+            adapter_number: None,
             quantity: Some("Quantity".to_string()),
             warehouse: Some("Warehouse".to_string()),
             notes: Some("Notes".to_string()),
@@ -2840,9 +2907,11 @@ mod tests {
             asset_type: Some(asset_type.to_string()),
             display_name: Some(display_name.to_string()),
             display_name_short: None,
+            computer_name: Some(format!("ASW{}", asset_code.to_ascii_uppercase())),
             brand: Some("Dell".to_string()),
             model: Some("7440".to_string()),
             serial_number: Some(format!("SN-{row_number:03}")),
+            adapter_number: None,
             quantity: None,
             warehouse: Some("HCM".to_string()),
             usage_location: None,
@@ -2895,9 +2964,11 @@ mod tests {
             asset_type: Some(asset_type.to_string()),
             display_name: Some(display_name.to_string()),
             display_name_short: None,
+            computer_name: None,
             brand: Some("Dell".to_string()),
             model: Some("7440".to_string()),
             serial_number: Some(format!("SN-{row_number:03}")),
+            adapter_number: None,
             quantity: None,
             warehouse: Some("HCM".to_string()),
             usage_location: None,
@@ -2947,9 +3018,11 @@ mod tests {
             asset_type: Some(asset_type.to_string()),
             display_name: Some(display_name.to_string()),
             display_name_short: None,
+            computer_name: None,
             brand: Some("Logitech".to_string()),
             model: None,
             serial_number: None,
+            adapter_number: None,
             quantity: Some(quantity.to_string()),
             warehouse: Some("HCM".to_string()),
             usage_location: None,
@@ -3060,9 +3133,11 @@ mod tests {
             asset_type: Some("Monitor".to_string()),
             display_name: Some(display_name.to_string()),
             display_name_short: Some(display_name.to_string()),
+            computer_name: Some(format!("ASW{}", asset_code.to_ascii_uppercase())),
             brand: Some("LG".to_string()),
             model: Some("LG 27".to_string()),
             serial_number: None,
+            adapter_number: None,
             quantity: None,
             warehouse: None,
             usage_location: usage_location.map(str::to_string),
@@ -3125,9 +3200,11 @@ mod tests {
             asset_type: Some("Laptop".to_string()),
             display_name: Some(format!("ASW{asset_code}")),
             display_name_short: None,
+            computer_name: Some(format!("ASW{asset_code}")),
             brand: Some("Dell".to_string()),
             model: Some("Dell Latitude 7440".to_string()),
             serial_number: Some(format!("SN-{row_number:03}")),
+            adapter_number: None,
             quantity: None,
             warehouse: Some("HCM".to_string()),
             usage_location: None,
@@ -3173,6 +3250,124 @@ mod tests {
                 .iter()
                 .any(|item| item.header == "Adapter number" && item.value == "7900LG3")
         );
+
+        let _ = fs::remove_file(csv_path);
+    }
+
+    #[test]
+    fn import_valid_rows_persists_explicit_computer_name_and_adapter_number_from_workbook() {
+        let mut conn = open_test_connection();
+        let csv_path = write_temp_csv(
+            "asset-list-computer-name",
+            &[
+                "Assetcode,Category,Computer Name,Asset Name,Model,Serrial Number,Adapter number,Note",
+                "VNLAP235,Laptop,ASWVNLAP235,ASWVNLAP235,Dell Latitude 3520,7900LG3,7900LG3,",
+            ],
+        );
+
+        let parsed = parse_asset_import_source(
+            csv_path.as_path(),
+            AssetImportMode::Serialized,
+            None,
+            None,
+        )
+        .expect("parse workbook with explicit computer name");
+
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            AssetImportBatchSeedInput {
+                import_type: AssetImportMode::Serialized,
+                source_file_name: parsed.source_file_name,
+                source_file_path: parsed.source_file_path,
+                source_file_type: parsed.source_file_type,
+                sheet_name: parsed.sheet_name,
+                header_row: parsed.header_row,
+                headers: parsed.headers,
+                mapping: parsed.auto_mapping,
+                rows: parsed.rows,
+            },
+        )
+        .expect("create parsed serialized batch");
+
+        let result = import_asset_import_batch_valid_rows_conn(&mut conn, batch.summary.id)
+            .expect("import parsed serialized batch");
+
+        assert_eq!(result.imported_count, 1);
+
+        let stored = conn
+            .query_row(
+                "SELECT computer_name, adapter_number FROM assets WHERE asset_code = 'VNLAP235'",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                    ))
+                },
+            )
+            .expect("load persisted serialized workbook fields");
+
+        assert_eq!(stored.0.as_deref(), Some("ASWVNLAP235"));
+        assert_eq!(stored.1.as_deref(), Some("7900LG3"));
+
+        let _ = fs::remove_file(csv_path);
+    }
+
+    #[test]
+    fn import_valid_rows_falls_back_to_asw_asset_code_when_workbook_computer_name_is_blank() {
+        let mut conn = open_test_connection();
+        let csv_path = write_temp_csv(
+            "asset-list-computer-name-fallback",
+            &[
+                "Assetcode,Category,Computer Name,Asset Name,Model,Serrial Number,Adapter number,Note",
+                "VNLAP502,Laptop,,ASWVNLAP502,Lenovo E16,PF-5MBN9A,56K33KS,",
+            ],
+        );
+
+        let parsed = parse_asset_import_source(
+            csv_path.as_path(),
+            AssetImportMode::Serialized,
+            None,
+            None,
+        )
+        .expect("parse workbook with blank computer name");
+
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            AssetImportBatchSeedInput {
+                import_type: AssetImportMode::Serialized,
+                source_file_name: parsed.source_file_name,
+                source_file_path: parsed.source_file_path,
+                source_file_type: parsed.source_file_type,
+                sheet_name: parsed.sheet_name,
+                header_row: parsed.header_row,
+                headers: parsed.headers,
+                mapping: parsed.auto_mapping,
+                rows: parsed.rows,
+            },
+        )
+        .expect("create parsed serialized batch");
+
+        let result = import_asset_import_batch_valid_rows_conn(&mut conn, batch.summary.id)
+            .expect("import parsed serialized batch");
+
+        assert_eq!(result.imported_count, 1);
+
+        let stored = conn
+            .query_row(
+                "SELECT computer_name, adapter_number FROM assets WHERE asset_code = 'VNLAP502'",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                    ))
+                },
+            )
+            .expect("load fallback computer name");
+
+        assert_eq!(stored.0.as_deref(), Some("ASWVNLAP502"));
+        assert_eq!(stored.1.as_deref(), Some("56K33KS"));
 
         let _ = fs::remove_file(csv_path);
     }
@@ -3796,9 +3991,11 @@ mod tests {
                     asset_type: Some("Laptop".to_string()),
                     display_name: Some("ASWVNLAP600".to_string()),
                     display_name_short: None,
+                    computer_name: Some("ASWVNLAP600".to_string()),
                     brand: Some("Dell".to_string()),
                     model: Some("Latitude 5440".to_string()),
                     serial_number: None,
+                    adapter_number: None,
                     quantity: None,
                     warehouse: Some("HCM".to_string()),
                     usage_location: None,
