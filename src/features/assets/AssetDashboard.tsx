@@ -280,7 +280,7 @@ export function AssetDashboard({
   return (
     <div className={dashboardShellClass}>
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="max-w-3xl">
+        <div>
           <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
             <Boxes size={16} className="text-emerald-400" />
             Asset Dashboard
