@@ -1,4 +1,4 @@
-import type { ReactNode } from "react"
+import { useEffect, useId, useRef, type ReactNode } from "react"
 import { LoaderCircle, Upload } from "lucide-react"
 import type { SharedImportErrorItem, SharedImportStatItem } from "./sharedImportTypes"
 
@@ -59,6 +59,28 @@ export function SharedImportShell<Row>({
     preview,
     report,
 }: SharedImportShellProps<Row>) {
+    const previewDialogId = useId()
+    const previewDialogRef = useRef<HTMLDivElement | null>(null)
+
+    useEffect(() => {
+        if (!preview || typeof window === "undefined") {
+            return
+        }
+
+        const dialog = previewDialogRef.current
+        dialog?.focus()
+
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key === "Escape") {
+                event.preventDefault()
+                preview.onCancel()
+            }
+        }
+
+        window.addEventListener("keydown", handleKeyDown)
+        return () => window.removeEventListener("keydown", handleKeyDown)
+    }, [preview])
+
     return (
         <>
             <div className="space-y-5">
@@ -149,8 +171,17 @@ export function SharedImportShell<Row>({
 
             {preview && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-                    <div className="max-h-[90vh] w-full max-w-4xl overflow-auto rounded-lg border border-[var(--border)] bg-[var(--bg)] p-6 shadow-xl">
-                        <h2 className="mb-4 text-lg font-semibold">{preview.title}</h2>
+                    <div
+                        ref={previewDialogRef}
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby={previewDialogId}
+                        tabIndex={-1}
+                        className="max-h-[90vh] w-full max-w-4xl overflow-auto rounded-lg border border-[var(--border)] bg-[var(--bg)] p-6 shadow-xl focus:outline-none"
+                    >
+                        <h2 id={previewDialogId} className="mb-4 text-lg font-semibold">
+                            {preview.title}
+                        </h2>
 
                         <div className="mb-6 flex flex-wrap gap-6 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-4">
                             {preview.summaryItems.map((item) => (

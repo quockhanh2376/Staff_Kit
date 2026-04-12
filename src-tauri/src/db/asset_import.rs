@@ -1303,9 +1303,28 @@ pub(crate) fn preview_asset_import_seed_conn(
     conn: &mut Connection,
     input: AssetImportBatchSeedInput,
 ) -> Result<AssetDirectImportPreview, String> {
+    preview_asset_import_seed_conn_with_cleanup(conn, input, delete_asset_import_batch_conn_internal)
+}
+
+fn preview_asset_import_seed_conn_with_cleanup<F>(
+    conn: &mut Connection,
+    input: AssetImportBatchSeedInput,
+    cleanup_batch: F,
+) -> Result<AssetDirectImportPreview, String>
+where
+    F: FnOnce(&mut Connection, i64, bool) -> Result<bool, String>,
+{
     let batch = create_asset_import_batch_seed_conn(conn, input)?;
+    let batch_id = batch.summary.id;
     let preview = asset_direct_preview_from_batch_detail(&batch);
-    delete_asset_import_batch_conn_internal(conn, batch.summary.id, false)?;
+
+    if let Err(err) = cleanup_batch(conn, batch_id, false) {
+        eprintln!(
+            "failed to clean up temporary asset import preview batch {}: {}",
+            batch_id, err
+        );
+    }
+
     Ok(preview)
 }
 
@@ -1313,12 +1332,30 @@ pub(crate) fn import_asset_import_seed_conn(
     conn: &mut Connection,
     input: AssetImportBatchSeedInput,
 ) -> Result<AssetDirectImportReport, String> {
+    import_asset_import_seed_conn_with_cleanup(conn, input, delete_asset_import_batch_conn_internal)
+}
+
+fn import_asset_import_seed_conn_with_cleanup<F>(
+    conn: &mut Connection,
+    input: AssetImportBatchSeedInput,
+    cleanup_batch: F,
+) -> Result<AssetDirectImportReport, String>
+where
+    F: FnOnce(&mut Connection, i64, bool) -> Result<bool, String>,
+{
     let batch = create_asset_import_batch_seed_conn(conn, input)?;
     let batch_id = batch.summary.id;
     let result = import_asset_import_batch_valid_rows_conn(conn, batch_id)?;
     let batch_after = load_asset_import_batch_detail_conn(conn, batch_id)?;
     let report = asset_direct_report_from_batch_detail(&batch_after, &result);
-    delete_asset_import_batch_conn_internal(conn, batch_id, false)?;
+
+    if let Err(err) = cleanup_batch(conn, batch_id, false) {
+        eprintln!(
+            "asset import succeeded but failed to delete temporary import batch {}: {}",
+            batch_id, err
+        );
+    }
+
     Ok(report)
 }
 
@@ -3007,8 +3044,9 @@ mod tests {
 
     use super::{
         create_asset_import_batch_seed_conn, import_asset_import_batch_valid_rows_conn,
-        import_asset_import_seed_conn, load_asset_import_batch_detail_conn,
-        parse_asset_import_source, preview_asset_import_seed_conn,
+        import_asset_import_seed_conn, import_asset_import_seed_conn_with_cleanup,
+        load_asset_import_batch_detail_conn, parse_asset_import_source,
+        preview_asset_import_seed_conn, preview_asset_import_seed_conn_with_cleanup,
         update_asset_import_row_conn,
         AssetImportBatchSeedInput, AssetImportFieldMapping, AssetImportMode,
         AssetImportRawValue, AssetImportRowSeedInput, AssetImportRowUpdateInput,
@@ -3943,6 +3981,25 @@ mod tests {
     }
 
     #[test]
+    fn preview_asset_import_seed_still_returns_preview_when_cleanup_fails() {
+        let mut conn = open_test_connection();
+
+        let preview = preview_asset_import_seed_conn_with_cleanup(
+            &mut conn,
+            sample_batch(
+                AssetImportMode::Quantity,
+                vec![quantity_row_without_asset_code(2, "Mouse", "Logitech M650", "10")],
+            ),
+            |_, _, _| Err("cleanup failed".to_string()),
+        )
+        .expect("preview should succeed even if cleanup fails");
+
+        assert_eq!(preview.total_rows, 1);
+        assert_eq!(preview.valid_rows, 1);
+        assert_eq!(preview.error_rows, 0);
+    }
+
+    #[test]
     fn import_asset_import_seed_imports_only_valid_rows_and_cleans_up_temporary_batch() {
         let mut conn = open_test_connection();
 
@@ -3973,6 +4030,30 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM asset_import_batches", [], |row| row.get(0))
             .expect("count temporary batches after direct import");
         assert_eq!(batch_count, 0);
+    }
+
+    #[test]
+    fn import_asset_import_seed_still_returns_report_when_cleanup_fails() {
+        let mut conn = open_test_connection();
+
+        let report = import_asset_import_seed_conn_with_cleanup(
+            &mut conn,
+            sample_batch(
+                AssetImportMode::Quantity,
+                vec![quantity_row_without_asset_code(2, "Mouse", "Logitech M650", "10")],
+            ),
+            |_, _, _| Err("cleanup failed".to_string()),
+        )
+        .expect("import should succeed even if cleanup fails");
+
+        assert_eq!(report.total_rows, 1);
+        assert_eq!(report.imported, 1);
+        assert_eq!(report.skipped, 0);
+
+        let stock_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM stock_items", [], |row| row.get(0))
+            .expect("count stock rows after import");
+        assert_eq!(stock_count, 1);
     }
 
     #[test]
