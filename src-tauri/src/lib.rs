@@ -296,6 +296,22 @@ fn inspect_asset_import_file(
 }
 
 #[tauri::command]
+fn preview_asset_import_file(
+    app: tauri::AppHandle,
+    payload: db::AssetDirectImportInput,
+) -> Result<db::AssetDirectImportPreview, String> {
+    db::preview_asset_import_file(&app, payload)
+}
+
+#[tauri::command]
+fn import_asset_import_file(
+    app: tauri::AppHandle,
+    payload: db::AssetDirectImportInput,
+) -> Result<db::AssetDirectImportReport, String> {
+    db::import_asset_import_file(&app, payload)
+}
+
+#[tauri::command]
 fn create_asset_import_batch(
     app: tauri::AppHandle,
     payload: db::AssetImportBatchCreateInput,
@@ -494,6 +510,8 @@ pub fn run() {
             detect_borrow_lan_host,
             probe_lan_server,
             inspect_asset_import_file,
+            preview_asset_import_file,
+            import_asset_import_file,
             create_asset_import_batch,
             list_asset_import_batches,
             get_asset_import_batch_detail,
