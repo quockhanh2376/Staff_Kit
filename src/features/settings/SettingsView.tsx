@@ -19,7 +19,7 @@ import {
 import type { AuthState } from "../auth/useAuthState"
 import type { SettingsState } from "./useSettingsState"
 import type { ImportState } from "../import/useImportState"
-import type { AssetImportState } from "../assets/useAssetImportState"
+import type { AssetImportState } from "../assets/useAssetDirectImportState"
 import type { AssetDashboardState } from "../assets/useAssetDashboardState"
 import type { StaffGroupKey } from "../../types/app"
 import { STAFF_GROUP_BUTTONS, DEFAULT_NEW_ACCOUNT_PASSWORD } from "../../lib/constants"
