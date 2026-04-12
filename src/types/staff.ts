@@ -512,6 +512,11 @@ export type SharedImportPreviewSummary = {
   errorRows: number
 }
 
+export type SharedImportStatItem = {
+  label: string
+  value: string | number
+}
+
 export type SharedImportPreviewCell = {
   key: string
   label: string

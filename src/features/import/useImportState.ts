@@ -33,7 +33,6 @@ export function useImportState({
     const [importTargetGroup, setImportTargetGroup] = useState<StaffGroupKey>("employee_list")
     const [importPreviewResult, setImportPreviewResult] = useState<ImportPreviewResult | null>(null)
     const [showImportPreviewModal, setShowImportPreviewModal] = useState(false)
-    const [selectedImportRowIndices, setSelectedImportRowIndices] = useState<Set<number>>(new Set())
 
     const importTargetGroupLabel = (() => {
         switch (importTargetGroup) {
@@ -116,7 +115,6 @@ export function useImportState({
                 targetStaffGroup: importTargetGroup,
             })
             setImportPreviewResult(preview)
-            setSelectedImportRowIndices(new Set(preview.previewRows.map((_, idx) => idx)))
             setShowImportPreviewModal(true)
         } catch (error) {
             setGlobalError(getErrorMessage(error))
@@ -138,7 +136,6 @@ export function useImportState({
             setImportReport(report)
             setImportPreviewResult(null)
             setShowImportPreviewModal(false)
-            setSelectedImportRowIndices(new Set())
             triggerReload()
         } catch (error) {
             setGlobalError(getErrorMessage(error))
@@ -150,20 +147,7 @@ export function useImportState({
     const handleRejectPreviewRows = useCallback(() => {
         setImportPreviewResult(null)
         setShowImportPreviewModal(false)
-        setSelectedImportRowIndices(new Set())
     }, [])
-
-    const togglePreviewRowSelection = (idx: number) => {
-        setSelectedImportRowIndices((prev) => {
-            const next = new Set(prev)
-            if (next.has(idx)) {
-                next.delete(idx)
-            } else {
-                next.add(idx)
-            }
-            return next
-        })
-    }
 
     return {
         isImportDrawerOpen,
@@ -179,8 +163,6 @@ export function useImportState({
         effectiveImportColumnKeySet,
         importPreviewResult,
         showImportPreviewModal,
-        selectedImportRowIndices,
-        setSelectedImportRowIndices,
         handlePickImportFiles,
         toggleImportColumn,
         selectAllOptionalImportColumns,
@@ -188,6 +170,5 @@ export function useImportState({
         handleImportSelectedColumns,
         handleApprovePreviewRows,
         handleRejectPreviewRows,
-        togglePreviewRowSelection,
     }
 }

@@ -24,3 +24,13 @@ assert.match(staffTypes, /skipped: number/)
 assert.match(staffTypes, /failed: number/)
 
 console.log("shared-import-shell contract tests passed")
+
+const importDrawer = readFileSync("src/features/import/ImportDrawer.tsx", "utf8")
+const sharedImportShell = readFileSync("src/features/import/sharedImportShell.tsx", "utf8")
+
+assert.match(sharedImportShell, /export function SharedImportShell/)
+assert.match(sharedImportShell, /"Approve Import"/)
+assert.match(importDrawer, /<SharedImportShell/)
+assert.doesNotMatch(importDrawer, /Review Import Changes/)
+assert.doesNotMatch(importDrawer, /selectedImportRowIndices/)
+assert.doesNotMatch(importDrawer, /togglePreviewRowSelection/)
