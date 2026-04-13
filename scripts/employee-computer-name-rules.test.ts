@@ -51,14 +51,20 @@ assert.deepEqual(extractComputerNameTokens("ASWVNMACPRO010,\nASWVNLAP293"), [
   "ASWVNLAP293",
 ])
 
-assert.equal(isEmployeeTableEditableColumn("computerName"), false)
-assert.equal(isEmployeeTableEditableColumn("notes"), true)
+assert.equal(isEmployeeTableEditableColumn("computerName", false), false)
+assert.equal(isEmployeeTableEditableColumn("computerName", true), true)
+assert.equal(isEmployeeTableEditableColumn("notes", false), true)
 
 const payload = buildEmployeePayloadForSave(employeeA, {
   notes: "updated",
-})
+}, false)
 assert.equal(payload.computerName, "LEGACY-RAW-01")
 assert.equal(payload.notes, "updated")
+
+const superAdminPayload = buildEmployeePayloadForSave(employeeA, {
+  computerName: "SUPER-ADMIN-EDIT",
+}, true)
+assert.equal(superAdminPayload.computerName, "SUPER-ADMIN-EDIT")
 
 const duplicateIds = collectDuplicateComputerEmployeeIds(
   [employeeA, employeeB],

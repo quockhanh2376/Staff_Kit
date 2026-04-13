@@ -190,6 +190,7 @@ function App() {
     employees: emp.employees,
     staffGroupFilter: emp.staffGroupFilter,
     canEditEmployeeTable: auth.canEditEmployeeTable,
+    canEditEmployeeComputerName: auth.canEditEmployeeComputerName,
     triggerReload,
     setGlobalError,
   })
@@ -486,6 +487,7 @@ function App() {
               tableEdit={edit}
               columnState={col}
               canEditEmployeeTable={auth.canEditEmployeeTable}
+              canEditEmployeeComputerName={auth.canEditEmployeeComputerName}
               selectedGroupLabel={selectedGroupLabel}
               selectedGroupTotal={selectedGroupTotal}
             />

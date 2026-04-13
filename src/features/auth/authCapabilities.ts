@@ -7,6 +7,7 @@ export type AuthCapabilities = {
     canImportData: boolean
     canResetData: boolean
     canEditEmployeeTable: boolean
+    canEditEmployeeComputerName: boolean
 }
 
 export function deriveAuthCapabilities({
@@ -17,7 +18,8 @@ export function deriveAuthCapabilities({
     isAuthenticated: boolean
 }): AuthCapabilities {
     const isAdminAccount = activeAccount?.role === "admin" || activeAccount?.role === "super_admin"
-    const isSuperAdminAccount = activeAccount?.isSuperAdmin === true
+    const isSuperAdminAccount =
+        activeAccount?.isSuperAdmin === true || activeAccount?.role === "super_admin"
 
     return {
         isAdminAccount,
@@ -28,5 +30,6 @@ export function deriveAuthCapabilities({
         // Employee table edit should stay available for a valid signed-in session even if
         // local account metadata is still hydrating or temporarily unavailable.
         canEditEmployeeTable: isAuthenticated,
+        canEditEmployeeComputerName: isAuthenticated && isSuperAdminAccount,
     }
 }

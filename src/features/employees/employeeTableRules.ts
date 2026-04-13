@@ -8,6 +8,17 @@ export function readEmployeeCellText(employee: EmployeeRecord, key: string): str
     return String(value)
 }
 
+export function readEmployeeEditableCellText(
+    employee: EmployeeRecord,
+    key: string,
+    canEditComputerName: boolean,
+): string {
+    if (key === "computerName" && canEditComputerName) {
+        return employee.storedComputerName ?? employee.computerName ?? ""
+    }
+    return readEmployeeCellText(employee, key)
+}
+
 export function extractComputerNameTokens(value: string): string[] {
     return value
         .split(/[\n,]+/g)
@@ -43,16 +54,25 @@ export function collectDuplicateComputerEmployeeIds(
     return duplicateIds
 }
 
-export function isEmployeeTableEditableColumn(key: string): boolean {
+export function isEmployeeTableEditableColumn(
+    key: string,
+    canEditComputerName = false,
+): boolean {
     if (key === "rowNumber") return false
     if (key === "employeeId") return false
-    if (key === "computerName") return false
+    if (key === "computerName") return canEditComputerName
     return true
+}
+
+function normalizeOptionalDraft(value: string | null | undefined): string | null {
+    const normalized = value?.trim()
+    return normalized ? normalized : null
 }
 
 export function buildEmployeePayloadForSave(
     employee: EmployeeRecord,
     drafts: Record<string, string>,
+    canEditComputerName = false,
 ): EmployeePayload {
     const TOP_LEVEL_KEYS = new Set([
         "employeeId",
@@ -98,8 +118,9 @@ export function buildEmployeePayloadForSave(
         contractEndDate: drafts.contractEndDate ?? employee.contractEndDate ?? null,
         clientYearOfServices:
             drafts.clientYearOfServices ?? employee.clientYearOfServices ?? null,
-        // Keep the persisted raw value instead of echoing the derived display value.
-        computerName: employee.storedComputerName ?? null,
+        computerName: canEditComputerName
+            ? normalizeOptionalDraft(drafts.computerName ?? employee.storedComputerName)
+            : employee.storedComputerName ?? null,
         notes: drafts.notes ?? employee.notes ?? null,
         staffGroup: employee.staffGroup,
         dynamicFields:
