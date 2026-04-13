@@ -12,7 +12,7 @@ import {
 } from "lucide-react"
 import type { AssetCategoryDetailRecord } from "../../types/staff"
 import type { AuthState } from "../auth/useAuthState"
-import type { AssetImportState } from "./useAssetImportState"
+import type { AssetImportState } from "./useAssetDirectImportState"
 import type { AssetDashboardState } from "./useAssetDashboardState"
 import {
   buildAssetCategoryDraftFromDetail,
@@ -28,8 +28,6 @@ import {
   type AssetCategoryDraft,
   type AssetDashboardTabKey,
 } from "./assetDashboardCopy"
-import { getAssetImportModeLabel } from "./assetImportModeConfig"
-import { getAssetImportSummaryLabel } from "./assetImportStatusMeta"
 import {
   resolveSerializedAssetComputerName,
   resolveSerializedAssetName,
@@ -268,7 +266,7 @@ export function AssetDashboard({
 
   return (
     <div className={dashboardShellClass}>
-      <div className="mx-auto w-full max-w-[1120px]">
+      <div className="w-full">
         <div className="flex flex-col items-start gap-4">
           <div className="flex items-center gap-2 text-sm font-semibold text-white">
             <Boxes size={16} className="text-[#00d68f]" />
@@ -323,32 +321,6 @@ export function AssetDashboard({
           {assetDashboard.statusMessage && (
             <div className="mt-4 rounded-[10px] border border-emerald-500/25 bg-emerald-500/8 px-3 py-2 text-xs text-emerald-100">
               {assetDashboard.statusMessage}
-            </div>
-          )}
-
-          {assetImport.activeBatchSummary && (
-            <div className="mt-3 rounded-[10px] border border-[#2b3342] bg-[#11161f] px-3 py-3 text-xs text-[#9aa3b2]">
-              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <div>
-                  <div className={dashboardShellLabelClass}>Active Import Batch</div>
-                  <div className="mt-1 text-sm text-slate-100">
-                    {assetImport.activeBatchSummary.batchKey} - {assetImport.activeBatchSummary.sourceFileName}
-                  </div>
-                  <div className="text-[11px] text-[#8f98a8]">
-                    {getAssetImportModeLabel(assetImport.activeBatchSummary.importType)} -{" "}
-                    {getAssetImportSummaryLabel("valid")} {assetImport.activeBatchSummary.validRows} -{" "}
-                    {getAssetImportSummaryLabel("errors")} {assetImport.activeBatchSummary.errorRows} -{" "}
-                    {getAssetImportSummaryLabel("imported")} {assetImport.activeBatchSummary.importedRows}
-                  </div>
-                </div>
-                <button
-                  className={dashboardSecondaryButtonClass}
-                  onClick={() => void assetImport.openBatchDetail(assetImport.activeBatchSummary!.id)}
-                  type="button"
-                >
-                  Resume Review
-                </button>
-              </div>
             </div>
           )}
 

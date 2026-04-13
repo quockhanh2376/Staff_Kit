@@ -180,6 +180,12 @@ export type AssetImportInspectInput = {
   sheetName?: string | null
 }
 
+export type AssetDirectImportInput = {
+  importType: AssetImportMode
+  filePath: string
+  sheetName?: string | null
+}
+
 export type AssetImportFileInspection = {
   fileName: string
   fileType: string
@@ -299,6 +305,52 @@ export type AssetImportCommitResult = {
   importedCount: number
   remainingErrorRows: number
   batchStatus: string
+}
+
+export type AssetDirectImportErrorItem = {
+  rowNumber: number
+  entityKey: string | null
+  reason: string
+}
+
+export type AssetDirectImportPreviewRow = {
+  rowNumber: number
+  assetCode: string | null
+  assetType: string | null
+  computerName: string | null
+  displayName: string | null
+  model: string | null
+  serialNumber: string | null
+  adapterNumber: string | null
+  quantity: string | null
+  usageLocation: string | null
+  notes: string | null
+  status: string
+  holderLabel: string | null
+  validationErrors: string[]
+}
+
+export type AssetDirectImportPreview = {
+  fileName: string
+  sheetName: string | null
+  importType: AssetImportMode
+  totalRows: number
+  validRows: number
+  errorRows: number
+  rows: AssetDirectImportPreviewRow[]
+  errors: AssetDirectImportErrorItem[]
+}
+
+export type AssetDirectImportReport = {
+  fileName: string
+  sheetName: string | null
+  importType: AssetImportMode
+  totalRows: number
+  imported: number
+  skipped: number
+  failed: number
+  importedAssetCodes: string[]
+  errors: AssetDirectImportErrorItem[]
 }
 
 export type BorrowRequestSubmitInput = {
@@ -504,6 +556,49 @@ export type ImportErrorItem = {
   row: number
   employeeId: string | null
   reason: string
+}
+
+export type SharedImportPreviewSummary = {
+  totalRows: number
+  validRows: number
+  errorRows: number
+}
+
+export type SharedImportStatItem = {
+  label: string
+  value: string | number
+}
+
+export type SharedImportPreviewCell = {
+  key: string
+  label: string
+  value: string
+}
+
+export type SharedImportPreviewRow = {
+  id: string
+  title: string
+  subtitle: string | null
+  badge: string | null
+  cells: SharedImportPreviewCell[]
+}
+
+export type SharedImportErrorItem = {
+  rowNumber: number
+  entityKey: string | null
+  reason: string
+}
+
+export type SharedImportSourceInfo = {
+  sourceFiles: string[]
+  sheetName: string | null
+}
+
+export type SharedImportReport = {
+  imported: number
+  skipped: number
+  failed: number
+  errors: SharedImportErrorItem[]
 }
 
 export type ImportReport = {

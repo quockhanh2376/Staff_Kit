@@ -22,7 +22,7 @@ import { useTableEdit } from "./features/employees/useTableEdit"
 import { useImportState } from "./features/import/useImportState"
 import { useTeamState } from "./features/teams/useTeamState"
 import { useBorrowState } from "./features/borrow/useBorrowState"
-import { useAssetImportState } from "./features/assets/useAssetImportState"
+import { useAssetDirectImportState } from "./features/assets/useAssetDirectImportState"
 import { useAssetDashboardState } from "./features/assets/useAssetDashboardState"
 import { useSettingsState } from "./features/settings/useSettingsState"
 
@@ -229,7 +229,7 @@ function App() {
     triggerReload,
   })
 
-  const assetImport = useAssetImportState({
+  const assetImport = useAssetDirectImportState({
     dbReady,
     isAuthenticated,
     reloadToken,

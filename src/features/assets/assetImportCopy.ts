@@ -3,15 +3,15 @@ type AssetImportPanelMode = "import" | "manual"
 export function getAssetImportPanelTitle(
   panelMode: AssetImportPanelMode,
 ): string {
-  return panelMode === "manual" ? "Add Serialized Asset" : "Asset Import Wizard"
+  return panelMode === "manual" ? "Add Serialized Asset" : "Asset Import"
 }
 
 export function getAssetImportSettingsEntryActionLabel(): string {
-  return "Open Import Wizard"
+  return "Import Assets"
 }
 
 export function getAssetImportSettingsEntryDescription(): string {
-  return "Start the staged desktop flow for CSV/Excel imports, then confirm quantity rows into stock records or serialized rows into borrow-ready assets. Use manual add when IT just needs one serialized asset fast."
+  return "Import CSV or Excel files into serialized assets or quantity stock with automatic preview and approval. Valid rows import into the database; invalid rows stay in the report."
 }
 
 export function getAssetImportSettingsManualActionLabel(): string {
@@ -19,23 +19,23 @@ export function getAssetImportSettingsManualActionLabel(): string {
 }
 
 export function getAssetImportBatchSummaryEmptyStateLabel(): string {
-  return "No staged import batches yet."
+  return "No recent import report yet."
 }
 
 export function buildAssetImportBatchSummaryCountLabel(count: number): string {
-  return `${count} staged import batch(es) available for review.`
+  return `Last import processed ${count} row(s).`
 }
 
 export function getAssetImportBatchListTitle(): string {
-  return "Staged Import Batches"
+  return "Latest Import Report"
 }
 
 export function getAssetImportActiveBatchTitle(): string {
-  return "Active Import Batch"
+  return "Preview Summary"
 }
 
 export function getAssetImportSerializedModeDescription(): string {
-  return "One serialized asset per row. Category, asset name, serial number, warehouse, and note."
+  return "One serialized asset per row. The app auto-detects known columns and previews valid/error rows before approval."
 }
 
 export function getAssetImportManualPanelTitle(): string {
@@ -43,7 +43,7 @@ export function getAssetImportManualPanelTitle(): string {
 }
 
 export function getAssetImportManualPanelDescription(): string {
-  return "Serialized-only fallback for one-off serialized assets or rows that are not worth pushing through batch review."
+  return "Serialized-only fallback for one-off assets that do not need the file import flow."
 }
 
 export function getAssetImportManualPanelPrimaryActionLabel(

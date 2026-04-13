@@ -17,13 +17,13 @@ import {
   getAssetImportSettingsManualActionLabel,
 } from "../src/features/assets/assetImportCopy.ts"
 
-assert.equal(getAssetImportPanelTitle("import"), "Asset Import Wizard")
+assert.equal(getAssetImportPanelTitle("import"), "Asset Import")
 assert.equal(getAssetImportPanelTitle("manual"), "Add Serialized Asset")
 
-assert.equal(getAssetImportSettingsEntryActionLabel(), "Open Import Wizard")
+assert.equal(getAssetImportSettingsEntryActionLabel(), "Import Assets")
 assert.equal(
   getAssetImportSettingsEntryDescription(),
-  "Start the staged desktop flow for CSV/Excel imports, then confirm quantity rows into stock records or serialized rows into borrow-ready assets. Use manual add when IT just needs one serialized asset fast.",
+  "Import CSV or Excel files into serialized assets or quantity stock with automatic preview and approval. Valid rows import into the database; invalid rows stay in the report.",
 )
 assert.equal(
   getAssetImportSettingsManualActionLabel(),
@@ -31,29 +31,29 @@ assert.equal(
 )
 assert.equal(
   getAssetImportBatchSummaryEmptyStateLabel(),
-  "No staged import batches yet.",
+  "No recent import report yet.",
 )
 assert.equal(
   buildAssetImportBatchSummaryCountLabel(3),
-  "3 staged import batch(es) available for review.",
+  "Last import processed 3 row(s).",
 )
 assert.equal(
   getAssetImportBatchListTitle(),
-  "Staged Import Batches",
+  "Latest Import Report",
 )
 assert.equal(
   getAssetImportActiveBatchTitle(),
-  "Active Import Batch",
+  "Preview Summary",
 )
 assert.equal(
   getAssetImportSerializedModeDescription(),
-  "One serialized asset per row. Category, asset name, serial number, warehouse, and note.",
+  "One serialized asset per row. The app auto-detects known columns and previews valid/error rows before approval.",
 )
 
 assert.equal(getAssetImportManualPanelTitle(), "Quick Serialized Add")
 assert.equal(
   getAssetImportManualPanelDescription(),
-  "Serialized-only fallback for one-off serialized assets or rows that are not worth pushing through batch review.",
+  "Serialized-only fallback for one-off assets that do not need the file import flow.",
 )
 assert.equal(
   getAssetImportManualPanelPrimaryActionLabel(false),

@@ -13,6 +13,9 @@ import type {
   AssetDashboardSerializedRecord,
   AssetDashboardSummary,
   SnapshotInfo,
+  AssetDirectImportInput,
+  AssetDirectImportPreview,
+  AssetDirectImportReport,
   AssetImportBatchCreateInput,
   AssetImportBatchDetail,
   AssetImportBatchSummary,
@@ -125,6 +128,24 @@ export const staffApi = {
   inspectAssetImportFile: (payload: AssetImportInspectInput) =>
     call<AssetImportFileInspection>("inspect_asset_import_file", {
       payload: {
+        filePath: payload.filePath,
+        sheetName: payload.sheetName ?? null,
+      },
+    }),
+
+  previewAssetImportFile: (payload: AssetDirectImportInput) =>
+    call<AssetDirectImportPreview>("preview_asset_import_file", {
+      payload: {
+        importType: payload.importType,
+        filePath: payload.filePath,
+        sheetName: payload.sheetName ?? null,
+      },
+    }),
+
+  importAssetImportFile: (payload: AssetDirectImportInput) =>
+    call<AssetDirectImportReport>("import_asset_import_file", {
+      payload: {
+        importType: payload.importType,
         filePath: payload.filePath,
         sheetName: payload.sheetName ?? null,
       },

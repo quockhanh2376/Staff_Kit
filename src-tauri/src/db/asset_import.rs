@@ -286,6 +286,69 @@ pub struct AssetImportCommitResult {
     pub batch_status: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetDirectImportInput {
+    #[serde(default)]
+    pub import_type: AssetImportMode,
+    pub file_path: String,
+    pub sheet_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetDirectImportErrorItem {
+    pub row_number: i64,
+    pub entity_key: Option<String>,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetDirectImportPreviewRow {
+    pub row_number: i64,
+    pub asset_code: Option<String>,
+    pub asset_type: Option<String>,
+    pub computer_name: Option<String>,
+    pub display_name: Option<String>,
+    pub model: Option<String>,
+    pub serial_number: Option<String>,
+    pub adapter_number: Option<String>,
+    pub quantity: Option<String>,
+    pub usage_location: Option<String>,
+    pub notes: Option<String>,
+    pub status: String,
+    pub holder_label: Option<String>,
+    pub validation_errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetDirectImportPreview {
+    pub file_name: String,
+    pub sheet_name: Option<String>,
+    pub import_type: AssetImportMode,
+    pub total_rows: i64,
+    pub valid_rows: i64,
+    pub error_rows: i64,
+    pub rows: Vec<AssetDirectImportPreviewRow>,
+    pub errors: Vec<AssetDirectImportErrorItem>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetDirectImportReport {
+    pub file_name: String,
+    pub sheet_name: Option<String>,
+    pub import_type: AssetImportMode,
+    pub total_rows: i64,
+    pub imported: i64,
+    pub skipped: i64,
+    pub failed: i64,
+    pub imported_asset_codes: Vec<String>,
+    pub errors: Vec<AssetDirectImportErrorItem>,
+}
+
 #[derive(Debug, Clone)]
 struct AssetImportResolvedMapping {
     mapping: AssetImportFieldMapping,
@@ -404,6 +467,38 @@ pub fn create_asset_import_batch(
             rows: parsed.rows,
         },
     )
+}
+
+pub fn preview_asset_import_file(
+    app: &AppHandle,
+    payload: AssetDirectImportInput,
+) -> Result<AssetDirectImportPreview, String> {
+    let file_path = resolve_import_file_path(payload.file_path)?;
+    let parsed = parse_asset_import_source(
+        file_path.as_path(),
+        payload.import_type,
+        payload.sheet_name.as_deref(),
+        None,
+    )?;
+
+    let mut conn = open_runtime_connection(app)?;
+    preview_asset_import_seed_conn(&mut conn, asset_import_seed_from_parsed(parsed, payload.import_type))
+}
+
+pub fn import_asset_import_file(
+    app: &AppHandle,
+    payload: AssetDirectImportInput,
+) -> Result<AssetDirectImportReport, String> {
+    let file_path = resolve_import_file_path(payload.file_path)?;
+    let parsed = parse_asset_import_source(
+        file_path.as_path(),
+        payload.import_type,
+        payload.sheet_name.as_deref(),
+        None,
+    )?;
+
+    let mut conn = open_runtime_connection(app)?;
+    import_asset_import_seed_conn(&mut conn, asset_import_seed_from_parsed(parsed, payload.import_type))
 }
 
 pub fn list_asset_import_batches(app: &AppHandle) -> Result<Vec<AssetImportBatchSummary>, String> {
@@ -1201,6 +1296,74 @@ pub(crate) fn delete_asset_import_batch_conn(
     conn: &mut Connection,
     batch_id: i64,
 ) -> Result<bool, String> {
+    delete_asset_import_batch_conn_internal(conn, batch_id, true)
+}
+
+pub(crate) fn preview_asset_import_seed_conn(
+    conn: &mut Connection,
+    input: AssetImportBatchSeedInput,
+) -> Result<AssetDirectImportPreview, String> {
+    preview_asset_import_seed_conn_with_cleanup(conn, input, delete_asset_import_batch_conn_internal)
+}
+
+fn preview_asset_import_seed_conn_with_cleanup<F>(
+    conn: &mut Connection,
+    input: AssetImportBatchSeedInput,
+    cleanup_batch: F,
+) -> Result<AssetDirectImportPreview, String>
+where
+    F: FnOnce(&mut Connection, i64, bool) -> Result<bool, String>,
+{
+    let batch = create_asset_import_batch_seed_conn(conn, input)?;
+    let batch_id = batch.summary.id;
+    let preview = asset_direct_preview_from_batch_detail(&batch);
+
+    if let Err(err) = cleanup_batch(conn, batch_id, false) {
+        eprintln!(
+            "failed to clean up temporary asset import preview batch {}: {}",
+            batch_id, err
+        );
+    }
+
+    Ok(preview)
+}
+
+pub(crate) fn import_asset_import_seed_conn(
+    conn: &mut Connection,
+    input: AssetImportBatchSeedInput,
+) -> Result<AssetDirectImportReport, String> {
+    import_asset_import_seed_conn_with_cleanup(conn, input, delete_asset_import_batch_conn_internal)
+}
+
+fn import_asset_import_seed_conn_with_cleanup<F>(
+    conn: &mut Connection,
+    input: AssetImportBatchSeedInput,
+    cleanup_batch: F,
+) -> Result<AssetDirectImportReport, String>
+where
+    F: FnOnce(&mut Connection, i64, bool) -> Result<bool, String>,
+{
+    let batch = create_asset_import_batch_seed_conn(conn, input)?;
+    let batch_id = batch.summary.id;
+    let result = import_asset_import_batch_valid_rows_conn(conn, batch_id)?;
+    let batch_after = load_asset_import_batch_detail_conn(conn, batch_id)?;
+    let report = asset_direct_report_from_batch_detail(&batch_after, &result);
+
+    if let Err(err) = cleanup_batch(conn, batch_id, false) {
+        eprintln!(
+            "asset import succeeded but failed to delete temporary import batch {}: {}",
+            batch_id, err
+        );
+    }
+
+    Ok(report)
+}
+
+fn delete_asset_import_batch_conn_internal(
+    conn: &mut Connection,
+    batch_id: i64,
+    write_audit_log: bool,
+) -> Result<bool, String> {
     let actor_ref = active_actor_ref(conn)?;
     let tx = conn
         .transaction()
@@ -1225,20 +1388,117 @@ pub(crate) fn delete_asset_import_batch_conn(
     )
     .map_err(humanize_sqlite_error)?;
 
-    audit::insert_audit_log_tx(
-        &tx,
-        "asset_import.delete_batch",
-        "local_account",
-        actor_ref.as_deref(),
-        "asset_import_batch",
-        batch_id.to_string().as_str(),
-        None,
-    )?;
+    if write_audit_log {
+        audit::insert_audit_log_tx(
+            &tx,
+            "asset_import.delete_batch",
+            "local_account",
+            actor_ref.as_deref(),
+            "asset_import_batch",
+            batch_id.to_string().as_str(),
+            None,
+        )?;
+    }
 
     tx.commit()
         .map_err(|err| format!("failed to commit asset import batch delete: {err}"))?;
 
     Ok(true)
+}
+
+fn asset_import_seed_from_parsed(
+    parsed: ParsedAssetImportSource,
+    import_type: AssetImportMode,
+) -> AssetImportBatchSeedInput {
+    AssetImportBatchSeedInput {
+        import_type,
+        source_file_name: parsed.source_file_name,
+        source_file_path: parsed.source_file_path,
+        source_file_type: parsed.source_file_type,
+        sheet_name: parsed.sheet_name,
+        header_row: parsed.header_row,
+        headers: parsed.headers,
+        mapping: parsed.auto_mapping,
+        rows: parsed.rows,
+    }
+}
+
+fn asset_direct_preview_from_batch_detail(
+    batch: &AssetImportBatchDetail,
+) -> AssetDirectImportPreview {
+    AssetDirectImportPreview {
+        file_name: batch.summary.source_file_name.clone(),
+        sheet_name: batch.summary.sheet_name.clone(),
+        import_type: batch.summary.import_type,
+        total_rows: batch.summary.total_rows,
+        valid_rows: batch.summary.valid_rows,
+        error_rows: batch.summary.error_rows,
+        rows: batch
+            .rows
+            .iter()
+            .map(asset_direct_preview_row_from_record)
+            .collect(),
+        errors: asset_direct_error_items_from_rows(&batch.rows),
+    }
+}
+
+fn asset_direct_report_from_batch_detail(
+    batch: &AssetImportBatchDetail,
+    result: &AssetImportCommitResult,
+) -> AssetDirectImportReport {
+    AssetDirectImportReport {
+        file_name: batch.summary.source_file_name.clone(),
+        sheet_name: batch.summary.sheet_name.clone(),
+        import_type: batch.summary.import_type,
+        total_rows: batch.summary.total_rows,
+        imported: result.imported_count,
+        skipped: batch.summary.error_rows,
+        failed: 0,
+        imported_asset_codes: result.imported_asset_codes.clone(),
+        errors: asset_direct_error_items_from_rows(&batch.rows),
+    }
+}
+
+fn asset_direct_preview_row_from_record(
+    row: &AssetImportRowRecord,
+) -> AssetDirectImportPreviewRow {
+    let holder_label = row
+        .resolved_full_name
+        .clone()
+        .or_else(|| row.submitted_full_name.clone())
+        .or_else(|| row.resolved_employee_id.clone())
+        .or_else(|| row.submitted_staff_id.clone());
+
+    AssetDirectImportPreviewRow {
+        row_number: row.row_number,
+        asset_code: row.asset_code.clone(),
+        asset_type: row.asset_type.clone(),
+        computer_name: row.computer_name.clone(),
+        display_name: row.display_name.clone(),
+        model: row.model.clone(),
+        serial_number: row.serial_number.clone(),
+        adapter_number: row.adapter_number.clone(),
+        quantity: row.quantity.clone(),
+        usage_location: row.usage_location.clone(),
+        notes: row.notes.clone(),
+        status: row.status.clone(),
+        holder_label,
+        validation_errors: row.validation_errors.clone(),
+    }
+}
+
+fn asset_direct_error_items_from_rows(
+    rows: &[AssetImportRowRecord],
+) -> Vec<AssetDirectImportErrorItem> {
+    rows.iter()
+        .flat_map(|row| {
+            row.validation_errors.iter().map(|reason| AssetDirectImportErrorItem {
+                row_number: row.row_number,
+                entity_key: row.asset_code.clone().or_else(|| row.display_name.clone()),
+                reason: reason.clone(),
+            })
+        })
+        .collect()
 }
 
 fn active_actor_ref(conn: &Connection) -> Result<Option<String>, String> {
@@ -2784,7 +3044,9 @@ mod tests {
 
     use super::{
         create_asset_import_batch_seed_conn, import_asset_import_batch_valid_rows_conn,
+        import_asset_import_seed_conn, import_asset_import_seed_conn_with_cleanup,
         load_asset_import_batch_detail_conn, parse_asset_import_source,
+        preview_asset_import_seed_conn, preview_asset_import_seed_conn_with_cleanup,
         update_asset_import_row_conn,
         AssetImportBatchSeedInput, AssetImportFieldMapping, AssetImportMode,
         AssetImportRawValue, AssetImportRowSeedInput, AssetImportRowUpdateInput,
@@ -3688,6 +3950,110 @@ mod tests {
         assert_eq!(batch_after.summary.error_rows, 0);
         assert_eq!(batch_after.summary.status, "completed");
         assert_eq!(batch_after.rows[0].status, "imported");
+    }
+
+    #[test]
+    fn preview_asset_import_seed_reports_valid_and_error_rows_without_persisting_batch() {
+        let mut conn = open_test_connection();
+
+        let preview = preview_asset_import_seed_conn(
+            &mut conn,
+            sample_batch(
+                AssetImportMode::Quantity,
+                vec![
+                    quantity_row_without_asset_code(2, "Mouse", "Logitech M650", "10"),
+                    quantity_row_without_asset_code(3, "Mouse", "Broken Mouse", "0"),
+                ],
+            ),
+        )
+        .expect("preview quantity import");
+
+        assert_eq!(preview.total_rows, 2);
+        assert_eq!(preview.valid_rows, 1);
+        assert_eq!(preview.error_rows, 1);
+        assert_eq!(preview.rows.len(), 2);
+        assert_eq!(preview.errors.len(), 1);
+
+        let batch_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM asset_import_batches", [], |row| row.get(0))
+            .expect("count temporary batches after preview");
+        assert_eq!(batch_count, 0);
+    }
+
+    #[test]
+    fn preview_asset_import_seed_still_returns_preview_when_cleanup_fails() {
+        let mut conn = open_test_connection();
+
+        let preview = preview_asset_import_seed_conn_with_cleanup(
+            &mut conn,
+            sample_batch(
+                AssetImportMode::Quantity,
+                vec![quantity_row_without_asset_code(2, "Mouse", "Logitech M650", "10")],
+            ),
+            |_, _, _| Err("cleanup failed".to_string()),
+        )
+        .expect("preview should succeed even if cleanup fails");
+
+        assert_eq!(preview.total_rows, 1);
+        assert_eq!(preview.valid_rows, 1);
+        assert_eq!(preview.error_rows, 0);
+    }
+
+    #[test]
+    fn import_asset_import_seed_imports_only_valid_rows_and_cleans_up_temporary_batch() {
+        let mut conn = open_test_connection();
+
+        let report = import_asset_import_seed_conn(
+            &mut conn,
+            sample_batch(
+                AssetImportMode::Quantity,
+                vec![
+                    quantity_row_without_asset_code(2, "Mouse", "Logitech M650", "10"),
+                    quantity_row_without_asset_code(3, "Mouse", "Broken Mouse", "0"),
+                ],
+            ),
+        )
+        .expect("import quantity rows directly");
+
+        assert_eq!(report.total_rows, 2);
+        assert_eq!(report.imported, 1);
+        assert_eq!(report.skipped, 1);
+        assert_eq!(report.failed, 0);
+        assert_eq!(report.errors.len(), 1);
+
+        let stock_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM stock_items", [], |row| row.get(0))
+            .expect("count stock rows after direct import");
+        assert_eq!(stock_count, 1);
+
+        let batch_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM asset_import_batches", [], |row| row.get(0))
+            .expect("count temporary batches after direct import");
+        assert_eq!(batch_count, 0);
+    }
+
+    #[test]
+    fn import_asset_import_seed_still_returns_report_when_cleanup_fails() {
+        let mut conn = open_test_connection();
+
+        let report = import_asset_import_seed_conn_with_cleanup(
+            &mut conn,
+            sample_batch(
+                AssetImportMode::Quantity,
+                vec![quantity_row_without_asset_code(2, "Mouse", "Logitech M650", "10")],
+            ),
+            |_, _, _| Err("cleanup failed".to_string()),
+        )
+        .expect("import should succeed even if cleanup fails");
+
+        assert_eq!(report.total_rows, 1);
+        assert_eq!(report.imported, 1);
+        assert_eq!(report.skipped, 0);
+
+        let stock_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM stock_items", [], |row| row.get(0))
+            .expect("count stock rows after import");
+        assert_eq!(stock_count, 1);
     }
 
     #[test]
