@@ -132,6 +132,15 @@ export function useTableEdit({
         (employee: EmployeeRecord, key: string): string => {
             const draft = tableEditDrafts[employee.id]?.[key]
             if (draft !== undefined) return draft
+            return readRawCellText(employee, key)
+        },
+        [tableEditDrafts],
+    )
+
+    const getEditableCellText = useCallback(
+        (employee: EmployeeRecord, key: string): string => {
+            const draft = tableEditDrafts[employee.id]?.[key]
+            if (draft !== undefined) return draft
             return readEmployeeEditableCellText(employee, key, canEditEmployeeComputerName)
         },
         [canEditEmployeeComputerName, tableEditDrafts],
@@ -299,6 +308,7 @@ export function useTableEdit({
         isMovingEmployees,
         canMoveSelectedRows,
         getDraftCellText,
+        getEditableCellText,
         setDraftCellText,
         startTableCellEdit,
         handleToggleTableEditMode,

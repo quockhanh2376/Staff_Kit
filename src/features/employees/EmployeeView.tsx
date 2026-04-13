@@ -365,7 +365,7 @@ export function EmployeeView({
                                                                             autoFocus
                                                                             className="form-input h-8 px-2 py-1 text-xs"
                                                                             type={DATE_COLUMN_KEYS.has(column.key) ? "date" : "text"}
-                                                                            value={draftValue}
+                                                                            value={edit.getEditableCellText(employee, column.key)}
                                                                             onChange={(event) =>
                                                                                 edit.setDraftCellText(employee, column.key, event.target.value)
                                                                             }

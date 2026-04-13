@@ -14,7 +14,7 @@ export function readEmployeeEditableCellText(
     canEditComputerName: boolean,
 ): string {
     if (key === "computerName" && canEditComputerName) {
-        return employee.storedComputerName ?? employee.computerName ?? ""
+        return employee.storedComputerName ?? ""
     }
     return readEmployeeCellText(employee, key)
 }
@@ -119,7 +119,9 @@ export function buildEmployeePayloadForSave(
         clientYearOfServices:
             drafts.clientYearOfServices ?? employee.clientYearOfServices ?? null,
         computerName: canEditComputerName
-            ? normalizeOptionalDraft(drafts.computerName ?? employee.storedComputerName)
+            ? ("computerName" in drafts
+                ? normalizeOptionalDraft(drafts.computerName)
+                : (employee.storedComputerName ?? null))
             : employee.storedComputerName ?? null,
         notes: drafts.notes ?? employee.notes ?? null,
         staffGroup: employee.staffGroup,
