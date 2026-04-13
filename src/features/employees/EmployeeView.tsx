@@ -328,6 +328,7 @@ export function EmployeeView({
                                                                 width: `${col.resolvedColumnWidths[column.key] ?? 170}px`,
                                                                 minWidth: `${col.resolvedColumnWidths[column.key] ?? 170}px`,
                                                             }}
+                                                            onClick={() => edit.startTableCellEdit(employee, column.key)}
                                                             onDoubleClick={() => edit.startTableCellEdit(employee, column.key)}
                                                         >
                                                             {(() => {
@@ -573,6 +574,9 @@ export function EmployeeView({
                                             {edit.selectedOnCurrentPageCount}
                                         </span>
                                         )
+                                    </span>
+                                    <span className="text-xs text-[var(--text-secondary)]">
+                                        Click an editable cell to update it. <span className="text-[var(--text-primary)]">Computer Name</span> stays read-only.
                                     </span>
                                 </>
                             )}
