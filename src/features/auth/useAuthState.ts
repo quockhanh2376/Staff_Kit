@@ -4,6 +4,7 @@ import type { LocalAccountRecord } from "../../types/staff"
 import type { LocalAccountRole } from "../../types/app"
 import { getErrorMessage } from "../../lib/utils"
 import { DEFAULT_ACCOUNT_NAME, DEFAULT_NEW_ACCOUNT_PASSWORD } from "../../lib/constants"
+import { deriveAuthCapabilities } from "./authCapabilities"
 
 type UseAuthStateOptions = {
     dbReady: boolean
@@ -119,14 +120,20 @@ export function useAuthState({
             null,
         [accounts, activeAccountId],
     )
+    const authCapabilities = useMemo(
+        () => deriveAuthCapabilities({ activeAccount, isAuthenticated }),
+        [activeAccount, isAuthenticated],
+    )
 
     const activeAccountName = activeAccount?.displayName ?? DEFAULT_ACCOUNT_NAME
-    const isAdminAccount = activeAccount?.role === "admin" || activeAccount?.role === "super_admin"
-    const isSuperAdminAccount = activeAccount?.isSuperAdmin === true
-    const canAccessSettings = isAdminAccount
-    const canImportData = isAdminAccount       // Only admins can import Excel
-    const canResetData = isSuperAdminAccount   // Only super_admin (adman) can reset all data
-    const canEditEmployeeTable = activeAccount !== null
+    const {
+        isAdminAccount,
+        isSuperAdminAccount,
+        canAccessSettings,
+        canImportData,
+        canResetData,
+        canEditEmployeeTable,
+    } = authCapabilities
 
     const handleLoginSubmit = async (event: FormEvent<HTMLFormElement>, setGlobalError: (msg: string | null) => void) => {
         event.preventDefault()
