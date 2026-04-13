@@ -64,6 +64,7 @@ type EmployeeViewProps = {
     tableEdit: TableEditState
     columnState: ColumnState
     canEditEmployeeTable: boolean
+    canEditEmployeeComputerName: boolean
     selectedGroupLabel: string
     selectedGroupTotal: number
 }
@@ -73,6 +74,7 @@ export function EmployeeView({
     tableEdit,
     columnState,
     canEditEmployeeTable,
+    canEditEmployeeComputerName,
     selectedGroupLabel,
     selectedGroupTotal,
 }: EmployeeViewProps) {
@@ -576,7 +578,12 @@ export function EmployeeView({
                                         )
                                     </span>
                                     <span className="text-xs text-[var(--text-secondary)]">
-                                        Click an editable cell to update it. <span className="text-[var(--text-primary)]">Computer Name</span> stays read-only.
+                                        Click an editable cell to update it.{" "}
+                                        <span className="text-[var(--text-primary)]">
+                                            {canEditEmployeeComputerName
+                                                ? "Computer Name is editable for Super Admin."
+                                                : "Computer Name is editable for Super Admin only."}
+                                        </span>
                                     </span>
                                 </>
                             )}

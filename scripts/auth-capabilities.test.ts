@@ -47,6 +47,7 @@ assert.deepEqual(
     canImportData: false,
     canResetData: false,
     canEditEmployeeTable: false,
+    canEditEmployeeComputerName: false,
   },
 )
 
@@ -56,6 +57,14 @@ assert.equal(
     isAuthenticated: true,
   }).canEditEmployeeTable,
   true,
+)
+
+assert.equal(
+  deriveAuthCapabilities({
+    activeAccount: null,
+    isAuthenticated: true,
+  }).canEditEmployeeComputerName,
+  false,
 )
 
 assert.deepEqual(
@@ -70,6 +79,7 @@ assert.deepEqual(
     canImportData: true,
     canResetData: false,
     canEditEmployeeTable: true,
+    canEditEmployeeComputerName: false,
   },
 )
 
@@ -85,6 +95,7 @@ assert.deepEqual(
     canImportData: true,
     canResetData: true,
     canEditEmployeeTable: true,
+    canEditEmployeeComputerName: true,
   },
 )
 
@@ -100,6 +111,7 @@ assert.deepEqual(
     canImportData: false,
     canResetData: false,
     canEditEmployeeTable: true,
+    canEditEmployeeComputerName: false,
   },
 )
 

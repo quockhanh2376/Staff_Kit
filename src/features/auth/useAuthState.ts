@@ -133,6 +133,7 @@ export function useAuthState({
         canImportData,
         canResetData,
         canEditEmployeeTable,
+        canEditEmployeeComputerName,
     } = authCapabilities
 
     const handleLoginSubmit = async (event: FormEvent<HTMLFormElement>, setGlobalError: (msg: string | null) => void) => {
@@ -338,6 +339,7 @@ export function useAuthState({
         canImportData,
         canResetData,
         canEditEmployeeTable,
+        canEditEmployeeComputerName,
         isLoadingAccounts,
         isMutatingAccounts,
         // login form

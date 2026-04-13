@@ -7,6 +7,7 @@ import { DATE_COLUMN_KEYS } from "../../lib/constants"
 import {
     buildEmployeePayloadForSave,
     isEmployeeTableEditableColumn,
+    readEmployeeEditableCellText,
     readEmployeeCellText,
 } from "./employeeTableRules"
 
@@ -14,6 +15,7 @@ type UseTableEditOptions = {
     employees: EmployeeRecord[]
     staffGroupFilter: StaffGroupKey
     canEditEmployeeTable: boolean
+    canEditEmployeeComputerName: boolean
     triggerReload: () => void
     setGlobalError: (msg: string | null) => void
 }
@@ -58,6 +60,7 @@ export function useTableEdit({
     employees,
     staffGroupFilter,
     canEditEmployeeTable,
+    canEditEmployeeComputerName,
     triggerReload,
     setGlobalError,
 }: UseTableEditOptions) {
@@ -129,9 +132,9 @@ export function useTableEdit({
         (employee: EmployeeRecord, key: string): string => {
             const draft = tableEditDrafts[employee.id]?.[key]
             if (draft !== undefined) return draft
-            return readRawCellText(employee, key)
+            return readEmployeeEditableCellText(employee, key, canEditEmployeeComputerName)
         },
-        [tableEditDrafts],
+        [canEditEmployeeComputerName, tableEditDrafts],
     )
 
     const setDraftCellText = useCallback(
@@ -139,7 +142,11 @@ export function useTableEdit({
             resetInactivityTimer()  // reset 2-min timer on every keystroke
             setTableEditDrafts((prev) => {
                 const rowDrafts = { ...(prev[employee.id] ?? {}) }
-                const originalValue = readRawCellText(employee, key)
+                const originalValue = readEmployeeEditableCellText(
+                    employee,
+                    key,
+                    canEditEmployeeComputerName,
+                )
                 if (value === originalValue) {
                     delete rowDrafts[key]
                 } else {
@@ -153,16 +160,22 @@ export function useTableEdit({
                 return { ...prev, [employee.id]: rowDrafts }
             })
         },
-        [resetInactivityTimer],
+        [canEditEmployeeComputerName, resetInactivityTimer],
     )
 
     const startTableCellEdit = useCallback(
         (employee: EmployeeRecord, key: string) => {
-            if (!canEditEmployeeTable || !isTableEditMode || !isEmployeeTableEditableColumn(key)) return
+            if (
+                !canEditEmployeeTable ||
+                !isTableEditMode ||
+                !isEmployeeTableEditableColumn(key, canEditEmployeeComputerName)
+            ) {
+                return
+            }
             resetInactivityTimer()  // reset timer when user clicks a cell
             setActiveTableEditCell({ employeeId: employee.id, columnKey: key })
         },
-        [canEditEmployeeTable, isTableEditMode, resetInactivityTimer],
+        [canEditEmployeeComputerName, canEditEmployeeTable, isTableEditMode, resetInactivityTimer],
     )
 
     // ── Toggle edit mode ─────────────────────────────────────────────────────────
@@ -196,7 +209,11 @@ export function useTableEdit({
                 const employee = employees.find((emp) => emp.id === id)
                 if (!employee) continue
 
-                const payload = buildEmployeePayloadForSave(employee, drafts)
+                const payload = buildEmployeePayloadForSave(
+                    employee,
+                    drafts,
+                    canEditEmployeeComputerName,
+                )
                 await staffApi.updateEmployee(id, payload)
             }
             setTableEditDrafts({})
@@ -294,7 +311,8 @@ export function useTableEdit({
         // utilities re-exported for use in views
         readRawCellText,
         readCellValue,
-        isTableEditableColumn: isEmployeeTableEditableColumn,
+        isTableEditableColumn: (key: string) =>
+            isEmployeeTableEditableColumn(key, canEditEmployeeComputerName),
         isColumnSortable,
     }
 }
