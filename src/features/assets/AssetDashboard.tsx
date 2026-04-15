@@ -454,8 +454,12 @@ function SerializedDashboardTable({
     ])
 
     for (const detail of assetDashboard.categoryDetails) {
+      if (detail.trackingMode !== "serialized") {
+        continue
+      }
+
       const label = detail.categoryName.trim() || detail.categoryCode.trim()
-      const value = normalizeSerializedAssetFilterText(label)
+      const value = normalizeSerializedAssetFilterText(detail.categoryCode)
       if (value && !options.has(value)) {
         options.set(value, label)
       }
@@ -463,7 +467,7 @@ function SerializedDashboardTable({
 
     for (const row of assetDashboard.serializedRows) {
       const label = (row.categoryName ?? row.categoryCode ?? "").trim()
-      const value = normalizeSerializedAssetFilterText(label)
+      const value = normalizeSerializedAssetFilterText(row.categoryCode)
       if (value && !options.has(value)) {
         options.set(value, label)
       }

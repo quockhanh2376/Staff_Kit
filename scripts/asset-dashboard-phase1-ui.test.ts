@@ -14,5 +14,8 @@ assert.match(assetDashboardSource, /All Categories/)
 assert.match(assetDashboardSource, /value=\{categoryFilter\}/)
 assert.match(assetDashboardSource, /onCategoryFilterChange\(event\.target\.value\)/)
 assert.match(assetDashboardSource, /categoryOptions\.map\(\(option\) => \(/)
+assert.match(assetDashboardSource, /detail\.trackingMode !== "serialized"/)
+assert.match(assetDashboardSource, /normalizeSerializedAssetFilterText\(detail\.categoryCode\)/)
+assert.match(assetDashboardSource, /normalizeSerializedAssetFilterText\(row\.categoryCode\)/)
 
 console.log("asset-dashboard-phase1-ui tests passed")

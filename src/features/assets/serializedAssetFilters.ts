@@ -23,9 +23,7 @@ export function filterSerializedAssetRows(
       normalizedCategory &&
       normalizedCategory !== ALL_SERIALIZED_ASSET_CATEGORY_FILTER
     ) {
-      const rowCategory = normalizeSerializedAssetFilterText(
-        row.categoryName ?? row.categoryCode ?? "",
-      )
+      const rowCategory = normalizeSerializedAssetFilterText(row.categoryCode)
       if (rowCategory !== normalizedCategory) {
         return false
       }

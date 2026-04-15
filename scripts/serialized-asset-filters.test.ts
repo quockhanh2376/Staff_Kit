@@ -41,6 +41,23 @@ const rows: AssetDashboardSerializedRecord[] = [
     holderEmployeeId: null,
     holderFullName: null,
   },
+  {
+    assetId: 3,
+    assetCode: "VNDOCK002",
+    categoryCode: "dock",
+    categoryName: "USB-C Dock",
+    computerName: null,
+    displayName: "Dell WD19",
+    displayNameShort: null,
+    model: "WD19",
+    serialNumber: null,
+    adapterNumber: null,
+    usageLocation: null,
+    notes: null,
+    status: "in_stock",
+    holderEmployeeId: null,
+    holderFullName: null,
+  },
 ]
 
 assert.deepEqual(
@@ -95,6 +112,22 @@ assert.deepEqual(
   filterSerializedAssetRows(rows, {
     searchTerm: "hung",
     categoryFilter: "monitor",
+  }).map((row) => row.assetCode),
+  [],
+)
+
+assert.deepEqual(
+  filterSerializedAssetRows(rows, {
+    searchTerm: "",
+    categoryFilter: "dock",
+  }).map((row) => row.assetCode),
+  ["VNDOCK002"],
+)
+
+assert.deepEqual(
+  filterSerializedAssetRows(rows, {
+    searchTerm: "",
+    categoryFilter: "usb-c dock",
   }).map((row) => row.assetCode),
   [],
 )
