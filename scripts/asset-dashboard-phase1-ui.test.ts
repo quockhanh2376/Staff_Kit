@@ -17,5 +17,12 @@ assert.match(assetDashboardSource, /categoryOptions\.map\(\(option\) => \(/)
 assert.match(assetDashboardSource, /detail\.trackingMode !== "serialized"/)
 assert.match(assetDashboardSource, /normalizeSerializedAssetFilterText\(detail\.categoryCode\)/)
 assert.match(assetDashboardSource, /normalizeSerializedAssetFilterText\(row\.categoryCode\)/)
+assert.match(assetDashboardSource, />\s*Clear Filters\s*</)
+assert.match(assetDashboardSource, /setSerializedSearchTerm\(""\)/)
+assert.match(
+  assetDashboardSource,
+  /setSerializedCategoryFilter\(ALL_SERIALIZED_ASSET_CATEGORY_FILTER\)/,
+)
+assert.match(assetDashboardSource, /onClearFilters=\{clearSerializedFilters\}/)
 
 console.log("asset-dashboard-phase1-ui tests passed")

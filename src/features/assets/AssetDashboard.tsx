@@ -153,6 +153,11 @@ export function AssetDashboard({
     })
   }
 
+  const clearSerializedFilters = () => {
+    setSerializedSearchTerm("")
+    setSerializedCategoryFilter(ALL_SERIALIZED_ASSET_CATEGORY_FILTER)
+  }
+
   const openNewCategoryDraft = () => {
     setCategoryDraft(buildEmptyAssetCategoryDraft())
     setActiveTab("categories")
@@ -385,6 +390,7 @@ export function AssetDashboard({
             onSearchTermChange={setSerializedSearchTerm}
             categoryFilter={serializedCategoryFilter}
             onCategoryFilterChange={setSerializedCategoryFilter}
+            onClearFilters={clearSerializedFilters}
           />
         ) : activeTab === "quantity" ? (
           <QuantityDashboardTable
@@ -440,6 +446,7 @@ function SerializedDashboardTable({
   onSearchTermChange,
   categoryFilter,
   onCategoryFilterChange,
+  onClearFilters,
 }: {
   activeUserScope: string
   assetDashboard: AssetDashboardState
@@ -447,6 +454,7 @@ function SerializedDashboardTable({
   onSearchTermChange: (value: string) => void
   categoryFilter: string
   onCategoryFilterChange: (value: string) => void
+  onClearFilters: () => void
 }) {
   const categoryOptions = useMemo(() => {
     const options = new Map<string, string>([
@@ -547,6 +555,13 @@ function SerializedDashboardTable({
                 </option>
               ))}
             </select>
+            <button
+              className={dashboardSecondaryButtonClass}
+              onClick={onClearFilters}
+              type="button"
+            >
+              Clear Filters
+            </button>
           </div>
           <div className="rounded-[12px] border border-dashed border-[#31394a] bg-[#0b0f15] px-4 py-8 text-center text-sm text-[#8f98a8]">
             No serialized assets match the current filters.
@@ -579,6 +594,13 @@ function SerializedDashboardTable({
                 </option>
               ))}
             </select>
+            <button
+              className={dashboardSecondaryButtonClass}
+              onClick={onClearFilters}
+              type="button"
+            >
+              Clear Filters
+            </button>
           </div>
           <div className={dashboardTableShellClass}>
             <div className="overflow-x-auto">
