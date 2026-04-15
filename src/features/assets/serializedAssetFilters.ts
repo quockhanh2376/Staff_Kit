@@ -16,11 +16,27 @@ export function filterSerializedAssetRows(
   filters: SerializedAssetFilterState,
 ): AssetDashboardSerializedRecord[] {
   const normalizedSearch = normalizeSerializedAssetFilterText(filters.searchTerm)
-  if (!normalizedSearch) {
-    return rows
-  }
+  const normalizedCategory = normalizeSerializedAssetFilterText(filters.categoryFilter)
 
-  return rows.filter((row) => buildSerializedAssetSearchText(row).includes(normalizedSearch))
+  return rows.filter((row) => {
+    if (
+      normalizedCategory &&
+      normalizedCategory !== ALL_SERIALIZED_ASSET_CATEGORY_FILTER
+    ) {
+      const rowCategory = normalizeSerializedAssetFilterText(
+        row.categoryName ?? row.categoryCode ?? "",
+      )
+      if (rowCategory !== normalizedCategory) {
+        return false
+      }
+    }
+
+    if (!normalizedSearch) {
+      return true
+    }
+
+    return buildSerializedAssetSearchText(row).includes(normalizedSearch)
+  })
 }
 
 export function normalizeSerializedAssetFilterText(

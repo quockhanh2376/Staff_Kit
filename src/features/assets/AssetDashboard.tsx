@@ -37,6 +37,7 @@ import {
 import {
   ALL_SERIALIZED_ASSET_CATEGORY_FILTER,
   filterSerializedAssetRows,
+  normalizeSerializedAssetFilterText,
 } from "./serializedAssetFilters"
 import { useSerializedAssetGridState } from "./useSerializedAssetGridState"
 
@@ -73,6 +74,9 @@ export function AssetDashboard({
 }: AssetDashboardProps) {
   const [activeTab, setActiveTab] = useState<AssetDashboardTabKey>("serialized")
   const [serializedSearchTerm, setSerializedSearchTerm] = useState("")
+  const [serializedCategoryFilter, setSerializedCategoryFilter] = useState(
+    ALL_SERIALIZED_ASSET_CATEGORY_FILTER,
+  )
   const [quantityDraftOverrides, setQuantityDraftOverrides] = useState<QuantityDraftMap>({})
   const [categoryDraft, setCategoryDraft] = useState<AssetCategoryDraft>(() =>
     buildEmptyAssetCategoryDraft(),
@@ -379,6 +383,8 @@ export function AssetDashboard({
             assetDashboard={assetDashboard}
             searchTerm={serializedSearchTerm}
             onSearchTermChange={setSerializedSearchTerm}
+            categoryFilter={serializedCategoryFilter}
+            onCategoryFilterChange={setSerializedCategoryFilter}
           />
         ) : activeTab === "quantity" ? (
           <QuantityDashboardTable
@@ -432,16 +438,48 @@ function SerializedDashboardTable({
   assetDashboard,
   searchTerm,
   onSearchTermChange,
+  categoryFilter,
+  onCategoryFilterChange,
 }: {
   activeUserScope: string
   assetDashboard: AssetDashboardState
   searchTerm: string
   onSearchTermChange: (value: string) => void
+  categoryFilter: string
+  onCategoryFilterChange: (value: string) => void
 }) {
-  const filteredRows = filterSerializedAssetRows(assetDashboard.serializedRows, {
-    searchTerm,
-    categoryFilter: ALL_SERIALIZED_ASSET_CATEGORY_FILTER,
-  })
+  const categoryOptions = useMemo(() => {
+    const options = new Map<string, string>([
+      [ALL_SERIALIZED_ASSET_CATEGORY_FILTER, "All Categories"],
+    ])
+
+    for (const detail of assetDashboard.categoryDetails) {
+      const label = detail.categoryName.trim() || detail.categoryCode.trim()
+      const value = normalizeSerializedAssetFilterText(label)
+      if (value && !options.has(value)) {
+        options.set(value, label)
+      }
+    }
+
+    for (const row of assetDashboard.serializedRows) {
+      const label = (row.categoryName ?? row.categoryCode ?? "").trim()
+      const value = normalizeSerializedAssetFilterText(label)
+      if (value && !options.has(value)) {
+        options.set(value, label)
+      }
+    }
+
+    return Array.from(options, ([value, label]) => ({ value, label }))
+  }, [assetDashboard.categoryDetails, assetDashboard.serializedRows])
+
+  const filteredRows = useMemo(
+    () =>
+      filterSerializedAssetRows(assetDashboard.serializedRows, {
+        searchTerm,
+        categoryFilter,
+      }),
+    [assetDashboard.serializedRows, categoryFilter, searchTerm],
+  )
 
   const {
     orderedColumns,
@@ -478,28 +516,69 @@ function SerializedDashboardTable({
 
   return (
     <div className="space-y-3">
-      <label className="relative block max-w-md">
-        <Search
-          size={16}
-          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
-        />
-        <input
-          className={`${dashboardInputClass} pl-10`}
-          type="search"
-          value={searchTerm}
-          onChange={(event) => onSearchTermChange(event.target.value)}
-          placeholder="Search computer, asset code, holder, model..."
-        />
-      </label>
-
       {filteredRows.length === 0 ? (
-        <div className="rounded-[12px] border border-dashed border-[#31394a] bg-[#0b0f15] px-4 py-8 text-center text-sm text-[#8f98a8]">
-          No serialized assets match the current filters.
+        <div className="space-y-3">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center">
+            <label className="relative flex-1">
+              <Search
+                size={15}
+                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#8f98a8]"
+              />
+              <input
+                className={`${dashboardInputClass} pl-9`}
+                onChange={(event) => onSearchTermChange(event.target.value)}
+                placeholder="Search computer, asset code, holder, model..."
+                type="text"
+                value={searchTerm}
+              />
+            </label>
+            <select
+              className={`${dashboardInputClass} md:w-[220px]`}
+              onChange={(event) => onCategoryFilterChange(event.target.value)}
+              value={categoryFilter}
+            >
+              {categoryOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="rounded-[12px] border border-dashed border-[#31394a] bg-[#0b0f15] px-4 py-8 text-center text-sm text-[#8f98a8]">
+            No serialized assets match the current filters.
+          </div>
         </div>
       ) : (
-        <div className={dashboardTableShellClass}>
-          <div className="overflow-x-auto">
-            <table className="min-w-max text-left text-[13px]">
+        <>
+          <div className="flex flex-col gap-3 md:flex-row md:items-center">
+            <label className="relative flex-1">
+              <Search
+                size={15}
+                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#8f98a8]"
+              />
+              <input
+                className={`${dashboardInputClass} pl-9`}
+                onChange={(event) => onSearchTermChange(event.target.value)}
+                placeholder="Search computer, asset code, holder, model..."
+                type="text"
+                value={searchTerm}
+              />
+            </label>
+            <select
+              className={`${dashboardInputClass} md:w-[220px]`}
+              onChange={(event) => onCategoryFilterChange(event.target.value)}
+              value={categoryFilter}
+            >
+              {categoryOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className={dashboardTableShellClass}>
+            <div className="overflow-x-auto">
+              <table className="min-w-max text-left text-[13px]">
               <thead className={dashboardTableHeadClass}>
                 <tr>
                   {orderedColumns.map((column) => {
@@ -576,8 +655,9 @@ function SerializedDashboardTable({
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
-        </div>
+        </>
       )}
     </div>
   )

@@ -75,4 +75,28 @@ assert.deepEqual(
   ["VNMON709"],
 )
 
+assert.deepEqual(
+  filterSerializedAssetRows(rows, {
+    searchTerm: "",
+    categoryFilter: "laptop",
+  }).map((row) => row.assetCode),
+  ["VNLAP235"],
+)
+
+assert.deepEqual(
+  filterSerializedAssetRows(rows, {
+    searchTerm: "",
+    categoryFilter: "monitor",
+  }).map((row) => row.assetCode),
+  ["VNMON709"],
+)
+
+assert.deepEqual(
+  filterSerializedAssetRows(rows, {
+    searchTerm: "hung",
+    categoryFilter: "monitor",
+  }).map((row) => row.assetCode),
+  [],
+)
+
 console.log("serialized-asset-filters tests passed")

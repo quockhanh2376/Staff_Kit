@@ -10,5 +10,9 @@ assert.match(
 assert.match(assetDashboardSource, /filterSerializedAssetRows\(/)
 assert.match(assetDashboardSource, /rows:\s*filteredRows/)
 assert.match(assetDashboardSource, /No serialized assets match the current filters\./)
+assert.match(assetDashboardSource, /All Categories/)
+assert.match(assetDashboardSource, /value=\{categoryFilter\}/)
+assert.match(assetDashboardSource, /onCategoryFilterChange\(event\.target\.value\)/)
+assert.match(assetDashboardSource, /categoryOptions\.map\(\(option\) => \(/)
 
 console.log("asset-dashboard-phase1-ui tests passed")
