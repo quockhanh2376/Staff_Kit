@@ -8,6 +8,7 @@ import {
   PencilLine,
   PlusCircle,
   RefreshCw,
+  Search,
   Trash2,
 } from "lucide-react"
 import type { AssetCategoryDetailRecord } from "../../types/staff"
@@ -33,6 +34,10 @@ import {
   resolveSerializedAssetName,
   type SerializedAssetColumnKey,
 } from "./serializedAssetGridConfig"
+import {
+  ALL_SERIALIZED_ASSET_CATEGORY_FILTER,
+  filterSerializedAssetRows,
+} from "./serializedAssetFilters"
 import { useSerializedAssetGridState } from "./useSerializedAssetGridState"
 
 type AssetDashboardProps = {
@@ -67,6 +72,7 @@ export function AssetDashboard({
   assetImport,
 }: AssetDashboardProps) {
   const [activeTab, setActiveTab] = useState<AssetDashboardTabKey>("serialized")
+  const [serializedSearchTerm, setSerializedSearchTerm] = useState("")
   const [quantityDraftOverrides, setQuantityDraftOverrides] = useState<QuantityDraftMap>({})
   const [categoryDraft, setCategoryDraft] = useState<AssetCategoryDraft>(() =>
     buildEmptyAssetCategoryDraft(),
@@ -371,6 +377,8 @@ export function AssetDashboard({
             key={activeUserScope}
             activeUserScope={activeUserScope}
             assetDashboard={assetDashboard}
+            searchTerm={serializedSearchTerm}
+            onSearchTermChange={setSerializedSearchTerm}
           />
         ) : activeTab === "quantity" ? (
           <QuantityDashboardTable
@@ -422,10 +430,19 @@ const dashboardTableHeadClass =
 function SerializedDashboardTable({
   activeUserScope,
   assetDashboard,
+  searchTerm,
+  onSearchTermChange,
 }: {
   activeUserScope: string
   assetDashboard: AssetDashboardState
+  searchTerm: string
+  onSearchTermChange: (value: string) => void
 }) {
+  const filteredRows = filterSerializedAssetRows(assetDashboard.serializedRows, {
+    searchTerm,
+    categoryFilter: ALL_SERIALIZED_ASSET_CATEGORY_FILTER,
+  })
+
   const {
     orderedColumns,
     sortedRows,
@@ -439,7 +456,7 @@ function SerializedDashboardTable({
     setDraggingColumnKey,
   } = useSerializedAssetGridState({
     activeUserScope,
-    rows: assetDashboard.serializedRows,
+    rows: filteredRows,
   })
 
   if (assetDashboard.isLoadingDashboard && assetDashboard.serializedRows.length === 0) {
@@ -460,117 +477,108 @@ function SerializedDashboardTable({
   }
 
   return (
-    <div className={dashboardTableShellClass}>
-      <div className="overflow-x-auto">
-        <table className="min-w-max text-left text-[13px]">
-          <thead className={dashboardTableHeadClass}>
-            <tr>
-              {orderedColumns.map((column) => {
-                const sortIndicator =
-                  sort.key !== column.key ? (
-                    <ArrowUpDown size={12} />
-                  ) : sort.direction === "asc" ? (
-                    <span className="text-[10px]">ASC</span>
-                  ) : (
-                    <span className="text-[10px]">DESC</span>
-                  )
+    <div className="space-y-3">
+      <label className="relative block max-w-md">
+        <Search
+          size={16}
+          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
+        />
+        <input
+          className={`${dashboardInputClass} pl-10`}
+          type="search"
+          value={searchTerm}
+          onChange={(event) => onSearchTermChange(event.target.value)}
+          placeholder="Search computer, asset code, holder, model..."
+        />
+      </label>
 
-                return (
-                  <th
-                    key={column.key}
-                    className={`group relative border-r border-slate-800 last:border-r-0 ${
-                      draggingColumnKey === column.key ? "bg-slate-800/85" : ""
-                    }`}
-                    style={{
-                      minWidth: column.minWidth,
-                      width: effectiveWidths[column.key],
-                    }}
-                    draggable
-                    onDragStart={() => handleHeaderDragStart(column.key)}
-                    onDragOver={(event) => event.preventDefault()}
-                    onDrop={() => handleHeaderDrop(column.key)}
-                    onDragEnd={() => setDraggingColumnKey(null)}
-                  >
-                    <button
-                      className="flex w-full items-center gap-2 px-3 py-2.5 pr-5 text-left font-semibold"
-                      onClick={() => toggleSort(column.key)}
-                      type="button"
-                    >
-                      <GripVertical
-                        size={12}
-                        className="shrink-0 text-slate-600 transition group-hover:text-slate-500"
-                      />
-                      <span className="truncate">{column.label}</span>
-                      <span className="ml-auto inline-flex shrink-0 items-center text-slate-500">
-                        {sortIndicator}
-                      </span>
-                    </button>
-                    <span
-                      className="absolute inset-y-0 right-0 flex w-3 cursor-col-resize items-center justify-center"
-                      onMouseDown={(event) => beginColumnResize(column.key, event)}
-                    >
-                      <span className="h-5 w-px bg-slate-700 transition group-hover:bg-emerald-400/60" />
-                    </span>
-                  </th>
-                )
-              })}
-            </tr>
-          </thead>
-          <tbody>
-            {sortedRows.map((row) => (
-              <tr key={row.assetId} className="border-t border-[#202736] align-top">
-                {orderedColumns.map((column) => (
-                  <td
-                    key={`${row.assetId}-${column.key}`}
-                      className={`px-3 py-2.5 align-top ${
-                        column.key === "id" || column.key === "assetName"
-                          ? "font-semibold text-slate-100"
-                          : dashboardMutedTextClass
-                    }`}
-                    style={{
-                      minWidth: column.minWidth,
-                      width: effectiveWidths[column.key],
-                    }}
-                  >
-                    {renderSerializedCellValue(column.key, row)}
-                  </td>
+      {filteredRows.length === 0 ? (
+        <div className="rounded-[12px] border border-dashed border-[#31394a] bg-[#0b0f15] px-4 py-8 text-center text-sm text-[#8f98a8]">
+          No serialized assets match the current filters.
+        </div>
+      ) : (
+        <div className={dashboardTableShellClass}>
+          <div className="overflow-x-auto">
+            <table className="min-w-max text-left text-[13px]">
+              <thead className={dashboardTableHeadClass}>
+                <tr>
+                  {orderedColumns.map((column) => {
+                    const sortIndicator =
+                      sort.key !== column.key ? (
+                        <ArrowUpDown size={12} />
+                      ) : sort.direction === "asc" ? (
+                        <span className="text-[10px]">ASC</span>
+                      ) : (
+                        <span className="text-[10px]">DESC</span>
+                      )
+
+                    return (
+                      <th
+                        key={column.key}
+                        className={`group relative border-r border-slate-800 last:border-r-0 ${
+                          draggingColumnKey === column.key ? "bg-slate-800/85" : ""
+                        }`}
+                        style={{
+                          minWidth: column.minWidth,
+                          width: effectiveWidths[column.key],
+                        }}
+                        draggable
+                        onDragStart={() => handleHeaderDragStart(column.key)}
+                        onDragOver={(event) => event.preventDefault()}
+                        onDrop={() => handleHeaderDrop(column.key)}
+                        onDragEnd={() => setDraggingColumnKey(null)}
+                      >
+                        <button
+                          className="flex w-full items-center gap-2 px-3 py-2.5 pr-5 text-left font-semibold"
+                          onClick={() => toggleSort(column.key)}
+                          type="button"
+                        >
+                          <GripVertical
+                            size={12}
+                            className="shrink-0 text-slate-600 transition group-hover:text-slate-500"
+                          />
+                          <span className="truncate">{column.label}</span>
+                          <span className="ml-auto inline-flex shrink-0 items-center text-slate-500">
+                            {sortIndicator}
+                          </span>
+                        </button>
+                        <span
+                          className="absolute inset-y-0 right-0 flex w-3 cursor-col-resize items-center justify-center"
+                          onMouseDown={(event) => beginColumnResize(column.key, event)}
+                        >
+                          <span className="h-5 w-px bg-slate-700 transition group-hover:bg-emerald-400/60" />
+                        </span>
+                      </th>
+                    )
+                  })}
+                </tr>
+              </thead>
+              <tbody>
+                {sortedRows.map((row) => (
+                  <tr key={row.assetId} className="border-t border-[#202736] align-top">
+                    {orderedColumns.map((column) => (
+                      <td
+                        key={`${row.assetId}-${column.key}`}
+                        className={`px-3 py-2.5 align-top ${
+                          column.key === "id" || column.key === "assetName"
+                            ? "font-semibold text-slate-100"
+                            : dashboardMutedTextClass
+                        }`}
+                        style={{
+                          minWidth: column.minWidth,
+                          width: effectiveWidths[column.key],
+                        }}
+                      >
+                        {renderSerializedCellValue(column.key, row)}
+                      </td>
+                    ))}
+                  </tr>
                 ))}
-                {/*
-                  {row.categoryName ?? row.categoryCode ?? "—"}
-                </td>
-                <td className="px-3 py-3 text-slate-100">
-                  <div className="whitespace-pre-line">
-                    {formatAssetDashboardDisplayNameLines(
-                      row.assetCode,
-                      row.displayNameShort,
-                      row.displayName,
-                    )}
-                  </div>
-                </td>
-                <td className={`px-3 py-3 ${dashboardMutedTextClass}`}>{row.model ?? "—"}</td>
-                <td className={`px-3 py-3 ${dashboardMutedTextClass}`}>{row.serialNumber ?? "—"}</td>
-                <td className={`px-3 py-3 ${dashboardMutedTextClass}`}>
-                  {formatAssetDashboardUsageLocationLabel(row.usageLocation)}
-                </td>
-                <td className="px-3 py-3">
-                  <span className="rounded-[999px] border border-slate-700 bg-slate-900/70 px-2 py-0.5 text-[11px] font-semibold capitalize text-slate-100">
-                    {formatAssetDashboardStatusLabel(row.status)}
-                  </span>
-                </td>
-                <td className={`px-3 py-3 ${dashboardMutedTextClass}`}>
-                  <div className="whitespace-pre-line">
-                    {formatAssetDashboardHolderLabel(
-                      row.holderFullName,
-                      row.holderEmployeeId,
-                    )}
-                  </div>
-                </td>
-                */}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
