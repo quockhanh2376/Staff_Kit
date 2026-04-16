@@ -12,20 +12,22 @@
 
 ## File Map
 
-- Create: `src/features/assets/serializedAssetFilters.ts`
-  - Pure helper for normalized serialized-asset search/category filtering.
+- Verify/Modify: `src/features/assets/serializedAssetFilters.ts`
+  - Confirm the helper matches the approved plan, then extend it for normalized serialized-asset search/category filtering as needed.
 - Modify: `src/features/assets/AssetDashboard.tsx`
   - Add serialized-tab filter state, render search/category/clear controls, compute filtered rows before table sorting, and show filtered empty state.
-- Create: `scripts/serialized-asset-filters.test.ts`
-  - Behavior-level Node test for search and category filtering.
-- Create: `scripts/asset-dashboard-phase1-ui.test.ts`
-  - Source guard for the serialized-tab filter UI wiring in `AssetDashboard.tsx`.
+- Verify/Modify: `scripts/serialized-asset-filters.test.ts`
+  - Confirm the behavior-level Node test coverage, then extend it for serialized search and category filtering as needed.
+- Verify/Modify: `scripts/asset-dashboard-phase1-ui.test.ts`
+  - Confirm the source-guard coverage, then extend it for serialized-tab filter UI wiring in `AssetDashboard.tsx` as needed.
 - Verify: `scripts/serialized-asset-grid.test.ts`
   - Ensure the existing serialized grid behavior still passes after filter wiring.
 - Verify: `scripts/asset-dashboard-formatting.test.ts`
   - Ensure existing asset dashboard formatting helpers still pass.
 - Verify: `docs/superpowers/specs/2026-04-15-asset-dashboard-phase1-filters-design.md`
   - Keep implementation aligned to the approved design.
+
+This plan captures the original TDD execution order from the pre-implementation baseline used for Phase 1. In the current repo state, `src/features/assets/serializedAssetFilters.ts`, `scripts/serialized-asset-filters.test.ts`, and `scripts/asset-dashboard-phase1-ui.test.ts` already exist, so any `Create`-style steps below should be interpreted as `Verify/Modify` when replaying the plan against a later checkout.
 
 ## Branch And Workspace
 
@@ -38,14 +40,14 @@ All commands below should run from the worktree root unless a later task explici
 ### Task 1: Add Search Filter With Test-First Coverage
 
 **Files:**
-- Create: `src/features/assets/serializedAssetFilters.ts`
-- Create: `scripts/serialized-asset-filters.test.ts`
-- Create: `scripts/asset-dashboard-phase1-ui.test.ts`
+- Verify/Modify: `src/features/assets/serializedAssetFilters.ts`
+- Verify/Modify: `scripts/serialized-asset-filters.test.ts`
+- Verify/Modify: `scripts/asset-dashboard-phase1-ui.test.ts`
 - Modify: `src/features/assets/AssetDashboard.tsx`
 
 - [ ] **Step 1: Write the failing search-helper test**
 
-Create `scripts/serialized-asset-filters.test.ts` with this exact content:
+Ensure `scripts/serialized-asset-filters.test.ts` matches this baseline red-state content:
 
 ```ts
 import assert from "node:assert/strict"
@@ -136,11 +138,11 @@ Run:
 node --experimental-strip-types scripts/serialized-asset-filters.test.ts
 ```
 
-Expected: FAIL with a module-resolution error because `src/features/assets/serializedAssetFilters.ts` does not exist yet.
+Expected: On the baseline assumed by this plan, FAIL with a module-resolution error because `src/features/assets/serializedAssetFilters.ts` has not been implemented yet. If that module already exists in the checkout you are using, this exact failure will not reproduce; treat that as a baseline mismatch and continue using the repo's current state.
 
 - [ ] **Step 3: Write the failing search UI guard**
 
-Create `scripts/asset-dashboard-phase1-ui.test.ts` with this exact content:
+Ensure `scripts/asset-dashboard-phase1-ui.test.ts` matches this baseline red-state content:
 
 ```ts
 import assert from "node:assert/strict"
@@ -167,11 +169,11 @@ Run:
 node --experimental-strip-types scripts/asset-dashboard-phase1-ui.test.ts
 ```
 
-Expected: FAIL because the search input, filtered row wiring, and filtered empty-state copy do not exist yet.
+Expected: On the baseline assumed by this plan, FAIL because the search input, filtered row wiring, and filtered empty-state copy have not been implemented yet. If the current checkout already contains those changes, this exact failure will not reproduce; treat that as a baseline mismatch and continue from the repo's current state.
 
 - [ ] **Step 5: Write the minimal serialized search helper**
 
-Create `src/features/assets/serializedAssetFilters.ts` with this exact content:
+Ensure `src/features/assets/serializedAssetFilters.ts` matches this baseline helper implementation:
 
 ```ts
 import type { AssetDashboardSerializedRecord } from "../../types/staff"
@@ -427,7 +429,7 @@ Run:
 node --experimental-strip-types scripts/serialized-asset-filters.test.ts
 ```
 
-Expected: FAIL because the current helper ignores any category filter other than search behavior.
+Expected: On the baseline assumed by this task, FAIL because the current helper still ignores any category filter other than search behavior. If the checkout already contains later category-filter work, this exact failure will not reproduce; treat that as a baseline mismatch and continue from the repo's current state.
 
 - [ ] **Step 3: Extend the UI guard with category-filter assertions**
 
@@ -448,7 +450,7 @@ Run:
 node --experimental-strip-types scripts/asset-dashboard-phase1-ui.test.ts
 ```
 
-Expected: FAIL because the category dropdown and its prop wiring do not exist yet.
+Expected: On the baseline assumed by this task, FAIL because the category dropdown and its prop wiring have not been implemented yet. If the checkout already contains those changes, this exact failure will not reproduce; treat that as a baseline mismatch and continue from the repo's current state.
 
 - [ ] **Step 5: Implement category filtering in the helper and dashboard UI**
 
@@ -467,9 +469,7 @@ export function filterSerializedAssetRows(
       normalizedCategory &&
       normalizedCategory !== ALL_SERIALIZED_ASSET_CATEGORY_FILTER
     ) {
-      const rowCategory = normalizeSerializedAssetFilterText(
-        row.categoryName ?? row.categoryCode ?? "",
-      )
+      const rowCategory = normalizeSerializedAssetFilterText(row.categoryCode)
       if (rowCategory !== normalizedCategory) {
         return false
       }
@@ -557,8 +557,12 @@ const categoryOptions = useMemo(() => {
   ])
 
   for (const detail of assetDashboard.categoryDetails) {
+    if (detail.trackingMode !== "serialized") {
+      continue
+    }
+
     const label = detail.categoryName.trim() || detail.categoryCode.trim()
-    const value = normalizeSerializedAssetFilterText(label)
+    const value = normalizeSerializedAssetFilterText(detail.categoryCode)
     if (value && !options.has(value)) {
       options.set(value, label)
     }
@@ -566,7 +570,7 @@ const categoryOptions = useMemo(() => {
 
   for (const row of assetDashboard.serializedRows) {
     const label = (row.categoryName ?? row.categoryCode ?? "").trim()
-    const value = normalizeSerializedAssetFilterText(label)
+    const value = normalizeSerializedAssetFilterText(row.categoryCode)
     if (value && !options.has(value)) {
       options.set(value, label)
     }
@@ -664,7 +668,7 @@ Run:
 node --experimental-strip-types scripts/asset-dashboard-phase1-ui.test.ts
 ```
 
-Expected: FAIL because the clear-filters button and reset handler do not exist yet.
+Expected: On the baseline assumed by this task, FAIL because the clear-filters button and reset handler have not been implemented yet. If the checkout already contains those changes, this exact failure will not reproduce; treat that as a baseline mismatch and continue from the repo's current state.
 
 - [ ] **Step 3: Implement the clear-filters reset wiring**
 
