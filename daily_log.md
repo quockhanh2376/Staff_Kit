@@ -1,3 +1,48 @@
+# Daily Log - 2026-04-16
+
+## Objective
+Ship Phase 1 of `Asset Dashboard` filtering so the serialized asset view has search/category controls in the desktop app, then align the control placement with the action row and preserve `daily_log.md` as the canonical NotebookLM source.
+
+## Work Completed
+- Implemented client-side Phase 1 filtering for the `Serialized` asset tab:
+  - search across asset code, resolved computer name, resolved asset name, model, serial number, holder full name, and holder employee ID
+  - category filter using canonical `categoryCode`
+  - `Clear Filters` reset action
+- Kept filtering ahead of the existing serialized grid sort/resize/drag behavior by feeding filtered rows into `useSerializedAssetGridState`.
+- Added focused script coverage for the filtering slice:
+  - `scripts/serialized-asset-filters.test.ts`
+  - `scripts/asset-dashboard-phase1-ui.test.ts`
+- Tightened category-filter behavior after review:
+  - serialized-only category options
+  - dropdown values keyed by stable category codes rather than display labels
+- Adjusted the final layout so the full filter group now sits on the same action row as `Refresh`, `Import Asset`, and `Add Asset`, with wrap-safe behavior on narrower widths.
+- Updated the implementation plan wording so it matches the current repository state and the final Phase 1 behavior.
+
+## Validation
+- Ran `node --experimental-strip-types scripts/serialized-asset-filters.test.ts`
+- Result: passed
+- Ran `node --experimental-strip-types scripts/asset-dashboard-phase1-ui.test.ts`
+- Result: passed
+- Ran `node --experimental-strip-types scripts/serialized-asset-grid.test.ts`
+- Result: passed
+- Ran `node --experimental-strip-types scripts/asset-dashboard-formatting.test.ts`
+- Result: passed
+- Ran `npm run check:quality`
+- Result: passed
+  - ESLint: passed
+  - TypeScript build/typecheck: passed
+  - Vite production build: passed
+  - Tauri `cargo check`: passed
+
+## Current State
+The Phase 1 branch now exposes search, category filtering, and clear-filters controls for serialized assets in the desktop UI, with the controls visible in the top action row instead of being buried below the dashboard cards or table body.
+
+## Next Suggested Focus
+- Re-run manual desktop QA on the serialized asset tab after this branch is merged or checked out locally.
+- Start Phase 2 only after the team is satisfied with the Phase 1 placement and discoverability of the dashboard filters.
+
+---
+
 # Daily Log - 2026-04-09
 
 ## Objective
