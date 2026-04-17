@@ -8,6 +8,7 @@ assert.match(
   /placeholder="Search computer, asset code, holder, model\.\.\."/,
 )
 assert.match(assetDashboardSource, /filterSerializedAssetRows\(/)
+assert.match(assetDashboardSource, /if \(activeTab !== "serialized"\) \{/)
 assert.match(assetDashboardSource, /const filterControls = activeTab === "serialized" \? \(/)
 assert.match(assetDashboardSource, /\{\s*filterControls\s*\}/)
 assert.match(assetDashboardSource, /rows:\s*filteredRows/)
@@ -26,6 +27,8 @@ assert.match(
   assetDashboardSource,
   /setSerializedCategoryFilter\(ALL_SERIALIZED_ASSET_CATEGORY_FILTER\)/,
 )
+assert.match(assetDashboardSource, /aria-label="Search serialized assets"/)
+assert.match(assetDashboardSource, /aria-label="Filter serialized assets by category"/)
 assert.doesNotMatch(assetDashboardSource, /onClearFilters=\{clearSerializedFilters\}/)
 assert.doesNotMatch(assetDashboardSource, /onSearchTermChange=\{setSerializedSearchTerm\}/)
 assert.doesNotMatch(assetDashboardSource, /onCategoryFilterChange=\{setSerializedCategoryFilter\}/)

@@ -126,6 +126,10 @@ export function AssetDashboard({
   )
 
   const serializedCategoryOptions = useMemo(() => {
+    if (activeTab !== "serialized") {
+      return [{ value: ALL_SERIALIZED_ASSET_CATEGORY_FILTER, label: "All Categories" }]
+    }
+
     const options = new Map<string, string>([
       [ALL_SERIALIZED_ASSET_CATEGORY_FILTER, "All Categories"],
     ])
@@ -151,16 +155,18 @@ export function AssetDashboard({
     }
 
     return Array.from(options, ([value, label]) => ({ value, label }))
-  }, [assetDashboard.categoryDetails, assetDashboard.serializedRows])
+  }, [activeTab, assetDashboard.categoryDetails, assetDashboard.serializedRows])
 
-  const filteredSerializedRows = useMemo(
-    () =>
-      filterSerializedAssetRows(assetDashboard.serializedRows, {
+  const filteredSerializedRows = useMemo(() => {
+    if (activeTab !== "serialized") {
+      return assetDashboard.serializedRows
+    }
+
+    return filterSerializedAssetRows(assetDashboard.serializedRows, {
         searchTerm: serializedSearchTerm,
         categoryFilter: serializedCategoryFilter,
-      }),
-    [assetDashboard.serializedRows, serializedCategoryFilter, serializedSearchTerm],
-  )
+      })
+  }, [activeTab, assetDashboard.serializedRows, serializedCategoryFilter, serializedSearchTerm])
 
   const updateQuantityDraft = (
     stockItemId: number,
@@ -203,6 +209,7 @@ export function AssetDashboard({
           className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#8f98a8]"
         />
         <input
+          aria-label="Search serialized assets"
           className={`${dashboardInputClass} pl-9`}
           onChange={(event) => setSerializedSearchTerm(event.target.value)}
           placeholder="Search computer, asset code, holder, model..."
@@ -211,6 +218,7 @@ export function AssetDashboard({
         />
       </label>
       <select
+        aria-label="Filter serialized assets by category"
         className={`${dashboardInputClass} w-full sm:w-[220px]`}
         onChange={(event) => setSerializedCategoryFilter(event.target.value)}
         value={serializedCategoryFilter}
