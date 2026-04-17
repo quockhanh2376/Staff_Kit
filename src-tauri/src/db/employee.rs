@@ -219,6 +219,24 @@ pub fn search_employees(
     query_employees(&conn, filters)
 }
 
+pub(crate) fn query_all_employees_for_filters(
+    conn: &Connection,
+    mut filters: EmployeeQuery,
+) -> Result<Vec<EmployeeRecord>, String> {
+    filters.limit = Some(5000);
+    filters.offset = Some(0);
+
+    let response = query_employees(conn, filters)?;
+    if response.total > i64::try_from(response.items.len()).unwrap_or(i64::MAX) {
+        return Err(format!(
+            "employee asset seed is limited to 5000 employees per run; current filters matched {} employees",
+            response.total
+        ));
+    }
+
+    Ok(response.items)
+}
+
 pub fn list_employee_group_counts(app: &AppHandle) -> Result<EmployeeGroupCounts, String> {
     let conn = open_runtime_connection(app)?;
 

@@ -30,6 +30,9 @@ import type {
   StockItemQuantityUpdateInput,
   EmployeeColumnDefinition,
   EmployeeGroupCounts,
+  EmployeeAssetSeedInput,
+  EmployeeAssetSeedPreview,
+  EmployeeAssetSeedReport,
   EmployeeColumnUpsertInput,
   EmployeeListResponse,
   EmployeePayload,
@@ -305,6 +308,28 @@ export const staffApi = {
   searchEmployees: (filters: EmployeeQueryInput) =>
     call<EmployeeListResponse>("search_employees", {
       filters,
+    }),
+
+  previewEmployeeAssetSeed: (payload: EmployeeAssetSeedInput) =>
+    call<EmployeeAssetSeedPreview>("preview_employee_asset_seed", {
+      payload: {
+        query: payload.query ?? null,
+        teamName: payload.teamName ?? null,
+        staffGroup: payload.staffGroup ?? null,
+        startDateFrom: payload.startDateFrom ?? null,
+        startDateTo: payload.startDateTo ?? null,
+      },
+    }),
+
+  importEmployeeAssetSeed: (payload: EmployeeAssetSeedInput) =>
+    call<EmployeeAssetSeedReport>("import_employee_asset_seed", {
+      payload: {
+        query: payload.query ?? null,
+        teamName: payload.teamName ?? null,
+        staffGroup: payload.staffGroup ?? null,
+        startDateFrom: payload.startDateFrom ?? null,
+        startDateTo: payload.startDateTo ?? null,
+      },
     }),
 
   listEmployeeGroupCounts: () => call<EmployeeGroupCounts>("list_employee_group_counts"),

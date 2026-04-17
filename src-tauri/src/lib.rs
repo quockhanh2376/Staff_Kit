@@ -58,6 +58,22 @@ fn search_employees(
 }
 
 #[tauri::command]
+fn preview_employee_asset_seed(
+    app: tauri::AppHandle,
+    payload: db::EmployeeAssetSeedInput,
+) -> Result<db::EmployeeAssetSeedPreview, String> {
+    db::preview_employee_asset_seed(&app, payload)
+}
+
+#[tauri::command]
+fn import_employee_asset_seed(
+    app: tauri::AppHandle,
+    payload: db::EmployeeAssetSeedInput,
+) -> Result<db::EmployeeAssetSeedReport, String> {
+    db::import_employee_asset_seed(&app, payload)
+}
+
+#[tauri::command]
 fn list_employee_group_counts(app: tauri::AppHandle) -> Result<db::EmployeeGroupCounts, String> {
     db::list_employee_group_counts(&app)
 }
@@ -536,6 +552,8 @@ pub fn run() {
             reject_borrow_request,
             list_employees,
             search_employees,
+            preview_employee_asset_seed,
+            import_employee_asset_seed,
             list_employee_group_counts,
             list_local_accounts,
             create_local_account,

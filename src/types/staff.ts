@@ -422,6 +422,42 @@ export type EmployeeQueryInput = {
   offset?: number
 }
 
+export type EmployeeAssetSeedInput = {
+  query?: string | null
+  teamName?: string | null
+  staffGroup?: string | null
+  startDateFrom?: string | null
+  startDateTo?: string | null
+}
+
+export type EmployeeAssetSeedPreviewRow = {
+  employeeId: string
+  fullName: string
+  sourceComputerName: string
+  assetCode: string | null
+  computerName: string | null
+  categoryCode: string | null
+  categoryName: string | null
+  status: string
+}
+
+export type EmployeeAssetSeedPreview = {
+  totalRows: number
+  validRows: number
+  errorRows: number
+  rows: EmployeeAssetSeedPreviewRow[]
+  errors: SharedImportErrorItem[]
+}
+
+export type EmployeeAssetSeedReport = {
+  totalRows: number
+  imported: number
+  skipped: number
+  failed: number
+  importedAssetCodes: string[]
+  errors: SharedImportErrorItem[]
+}
+
 export type EmployeeGroupCounts = {
   employeeList: number
   onboarding: number
