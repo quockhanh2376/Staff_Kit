@@ -56,14 +56,17 @@ export function useEmployeeAssetSeedState({
     )
 
     const sourceSummaryLines = useMemo(() => {
+        const sourceLabel = preview?.sourceLabel ?? "Stored Employee Computer Name"
+
         return [
             "Source: Employee List filters",
+            `Seed source: ${sourceLabel}`,
             payload.query ? `Search: ${payload.query}` : "Search: All employees",
             payload.teamName ? `Team: ${payload.teamName}` : "Team: All teams",
             payload.startDateFrom ? `Start from: ${payload.startDateFrom}` : "Start from: Any date",
             payload.startDateTo ? `Start to: ${payload.startDateTo}` : "Start to: Any date",
         ]
-    }, [payload])
+    }, [payload, preview?.sourceLabel])
 
     const openDrawer = useCallback(() => {
         setDrawerOpen(true)
@@ -92,7 +95,7 @@ export function useEmployeeAssetSeedState({
             const nextPreview = await staffApi.previewEmployeeAssetSeed(payload)
             setPreview(nextPreview)
             setReport(null)
-            setApprovedPayload(payload)
+            setApprovedPayload({ ...payload, snapshotId: nextPreview.snapshotId })
         } catch (error) {
             setGlobalError(getErrorMessage(error))
         } finally {
@@ -112,7 +115,7 @@ export function useEmployeeAssetSeedState({
             setPreview(null)
             setReport(nextReport)
             setStatusMessage(
-                `Imported ${nextReport.imported} asset(s). Skipped ${nextReport.skipped} row(s).`,
+                `Imported ${nextReport.imported} asset(s) from reviewed snapshot ${nextReport.snapshotId}. Skipped ${nextReport.skipped} row(s).`,
             )
             triggerReload()
         } catch (error) {
