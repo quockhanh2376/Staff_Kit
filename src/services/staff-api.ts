@@ -313,6 +313,7 @@ export const staffApi = {
   previewEmployeeAssetSeed: (payload: EmployeeAssetSeedInput) =>
     call<EmployeeAssetSeedPreview>("preview_employee_asset_seed", {
       payload: {
+        snapshotId: payload.snapshotId ?? null,
         query: payload.query ?? null,
         teamName: payload.teamName ?? null,
         staffGroup: payload.staffGroup ?? null,
@@ -324,6 +325,7 @@ export const staffApi = {
   importEmployeeAssetSeed: (payload: EmployeeAssetSeedInput) =>
     call<EmployeeAssetSeedReport>("import_employee_asset_seed", {
       payload: {
+        snapshotId: payload.snapshotId ?? null,
         query: payload.query ?? null,
         teamName: payload.teamName ?? null,
         staffGroup: payload.staffGroup ?? null,

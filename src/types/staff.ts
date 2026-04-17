@@ -423,6 +423,7 @@ export type EmployeeQueryInput = {
 }
 
 export type EmployeeAssetSeedInput = {
+  snapshotId?: number | null
   query?: string | null
   teamName?: string | null
   staffGroup?: string | null
@@ -442,6 +443,10 @@ export type EmployeeAssetSeedPreviewRow = {
 }
 
 export type EmployeeAssetSeedPreview = {
+  snapshotId: number
+  sourceLabel: string
+  matchedEmployeeCount: number
+  excludedRows: number
   totalRows: number
   validRows: number
   errorRows: number
@@ -450,6 +455,10 @@ export type EmployeeAssetSeedPreview = {
 }
 
 export type EmployeeAssetSeedReport = {
+  snapshotId: number
+  sourceLabel: string
+  matchedEmployeeCount: number
+  excludedRows: number
   totalRows: number
   imported: number
   skipped: number
