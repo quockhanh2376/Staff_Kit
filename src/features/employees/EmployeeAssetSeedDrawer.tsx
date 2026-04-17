@@ -13,7 +13,9 @@ export function EmployeeAssetSeedDrawer({ seedState }: EmployeeAssetSeedDrawerPr
         ? {
               title: "Preview Employee Asset Import",
               summaryItems: [
-                  { label: "Matched Employees", value: seed.preview.totalRows },
+                  { label: "Matched Employees", value: seed.preview.matchedEmployeeCount },
+                  { label: "Candidate Rows", value: seed.preview.totalRows },
+                  { label: "Excluded Rows", value: seed.preview.excludedRows },
                   { label: "Valid Assets", value: seed.preview.validRows },
                   { label: "Error Rows", value: seed.preview.errorRows },
               ],
@@ -68,6 +70,7 @@ export function EmployeeAssetSeedDrawer({ seedState }: EmployeeAssetSeedDrawerPr
         ? {
               title: "Employee asset import completed",
               summaryItems: [
+                  { label: "Reviewed Snapshot", value: seed.report.snapshotId },
                   { label: "Imported", value: seed.report.imported },
                   { label: "Skipped", value: seed.report.skipped },
                   { label: "Failed", value: seed.report.failed },
@@ -86,7 +89,7 @@ export function EmployeeAssetSeedDrawer({ seedState }: EmployeeAssetSeedDrawerPr
         >
             <SharedImportShell
                 fileSectionTitle="Current Employee Filters"
-                fileSectionDescription="Serialized assets will be created from stored Computer Name values in the current Employee List result set."
+                fileSectionDescription="Serialized assets will be created from Stored Employee Computer Name values in the reviewed Employee List snapshot."
                 selectedFiles={seed.sourceSummaryLines}
                 emptyFilesLabel="Current Employee List filters will be used."
                 primaryActionLabel="Preview Import"
@@ -100,10 +103,16 @@ export function EmployeeAssetSeedDrawer({ seedState }: EmployeeAssetSeedDrawerPr
             >
                 <div className="rounded-[8px] border border-[var(--border)] bg-[var(--surface-hover)]/25 p-4 text-sm text-[var(--text-secondary)]">
                     <div className="font-semibold text-[var(--text-primary)]">How this works</div>
+                    {seed.preview && (
+                        <div className="mt-2 rounded-[6px] border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs text-[var(--text-secondary)]">
+                            Seed source: <span className="font-medium text-[var(--text-primary)]">{seed.preview.sourceLabel}</span>
+                        </div>
+                    )}
                     <ul className="mt-2 list-disc space-y-1 pl-5 text-xs">
                         <li>Only current Employee List filters are used.</li>
-                        <li>Preview imports valid rows and skips duplicate or invalid rows.</li>
-                        <li>Approve writes valid serialized assets directly into the database.</li>
+                        <li>Preview stores a reviewed snapshot before anything is written.</li>
+                        <li>Preview counts excluded employees whose stored Computer Name is blank or invalid.</li>
+                        <li>Approve imports the reviewed snapshot, not a refreshed filter query.</li>
                     </ul>
                     {seed.statusMessage && (
                         <div className="mt-3 rounded-[6px] border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300">
