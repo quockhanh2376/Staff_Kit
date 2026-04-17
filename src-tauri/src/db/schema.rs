@@ -320,6 +320,37 @@ CREATE TABLE IF NOT EXISTS asset_import_rows (
   UNIQUE(batch_id, row_number)
 );
 
+CREATE TABLE IF NOT EXISTS employee_asset_seed_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  actor_account_id INTEGER REFERENCES app_local_accounts(id) ON UPDATE CASCADE ON DELETE SET NULL,
+  filters_json TEXT,
+  source_label TEXT NOT NULL,
+  matched_employee_count INTEGER NOT NULL DEFAULT 0,
+  excluded_rows INTEGER NOT NULL DEFAULT 0,
+  total_rows INTEGER NOT NULL DEFAULT 0,
+  valid_rows INTEGER NOT NULL DEFAULT 0,
+  error_rows INTEGER NOT NULL DEFAULT 0,
+  errors_json TEXT NOT NULL DEFAULT '[]',
+  approved_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS employee_asset_seed_snapshot_rows (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  snapshot_id INTEGER NOT NULL REFERENCES employee_asset_seed_snapshots(id) ON DELETE CASCADE,
+  row_number INTEGER NOT NULL,
+  employee_id TEXT NOT NULL,
+  full_name TEXT NOT NULL,
+  source_computer_name TEXT NOT NULL,
+  asset_code TEXT,
+  computer_name TEXT,
+  category_code TEXT,
+  category_name TEXT,
+  status TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(snapshot_id, row_number)
+);
+
 CREATE TABLE IF NOT EXISTS borrow_requests (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   request_key TEXT NOT NULL UNIQUE,
