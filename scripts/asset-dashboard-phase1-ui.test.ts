@@ -8,12 +8,15 @@ assert.match(
   /placeholder="Search computer, asset code, holder, model\.\.\."/,
 )
 assert.match(assetDashboardSource, /filterSerializedAssetRows\(/)
+assert.match(assetDashboardSource, /const filterControls = activeTab === "serialized" \? \(/)
+assert.match(assetDashboardSource, /\{\s*filterControls\s*\}/)
 assert.match(assetDashboardSource, /rows:\s*filteredRows/)
+assert.match(assetDashboardSource, /filteredRows=\{filteredSerializedRows\}/)
 assert.match(assetDashboardSource, /No serialized assets match the current filters\./)
 assert.match(assetDashboardSource, /All Categories/)
-assert.match(assetDashboardSource, /value=\{categoryFilter\}/)
-assert.match(assetDashboardSource, /onCategoryFilterChange\(event\.target\.value\)/)
-assert.match(assetDashboardSource, /categoryOptions\.map\(\(option\) => \(/)
+assert.match(assetDashboardSource, /value=\{serializedCategoryFilter\}/)
+assert.match(assetDashboardSource, /setSerializedCategoryFilter\(event\.target\.value\)/)
+assert.match(assetDashboardSource, /serializedCategoryOptions\.map\(\(option\) => \(/)
 assert.match(assetDashboardSource, /detail\.trackingMode !== "serialized"/)
 assert.match(assetDashboardSource, /normalizeSerializedAssetFilterText\(detail\.categoryCode\)/)
 assert.match(assetDashboardSource, /normalizeSerializedAssetFilterText\(row\.categoryCode\)/)
@@ -23,6 +26,8 @@ assert.match(
   assetDashboardSource,
   /setSerializedCategoryFilter\(ALL_SERIALIZED_ASSET_CATEGORY_FILTER\)/,
 )
-assert.match(assetDashboardSource, /onClearFilters=\{clearSerializedFilters\}/)
+assert.doesNotMatch(assetDashboardSource, /onClearFilters=\{clearSerializedFilters\}/)
+assert.doesNotMatch(assetDashboardSource, /onSearchTermChange=\{setSerializedSearchTerm\}/)
+assert.doesNotMatch(assetDashboardSource, /onCategoryFilterChange=\{setSerializedCategoryFilter\}/)
 
 console.log("asset-dashboard-phase1-ui tests passed")

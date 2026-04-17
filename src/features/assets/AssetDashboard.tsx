@@ -125,6 +125,43 @@ export function AssetDashboard({
     [assetDashboard.categoryDetails, categoryDraft],
   )
 
+  const serializedCategoryOptions = useMemo(() => {
+    const options = new Map<string, string>([
+      [ALL_SERIALIZED_ASSET_CATEGORY_FILTER, "All Categories"],
+    ])
+
+    for (const detail of assetDashboard.categoryDetails) {
+      if (detail.trackingMode !== "serialized") {
+        continue
+      }
+
+      const label = detail.categoryName.trim() || detail.categoryCode.trim()
+      const value = normalizeSerializedAssetFilterText(detail.categoryCode)
+      if (value && !options.has(value)) {
+        options.set(value, label)
+      }
+    }
+
+    for (const row of assetDashboard.serializedRows) {
+      const label = (row.categoryName ?? row.categoryCode ?? "").trim()
+      const value = normalizeSerializedAssetFilterText(row.categoryCode)
+      if (value && !options.has(value)) {
+        options.set(value, label)
+      }
+    }
+
+    return Array.from(options, ([value, label]) => ({ value, label }))
+  }, [assetDashboard.categoryDetails, assetDashboard.serializedRows])
+
+  const filteredSerializedRows = useMemo(
+    () =>
+      filterSerializedAssetRows(assetDashboard.serializedRows, {
+        searchTerm: serializedSearchTerm,
+        categoryFilter: serializedCategoryFilter,
+      }),
+    [assetDashboard.serializedRows, serializedCategoryFilter, serializedSearchTerm],
+  )
+
   const updateQuantityDraft = (
     stockItemId: number,
     fieldKey: "quantityOnHand" | "assignedQuantity",
@@ -157,6 +194,42 @@ export function AssetDashboard({
     setSerializedSearchTerm("")
     setSerializedCategoryFilter(ALL_SERIALIZED_ASSET_CATEGORY_FILTER)
   }
+
+  const filterControls = activeTab === "serialized" ? (
+    <div className="flex min-w-[320px] flex-1 flex-wrap items-center gap-3">
+      <label className="relative min-w-[260px] flex-1">
+        <Search
+          size={15}
+          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#8f98a8]"
+        />
+        <input
+          className={`${dashboardInputClass} pl-9`}
+          onChange={(event) => setSerializedSearchTerm(event.target.value)}
+          placeholder="Search computer, asset code, holder, model..."
+          type="text"
+          value={serializedSearchTerm}
+        />
+      </label>
+      <select
+        className={`${dashboardInputClass} w-full sm:w-[220px]`}
+        onChange={(event) => setSerializedCategoryFilter(event.target.value)}
+        value={serializedCategoryFilter}
+      >
+        {serializedCategoryOptions.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <button
+        className={dashboardShellSecondaryButtonClass}
+        onClick={clearSerializedFilters}
+        type="button"
+      >
+        Clear Filters
+      </button>
+    </div>
+  ) : null
 
   const openNewCategoryDraft = () => {
     setCategoryDraft(buildEmptyAssetCategoryDraft())
@@ -331,6 +404,8 @@ export function AssetDashboard({
               <PlusCircle size={16} />
               Add Asset
             </button>
+
+            {filterControls}
           </div>
 
           {assetDashboard.statusMessage && (
@@ -386,11 +461,7 @@ export function AssetDashboard({
             key={activeUserScope}
             activeUserScope={activeUserScope}
             assetDashboard={assetDashboard}
-            searchTerm={serializedSearchTerm}
-            onSearchTermChange={setSerializedSearchTerm}
-            categoryFilter={serializedCategoryFilter}
-            onCategoryFilterChange={setSerializedCategoryFilter}
-            onClearFilters={clearSerializedFilters}
+            filteredRows={filteredSerializedRows}
           />
         ) : activeTab === "quantity" ? (
           <QuantityDashboardTable
@@ -442,57 +513,12 @@ const dashboardTableHeadClass =
 function SerializedDashboardTable({
   activeUserScope,
   assetDashboard,
-  searchTerm,
-  onSearchTermChange,
-  categoryFilter,
-  onCategoryFilterChange,
-  onClearFilters,
+  filteredRows,
 }: {
   activeUserScope: string
   assetDashboard: AssetDashboardState
-  searchTerm: string
-  onSearchTermChange: (value: string) => void
-  categoryFilter: string
-  onCategoryFilterChange: (value: string) => void
-  onClearFilters: () => void
+  filteredRows: AssetDashboardState["serializedRows"]
 }) {
-  const categoryOptions = useMemo(() => {
-    const options = new Map<string, string>([
-      [ALL_SERIALIZED_ASSET_CATEGORY_FILTER, "All Categories"],
-    ])
-
-    for (const detail of assetDashboard.categoryDetails) {
-      if (detail.trackingMode !== "serialized") {
-        continue
-      }
-
-      const label = detail.categoryName.trim() || detail.categoryCode.trim()
-      const value = normalizeSerializedAssetFilterText(detail.categoryCode)
-      if (value && !options.has(value)) {
-        options.set(value, label)
-      }
-    }
-
-    for (const row of assetDashboard.serializedRows) {
-      const label = (row.categoryName ?? row.categoryCode ?? "").trim()
-      const value = normalizeSerializedAssetFilterText(row.categoryCode)
-      if (value && !options.has(value)) {
-        options.set(value, label)
-      }
-    }
-
-    return Array.from(options, ([value, label]) => ({ value, label }))
-  }, [assetDashboard.categoryDetails, assetDashboard.serializedRows])
-
-  const filteredRows = useMemo(
-    () =>
-      filterSerializedAssetRows(assetDashboard.serializedRows, {
-        searchTerm,
-        categoryFilter,
-      }),
-    [assetDashboard.serializedRows, categoryFilter, searchTerm],
-  )
-
   const {
     orderedColumns,
     sortedRows,
@@ -530,78 +556,12 @@ function SerializedDashboardTable({
     <div className="space-y-3">
       {filteredRows.length === 0 ? (
         <div className="space-y-3">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center">
-            <label className="relative flex-1">
-              <Search
-                size={15}
-                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#8f98a8]"
-              />
-              <input
-                className={`${dashboardInputClass} pl-9`}
-                onChange={(event) => onSearchTermChange(event.target.value)}
-                placeholder="Search computer, asset code, holder, model..."
-                type="text"
-                value={searchTerm}
-              />
-            </label>
-            <select
-              className={`${dashboardInputClass} md:w-[220px]`}
-              onChange={(event) => onCategoryFilterChange(event.target.value)}
-              value={categoryFilter}
-            >
-              {categoryOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            <button
-              className={dashboardSecondaryButtonClass}
-              onClick={onClearFilters}
-              type="button"
-            >
-              Clear Filters
-            </button>
-          </div>
           <div className="rounded-[12px] border border-dashed border-[#31394a] bg-[#0b0f15] px-4 py-8 text-center text-sm text-[#8f98a8]">
             No serialized assets match the current filters.
           </div>
         </div>
       ) : (
         <>
-          <div className="flex flex-col gap-3 md:flex-row md:items-center">
-            <label className="relative flex-1">
-              <Search
-                size={15}
-                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#8f98a8]"
-              />
-              <input
-                className={`${dashboardInputClass} pl-9`}
-                onChange={(event) => onSearchTermChange(event.target.value)}
-                placeholder="Search computer, asset code, holder, model..."
-                type="text"
-                value={searchTerm}
-              />
-            </label>
-            <select
-              className={`${dashboardInputClass} md:w-[220px]`}
-              onChange={(event) => onCategoryFilterChange(event.target.value)}
-              value={categoryFilter}
-            >
-              {categoryOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            <button
-              className={dashboardSecondaryButtonClass}
-              onClick={onClearFilters}
-              type="button"
-            >
-              Clear Filters
-            </button>
-          </div>
           <div className={dashboardTableShellClass}>
             <div className="overflow-x-auto">
               <table className="min-w-max text-left text-[13px]">
