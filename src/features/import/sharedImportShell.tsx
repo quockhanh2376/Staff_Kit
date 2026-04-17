@@ -25,10 +25,10 @@ type SharedImportShellProps<Row> = {
     fileSectionDescription: string
     selectedFiles: string[]
     emptyFilesLabel: string
-    chooseButtonLabel: string
-    chooseButtonBusyLabel: string
-    onChooseFiles: () => void
-    isChoosingFiles: boolean
+    chooseButtonLabel?: string
+    chooseButtonBusyLabel?: string
+    onChooseFiles?: () => void
+    isChoosingFiles?: boolean
     primaryActionLabel: string
     primaryActionBusyLabel: string
     onPrimaryAction: () => void
@@ -61,6 +61,11 @@ export function SharedImportShell<Row>({
 }: SharedImportShellProps<Row>) {
     const previewDialogId = useId()
     const previewDialogRef = useRef<HTMLDivElement | null>(null)
+    const hasChooseAction =
+        typeof onChooseFiles === "function" &&
+        typeof chooseButtonLabel === "string" &&
+        typeof chooseButtonBusyLabel === "string"
+    const isChoosing = isChoosingFiles ?? false
 
     useEffect(() => {
         if (!preview || typeof window === "undefined") {
@@ -113,13 +118,14 @@ export function SharedImportShell<Row>({
                 {children}
 
                 <div className="flex flex-wrap items-center gap-2 border-t border-[var(--border)] pt-4">
+                    {hasChooseAction && (
                     <button
                         className="rounded-[8px] border border-[var(--border)] px-3 py-2 text-sm font-medium"
                         onClick={onChooseFiles}
                         type="button"
-                        disabled={isChoosingFiles || isPrimaryActionBusy}
+                        disabled={isChoosing || isPrimaryActionBusy}
                     >
-                        {isChoosingFiles ? (
+                        {isChoosing ? (
                             <span className="inline-flex items-center gap-2">
                                 <LoaderCircle className="animate-spin" size={14} />
                                 {chooseButtonBusyLabel}
@@ -128,11 +134,12 @@ export function SharedImportShell<Row>({
                             chooseButtonLabel
                         )}
                     </button>
+                    )}
                     <button
                         className="rounded-[8px] bg-[var(--primary)] px-3 py-2 text-sm font-semibold text-[#00131c] disabled:opacity-50"
                         onClick={onPrimaryAction}
                         type="button"
-                        disabled={isPrimaryActionDisabled || isPrimaryActionBusy || isChoosingFiles}
+                        disabled={isPrimaryActionDisabled || isPrimaryActionBusy || isChoosing}
                     >
                         {isPrimaryActionBusy ? primaryActionBusyLabel : primaryActionLabel}
                     </button>

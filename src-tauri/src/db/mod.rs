@@ -24,6 +24,7 @@ use schema::*;
 
 // ── Sub-modules ───────────────────────────────────────────────────────────────
 pub(crate) mod asset;
+pub(crate) mod employee_asset_seed;
 pub(crate) mod asset_import;
 pub(crate) mod audit;
 pub mod auth;
@@ -37,6 +38,7 @@ pub mod team;
 
 // ── Re-exports (all public types bubble up to `db::`) ─────────────────────────
 pub use asset::*;
+pub use employee_asset_seed::*;
 pub use asset_import::*;
 pub use auth::*;
 pub use backup::*;
