@@ -4,7 +4,7 @@ import {
   buildAssetImportActionLabel,
   buildAssetImportDeleteMessage,
   buildAssetImportSuccessMessage,
-} from "../src/features/assets/assetImportMessages.ts"
+} from "../src/features/assets/assetImportStatusMeta.ts"
 import type { AssetImportCommitResult } from "../src/types/staff.ts"
 
 const sharedResult: AssetImportCommitResult = {

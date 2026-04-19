@@ -8,7 +8,7 @@ import type {
     ActiveResizeState,
 } from "../../types/app"
 import { staffApi } from "../../services/staff-api"
-import { getErrorMessage } from "../../lib/utils"
+import { getUserErrorMessage } from "../../lib/errorHandling"
 import {
     readColumnPreferences,
     readColumnLabelOverrides,
@@ -134,7 +134,7 @@ export function useColumnState({
                 }
             } catch (error) {
                 if (!disposed) {
-                    setGlobalError(getErrorMessage(error))
+                    setGlobalError(getUserErrorMessage(error))
                 }
             } finally {
                 if (!disposed) {
@@ -519,7 +519,7 @@ export function useColumnState({
                 })
                 triggerReload()
             } catch (error) {
-                setGlobalError(getErrorMessage(error))
+                setGlobalError(getUserErrorMessage(error))
             } finally {
                 setMutatingColumns(false)
             }
@@ -538,7 +538,7 @@ export function useColumnState({
             setNewColumnTitle("")
             triggerReload()
         } catch (error) {
-            setGlobalError(getErrorMessage(error))
+            setGlobalError(getUserErrorMessage(error))
         } finally {
             setMutatingColumns(false)
         }
@@ -558,7 +558,7 @@ export function useColumnState({
             })
             triggerReload()
         } catch (error) {
-            setGlobalError(getErrorMessage(error))
+            setGlobalError(getUserErrorMessage(error))
         } finally {
             setMutatingColumns(false)
         }

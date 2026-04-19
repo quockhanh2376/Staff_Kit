@@ -2,7 +2,7 @@ import { useCallback, useMemo, useRef, useState } from "react"
 import { staffApi } from "../../services/staff-api"
 import type { EmployeeRecord } from "../../types/staff"
 import type { StaffGroupKey, ActiveTableEditCell, TableEditDrafts } from "../../types/app"
-import { getErrorMessage } from "../../lib/utils"
+import { getUserErrorMessage } from "../../lib/errorHandling"
 import { DATE_COLUMN_KEYS } from "../../lib/constants"
 import {
     buildEmployeePayloadForSave,
@@ -229,7 +229,7 @@ export function useTableEdit({
             setActiveTableEditCell(null)
             triggerReload()
         } catch (error) {
-            setGlobalError(getErrorMessage(error))
+            setGlobalError(getUserErrorMessage(error))
         } finally {
             setSavingTableEdits(false)
         }
@@ -249,7 +249,7 @@ export function useTableEdit({
             setSelectedMoveEmployeeIds([])
             triggerReload()
         } catch (error) {
-            setGlobalError(getErrorMessage(error))
+            setGlobalError(getUserErrorMessage(error))
         } finally {
             setMovingEmployees(false)
         }

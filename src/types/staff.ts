@@ -1,9 +1,11 @@
-﻿export type DatabaseStatus = {
+﻿/** Database initialization status returned on app startup. */
+export type DatabaseStatus = {
   initialized: boolean
   dbPath: string
   sqliteVersion: string
 }
 
+/** Persisted backup configuration. */
 export type BackupSettings = {
   backupDirectoryPath: string
   autoBackupEnabled: boolean
@@ -12,6 +14,7 @@ export type BackupSettings = {
   autoBackupRetentionDays: number
 }
 
+/** Information about a single database snapshot. */
 export type SnapshotInfo = {
   filename: string
   label: string
@@ -20,6 +23,7 @@ export type SnapshotInfo = {
   fullPath: string
 }
 
+/** Result of a backup operation (manual or automatic). */
 export type BackupRunResult = {
   backupFilePath: string
   retainedFiles: number
@@ -31,6 +35,7 @@ export type BackupSettingsUpdateInput = {
   autoBackupEnabled: boolean
 }
 
+/** LAN server configuration for the Borrow/Return QR flow. */
 export type BorrowLanSettings = {
   host: string
   port: number
@@ -42,6 +47,7 @@ export type BorrowLanSettingsUpdateInput = {
   port: number
 }
 
+/** Input payload for creating or upserting a single asset. */
 export type AssetSeedItemInput = {
   assetCode: string
   categoryId?: number | null
@@ -56,6 +62,7 @@ export type AssetSeedItemInput = {
   notes?: string | null
 }
 
+/** Persisted asset record (core fields). */
 export type AssetRecord = {
   id: number
   assetCode: string
@@ -67,6 +74,7 @@ export type AssetRecord = {
   status: string
 }
 
+/** How an asset category tracks its items. */
 export type AssetTrackingMode = "serialized" | "quantity"
 export type AssetImportMode = AssetTrackingMode
 
@@ -114,6 +122,7 @@ export type AssetCategoryUpsertInput = {
   prefixes: AssetCategoryPrefixInput[]
 }
 
+/** Aggregate counts for the asset dashboard summary cards. */
 export type AssetDashboardSummary = {
   totalSerializedAssets: number
   serializedInStock: number
@@ -122,6 +131,7 @@ export type AssetDashboardSummary = {
   totalQuantityAssigned: number
 }
 
+/** A single serialized asset row on the dashboard (joined with holder info). */
 export type AssetDashboardSerializedRecord = {
   assetId: number
   assetCode: string
@@ -353,6 +363,7 @@ export type AssetDirectImportReport = {
   errors: AssetDirectImportErrorItem[]
 }
 
+/** Borrow/Return request submission from the LAN QR page. */
 export type BorrowRequestSubmitInput = {
   submittedEmployeeId: string
   submittedFullName: string
@@ -360,6 +371,7 @@ export type BorrowRequestSubmitInput = {
   submitSourceIp?: string | null
 }
 
+/** A pending or processed borrow/return request (Core Rule: Request Pending → Approve). */
 export type BorrowRequestRecord = {
   id: number
   requestKey: string
@@ -377,6 +389,7 @@ export type BorrowRequestRejectInput = {
   note: string
 }
 
+/** Full employee record with core, computed, and dynamic fields. */
 export type EmployeeRecord = {
   id: number
   employeeId: string

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { staffApi } from "../../services/staff-api"
 import type { BorrowLanSettings, BorrowRequestRecord } from "../../types/staff"
-import { getErrorMessage } from "../../lib/utils"
+import { getUserErrorMessage } from "../../lib/errorHandling"
 import {
   buildBorrowReviewApproveSuccessMessage,
   buildBorrowReviewRejectSuccessMessage,
@@ -72,7 +72,7 @@ export function useBorrowState({
         const detail = await staffApi.getBorrowRequestDetail(requestId)
         setSelectedRequest(detail)
       } catch (error) {
-        setGlobalError(getErrorMessage(error))
+        setGlobalError(getUserErrorMessage(error))
       } finally {
         setLoadingDetail(false)
       }
@@ -102,7 +102,7 @@ export function useBorrowState({
         setSelectedRequestId(nextSelectedId)
         await loadRequestDetail(nextSelectedId)
       } catch (error) {
-        setGlobalError(getErrorMessage(error))
+        setGlobalError(getUserErrorMessage(error))
       } finally {
         setLoadingQueue(false)
       }
@@ -145,7 +145,7 @@ export function useBorrowState({
       await refreshQueue(selectedRequest.id)
       triggerReload()
     } catch (error) {
-      setGlobalError(getErrorMessage(error))
+      setGlobalError(getUserErrorMessage(error))
     } finally {
       setApproving(false)
     }
@@ -174,7 +174,7 @@ export function useBorrowState({
       await refreshQueue(selectedRequest.id)
       triggerReload()
     } catch (error) {
-      setGlobalError(getErrorMessage(error))
+      setGlobalError(getUserErrorMessage(error))
     } finally {
       setRejecting(false)
     }

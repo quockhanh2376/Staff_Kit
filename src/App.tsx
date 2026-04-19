@@ -3,13 +3,11 @@ import { ClipboardList, LoaderCircle, LogOut, Moon, Settings, Sun, Users } from 
 import { staffApi } from "./services/staff-api"
 import type { DatabaseStatus } from "./types/staff"
 import type { AppView, Theme } from "./types/app"
-import { getErrorMessage, getGroupCount, normalizeUserScope, buildScopedStorageKey } from "./lib/utils"
+import { getGroupCount, normalizeUserScope, buildScopedStorageKey } from "./lib/utils"
+import { getUserErrorMessage } from "./lib/errorHandling"
+import { useScopedStorageKeys } from "./lib/useScopedStorageKeys"
 import {
   THEME_KEY,
-  COLUMN_PREFS_KEY,
-  COLUMN_PREFS_VERSION_KEY,
-  COLUMN_LABEL_OVERRIDES_KEY,
-  COLUMN_WIDTHS_KEY,
   STAFF_GROUP_BUTTONS,
   DEFAULT_ACCOUNT_NAME,
 } from "./lib/constants"
@@ -100,7 +98,7 @@ function App() {
     setTheme(saved, scopedThemeKey)
   }, [scopedThemeKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Column state ─────────────────────────────────────────────────────────────
+  // ── Employee + Column state ─────────────────────────────────────────────────
 
   const employeeState = useEmployeeState({
     dbReady,
@@ -116,71 +114,13 @@ function App() {
     [emp.staffGroupFilter],
   )
 
-  const legacyScopedColumnPrefsKey = useMemo(
-    () => buildScopedStorageKey(COLUMN_PREFS_KEY, activeUserScope),
-    [activeUserScope],
-  )
-  const legacyScopedColumnPrefsVersionKey = useMemo(
-    () => buildScopedStorageKey(COLUMN_PREFS_VERSION_KEY, activeUserScope),
-    [activeUserScope],
-  )
-  const legacyScopedColumnLabelOverridesKey = useMemo(
-    () => buildScopedStorageKey(COLUMN_LABEL_OVERRIDES_KEY, activeUserScope),
-    [activeUserScope],
-  )
-  const legacyScopedColumnWidthsKey = useMemo(
-    () => buildScopedStorageKey(COLUMN_WIDTHS_KEY, activeUserScope),
-    [activeUserScope],
-  )
-  const columnPrefsScope = useMemo(
-    () => `${activeUserScope}:${emp.staffGroupFilter}`,
-    [activeUserScope, emp.staffGroupFilter],
-  )
-  const scopedColumnPrefsKey = useMemo(
-    () => buildScopedStorageKey(COLUMN_PREFS_KEY, columnPrefsScope),
-    [columnPrefsScope],
-  )
-  const scopedColumnPrefsVersionKey = useMemo(
-    () => buildScopedStorageKey(COLUMN_PREFS_VERSION_KEY, columnPrefsScope),
-    [columnPrefsScope],
-  )
-  const scopedColumnLabelOverridesKey = useMemo(
-    () => buildScopedStorageKey(COLUMN_LABEL_OVERRIDES_KEY, columnPrefsScope),
-    [columnPrefsScope],
-  )
-  const scopedColumnWidthsKey = useMemo(
-    () => buildScopedStorageKey(COLUMN_WIDTHS_KEY, columnPrefsScope),
-    [columnPrefsScope],
-  )
-  const scopedColumnPrefsFallbackKeys = useMemo(
-    () => (emp.staffGroupFilter === "employee_list" ? [legacyScopedColumnPrefsKey] : []),
-    [emp.staffGroupFilter, legacyScopedColumnPrefsKey],
-  )
-  const scopedColumnPrefsVersionFallbackKeys = useMemo(
-    () => (emp.staffGroupFilter === "employee_list" ? [legacyScopedColumnPrefsVersionKey] : []),
-    [emp.staffGroupFilter, legacyScopedColumnPrefsVersionKey],
-  )
-  const scopedColumnLabelOverridesFallbackKeys = useMemo(
-    () => (emp.staffGroupFilter === "employee_list" ? [legacyScopedColumnLabelOverridesKey] : []),
-    [emp.staffGroupFilter, legacyScopedColumnLabelOverridesKey],
-  )
-  const scopedColumnWidthsFallbackKeys = useMemo(
-    () => (emp.staffGroupFilter === "employee_list" ? [legacyScopedColumnWidthsKey] : []),
-    [emp.staffGroupFilter, legacyScopedColumnWidthsKey],
-  )
+  const scopedKeys = useScopedStorageKeys(activeAccount?.accountKey, emp.staffGroupFilter)
 
   const col = useColumnState({
     dbReady,
     isAuthenticated,
     reloadToken,
-    scopedColumnPrefsKey,
-    scopedColumnPrefsVersionKey,
-    scopedColumnLabelOverridesKey,
-    scopedColumnWidthsKey,
-    scopedColumnPrefsFallbackKeys,
-    scopedColumnPrefsVersionFallbackKeys,
-    scopedColumnLabelOverridesFallbackKeys,
-    scopedColumnWidthsFallbackKeys,
+    ...scopedKeys,
     activeAccountName,
     setGlobalError,
   })
@@ -273,7 +213,7 @@ function App() {
         setDbStatus(status)
         setDbReady(true)
       } catch (error) {
-        if (!disposed) setGlobalError(getErrorMessage(error))
+        if (!disposed) setGlobalError(getUserErrorMessage(error))
       } finally {
         if (!disposed) setBootstrapping(false)
       }
@@ -297,7 +237,7 @@ function App() {
     const noteKey = buildScopedStorageKey("sidebar-note", activeUserScope)
     setSidebarNote(localStorage.getItem(noteKey) ?? "")
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated, activeUserScope, scopedColumnPrefsKey, scopedColumnLabelOverridesKey, scopedColumnWidthsKey])
+  }, [isAuthenticated, activeUserScope, scopedKeys.scopedColumnPrefsKey, scopedKeys.scopedColumnLabelOverridesKey, scopedKeys.scopedColumnWidthsKey])
 
   // ── Derived employee labels ───────────────────────────────────────────────────
   const selectedGroupTotal = useMemo(

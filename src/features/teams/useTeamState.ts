@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { staffApi } from "../../services/staff-api"
 import type { TeamRecord } from "../../types/staff"
-import { getErrorMessage } from "../../lib/utils"
+import { getUserErrorMessage } from "../../lib/errorHandling"
 
 type UseTeamStateOptions = {
     dbReady: boolean
@@ -37,7 +37,7 @@ export function useTeamState({
                 const data = await staffApi.listTeams()
                 if (!disposed) setTeams(data)
             } catch (error) {
-                if (!disposed) setGlobalError(getErrorMessage(error))
+                if (!disposed) setGlobalError(getUserErrorMessage(error))
             } finally {
                 if (!disposed) setLoadingTeams(false)
             }
@@ -59,7 +59,7 @@ export function useTeamState({
             setNewTeamParentName("")
             triggerReload()
         } catch (error) {
-            setGlobalError(getErrorMessage(error))
+            setGlobalError(getUserErrorMessage(error))
         } finally {
             setSavingTeam(false)
         }
@@ -76,7 +76,7 @@ export function useTeamState({
             })
             triggerReload()
         } catch (error) {
-            setGlobalError(getErrorMessage(error))
+            setGlobalError(getUserErrorMessage(error))
         }
     }
 
@@ -89,7 +89,7 @@ export function useTeamState({
             })
             triggerReload()
         } catch (error) {
-            setGlobalError(getErrorMessage(error))
+            setGlobalError(getUserErrorMessage(error))
         }
     }
 
@@ -102,7 +102,7 @@ export function useTeamState({
             await staffApi.deleteTeam(team.id)
             triggerReload()
         } catch (error) {
-            setGlobalError(getErrorMessage(error))
+            setGlobalError(getUserErrorMessage(error))
         }
     }
 

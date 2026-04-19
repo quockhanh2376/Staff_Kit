@@ -6,7 +6,7 @@ import type {
     EmployeeAssetSeedReport,
 } from "../../types/staff"
 import type { StaffGroupKey } from "../../types/app"
-import { getErrorMessage } from "../../lib/utils"
+import { getUserErrorMessage } from "../../lib/errorHandling"
 import { ALL_TEAMS_OPTION } from "../../lib/constants"
 
 type UseEmployeeAssetSeedStateOptions = {
@@ -97,7 +97,7 @@ export function useEmployeeAssetSeedState({
             setReport(null)
             setApprovedPayload({ ...payload, snapshotId: nextPreview.snapshotId })
         } catch (error) {
-            setGlobalError(getErrorMessage(error))
+            setGlobalError(getUserErrorMessage(error))
         } finally {
             setPreviewing(false)
         }
@@ -119,7 +119,7 @@ export function useEmployeeAssetSeedState({
             )
             triggerReload()
         } catch (error) {
-            setGlobalError(getErrorMessage(error))
+            setGlobalError(getUserErrorMessage(error))
         } finally {
             setImporting(false)
         }

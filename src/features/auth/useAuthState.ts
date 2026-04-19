@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react
 import { staffApi } from "../../services/staff-api"
 import type { LocalAccountRecord } from "../../types/staff"
 import type { LocalAccountRole } from "../../types/app"
-import { getErrorMessage } from "../../lib/utils"
+import { getUserErrorMessage } from "../../lib/errorHandling"
 import { DEFAULT_ACCOUNT_NAME, DEFAULT_NEW_ACCOUNT_PASSWORD } from "../../lib/constants"
 import { deriveAuthCapabilities } from "./authCapabilities"
 
@@ -87,7 +87,7 @@ export function useAuthState({
                 }
             } catch (error) {
                 // propagate to caller
-                console.error(getErrorMessage(error))
+                console.error(error)
             } finally {
                 if (!disposed) {
                     setLoadingAccounts(false)
@@ -155,7 +155,7 @@ export function useAuthState({
             setShowLoginPassword(false)
             onLoginSuccess()
         } catch (error) {
-            setGlobalError(getErrorMessage(error))
+            setGlobalError(getUserErrorMessage(error))
         } finally {
             setSigningIn(false)
         }
@@ -183,7 +183,7 @@ export function useAuthState({
             setForgotNewPassword("")
             setShowForgotNewPassword(false)
         } catch (error) {
-            setGlobalError(getErrorMessage(error))
+            setGlobalError(getUserErrorMessage(error))
         } finally {
             setSubmittingForgotPassword(false)
         }
@@ -205,7 +205,7 @@ export function useAuthState({
             setActiveAccountId(id)
             triggerReload()
         } catch (error) {
-            setGlobalError(getErrorMessage(error))
+            setGlobalError(getUserErrorMessage(error))
         } finally {
             setMutatingAccounts(false)
         }
@@ -240,7 +240,7 @@ export function useAuthState({
             setEditingAccountId(null)
             triggerReload()
         } catch (error) {
-            setGlobalError(getErrorMessage(error))
+            setGlobalError(getUserErrorMessage(error))
         } finally {
             setMutatingAccounts(false)
         }
@@ -277,7 +277,7 @@ export function useAuthState({
             })
             triggerReload()
         } catch (error) {
-            setGlobalError(getErrorMessage(error))
+            setGlobalError(getUserErrorMessage(error))
         } finally {
             setMutatingAccounts(false)
         }
@@ -293,7 +293,7 @@ export function useAuthState({
             await staffApi.deleteLocalAccount(account.id)
             triggerReload()
         } catch (error) {
-            setGlobalError(getErrorMessage(error))
+            setGlobalError(getUserErrorMessage(error))
         } finally {
             setMutatingAccounts(false)
         }
@@ -320,7 +320,7 @@ export function useAuthState({
             setNewAccountRole("user")
             triggerReload()
         } catch (error) {
-            setGlobalError(getErrorMessage(error))
+            setGlobalError(getUserErrorMessage(error))
         } finally {
             setMutatingAccounts(false)
         }
