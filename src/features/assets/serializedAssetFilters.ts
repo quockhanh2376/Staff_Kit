@@ -40,7 +40,7 @@ export function filterSerializedAssetRows(
 export function normalizeSerializedAssetFilterText(
   value: string | null | undefined,
 ): string {
-  return value?.trim().toLowerCase() ?? ""
+  return value?.trim().normalize("NFD").replace(/\p{M}/gu, "").toLowerCase() ?? ""
 }
 
 function buildSerializedAssetSearchText(row: AssetDashboardSerializedRecord): string {

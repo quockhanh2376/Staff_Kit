@@ -470,6 +470,7 @@ export function AssetDashboard({
             activeUserScope={activeUserScope}
             assetDashboard={assetDashboard}
             filteredRows={filteredSerializedRows}
+            searchTerm={serializedSearchTerm}
           />
         ) : activeTab === "quantity" ? (
           <QuantityDashboardTable
@@ -518,14 +519,69 @@ const dashboardTableShellClass =
 const dashboardTableHeadClass =
   "bg-[#1c2128] text-[11px] uppercase tracking-[0.08em] text-slate-400"
 
+function stripDiacriticsForSearch(str: string): string {
+  return str.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase()
+}
+
+function hasSerializedSearchMatch(text: string, query: string): boolean {
+  const trimmedQuery = query.trim()
+  if (!trimmedQuery) return false
+  return stripDiacriticsForSearch(text).includes(stripDiacriticsForSearch(trimmedQuery))
+}
+
+function HighlightText({ text, query }: { text: string; query: string }) {
+  const trimmedQuery = query.trim()
+  if (!trimmedQuery) return <>{text}</>
+  const normQuery = stripDiacriticsForSearch(trimmedQuery)
+  const normText = stripDiacriticsForSearch(text)
+  const parts: React.ReactNode[] = []
+  let cursor = 0
+  let searchFrom = 0
+  while (searchFrom < normText.length) {
+    const idx = normText.indexOf(normQuery, searchFrom)
+    if (idx === -1) break
+    if (idx > cursor) parts.push(text.slice(cursor, idx))
+    parts.push(
+      <mark key={idx} className="search-highlight-mark">
+        {text.slice(idx, idx + normQuery.length)}
+      </mark>
+    )
+    cursor = idx + normQuery.length
+    searchFrom = cursor
+  }
+  if (cursor < text.length) parts.push(text.slice(cursor))
+  return <>{parts}</>
+}
+
+function getCellSearchText(
+  columnKey: SerializedAssetColumnKey,
+  row: AssetDashboardState["serializedRows"][number],
+): string {
+  switch (columnKey) {
+    case "id": return row.assetCode
+    case "category": return row.categoryName ?? row.categoryCode ?? ""
+    case "computerName": return resolveSerializedAssetComputerName(row.assetCode, row.computerName)
+    case "assetName": return resolveSerializedAssetName(row.assetCode, row.displayName, row.displayNameShort)
+    case "model": return row.model ?? ""
+    case "serialNumber": return row.serialNumber ?? ""
+    case "adapterNumber": return row.adapterNumber ?? ""
+    case "usageLocation": return row.usageLocation ?? ""
+    case "note": return row.notes ?? ""
+    case "status": return ""
+    case "holder": return [row.holderFullName, row.holderEmployeeId].filter(Boolean).join(" ")
+  }
+}
+
 function SerializedDashboardTable({
   activeUserScope,
   assetDashboard,
   filteredRows,
+  searchTerm,
 }: {
   activeUserScope: string
   assetDashboard: AssetDashboardState
   filteredRows: AssetDashboardState["serializedRows"]
+  searchTerm: string
 }) {
   const {
     orderedColumns,
@@ -629,22 +685,26 @@ function SerializedDashboardTable({
               <tbody>
                 {sortedRows.map((row) => (
                   <tr key={row.assetId} className="border-t border-[#202736] align-top">
-                    {orderedColumns.map((column) => (
-                      <td
-                        key={`${row.assetId}-${column.key}`}
-                        className={`px-3 py-2.5 align-top ${
-                          column.key === "id" || column.key === "assetName"
-                            ? "font-semibold text-slate-100"
-                            : dashboardMutedTextClass
-                        }`}
-                        style={{
-                          minWidth: column.minWidth,
-                          width: effectiveWidths[column.key],
-                        }}
-                      >
-                        {renderSerializedCellValue(column.key, row)}
-                      </td>
-                    ))}
+                    {orderedColumns.map((column) => {
+                      const cellText = getCellSearchText(column.key, row)
+                      const isCellMatch = !!searchTerm.trim() && hasSerializedSearchMatch(cellText, searchTerm)
+                      return (
+                        <td
+                          key={`${row.assetId}-${column.key}`}
+                          className={`px-3 py-2.5 align-top ${
+                            column.key === "id" || column.key === "assetName"
+                              ? "font-semibold text-slate-100"
+                              : dashboardMutedTextClass
+                          } ${isCellMatch ? "search-highlight-cell" : ""}`}
+                          style={{
+                            minWidth: column.minWidth,
+                            width: effectiveWidths[column.key],
+                          }}
+                        >
+                          {renderSerializedCellValue(column.key, row, searchTerm)}
+                        </td>
+                      )
+                    })}
                   </tr>
                 ))}
               </tbody>
@@ -660,34 +720,47 @@ function SerializedDashboardTable({
 function renderSerializedCellValue(
   columnKey: SerializedAssetColumnKey,
   row: AssetDashboardState["serializedRows"][number],
+  searchTerm: string,
 ) {
   switch (columnKey) {
-    case "id":
-      return <span className="whitespace-nowrap">{row.assetCode}</span>
-    case "category":
-      return row.categoryName ?? row.categoryCode ?? "\u2014"
-    case "computerName":
+    case "id": {
+      const id = row.assetCode
+      return <span className="whitespace-nowrap"><HighlightText text={id} query={searchTerm} /></span>
+    }
+    case "category": {
+      const cat = row.categoryName ?? row.categoryCode ?? "\u2014"
+      return <HighlightText text={cat} query={searchTerm} />
+    }
+    case "computerName": {
+      const cn = resolveSerializedAssetComputerName(row.assetCode, row.computerName) || "\u2014"
       return (
         <span className="whitespace-nowrap text-slate-100">
-          {resolveSerializedAssetComputerName(row.assetCode, row.computerName) || "\u2014"}
+          <HighlightText text={cn} query={searchTerm} />
         </span>
       )
-    case "assetName":
-      return resolveSerializedAssetName(
-        row.assetCode,
-        row.displayName,
-        row.displayNameShort,
-      ) || "\u2014"
-    case "model":
-      return row.model ?? "\u2014"
-    case "serialNumber":
-      return row.serialNumber ?? "\u2014"
-    case "adapterNumber":
-      return row.adapterNumber ?? "\u2014"
+    }
+    case "assetName": {
+      const an = resolveSerializedAssetName(row.assetCode, row.displayName, row.displayNameShort) || "\u2014"
+      return <HighlightText text={an} query={searchTerm} />
+    }
+    case "model": {
+      const m = row.model ?? "\u2014"
+      return <HighlightText text={m} query={searchTerm} />
+    }
+    case "serialNumber": {
+      const sn = row.serialNumber ?? "\u2014"
+      return <HighlightText text={sn} query={searchTerm} />
+    }
+    case "adapterNumber": {
+      const an = row.adapterNumber ?? "\u2014"
+      return <HighlightText text={an} query={searchTerm} />
+    }
     case "usageLocation":
       return formatAssetDashboardUsageLocationLabel(row.usageLocation)
-    case "note":
-      return row.notes ?? "\u2014"
+    case "note": {
+      const note = row.notes ?? "\u2014"
+      return <HighlightText text={note} query={searchTerm} />
+    }
     case "status":
       return (
         <span className="rounded-[999px] border border-slate-700 bg-slate-900/70 px-2 py-0.5 text-[11px] font-semibold capitalize text-slate-100">
@@ -699,9 +772,11 @@ function renderSerializedCellValue(
       const holderId = formatAssetDashboardHolderEmployeeId(row.holderEmployeeId)
       return (
         <div className="flex flex-col gap-0.5">
-          {holderName && <span>{holderName}</span>}
+          {holderName && <span><HighlightText text={holderName} query={searchTerm} /></span>}
           {holderId && (
-            <span className="text-xs font-semibold text-emerald-400">{holderId}</span>
+            <span className="text-xs font-semibold text-emerald-400">
+              <HighlightText text={holderId} query={searchTerm} />
+            </span>
           )}
           {!holderName && !holderId && "\u2014"}
         </div>
