@@ -5,6 +5,8 @@ import {
   collectDuplicateComputerEmployeeIds,
   extractComputerNameTokens,
   isEmployeeTableEditableColumn,
+  readEmployeeCellText,
+  readEmployeeEditableCellText,
 } from "../src/features/employees/employeeTableRules.ts"
 import type { EmployeeRecord } from "../src/types/staff.ts"
 
@@ -46,10 +48,29 @@ const employeeB: EmployeeRecord = {
   dynamicFields: {},
 }
 
+const employeeC: EmployeeRecord = {
+  ...employeeA,
+  id: 3,
+  employeeId: "ASWVN1304",
+  computerName: "ASW-DERIVED-DISPLAY",
+  storedComputerName: null,
+}
+
+const employeeD: EmployeeRecord = {
+  ...employeeA,
+  id: 4,
+  employeeId: "ASWVN1305",
+  storedComputerName: "  RAW-WITH-SPACES  ",
+}
+
 assert.deepEqual(extractComputerNameTokens("ASWVNMACPRO010,\nASWVNLAP293"), [
   "ASWVNMACPRO010",
   "ASWVNLAP293",
 ])
+
+assert.equal(readEmployeeCellText(employeeA, "computerName"), "ASWVNMACPRO010,\nASWVNLAP293")
+assert.equal(readEmployeeEditableCellText(employeeA, "computerName", true), "LEGACY-RAW-01")
+assert.equal(readEmployeeEditableCellText(employeeC, "computerName", true), "")
 
 assert.equal(isEmployeeTableEditableColumn("computerName", false), false)
 assert.equal(isEmployeeTableEditableColumn("computerName", true), true)
@@ -65,6 +86,11 @@ const superAdminPayload = buildEmployeePayloadForSave(employeeA, {
   computerName: "SUPER-ADMIN-EDIT",
 }, true)
 assert.equal(superAdminPayload.computerName, "SUPER-ADMIN-EDIT")
+
+const superAdminUnchangedPayload = buildEmployeePayloadForSave(employeeD, {
+  notes: "still updated",
+}, true)
+assert.equal(superAdminUnchangedPayload.computerName, "  RAW-WITH-SPACES  ")
 
 const duplicateIds = collectDuplicateComputerEmployeeIds(
   [employeeA, employeeB],
