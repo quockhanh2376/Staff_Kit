@@ -19,7 +19,7 @@ import {
   buildAssetCategoryDraftFromDetail,
   buildAssetDashboardSummaryCards,
   buildEmptyAssetCategoryDraft,
-  formatAssetDashboardHolderLabel,
+  formatAssetDashboardHolderEmployeeId,
   formatAssetDashboardStatusLabel,
   formatAssetDashboardUsageLocationLabel,
   getAssetDashboardEmptyStateLabel,
@@ -694,12 +694,19 @@ function renderSerializedCellValue(
           {formatAssetDashboardStatusLabel(row.status)}
         </span>
       )
-    case "holder":
+    case "holder": {
+      const holderName = row.holderFullName?.trim()
+      const holderId = formatAssetDashboardHolderEmployeeId(row.holderEmployeeId)
       return (
-        <div className="whitespace-pre-line">
-          {formatAssetDashboardHolderLabel(row.holderFullName, row.holderEmployeeId)}
+        <div className="flex flex-col gap-0.5">
+          {holderName && <span>{holderName}</span>}
+          {holderId && (
+            <span className="text-xs font-semibold text-emerald-400">{holderId}</span>
+          )}
+          {!holderName && !holderId && "\u2014"}
         </div>
       )
+    }
   }
 }
 

@@ -112,12 +112,19 @@ export function formatAssetDashboardDisplayNameLines(
   return `${shortName}\n${normalizedDisplayName}`
 }
 
+export function formatAssetDashboardHolderEmployeeId(employeeId: string | null): string {
+  const trimmed = employeeId?.trim()
+  if (!trimmed) return ""
+  const match = trimmed.match(/^(?:[A-Za-z]+)(\d+)$/)
+  return match ? match[1] : trimmed
+}
+
 export function formatAssetDashboardHolderLabel(
   fullName: string | null,
   employeeId: string | null,
 ): string {
   const normalizedFullName = fullName?.trim()
-  const normalizedEmployeeId = employeeId?.trim()
+  const normalizedEmployeeId = formatAssetDashboardHolderEmployeeId(employeeId)
 
   if (normalizedFullName && normalizedEmployeeId) {
     return `${normalizedFullName}\n${normalizedEmployeeId}`
