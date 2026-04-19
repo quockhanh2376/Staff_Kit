@@ -3,7 +3,7 @@ import { ClipboardList, LoaderCircle, LogOut, Moon, Settings, Sun, Users } from 
 import { staffApi } from "./services/staff-api"
 import type { DatabaseStatus } from "./types/staff"
 import type { AppView, Theme } from "./types/app"
-import { getGroupCount, buildScopedStorageKey } from "./lib/utils"
+import { getGroupCount, normalizeUserScope, buildScopedStorageKey } from "./lib/utils"
 import { getUserErrorMessage } from "./lib/errorHandling"
 import { useScopedStorageKeys } from "./lib/useScopedStorageKeys"
 import {
@@ -87,7 +87,7 @@ function App() {
 
   // ── Scoped storage keys (per user profile) ───────────────────────────────────
   const activeUserScope = useMemo(
-    () => activeAccount?.accountKey ?? DEFAULT_ACCOUNT_NAME,
+    () => activeAccount?.accountKey ?? normalizeUserScope(DEFAULT_ACCOUNT_NAME),
     [activeAccount],
   )
 
