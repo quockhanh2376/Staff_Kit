@@ -1168,7 +1168,7 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
         asset_type,
         display_name,
         display_name_short,
-        computer_name,
+        _,
         brand,
         model,
         serial_number,
@@ -1205,7 +1205,6 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
                 asset_type: asset_type.unwrap_or_default(),
                 display_name: display_name.unwrap_or_default(),
                 display_name_short,
-                computer_name,
                 brand,
                 model,
                 serial_number,
@@ -3556,21 +3555,14 @@ mod tests {
 
         assert_eq!(result.imported_count, 1);
 
-        let stored = conn
-            .query_row(
-                "SELECT computer_name, adapter_number FROM assets WHERE asset_code = 'VNLAP235'",
-                [],
-                |row| {
-                    Ok((
-                        row.get::<_, Option<String>>(0)?,
-                        row.get::<_, Option<String>>(1)?,
-                    ))
-                },
-            )
-            .expect("load persisted serialized workbook fields");
+        let dashboard_row = crate::db::asset::list_asset_dashboard_serialized_conn(&conn)
+            .expect("load serialized dashboard rows")
+            .into_iter()
+            .find(|row| row.asset_code == "VNLAP235")
+            .expect("find imported laptop in dashboard rows");
 
-        assert_eq!(stored.0.as_deref(), Some("ASWVNLAP235"));
-        assert_eq!(stored.1.as_deref(), Some("7900LG3"));
+        assert_eq!(dashboard_row.computer_name.as_deref(), Some("ASWVNLAP235"));
+        assert_eq!(dashboard_row.adapter_number.as_deref(), Some("7900LG3"));
 
         let _ = fs::remove_file(csv_path);
     }
@@ -3615,21 +3607,14 @@ mod tests {
 
         assert_eq!(result.imported_count, 1);
 
-        let stored = conn
-            .query_row(
-                "SELECT computer_name, adapter_number FROM assets WHERE asset_code = 'VNLAP502'",
-                [],
-                |row| {
-                    Ok((
-                        row.get::<_, Option<String>>(0)?,
-                        row.get::<_, Option<String>>(1)?,
-                    ))
-                },
-            )
-            .expect("load fallback computer name");
+        let dashboard_row = crate::db::asset::list_asset_dashboard_serialized_conn(&conn)
+            .expect("load serialized dashboard rows")
+            .into_iter()
+            .find(|row| row.asset_code == "VNLAP502")
+            .expect("find imported laptop in dashboard rows");
 
-        assert_eq!(stored.0.as_deref(), Some("ASWVNLAP502"));
-        assert_eq!(stored.1.as_deref(), Some("56K33KS"));
+        assert_eq!(dashboard_row.computer_name.as_deref(), Some("ASWVNLAP502"));
+        assert_eq!(dashboard_row.adapter_number.as_deref(), Some("56K33KS"));
 
         let _ = fs::remove_file(csv_path);
     }

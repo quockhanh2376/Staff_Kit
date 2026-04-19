@@ -16,6 +16,7 @@ import {
   parseAssetDashboardQuantityDraft,
   validateAssetCategoryDraft,
 } from "../src/features/assets/assetDashboardCopy.ts"
+import { resolveSerializedAssetComputerName } from "../src/features/assets/serializedAssetGridConfig.ts"
 import { shouldCloseAssetImportWizardAfterImport } from "../src/features/assets/assetImportCopy.ts"
 
 const serializedHeaders = [
@@ -65,6 +66,8 @@ assert.equal(
   formatDerivedComputerNames(["VNMACPRO010", "VNLAP293"]),
   "ASWVNMACPRO010,\nASWVNLAP293",
 )
+assert.equal(resolveSerializedAssetComputerName("VNLAP293", "ASWVNLAP293"), "ASWVNLAP293")
+assert.equal(resolveSerializedAssetComputerName("VNMON709", null), "")
 
 const summaryCards = buildAssetDashboardSummaryCards({
   totalSerializedAssets: 12,

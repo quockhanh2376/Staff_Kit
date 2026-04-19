@@ -9,6 +9,7 @@ import {
   PlusCircle,
   RefreshCw,
   Search,
+  Settings,
   Trash2,
 } from "lucide-react"
 import type { AssetCategoryDetailRecord } from "../../types/staff"
@@ -30,6 +31,7 @@ import {
   type AssetDashboardTabKey,
 } from "./assetDashboardCopy"
 import {
+  SERIALIZED_ASSET_COLUMN_MAP,
   resolveSerializedAssetComputerName,
   resolveSerializedAssetName,
   type SerializedAssetColumnKey,
@@ -39,6 +41,8 @@ import {
   filterSerializedAssetRows,
   normalizeSerializedAssetFilterText,
 } from "./serializedAssetFilters"
+import { AssetDashboardColumnsDrawer } from "./AssetDashboardColumnsDrawer"
+import { useAssetDashboardColumnPrefs } from "./useAssetDashboardColumnPrefs"
 import { useSerializedAssetGridState } from "./useSerializedAssetGridState"
 
 type AssetDashboardProps = {
@@ -55,6 +59,119 @@ type QuantityDraftMap = Record<
     assignedQuantity: string
   }
 >
+
+type QuantityAssetColumnKey =
+  | "category"
+  | "itemName"
+  | "brand"
+  | "model"
+  | "warehouse"
+  | "quantityOnHand"
+  | "assignedQuantity"
+  | "note"
+
+const QUANTITY_ASSET_STORAGE_PREFIX = "staffkit:asset-dashboard-quantity-grid"
+
+const QUANTITY_ASSET_COLUMN_MAP: Record<
+  QuantityAssetColumnKey,
+  { key: QuantityAssetColumnKey; label: string; defaultWidth: number; minWidth: number }
+> = {
+  category: { key: "category", label: "Category", defaultWidth: 140, minWidth: 120 },
+  itemName: { key: "itemName", label: "Item Name", defaultWidth: 190, minWidth: 150 },
+  brand: { key: "brand", label: "Brand", defaultWidth: 150, minWidth: 120 },
+  model: { key: "model", label: "Model", defaultWidth: 150, minWidth: 120 },
+  warehouse: { key: "warehouse", label: "Warehouse", defaultWidth: 140, minWidth: 120 },
+  quantityOnHand: {
+    key: "quantityOnHand",
+    label: "On Hand",
+    defaultWidth: 140,
+    minWidth: 130,
+  },
+  assignedQuantity: {
+    key: "assignedQuantity",
+    label: "Assigned",
+    defaultWidth: 140,
+    minWidth: 130,
+  },
+  note: { key: "note", label: "Note", defaultWidth: 180, minWidth: 140 },
+}
+
+const DEFAULT_QUANTITY_ASSET_COLUMN_ORDER: QuantityAssetColumnKey[] = [
+  "category",
+  "itemName",
+  "brand",
+  "model",
+  "warehouse",
+  "quantityOnHand",
+  "assignedQuantity",
+  "note",
+]
+
+const DEFAULT_VISIBLE_QUANTITY_ASSET_COLUMN_KEYS = DEFAULT_QUANTITY_ASSET_COLUMN_ORDER.slice()
+
+type CategoryListColumnKey =
+  | "categoryName"
+  | "categoryCode"
+  | "trackingMode"
+  | "status"
+  | "prefixes"
+  | "assetCount"
+  | "stockItemCount"
+  | "qrRequired"
+
+const CATEGORY_LIST_STORAGE_PREFIX = "staffkit:asset-dashboard-category-grid"
+
+const CATEGORY_LIST_COLUMN_MAP: Record<
+  CategoryListColumnKey,
+  { key: CategoryListColumnKey; label: string; defaultWidth: number; minWidth: number }
+> = {
+  categoryName: {
+    key: "categoryName",
+    label: "Category Name",
+    defaultWidth: 170,
+    minWidth: 150,
+  },
+  categoryCode: {
+    key: "categoryCode",
+    label: "Category Code",
+    defaultWidth: 150,
+    minWidth: 130,
+  },
+  trackingMode: {
+    key: "trackingMode",
+    label: "Tracking Mode",
+    defaultWidth: 130,
+    minWidth: 120,
+  },
+  status: { key: "status", label: "Status", defaultWidth: 110, minWidth: 100 },
+  prefixes: { key: "prefixes", label: "Prefixes", defaultWidth: 220, minWidth: 180 },
+  assetCount: { key: "assetCount", label: "Assets", defaultWidth: 90, minWidth: 80 },
+  stockItemCount: {
+    key: "stockItemCount",
+    label: "Stock Items",
+    defaultWidth: 110,
+    minWidth: 100,
+  },
+  qrRequired: {
+    key: "qrRequired",
+    label: "QR Required",
+    defaultWidth: 110,
+    minWidth: 100,
+  },
+}
+
+const DEFAULT_CATEGORY_LIST_COLUMN_ORDER: CategoryListColumnKey[] = [
+  "categoryName",
+  "categoryCode",
+  "trackingMode",
+  "status",
+  "prefixes",
+  "assetCount",
+  "stockItemCount",
+  "qrRequired",
+]
+
+const DEFAULT_VISIBLE_CATEGORY_LIST_COLUMN_KEYS = DEFAULT_CATEGORY_LIST_COLUMN_ORDER.slice()
 
 const dashboardShellClass =
   "mt-4 rounded-[18px] border border-[#222938] bg-[#151921] px-5 py-5 text-slate-300 shadow-[0_16px_38px_rgba(0,0,0,0.24)]"
@@ -474,6 +591,7 @@ export function AssetDashboard({
           />
         ) : activeTab === "quantity" ? (
           <QuantityDashboardTable
+            activeUserScope={activeUserScope}
             auth={auth}
             assetDashboard={assetDashboard}
             quantityDrafts={quantityDrafts}
@@ -482,6 +600,7 @@ export function AssetDashboard({
           />
         ) : (
           <CategoryManagementPanel
+            activeUserScope={activeUserScope}
             auth={auth}
             assetDashboard={assetDashboard}
             categoryDraft={categoryDraft}
@@ -583,6 +702,11 @@ function SerializedDashboardTable({
   filteredRows: AssetDashboardState["serializedRows"]
   searchTerm: string
 }) {
+  const serializedGrid = useSerializedAssetGridState({
+    activeUserScope,
+    rows: filteredRows,
+  })
+
   const {
     orderedColumns,
     sortedRows,
@@ -594,10 +718,10 @@ function SerializedDashboardTable({
     handleHeaderDrop,
     beginColumnResize,
     setDraggingColumnKey,
-  } = useSerializedAssetGridState({
-    activeUserScope,
-    rows: filteredRows,
-  })
+    setColumnsDrawerOpen,
+  } = serializedGrid
+
+  const firstVisibleColumnKey = orderedColumns[0]?.key ?? null
 
   if (assetDashboard.isLoadingDashboard && assetDashboard.serializedRows.length === 0) {
     return (
@@ -657,20 +781,33 @@ function SerializedDashboardTable({
                         onDrop={() => handleHeaderDrop(column.key)}
                         onDragEnd={() => setDraggingColumnKey(null)}
                       >
-                        <button
-                          className="flex w-full items-center gap-2 px-3 py-2.5 pr-5 text-left font-semibold"
-                          onClick={() => toggleSort(column.key)}
-                          type="button"
-                        >
-                          <GripVertical
-                            size={12}
-                            className="shrink-0 text-slate-600 transition group-hover:text-slate-500"
-                          />
-                          <span className="truncate">{column.label}</span>
-                          <span className="ml-auto inline-flex shrink-0 items-center text-slate-500">
-                            {sortIndicator}
-                          </span>
-                        </button>
+                        <div className="flex items-center gap-2 px-3 py-2.5 pr-5">
+                          {column.key === firstVisibleColumnKey ? (
+                            <button
+                              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] border border-[#283140] bg-[#151b26] text-slate-400 transition hover:bg-[#1b2230] hover:text-slate-200"
+                              onClick={() => setColumnsDrawerOpen(true)}
+                              type="button"
+                              aria-label="Open column settings"
+                              title="Column Settings"
+                            >
+                              <Settings size={14} />
+                            </button>
+                          ) : null}
+                          <button
+                            className="flex min-w-0 flex-1 items-center gap-2 text-left font-semibold"
+                            onClick={() => toggleSort(column.key)}
+                            type="button"
+                          >
+                            <GripVertical
+                              size={12}
+                              className="shrink-0 text-slate-600 transition group-hover:text-slate-500"
+                            />
+                            <span className="truncate">{column.label}</span>
+                            <span className="ml-auto inline-flex shrink-0 items-center text-slate-500">
+                              {sortIndicator}
+                            </span>
+                          </button>
+                        </div>
                         <span
                           className="absolute inset-y-0 right-0 flex w-3 cursor-col-resize items-center justify-center"
                           onMouseDown={(event) => beginColumnResize(column.key, event)}
@@ -711,6 +848,12 @@ function SerializedDashboardTable({
             </table>
             </div>
           </div>
+          <AssetDashboardColumnsDrawer
+            activeUserScope={activeUserScope}
+            tableLabel="Asset Dashboard / Serialized"
+            columnMap={SERIALIZED_ASSET_COLUMN_MAP}
+            grid={serializedGrid}
+          />
         </>
       )}
     </div>
@@ -785,13 +928,127 @@ function renderSerializedCellValue(
   }
 }
 
+function renderQuantityCellValue({
+  auth,
+  row,
+  columnKey,
+  draft,
+  isSaving,
+  updateQuantityDraft,
+}: {
+  auth: Pick<AuthState, "isAdminAccount">
+  row: AssetDashboardState["quantityRows"][number]
+  columnKey: QuantityAssetColumnKey
+  draft: QuantityDraftMap[number]
+  isSaving: boolean
+  updateQuantityDraft: (
+    stockItemId: number,
+    fieldKey: "quantityOnHand" | "assignedQuantity",
+    value: string,
+  ) => void
+}) {
+  switch (columnKey) {
+    case "category":
+      return row.categoryName
+    case "itemName":
+      return row.itemName
+    case "brand":
+      return row.brand ?? "—"
+    case "model":
+      return row.model ?? "—"
+    case "warehouse":
+      return row.warehouse ?? "—"
+    case "quantityOnHand":
+      return (
+        <input
+          className={`${dashboardInputClass} min-w-[110px] py-1.5 text-xs`}
+          inputMode="numeric"
+          min={0}
+          step={1}
+          type="number"
+          value={draft.quantityOnHand}
+          onChange={(event) =>
+            updateQuantityDraft(row.stockItemId, "quantityOnHand", event.target.value)
+          }
+          disabled={!auth.isAdminAccount || isSaving}
+        />
+      )
+    case "assignedQuantity":
+      return (
+        <input
+          className={`${dashboardInputClass} min-w-[110px] py-1.5 text-xs`}
+          inputMode="numeric"
+          min={0}
+          step={1}
+          type="number"
+          value={draft.assignedQuantity}
+          onChange={(event) =>
+            updateQuantityDraft(row.stockItemId, "assignedQuantity", event.target.value)
+          }
+          disabled={!auth.isAdminAccount || isSaving}
+        />
+      )
+    case "note":
+      return row.note ?? "—"
+  }
+}
+
+function buildCategoryPrefixSummary(detail: AssetCategoryDetailRecord): string {
+  return detail.prefixes.length > 0
+    ? detail.prefixes
+        .filter((prefix) => prefix.isActive)
+        .map((prefix) => (prefix.isPrimary ? `${prefix.prefixValue} (primary)` : prefix.prefixValue))
+        .join(", ") || "No prefixes"
+    : "No prefixes"
+}
+
+function renderCategoryListCellValue(
+  columnKey: CategoryListColumnKey,
+  detail: AssetCategoryDetailRecord,
+) {
+  switch (columnKey) {
+    case "categoryName":
+      return detail.categoryName
+    case "categoryCode":
+      return detail.categoryCode
+    case "trackingMode":
+      return (
+        <span className="rounded-[999px] border border-[#31394a] bg-[#141a23] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.05em] text-[#8f98a8]">
+          {detail.trackingMode}
+        </span>
+      )
+    case "status":
+      return (
+        <span
+          className={`rounded-[999px] border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.05em] ${
+            detail.isActive
+              ? "border-[#00d68f]/30 bg-[#0d1f18] text-[#55d8a5]"
+              : "border-[#31394a] text-[#8f98a8]"
+          }`}
+        >
+          {detail.isActive ? "Active" : "Inactive"}
+        </span>
+      )
+    case "prefixes":
+      return buildCategoryPrefixSummary(detail)
+    case "assetCount":
+      return detail.assetCount
+    case "stockItemCount":
+      return detail.stockItemCount
+    case "qrRequired":
+      return detail.qrRequired ? "Yes" : "No"
+  }
+}
+
 function QuantityDashboardTable({
+  activeUserScope,
   auth,
   assetDashboard,
   quantityDrafts,
   updateQuantityDraft,
   clearQuantityDraft,
 }: {
+  activeUserScope: string
   auth: Pick<AuthState, "isAdminAccount">
   assetDashboard: AssetDashboardState
   quantityDrafts: QuantityDraftMap
@@ -802,6 +1059,27 @@ function QuantityDashboardTable({
   ) => void
   clearQuantityDraft: (stockItemId: number) => void
 }) {
+  const quantityGrid = useAssetDashboardColumnPrefs({
+    activeUserScope,
+    storagePrefix: QUANTITY_ASSET_STORAGE_PREFIX,
+    columnMap: QUANTITY_ASSET_COLUMN_MAP,
+    defaultOrder: DEFAULT_QUANTITY_ASSET_COLUMN_ORDER,
+    defaultVisibleKeys: DEFAULT_VISIBLE_QUANTITY_ASSET_COLUMN_KEYS,
+  })
+
+  const {
+    orderedColumns,
+    effectiveWidths,
+    draggingColumnKey,
+    handleHeaderDragStart,
+    handleHeaderDrop,
+    beginColumnResize,
+    setDraggingColumnKey,
+    setColumnsDrawerOpen,
+  } = quantityGrid
+
+  const firstVisibleColumnKey = orderedColumns[0]?.key ?? null
+
   if (assetDashboard.isLoadingDashboard && assetDashboard.quantityRows.length === 0) {
     return (
       <div className={`flex items-center gap-2 px-4 py-4 text-sm ${dashboardInnerSurfaceClass} ${dashboardMutedTextClass}`}>
@@ -820,113 +1098,135 @@ function QuantityDashboardTable({
   }
 
   return (
-    <div className={dashboardTableShellClass}>
-      <div className="overflow-x-auto">
-        <table className="min-w-full text-left text-[13px]">
-          <thead className={dashboardTableHeadClass}>
-            <tr>
-              <th className="px-3 py-2.5 font-semibold">Category</th>
-              <th className="px-3 py-2.5 font-semibold">Item Name</th>
-              <th className="px-3 py-2.5 font-semibold">Brand</th>
-              <th className="px-3 py-2.5 font-semibold">Model</th>
-              <th className="px-3 py-2.5 font-semibold">Warehouse</th>
-              <th className="px-3 py-2.5 font-semibold">On Hand</th>
-              <th className="px-3 py-2.5 font-semibold">Assigned</th>
-              <th className="px-3 py-2.5 font-semibold">Note</th>
-              <th className="px-3 py-2.5 font-semibold">Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {assetDashboard.quantityRows.map((row) => {
-              const draft = quantityDrafts[row.stockItemId] ?? {
-                quantityOnHand: String(row.quantityOnHand),
-                assignedQuantity: String(row.assignedQuantity),
-              }
-              const parsedOnHand = parseAssetDashboardQuantityDraft(draft.quantityOnHand)
-              const parsedAssigned = parseAssetDashboardQuantityDraft(draft.assignedQuantity)
-              const hasValidDraft = parsedOnHand != null && parsedAssigned != null
-              const isDirty =
-                draft.quantityOnHand !== String(row.quantityOnHand) ||
-                draft.assignedQuantity !== String(row.assignedQuantity)
-              const isSaving = assetDashboard.isUpdatingStockItemId === row.stockItemId
-
-              return (
-                <tr key={row.stockItemId} className="border-t border-[#202736] align-top">
-                  <td className={`px-3 py-2.5 ${dashboardMutedTextClass}`}>{row.categoryName}</td>
-                  <td className="px-3 py-2.5 font-semibold text-slate-100">{row.itemName}</td>
-                  <td className={`px-3 py-2.5 ${dashboardMutedTextClass}`}>{row.brand ?? "—"}</td>
-                  <td className={`px-3 py-2.5 ${dashboardMutedTextClass}`}>{row.model ?? "—"}</td>
-                  <td className={`px-3 py-2.5 ${dashboardMutedTextClass}`}>{row.warehouse ?? "—"}</td>
-                  <td className="px-3 py-2.5">
-                    <input
-                      className={`${dashboardInputClass} min-w-[110px] py-1.5 text-xs`}
-                      inputMode="numeric"
-                      min={0}
-                      step={1}
-                      type="number"
-                      value={draft.quantityOnHand}
-                      onChange={(event) =>
-                        updateQuantityDraft(
-                          row.stockItemId,
-                          "quantityOnHand",
-                          event.target.value,
-                        )
-                      }
-                      disabled={!auth.isAdminAccount || isSaving}
-                    />
-                  </td>
-                  <td className="px-3 py-2.5">
-                    <input
-                      className={`${dashboardInputClass} min-w-[110px] py-1.5 text-xs`}
-                      inputMode="numeric"
-                      min={0}
-                      step={1}
-                      type="number"
-                      value={draft.assignedQuantity}
-                      onChange={(event) =>
-                        updateQuantityDraft(
-                          row.stockItemId,
-                          "assignedQuantity",
-                          event.target.value,
-                        )
-                      }
-                      disabled={!auth.isAdminAccount || isSaving}
-                    />
-                  </td>
-                  <td className={`px-3 py-2.5 ${dashboardMutedTextClass}`}>{row.note ?? "—"}</td>
-                  <td className="px-3 py-2.5">
-                    <button
-                      className={dashboardSecondaryButtonClass}
-                      onClick={async () => {
-                        if (parsedOnHand == null || parsedAssigned == null) {
-                          return
-                        }
-                        const updated = await assetDashboard.updateStockItemQuantity({
-                          stockItemId: row.stockItemId,
-                          quantityOnHand: parsedOnHand,
-                          assignedQuantity: parsedAssigned,
-                        })
-                        if (updated) {
-                          clearQuantityDraft(row.stockItemId)
-                        }
-                      }}
-                      type="button"
-                      disabled={!auth.isAdminAccount || !hasValidDraft || !isDirty || isSaving}
+    <div className="space-y-3">
+      <div className={dashboardTableShellClass}>
+        <div className="overflow-x-auto">
+          <table className="min-w-max text-left text-[13px]">
+            <thead className={dashboardTableHeadClass}>
+              <tr>
+                {orderedColumns.map((column) => (
+                  <th
+                    key={column.key}
+                    className={`group relative border-r border-slate-800 last:border-r-0 ${
+                      draggingColumnKey === column.key ? "bg-slate-800/85" : ""
+                    }`}
+                    style={{
+                      minWidth: column.minWidth,
+                      width: effectiveWidths[column.key],
+                    }}
+                    draggable
+                    onDragStart={() => handleHeaderDragStart(column.key)}
+                    onDragOver={(event) => event.preventDefault()}
+                    onDrop={() => handleHeaderDrop(column.key)}
+                    onDragEnd={() => setDraggingColumnKey(null)}
+                  >
+                    <div className="flex items-center gap-2 px-3 py-2.5 pr-5">
+                      {column.key === firstVisibleColumnKey ? (
+                        <button
+                          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] border border-[#283140] bg-[#151b26] text-slate-400 transition hover:bg-[#1b2230] hover:text-slate-200"
+                          onClick={() => setColumnsDrawerOpen(true)}
+                          type="button"
+                          aria-label="Open column settings"
+                          title="Column Settings"
+                        >
+                          <Settings size={14} />
+                        </button>
+                      ) : null}
+                      <GripVertical
+                        size={12}
+                        className="shrink-0 text-slate-600 transition group-hover:text-slate-500"
+                      />
+                      <span className="truncate font-semibold">{column.label}</span>
+                    </div>
+                    <span
+                      className="absolute inset-y-0 right-0 flex w-3 cursor-col-resize items-center justify-center"
+                      onMouseDown={(event) => beginColumnResize(column.key, event)}
                     >
-                      {isSaving ? "Saving..." : "Save"}
-                    </button>
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
+                      <span className="h-5 w-px bg-slate-700 transition group-hover:bg-emerald-400/60" />
+                    </span>
+                  </th>
+                ))}
+                <th className="px-3 py-2.5 font-semibold">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {assetDashboard.quantityRows.map((row) => {
+                const draft = quantityDrafts[row.stockItemId] ?? {
+                  quantityOnHand: String(row.quantityOnHand),
+                  assignedQuantity: String(row.assignedQuantity),
+                }
+                const parsedOnHand = parseAssetDashboardQuantityDraft(draft.quantityOnHand)
+                const parsedAssigned = parseAssetDashboardQuantityDraft(draft.assignedQuantity)
+                const hasValidDraft = parsedOnHand != null && parsedAssigned != null
+                const isDirty =
+                  draft.quantityOnHand !== String(row.quantityOnHand) ||
+                  draft.assignedQuantity !== String(row.assignedQuantity)
+                const isSaving = assetDashboard.isUpdatingStockItemId === row.stockItemId
+
+                return (
+                  <tr key={row.stockItemId} className="border-t border-[#202736] align-top">
+                    {orderedColumns.map((column) => (
+                      <td
+                        key={`${row.stockItemId}-${column.key}`}
+                        className={`px-3 py-2.5 align-top ${
+                          column.key === "itemName" ? "font-semibold text-slate-100" : dashboardMutedTextClass
+                        }`}
+                        style={{
+                          minWidth: column.minWidth,
+                          width: effectiveWidths[column.key],
+                        }}
+                      >
+                        {renderQuantityCellValue({
+                          auth,
+                          row,
+                          columnKey: column.key,
+                          draft,
+                          isSaving,
+                          updateQuantityDraft,
+                        })}
+                      </td>
+                    ))}
+                    <td className="px-3 py-2.5">
+                      <button
+                        className={dashboardSecondaryButtonClass}
+                        onClick={async () => {
+                          if (parsedOnHand == null || parsedAssigned == null) {
+                            return
+                          }
+                          const updated = await assetDashboard.updateStockItemQuantity({
+                            stockItemId: row.stockItemId,
+                            quantityOnHand: parsedOnHand,
+                            assignedQuantity: parsedAssigned,
+                          })
+                          if (updated) {
+                            clearQuantityDraft(row.stockItemId)
+                          }
+                        }}
+                        type="button"
+                        disabled={!auth.isAdminAccount || !hasValidDraft || !isDirty || isSaving}
+                      >
+                        {isSaving ? "Saving..." : "Save"}
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
+      <AssetDashboardColumnsDrawer
+        activeUserScope={activeUserScope}
+        tableLabel="Asset Dashboard / Quantity"
+        columnMap={QUANTITY_ASSET_COLUMN_MAP}
+        grid={quantityGrid}
+      />
     </div>
   )
 }
 
 function CategoryManagementPanel({
+  activeUserScope,
   auth,
   assetDashboard,
   categoryDraft,
@@ -942,6 +1242,7 @@ function CategoryManagementPanel({
   saveCategoryDraft,
   deactivateCategory,
 }: {
+  activeUserScope: string
   auth: Pick<AuthState, "isAdminAccount">
   assetDashboard: AssetDashboardState
   categoryDraft: AssetCategoryDraft
@@ -964,6 +1265,26 @@ function CategoryManagementPanel({
   saveCategoryDraft: () => Promise<void>
   deactivateCategory: () => Promise<void>
 }) {
+  const categoryGrid = useAssetDashboardColumnPrefs({
+    activeUserScope,
+    storagePrefix: CATEGORY_LIST_STORAGE_PREFIX,
+    columnMap: CATEGORY_LIST_COLUMN_MAP,
+    defaultOrder: DEFAULT_CATEGORY_LIST_COLUMN_ORDER,
+    defaultVisibleKeys: DEFAULT_VISIBLE_CATEGORY_LIST_COLUMN_KEYS,
+  })
+
+  const {
+    orderedColumns,
+    effectiveWidths,
+    draggingColumnKey,
+    handleHeaderDragStart,
+    handleHeaderDrop,
+    beginColumnResize,
+    setDraggingColumnKey,
+    setColumnsDrawerOpen,
+  } = categoryGrid
+
+  const firstVisibleColumnKey = orderedColumns[0]?.key ?? null
   const isTrackingModeLocked =
     selectedCategoryDetail != null &&
     (selectedCategoryDetail.assetCount > 0 || selectedCategoryDetail.stockItemCount > 0)
@@ -1002,70 +1323,96 @@ function CategoryManagementPanel({
             {getAssetDashboardEmptyStateLabel("categories")}
           </div>
         ) : (
-          <div className="mt-4 space-y-3">
-            {assetDashboard.categoryDetails.map((detail) => {
-              const isSelected = detail.id === categoryDraft.id
-              const prefixSummary =
-                detail.prefixes.length > 0
-                  ? detail.prefixes
-                      .filter((prefix) => prefix.isActive)
-                      .map((prefix) =>
-                        prefix.isPrimary
-                          ? `${prefix.prefixValue} (primary)`
-                          : prefix.prefixValue,
-                      )
-                      .join(", ")
-                  : "No prefixes"
-
-              return (
-                <button
-                  key={detail.id}
-                  className={`w-full rounded-[10px] border px-3 py-3 text-left transition ${
-                    isSelected
-                      ? "border-[#00d68f] bg-[#0d1f18]"
-                      : "border-[#283140] bg-[#0f141c] hover:bg-[#151b25]"
-                  }`}
-                  onClick={() => openExistingCategoryDraft(detail)}
-                  type="button"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-semibold text-slate-100">
-                        {detail.categoryName}
-                      </div>
-                      <div className={`mt-1 text-[11px] uppercase tracking-[0.06em] ${dashboardMutedTextClass}`}>
-                        {detail.categoryCode}
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap justify-end gap-1">
-                      <span className="rounded-[999px] border border-[#31394a] bg-[#141a23] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.05em] text-[#8f98a8]">
-                        {detail.trackingMode}
-                      </span>
-                      <span
-                        className={`rounded-[999px] border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.05em] ${
-                          detail.isActive
-                            ? "border-[#00d68f]/30 bg-[#0d1f18] text-[#55d8a5]"
-                            : "border-[#31394a] text-[#8f98a8]"
+          <div className="mt-4 overflow-hidden rounded-[12px] border border-slate-800 bg-[#0d1117]">
+            <div className="overflow-x-auto">
+              <table className="min-w-max text-left text-[13px]">
+                <thead className={dashboardTableHeadClass}>
+                  <tr>
+                    {orderedColumns.map((column) => (
+                      <th
+                        key={column.key}
+                        className={`group relative border-r border-slate-800 last:border-r-0 ${
+                          draggingColumnKey === column.key ? "bg-slate-800/85" : ""
                         }`}
+                        style={{
+                          minWidth: column.minWidth,
+                          width: effectiveWidths[column.key],
+                        }}
+                        draggable
+                        onDragStart={() => handleHeaderDragStart(column.key)}
+                        onDragOver={(event) => event.preventDefault()}
+                        onDrop={() => handleHeaderDrop(column.key)}
+                        onDragEnd={() => setDraggingColumnKey(null)}
                       >
-                        {detail.isActive ? "Active" : "Inactive"}
-                      </span>
-                    </div>
-                  </div>
-                  <div className={`mt-3 text-xs ${dashboardMutedTextClass}`}>
-                    Prefixes: {prefixSummary}
-                  </div>
-                  <div className={`mt-2 flex flex-wrap gap-3 text-[11px] ${dashboardMutedTextClass}`}>
-                    <span>Assets: {detail.assetCount}</span>
-                    <span>Stock items: {detail.stockItemCount}</span>
-                    <span>QR required: {detail.qrRequired ? "Yes" : "No"}</span>
-                  </div>
-                </button>
-              )
-            })}
+                        <div className="flex items-center gap-2 px-3 py-2.5 pr-5">
+                          {column.key === firstVisibleColumnKey ? (
+                            <button
+                              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] border border-[#283140] bg-[#151b26] text-slate-400 transition hover:bg-[#1b2230] hover:text-slate-200"
+                              onClick={() => setColumnsDrawerOpen(true)}
+                              type="button"
+                              aria-label="Open column settings"
+                              title="Column Settings"
+                            >
+                              <Settings size={14} />
+                            </button>
+                          ) : null}
+                          <GripVertical
+                            size={12}
+                            className="shrink-0 text-slate-600 transition group-hover:text-slate-500"
+                          />
+                          <span className="truncate font-semibold">{column.label}</span>
+                        </div>
+                        <span
+                          className="absolute inset-y-0 right-0 flex w-3 cursor-col-resize items-center justify-center"
+                          onMouseDown={(event) => beginColumnResize(column.key, event)}
+                        >
+                          <span className="h-5 w-px bg-slate-700 transition group-hover:bg-emerald-400/60" />
+                        </span>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {assetDashboard.categoryDetails.map((detail) => {
+                    const isSelected = detail.id === categoryDraft.id
+
+                    return (
+                      <tr
+                        key={detail.id}
+                        className={`cursor-pointer border-t border-[#202736] align-top transition ${
+                          isSelected ? "bg-[#0d1f18]" : "hover:bg-[#151b25]"
+                        }`}
+                        onClick={() => openExistingCategoryDraft(detail)}
+                      >
+                        {orderedColumns.map((column) => (
+                          <td
+                            key={`${detail.id}-${column.key}`}
+                            className={`px-3 py-2.5 align-top ${
+                              column.key === "categoryName" ? "font-semibold text-slate-100" : dashboardMutedTextClass
+                            }`}
+                            style={{
+                              minWidth: column.minWidth,
+                              width: effectiveWidths[column.key],
+                            }}
+                          >
+                            {renderCategoryListCellValue(column.key, detail)}
+                          </td>
+                        ))}
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
         </div>
+        <AssetDashboardColumnsDrawer
+          activeUserScope={activeUserScope}
+          tableLabel="Asset Dashboard / Categories"
+          columnMap={CATEGORY_LIST_COLUMN_MAP}
+          grid={categoryGrid}
+        />
       </div>
 
       <div className="rounded-[12px] border border-[#252d3b] bg-[#11161f] p-4">

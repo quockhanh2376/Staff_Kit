@@ -16,7 +16,6 @@ pub struct AssetUpsertInput {
     pub asset_type: String,
     pub display_name: String,
     pub display_name_short: Option<String>,
-    pub computer_name: Option<String>,
     pub brand: Option<String>,
     pub model: Option<String>,
     pub serial_number: Option<String>,
@@ -234,7 +233,6 @@ fn insert_asset_stmt(
     asset_type: &str,
     display_name: &str,
     display_name_short: Option<&str>,
-    computer_name: Option<&str>,
     brand: Option<&str>,
     model: Option<&str>,
     serial_number: Option<&str>,
@@ -252,7 +250,6 @@ fn insert_asset_stmt(
               asset_type,
               display_name,
               display_name_short,
-              computer_name,
               brand,
               model,
               serial_number,
@@ -264,7 +261,7 @@ fn insert_asset_stmt(
               created_at,
               updated_at
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'in_stock', datetime('now'), datetime('now'))
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'in_stock', datetime('now'), datetime('now'))
             "#,
             params![
                 asset_code,
@@ -272,7 +269,6 @@ fn insert_asset_stmt(
                 asset_type,
                 display_name,
                 display_name_short,
-                computer_name,
                 brand,
                 model,
                 serial_number,
@@ -473,7 +469,6 @@ pub(crate) fn create_asset_tx(
     let asset_type = require_text(input.asset_type.clone(), "assetType")?;
     let display_name = require_text(input.display_name.clone(), "displayName")?;
     let display_name_short = normalize_optional_text(input.display_name_short.clone());
-    let computer_name = normalize_optional_text(input.computer_name.clone());
     let brand = normalize_optional_text(input.brand.clone());
     let model = normalize_optional_text(input.model.clone());
     let serial_number = normalize_optional_text(input.serial_number.clone());
@@ -489,7 +484,6 @@ pub(crate) fn create_asset_tx(
         asset_type.as_str(),
         display_name.as_str(),
         display_name_short.as_deref(),
-        computer_name.as_deref(),
         brand.as_deref(),
         model.as_deref(),
         serial_number.as_deref(),
@@ -583,7 +577,6 @@ pub(crate) fn upsert_assets_conn(
         let asset_type = require_text(input.asset_type, "assetType")?;
         let display_name = require_text(input.display_name, "displayName")?;
         let display_name_short = normalize_optional_text(input.display_name_short);
-        let computer_name = normalize_optional_text(input.computer_name);
         let brand = normalize_optional_text(input.brand);
         let model = normalize_optional_text(input.model);
         let serial_number = normalize_optional_text(input.serial_number);
@@ -600,7 +593,6 @@ pub(crate) fn upsert_assets_conn(
               asset_type,
               display_name,
               display_name_short,
-              computer_name,
               brand,
               model,
               serial_number,
@@ -612,13 +604,12 @@ pub(crate) fn upsert_assets_conn(
               created_at,
               updated_at
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'in_stock', datetime('now'), datetime('now'))
+                        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'in_stock', datetime('now'), datetime('now'))
             ON CONFLICT(asset_code) DO UPDATE SET
               category_id = excluded.category_id,
               asset_type = excluded.asset_type,
               display_name = excluded.display_name,
               display_name_short = excluded.display_name_short,
-              computer_name = excluded.computer_name,
               brand = excluded.brand,
               model = excluded.model,
               serial_number = excluded.serial_number,
@@ -634,7 +625,6 @@ pub(crate) fn upsert_assets_conn(
                 asset_type.as_str(),
                 display_name.as_str(),
                 display_name_short.as_deref(),
-                computer_name.as_deref(),
                 brand.as_deref(),
                 model.as_deref(),
                 serial_number.as_deref(),
@@ -1367,7 +1357,10 @@ pub(crate) fn list_asset_dashboard_serialized_conn(
               a.asset_code,
               c.category_code,
               c.category_name,
-              a.computer_name,
+                            CASE
+                                WHEN COALESCE(c.has_computer_name, 0) = 1 THEN 'ASW' || UPPER(a.asset_code)
+                                ELSE NULL
+                            END AS computer_name,
               a.display_name,
               a.display_name_short,
               a.model,
@@ -1653,7 +1646,6 @@ mod tests {
                 asset_type: "Laptop".to_string(),
                 display_name: "Dell Latitude".to_string(),
                 display_name_short: None,
-                computer_name: None,
                 brand: None,
                 model: Some("7440".to_string()),
                 serial_number: Some("SN-001".to_string()),
@@ -1682,7 +1674,6 @@ mod tests {
                 asset_type: "Laptop".to_string(),
                 display_name: "Dell Latitude".to_string(),
                 display_name_short: None,
-                computer_name: None,
                 brand: None,
                 model: None,
                 serial_number: None,
@@ -1708,7 +1699,6 @@ mod tests {
                 asset_type: "Laptop".to_string(),
                 display_name: "Dell Latitude 7450".to_string(),
                 display_name_short: None,
-                computer_name: None,
                 brand: None,
                 model: Some("7450".to_string()),
                 serial_number: Some("SN-001".to_string()),
@@ -1735,24 +1725,24 @@ mod tests {
             r#"
             INSERT INTO assets(
               asset_code,
+              category_id,
               asset_type,
               display_name,
               display_name_short,
-              computer_name,
               usage_location,
               adapter_number,
               status,
               created_at,
               updated_at
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, 'assigned', datetime('now'), datetime('now'))
+                        VALUES(?, ?, ?, ?, ?, ?, ?, 'assigned', datetime('now'), datetime('now'))
             "#,
             params![
                 "VNMON709",
+                category_id(&conn, "monitor"),
                 "Monitor",
                 "Dell 24 Monitor",
                 "Mon709",
-                "ASWVNMON709",
                 "office",
                 "ADP-709",
             ],
@@ -1761,23 +1751,21 @@ mod tests {
 
         let stored = conn
             .query_row(
-                "SELECT display_name_short, computer_name, usage_location, adapter_number FROM assets WHERE asset_code = ?",
+                "SELECT display_name_short, usage_location, adapter_number FROM assets WHERE asset_code = ?",
                 params!["VNMON709"],
                 |row| {
                     Ok((
                         row.get::<_, Option<String>>(0)?,
                         row.get::<_, Option<String>>(1)?,
                         row.get::<_, Option<String>>(2)?,
-                        row.get::<_, Option<String>>(3)?,
                     ))
                 },
             )
             .expect("load stored dashboard metadata");
 
         assert_eq!(stored.0.as_deref(), Some("Mon709"));
-        assert_eq!(stored.1.as_deref(), Some("ASWVNMON709"));
-        assert_eq!(stored.2.as_deref(), Some("office"));
-        assert_eq!(stored.3.as_deref(), Some("ADP-709"));
+        assert_eq!(stored.1.as_deref(), Some("office"));
+        assert_eq!(stored.2.as_deref(), Some("ADP-709"));
     }
 
     #[test]
@@ -1836,7 +1824,6 @@ mod tests {
                     asset_type: "Monitor".to_string(),
                     display_name: "Monitor LG".to_string(),
                     display_name_short: Some("Mon709".to_string()),
-                    computer_name: Some("ASWVNMON709".to_string()),
                     brand: Some("LG".to_string()),
                     model: Some("LG 27".to_string()),
                     serial_number: Some("MON-SN-709".to_string()),
@@ -1851,7 +1838,6 @@ mod tests {
                     asset_type: "Laptop".to_string(),
                     display_name: "Dell Latitude 5440".to_string(),
                     display_name_short: None,
-                    computer_name: Some("ASWVNLAP050".to_string()),
                     brand: Some("Dell".to_string()),
                     model: Some("5440".to_string()),
                     serial_number: Some("LAP-SN-050".to_string()),
@@ -1892,7 +1878,7 @@ mod tests {
             .expect("find laptop row");
 
         assert_eq!(monitor.category_code.as_deref(), Some("monitor"));
-        assert_eq!(monitor.computer_name.as_deref(), Some("ASWVNMON709"));
+    assert!(monitor.computer_name.is_none());
         assert_eq!(monitor.display_name_short.as_deref(), Some("Mon709"));
         assert_eq!(monitor.adapter_number.as_deref(), Some("ADP-709"));
         assert_eq!(monitor.usage_location.as_deref(), Some("office"));

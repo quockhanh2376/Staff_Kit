@@ -1,73 +1,71 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import type { MouseEvent as ReactMouseEvent } from "react"
-import type { AssetDashboardSerializedRecord } from "../../types/staff"
-import {
-  buildSerializedAssetGridStorageKeys,
-  cycleSerializedAssetSort,
-  DEFAULT_SERIALIZED_ASSET_COLUMN_ORDER,
-  DEFAULT_VISIBLE_SERIALIZED_ASSET_COLUMN_KEYS,
-  SERIALIZED_ASSET_COLUMN_MAP,
-  sortSerializedAssetRows,
-  type SerializedAssetColumnKey,
-  type SerializedAssetGridSort,
-} from "./serializedAssetGridConfig"
 
-type UseSerializedAssetGridStateOptions = {
-  activeUserScope: string
-  rows: AssetDashboardSerializedRecord[]
+type ColumnDefinition<Key extends string> = {
+  key: Key
+  label: string
+  defaultWidth: number
+  minWidth: number
 }
 
-type WidthMap = Partial<Record<SerializedAssetColumnKey, number>>
+type WidthMap<Key extends string> = Partial<Record<Key, number>>
 
-const MAX_COLUMN_WIDTH = 480
-
-type DropTarget = {
-  key: SerializedAssetColumnKey
+type DropTarget<Key extends string> = {
+  key: Key
   position: "before" | "after"
 }
 
-export type SerializedAssetGridState = ReturnType<typeof useSerializedAssetGridState>
+type UseAssetDashboardColumnPrefsOptions<Key extends string> = {
+  activeUserScope: string
+  storagePrefix: string
+  columnMap: Record<Key, ColumnDefinition<Key>>
+  defaultOrder: Key[]
+  defaultVisibleKeys: Key[]
+}
 
-export function useSerializedAssetGridState({
+const MAX_COLUMN_WIDTH = 480
+
+export function useAssetDashboardColumnPrefs<Key extends string>({
   activeUserScope,
-  rows,
-}: UseSerializedAssetGridStateOptions) {
+  storagePrefix,
+  columnMap,
+  defaultOrder,
+  defaultVisibleKeys,
+}: UseAssetDashboardColumnPrefsOptions<Key>) {
   const storageKeys = useMemo(
-    () => buildSerializedAssetGridStorageKeys(activeUserScope),
-    [activeUserScope],
+    () => ({
+      order: `${storagePrefix}:${activeUserScope}:order`,
+      hidden: `${storagePrefix}:${activeUserScope}:hidden`,
+      widths: `${storagePrefix}:${activeUserScope}:widths`,
+    }),
+    [activeUserScope, storagePrefix],
   )
 
-  const [columnOrder, setColumnOrder] = useState<SerializedAssetColumnKey[]>(() =>
-    readStoredColumnOrder(storageKeys.order),
+  const [columnOrder, setColumnOrder] = useState<Key[]>(() =>
+    readStoredColumnOrder(storageKeys.order, defaultOrder),
   )
-  const [hiddenColumns, setHiddenColumns] = useState<SerializedAssetColumnKey[]>(() =>
-    readStoredHiddenColumns(storageKeys.hidden),
+  const [hiddenColumns, setHiddenColumns] = useState<Key[]>(() =>
+    readStoredHiddenColumns(storageKeys.hidden, defaultOrder, defaultVisibleKeys),
   )
-  const [columnWidths, setColumnWidths] = useState<WidthMap>(() =>
+  const [columnWidths, setColumnWidths] = useState<WidthMap<Key>>(() =>
     readStoredColumnWidths(storageKeys.widths),
   )
-  const [sort, setSort] = useState<SerializedAssetGridSort>({
-    key: null,
-    direction: null,
-  })
-  const [draggingColumnKey, setDraggingColumnKey] =
-    useState<SerializedAssetColumnKey | null>(null)
-  const [drawerDraggingColumnKey, setDrawerDraggingColumnKey] =
-    useState<SerializedAssetColumnKey | null>(null)
-  const [drawerDropTarget, setDrawerDropTarget] = useState<DropTarget | null>(null)
+  const [draggingColumnKey, setDraggingColumnKey] = useState<Key | null>(null)
+  const [drawerDraggingColumnKey, setDrawerDraggingColumnKey] = useState<Key | null>(null)
+  const [drawerDropTarget, setDrawerDropTarget] = useState<DropTarget<Key> | null>(null)
   const [isColumnsDrawerOpen, setColumnsDrawerOpen] = useState(false)
   const [columnSearchTerm, setColumnSearchTerm] = useState("")
   const [undoResetSnapshot, setUndoResetSnapshot] = useState<{
-    order: SerializedAssetColumnKey[]
-    hidden: SerializedAssetColumnKey[]
-    widths: WidthMap
+    order: Key[]
+    hidden: Key[]
+    widths: WidthMap<Key>
   } | null>(null)
   const [resizeState, setResizeState] = useState<{
-    key: SerializedAssetColumnKey
+    key: Key
     startX: number
     startWidth: number
   } | null>(null)
-  const latestColumnWidthsRef = useRef<WidthMap>(columnWidths)
+  const latestColumnWidthsRef = useRef<WidthMap<Key>>(columnWidths)
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -92,7 +90,7 @@ export function useSerializedAssetGridState({
       return
     }
 
-    const definition = SERIALIZED_ASSET_COLUMN_MAP[resizeState.key]
+    const definition = columnMap[resizeState.key]
 
     const handleMouseMove = (event: MouseEvent) => {
       const delta = event.clientX - resizeState.startX
@@ -129,17 +127,20 @@ export function useSerializedAssetGridState({
       window.removeEventListener("mouseup", handleMouseUp)
       document.body.classList.remove("column-resize-active")
     }
-  }, [resizeState, storageKeys.widths])
+  }, [columnMap, resizeState, storageKeys.widths])
+
+  const orderedColumnKeys = useMemo(
+    () => reconcileColumnOrder(columnOrder, defaultOrder),
+    [columnOrder, defaultOrder],
+  )
 
   const orderedColumns = useMemo(
     () =>
-      reconcileColumnOrder(columnOrder)
+      orderedColumnKeys
         .filter((key) => !hiddenColumns.includes(key))
-        .map((key) => SERIALIZED_ASSET_COLUMN_MAP[key]),
-    [columnOrder, hiddenColumns],
+        .map((key) => columnMap[key]),
+    [columnMap, hiddenColumns, orderedColumnKeys],
   )
-
-  const orderedColumnKeys = useMemo(() => reconcileColumnOrder(columnOrder), [columnOrder])
 
   const filteredColumnKeys = useMemo(() => {
     const keyword = columnSearchTerm.trim().toLowerCase()
@@ -148,44 +149,35 @@ export function useSerializedAssetGridState({
     }
 
     return orderedColumnKeys.filter((key) => {
-      const column = SERIALIZED_ASSET_COLUMN_MAP[key]
+      const column = columnMap[key]
       return `${column.label} ${column.key}`.toLowerCase().includes(keyword)
     })
-  }, [columnSearchTerm, orderedColumnKeys])
+  }, [columnMap, columnSearchTerm, orderedColumnKeys])
 
   const effectiveWidths = useMemo(() => {
-    const widths: Record<SerializedAssetColumnKey, number> = {} as Record<
-      SerializedAssetColumnKey,
-      number
-    >
-    for (const key of DEFAULT_SERIALIZED_ASSET_COLUMN_ORDER) {
-      const definition = SERIALIZED_ASSET_COLUMN_MAP[key]
+    const widths = {} as Record<Key, number>
+    for (const key of defaultOrder) {
+      const definition = columnMap[key]
       widths[key] = Math.max(
         definition.minWidth,
         Math.min(MAX_COLUMN_WIDTH, Math.round(columnWidths[key] ?? definition.defaultWidth)),
       )
     }
     return widths
-  }, [columnWidths])
+  }, [columnMap, columnWidths, defaultOrder])
 
-  const sortedRows = useMemo(() => sortSerializedAssetRows(rows, sort), [rows, sort])
-
-  const toggleSort = (key: SerializedAssetColumnKey) => {
-    setSort((current) => cycleSerializedAssetSort(current, key))
-  }
-
-  const handleHeaderDragStart = (key: SerializedAssetColumnKey) => {
+  const handleHeaderDragStart = (key: Key) => {
     setDraggingColumnKey(key)
   }
 
-  const handleHeaderDrop = (targetKey: SerializedAssetColumnKey) => {
+  const handleHeaderDrop = (targetKey: Key) => {
     if (!draggingColumnKey || draggingColumnKey === targetKey) {
       setDraggingColumnKey(null)
       return
     }
 
     setColumnOrder((current) => {
-      const base = reconcileColumnOrder(current)
+      const base = reconcileColumnOrder(current, defaultOrder)
       const filtered = base.filter((key) => key !== draggingColumnKey)
       const targetIndex = filtered.indexOf(targetKey)
       if (targetIndex === -1) {
@@ -197,9 +189,9 @@ export function useSerializedAssetGridState({
     setDraggingColumnKey(null)
   }
 
-  const toggleColumnVisibility = (key: SerializedAssetColumnKey) => {
+  const toggleColumnVisibility = (key: Key) => {
     setHiddenColumns((current) => {
-      const nextHidden = reconcileHiddenColumns(current)
+      const nextHidden = reconcileHiddenColumns(current, defaultOrder)
       const isHidden = nextHidden.includes(key)
       if (isHidden) {
         return nextHidden.filter((item) => item !== key)
@@ -214,7 +206,7 @@ export function useSerializedAssetGridState({
     })
   }
 
-  const startDrawerColumnDrag = (key: SerializedAssetColumnKey) => {
+  const startDrawerColumnDrag = (key: Key) => {
     setDrawerDraggingColumnKey(key)
     setDrawerDropTarget(null)
   }
@@ -229,7 +221,7 @@ export function useSerializedAssetGridState({
     const handlePointerMove = (event: PointerEvent) => {
       const hovered = document.elementFromPoint(event.clientX, event.clientY)
       const row = hovered instanceof Element
-        ? hovered.closest<HTMLElement>("[data-serialized-column-key]")
+        ? hovered.closest<HTMLElement>("[data-asset-dashboard-column-key]")
         : null
 
       if (!row) {
@@ -237,13 +229,13 @@ export function useSerializedAssetGridState({
         return
       }
 
-      const rawKey = row.dataset.serializedColumnKey
+      const rawKey = row.dataset.assetDashboardColumnKey
       if (!rawKey || rawKey === drawerDraggingColumnKey) {
         setDrawerDropTarget(null)
         return
       }
 
-      const targetKey = rawKey as SerializedAssetColumnKey
+      const targetKey = rawKey as Key
       const bounds = row.getBoundingClientRect()
       const midpoint = bounds.top + bounds.height / 2
       const position = event.clientY >= midpoint ? "after" : "before"
@@ -259,7 +251,7 @@ export function useSerializedAssetGridState({
     const finishDrag = () => {
       if (drawerDropTarget) {
         setColumnOrder((current) => {
-          const nextOrder = reconcileColumnOrder(current).filter(
+          const nextOrder = reconcileColumnOrder(current, defaultOrder).filter(
             (key) => key !== drawerDraggingColumnKey,
           )
           const targetIndex = nextOrder.indexOf(drawerDropTarget.key)
@@ -286,7 +278,7 @@ export function useSerializedAssetGridState({
       window.removeEventListener("pointerup", finishDrag)
       window.removeEventListener("pointercancel", finishDrag)
     }
-  }, [drawerDraggingColumnKey, drawerDropTarget])
+  }, [defaultOrder, drawerDraggingColumnKey, drawerDropTarget])
 
   const resetColumnPreferences = () => {
     setUndoResetSnapshot({
@@ -294,8 +286,8 @@ export function useSerializedAssetGridState({
       hidden: hiddenColumns,
       widths: columnWidths,
     })
-    setColumnOrder(DEFAULT_SERIALIZED_ASSET_COLUMN_ORDER.slice())
-    setHiddenColumns(buildDefaultHiddenColumns())
+    setColumnOrder(defaultOrder.slice())
+    setHiddenColumns(buildDefaultHiddenColumns(defaultOrder, defaultVisibleKeys))
     setColumnWidths({})
   }
 
@@ -310,10 +302,7 @@ export function useSerializedAssetGridState({
     setUndoResetSnapshot(null)
   }
 
-  const beginColumnResize = (
-    key: SerializedAssetColumnKey,
-    event: ReactMouseEvent<HTMLSpanElement>,
-  ) => {
+  const beginColumnResize = (key: Key, event: ReactMouseEvent<HTMLElement>) => {
     event.preventDefault()
     event.stopPropagation()
     setResizeState({
@@ -328,16 +317,13 @@ export function useSerializedAssetGridState({
     orderedColumnKeys,
     hiddenColumns,
     filteredColumnKeys,
-    sortedRows,
     effectiveWidths,
-    sort,
     draggingColumnKey,
     drawerDraggingColumnKey,
     drawerDropTarget,
     isColumnsDrawerOpen,
     columnSearchTerm,
     undoResetSnapshot,
-    toggleSort,
     handleHeaderDragStart,
     handleHeaderDrop,
     beginColumnResize,
@@ -351,16 +337,12 @@ export function useSerializedAssetGridState({
   }
 }
 
-function reconcileColumnOrder(
-  order: SerializedAssetColumnKey[],
-): SerializedAssetColumnKey[] {
+function reconcileColumnOrder<Key extends string>(order: Key[], defaultOrder: Key[]): Key[] {
   const unique = order.filter(
-    (key, index, values) =>
-      DEFAULT_SERIALIZED_ASSET_COLUMN_ORDER.includes(key) &&
-      values.indexOf(key) === index,
+    (key, index, values) => defaultOrder.includes(key) && values.indexOf(key) === index,
   )
 
-  for (const key of DEFAULT_SERIALIZED_ASSET_COLUMN_ORDER) {
+  for (const key of defaultOrder) {
     if (!unique.includes(key)) {
       unique.push(key)
     }
@@ -369,56 +351,55 @@ function reconcileColumnOrder(
   return unique
 }
 
-function reconcileHiddenColumns(
-  hiddenColumns: SerializedAssetColumnKey[],
-): SerializedAssetColumnKey[] {
+function reconcileHiddenColumns<Key extends string>(hiddenColumns: Key[], defaultOrder: Key[]): Key[] {
   return hiddenColumns.filter(
-    (key, index, values) =>
-      DEFAULT_SERIALIZED_ASSET_COLUMN_ORDER.includes(key) && values.indexOf(key) === index,
+    (key, index, values) => defaultOrder.includes(key) && values.indexOf(key) === index,
   )
 }
 
-function buildDefaultHiddenColumns(): SerializedAssetColumnKey[] {
-  return DEFAULT_SERIALIZED_ASSET_COLUMN_ORDER.filter(
-    (key) => !DEFAULT_VISIBLE_SERIALIZED_ASSET_COLUMN_KEYS.includes(key),
-  )
+function buildDefaultHiddenColumns<Key extends string>(defaultOrder: Key[], defaultVisibleKeys: Key[]): Key[] {
+  return defaultOrder.filter((key) => !defaultVisibleKeys.includes(key))
 }
 
-function readStoredColumnOrder(storageKey: string): SerializedAssetColumnKey[] {
+function readStoredColumnOrder<Key extends string>(storageKey: string, defaultOrder: Key[]): Key[] {
   if (typeof window === "undefined") {
-    return DEFAULT_SERIALIZED_ASSET_COLUMN_ORDER.slice()
+    return defaultOrder.slice()
   }
 
   const savedOrder = window.localStorage.getItem(storageKey)
   if (!savedOrder) {
-    return DEFAULT_SERIALIZED_ASSET_COLUMN_ORDER.slice()
+    return defaultOrder.slice()
   }
 
   try {
-    return reconcileColumnOrder(JSON.parse(savedOrder) as SerializedAssetColumnKey[])
+    return reconcileColumnOrder(JSON.parse(savedOrder) as Key[], defaultOrder)
   } catch {
-    return DEFAULT_SERIALIZED_ASSET_COLUMN_ORDER.slice()
+    return defaultOrder.slice()
   }
 }
 
-function readStoredHiddenColumns(storageKey: string): SerializedAssetColumnKey[] {
+function readStoredHiddenColumns<Key extends string>(
+  storageKey: string,
+  defaultOrder: Key[],
+  defaultVisibleKeys: Key[],
+): Key[] {
   if (typeof window === "undefined") {
-    return buildDefaultHiddenColumns()
+    return buildDefaultHiddenColumns(defaultOrder, defaultVisibleKeys)
   }
 
   const savedHiddenColumns = window.localStorage.getItem(storageKey)
   if (!savedHiddenColumns) {
-    return buildDefaultHiddenColumns()
+    return buildDefaultHiddenColumns(defaultOrder, defaultVisibleKeys)
   }
 
   try {
-    return reconcileHiddenColumns(JSON.parse(savedHiddenColumns) as SerializedAssetColumnKey[])
+    return reconcileHiddenColumns(JSON.parse(savedHiddenColumns) as Key[], defaultOrder)
   } catch {
-    return buildDefaultHiddenColumns()
+    return buildDefaultHiddenColumns(defaultOrder, defaultVisibleKeys)
   }
 }
 
-function readStoredColumnWidths(storageKey: string): WidthMap {
+function readStoredColumnWidths<Key extends string>(storageKey: string): WidthMap<Key> {
   if (typeof window === "undefined") {
     return {}
   }
@@ -429,7 +410,7 @@ function readStoredColumnWidths(storageKey: string): WidthMap {
   }
 
   try {
-    return JSON.parse(savedWidths) as WidthMap
+    return JSON.parse(savedWidths) as WidthMap<Key>
   } catch {
     return {}
   }

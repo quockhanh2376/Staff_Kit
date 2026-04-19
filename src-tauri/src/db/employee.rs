@@ -194,8 +194,9 @@ LEFT JOIN (
         ) AS row_num
       FROM asset_loans al
       INNER JOIN assets a ON a.id = al.asset_id
+    INNER JOIN asset_categories c ON c.id = a.category_id
       WHERE al.returned_at IS NULL
-        AND lower(trim(COALESCE(a.asset_type, ''))) = 'laptop'
+    AND COALESCE(c.has_computer_name, 0) = 1
     ) laptop_names
     WHERE laptop_names.row_num = 1
 ) lc ON lc.employee_id_fk = e.id
@@ -1083,15 +1084,24 @@ mod tests {
         conn.last_insert_rowid()
     }
 
-    fn seed_laptop_asset(conn: &Connection, asset_code: &str) -> i64 {
+    fn category_id(conn: &Connection, category_code: &str) -> i64 {
+        conn.query_row(
+            "SELECT id FROM asset_categories WHERE category_code = ?1",
+            params![category_code],
+            |row| row.get(0),
+        )
+        .expect("load asset category id")
+    }
+
+    fn seed_asset(conn: &Connection, asset_code: &str, asset_type: &str, category_code: &str) -> i64 {
         conn.execute(
             r#"
-            INSERT INTO assets(asset_code, asset_type, display_name, status, created_at, updated_at)
-            VALUES(?, 'Laptop', ?, 'assigned', datetime('now'), datetime('now'))
+            INSERT INTO assets(asset_code, category_id, asset_type, display_name, status, created_at, updated_at)
+            VALUES(?, ?, ?, ?, 'assigned', datetime('now'), datetime('now'))
             "#,
-            params![asset_code, asset_code],
+            params![asset_code, category_id(conn, category_code), asset_type, asset_code],
         )
-        .expect("insert laptop asset");
+        .expect("insert asset");
         conn.last_insert_rowid()
     }
 
@@ -1133,8 +1143,8 @@ mod tests {
     fn query_employees_derives_computer_name_from_active_laptop_loans() {
         let conn = open_test_connection();
         let employee_row_id = seed_employee(&conn, "ASWVN1302", "Lư Thế Hùng");
-        let mac_asset_id = seed_laptop_asset(&conn, "VNMACPRO010");
-        let lap_asset_id = seed_laptop_asset(&conn, "VNLAP293");
+        let mac_asset_id = seed_asset(&conn, "VNMACPRO010", "Laptop", "laptop");
+        let lap_asset_id = seed_asset(&conn, "VNLAP293", "Laptop", "laptop");
         seed_active_loan(&conn, employee_row_id, mac_asset_id);
         seed_active_loan(&conn, employee_row_id, lap_asset_id);
 
@@ -1169,7 +1179,7 @@ mod tests {
     fn query_employees_can_search_by_derived_laptop_computer_name() {
         let conn = open_test_connection();
         let employee_row_id = seed_employee(&conn, "ASWVN1302", "Lư Thế Hùng");
-        let lap_asset_id = seed_laptop_asset(&conn, "VNLAP293");
+        let lap_asset_id = seed_asset(&conn, "VNLAP293", "Laptop", "laptop");
         seed_active_loan(&conn, employee_row_id, lap_asset_id);
 
         let response = query_employees(
@@ -1222,5 +1232,37 @@ mod tests {
             with_query_join.contains("asset_loans"),
             "query path should still include laptop aggregation when lc is referenced",
         );
+    }
+    #[test]
+    fn query_employees_excludes_monitor_loans_from_computer_name() {
+        let conn = open_test_connection();
+        let employee_row_id = seed_employee(&conn, "ASWVN1302", "Lư Thế Hùng");
+        let laptop_asset_id = seed_asset(&conn, "VNLAP293", "Laptop", "laptop");
+        let monitor_asset_id = seed_asset(&conn, "VNMON709", "Monitor", "monitor");
+        seed_active_loan(&conn, employee_row_id, laptop_asset_id);
+        seed_active_loan(&conn, employee_row_id, monitor_asset_id);
+
+        let response = query_employees(
+            &conn,
+            EmployeeQuery {
+                query: None,
+                team_name: None,
+                staff_group: None,
+                sort_key: None,
+                sort_direction: None,
+                start_date_from: None,
+                start_date_to: None,
+                limit: Some(20),
+                offset: Some(0),
+            },
+        )
+        .expect("query employees");
+
+        let employee = response
+            .items
+            .iter()
+            .find(|item| item.employee_id == "ASWVN1302")
+            .expect("find seeded employee");
+        assert_eq!(employee.computer_name.as_deref(), Some("ASWVNLAP293"));
     }
 }

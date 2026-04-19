@@ -217,7 +217,7 @@ pub(crate) fn import_employee_asset_seed_conn(
             continue;
         };
 
-        let Some(computer_name) = row.computer_name.as_deref() else {
+        if row.computer_name.as_deref().is_none() {
             skipped += 1;
             errors.push(EmployeeAssetSeedErrorItem {
                 row_number: row.row_number,
@@ -225,7 +225,7 @@ pub(crate) fn import_employee_asset_seed_conn(
                 reason: "computer name could not be derived".to_string(),
             });
             continue;
-        };
+        }
 
         let Some(category_id) = load_category_id_by_code_tx(&tx, row.category_code.as_deref())? else {
             skipped += 1;
@@ -237,7 +237,7 @@ pub(crate) fn import_employee_asset_seed_conn(
             continue;
         };
 
-        if asset_exists_for_seed_tx(&tx, asset_code, computer_name)? {
+        if asset_exists_for_seed_tx(&tx, asset_code)? {
             skipped += 1;
             errors.push(EmployeeAssetSeedErrorItem {
                 row_number: row.row_number,
@@ -258,9 +258,8 @@ pub(crate) fn import_employee_asset_seed_conn(
                 asset_code: asset_code.to_string(),
                 category_id: Some(category_id),
                 asset_type,
-                display_name: computer_name.to_string(),
+                display_name: strip_vn_prefix(asset_code),
                 display_name_short: None,
-                computer_name: Some(computer_name.to_string()),
                 brand: None,
                 model: None,
                 serial_number: None,
@@ -486,7 +485,7 @@ fn build_candidate_rows(
         }
 
         let (category_code, category_name) = load_category_labels_by_id_conn(conn, category.id)?;
-        if asset_exists_for_seed_conn(conn, asset_code.as_str(), computer_name.as_str())? {
+        if asset_exists_for_seed_conn(conn, asset_code.as_str())? {
             rows.push(CandidateRow {
                 row_number,
                 employee_id: employee.employee_id,
@@ -765,20 +764,27 @@ fn derive_asset_identity(source: &str) -> Result<(String, String), String> {
     Ok((normalized.clone(), format!("ASW{normalized}")))
 }
 
+fn strip_vn_prefix(asset_code: &str) -> String {
+    let normalized = asset_code.trim();
+    if normalized.len() >= 2 && normalized[..2].eq_ignore_ascii_case("VN") {
+        normalized[2..].to_string()
+    } else {
+        normalized.to_string()
+    }
+}
+
 fn asset_exists_for_seed_conn(
     conn: &Connection,
     asset_code: &str,
-    computer_name: &str,
 ) -> Result<bool, String> {
     conn.query_row(
         r#"
         SELECT 1
         FROM assets
         WHERE asset_code = ? COLLATE NOCASE
-           OR computer_name = ? COLLATE NOCASE
         LIMIT 1
         "#,
-        params![asset_code, computer_name],
+        params![asset_code],
         |_| Ok(true),
     )
     .optional()
@@ -789,17 +795,15 @@ fn asset_exists_for_seed_conn(
 fn asset_exists_for_seed_tx(
     tx: &Transaction<'_>,
     asset_code: &str,
-    computer_name: &str,
 ) -> Result<bool, String> {
     tx.query_row(
         r#"
         SELECT 1
         FROM assets
         WHERE asset_code = ? COLLATE NOCASE
-           OR computer_name = ? COLLATE NOCASE
         LIMIT 1
         "#,
-        params![asset_code, computer_name],
+        params![asset_code],
         |_| Ok(true),
     )
     .optional()
@@ -1081,6 +1085,21 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .expect("collect imported asset codes");
         assert_eq!(imported_codes, vec!["VNLAP293".to_string(), "VNLAP294".to_string()]);
+
+        let imported_display_names = conn
+            .prepare("SELECT asset_code, display_name FROM assets ORDER BY asset_code ASC")
+            .expect("prepare imported asset display-name query")
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+            .expect("query imported asset display names")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect imported asset display names");
+        assert_eq!(
+            imported_display_names,
+            vec![
+                ("VNLAP293".to_string(), "LAP293".to_string()),
+                ("VNLAP294".to_string(), "LAP294".to_string()),
+            ]
+        );
     }
 
     #[test]
@@ -1157,5 +1176,46 @@ mod tests {
         .expect_err("preview should require admin permission");
 
         assert!(error.contains("Only admin accounts"));
+    }
+
+    #[test]
+    fn import_employee_asset_seed_strips_vn_prefix_for_macpro_display_name() {
+        let mut conn = open_test_connection();
+        seed_employee(
+            &conn,
+            "ASWVN1302",
+            "Nguyen Van A",
+            Some("ASWVNMACPRO010"),
+            "employee_list",
+        );
+
+        let preview = preview_employee_asset_seed_conn(
+            &mut conn,
+            &EmployeeAssetSeedInput {
+                staff_group: Some("employee_list".to_string()),
+                ..EmployeeAssetSeedInput::default()
+            },
+        )
+        .expect("preview employee asset seed");
+
+        let report = import_employee_asset_seed_conn(
+            &mut conn,
+            &EmployeeAssetSeedInput {
+                snapshot_id: Some(preview.snapshot_id),
+                ..EmployeeAssetSeedInput::default()
+            },
+        )
+        .expect("import employee asset seed");
+
+        assert_eq!(report.imported_asset_codes, vec!["VNMACPRO010".to_string()]);
+
+        let display_name = conn
+            .query_row(
+                "SELECT display_name FROM assets WHERE asset_code = 'VNMACPRO010'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("load imported macpro display name");
+        assert_eq!(display_name, "MACPRO010");
     }
 }

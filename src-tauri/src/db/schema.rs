@@ -212,6 +212,7 @@ CREATE TABLE IF NOT EXISTS asset_categories (
   tracking_mode TEXT NOT NULL,
   prefix_code TEXT,
   qr_required INTEGER NOT NULL DEFAULT 0,
+  has_computer_name INTEGER NOT NULL DEFAULT 0,
   is_active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -234,7 +235,6 @@ CREATE TABLE IF NOT EXISTS assets (
   asset_type TEXT NOT NULL,
   display_name TEXT NOT NULL,
   display_name_short TEXT,
-  computer_name TEXT,
   brand TEXT,
   model TEXT,
   serial_number TEXT,

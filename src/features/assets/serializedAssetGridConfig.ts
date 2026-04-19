@@ -39,6 +39,19 @@ export const DEFAULT_SERIALIZED_ASSET_COLUMN_ORDER: SerializedAssetColumnKey[] =
   "holder",
 ]
 
+export const DEFAULT_VISIBLE_SERIALIZED_ASSET_COLUMN_KEYS: SerializedAssetColumnKey[] = [
+  "id",
+  "category",
+  "assetName",
+  "model",
+  "serialNumber",
+  "adapterNumber",
+  "usageLocation",
+  "note",
+  "status",
+  "holder",
+]
+
 export const SERIALIZED_ASSET_COLUMN_MAP: Record<
   SerializedAssetColumnKey,
   SerializedAssetColumnDefinition
@@ -86,6 +99,7 @@ const STORAGE_PREFIX = "staffkit:asset-dashboard-serialized-grid"
 export function buildSerializedAssetGridStorageKeys(activeUserScope: string) {
   return {
     order: `${STORAGE_PREFIX}:${activeUserScope}:order`,
+    hidden: `${STORAGE_PREFIX}:${activeUserScope}:hidden`,
     widths: `${STORAGE_PREFIX}:${activeUserScope}:widths`,
   }
 }
@@ -178,7 +192,7 @@ function getComparableValue(
 }
 
 export function resolveSerializedAssetComputerName(
-  assetCode: string,
+  _assetCode: string,
   computerName: string | null | undefined,
 ): string {
   const normalizedComputerName = computerName?.trim()
@@ -186,12 +200,7 @@ export function resolveSerializedAssetComputerName(
     return normalizedComputerName
   }
 
-  const normalizedAssetCode = assetCode.trim().toUpperCase()
-  if (!normalizedAssetCode) {
-    return ""
-  }
-
-  return `ASW${normalizedAssetCode}`
+  return ""
 }
 
 export function resolveSerializedAssetName(

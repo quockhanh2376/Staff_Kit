@@ -504,7 +504,6 @@ fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
             "INTEGER REFERENCES asset_categories(id) ON UPDATE CASCADE ON DELETE SET NULL",
         ),
         ("display_name_short", "TEXT"),
-        ("computer_name", "TEXT"),
         ("brand", "TEXT"),
         ("warehouse", "TEXT"),
         ("usage_location", "TEXT"),
@@ -519,6 +518,36 @@ fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
             [],
         )
         .map_err(|err| format!("failed to add assets.{column_name} column: {err}"))?;
+    }
+
+    // Drop legacy computer_name column from assets (SQLite >= 3.35, safe with Tauri 2)
+    if existing.iter().any(|name| name == "computer_name") {
+        conn.execute("ALTER TABLE assets DROP COLUMN computer_name", [])
+            .map_err(|err| format!("failed to drop assets.computer_name column: {err}"))?;
+    }
+
+    // Add has_computer_name to asset_categories if missing
+    let existing_cat_columns = {
+        let mut cat_stmt = conn
+            .prepare("PRAGMA table_info(asset_categories)")
+            .map_err(|err| format!("failed to inspect asset_categories table: {err}"))?;
+        let rows = cat_stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|err| format!("failed to read asset_categories columns: {err}"))?;
+        let columns = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|err| format!("failed to collect asset_categories columns: {err}"))?;
+        columns
+    };
+    if !existing_cat_columns
+        .iter()
+        .any(|name| name == "has_computer_name")
+    {
+        conn.execute(
+            "ALTER TABLE asset_categories ADD COLUMN has_computer_name INTEGER NOT NULL DEFAULT 0",
+            [],
+        )
+        .map_err(|err| format!("failed to add asset_categories.has_computer_name column: {err}"))?;
     }
 
     conn.execute_batch(
@@ -591,13 +620,13 @@ fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
         .map_err(|err| format!("failed to add asset_import_rows.{column_name} column: {err}"))?;
     }
 
-    for (category_code, category_name, tracking_mode, prefix_code, qr_required) in [
-        ("laptop", "Laptop", "serialized", Some("VNLAP"), 1_i64),
-        ("monitor", "Monitor", "serialized", Some("VNMON"), 1_i64),
-        ("mouse", "Mouse", "quantity", None, 0_i64),
-        ("keyboard", "Keyboard", "quantity", None, 0_i64),
-        ("headset", "Headset", "quantity", None, 0_i64),
-        ("usb_type_c_hub", "USB Type-C Hub", "quantity", None, 0_i64),
+    for (category_code, category_name, tracking_mode, prefix_code, qr_required, has_computer_name) in [
+        ("laptop", "Laptop", "serialized", Some("VNLAP"), 1_i64, 1_i64),
+        ("monitor", "Monitor", "serialized", Some("VNMON"), 1_i64, 0_i64),
+        ("mouse", "Mouse", "quantity", None, 0_i64, 0_i64),
+        ("keyboard", "Keyboard", "quantity", None, 0_i64, 0_i64),
+        ("headset", "Headset", "quantity", None, 0_i64, 0_i64),
+        ("usb_type_c_hub", "USB Type-C Hub", "quantity", None, 0_i64, 0_i64),
     ] {
         conn.execute(
             r#"
@@ -607,16 +636,18 @@ fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
               tracking_mode,
               prefix_code,
               qr_required,
+              has_computer_name,
               is_active,
               created_at,
               updated_at
             )
-            VALUES(?, ?, ?, ?, ?, 1, datetime('now'), datetime('now'))
+            VALUES(?, ?, ?, ?, ?, ?, 1, datetime('now'), datetime('now'))
             ON CONFLICT(category_code) DO UPDATE SET
               category_name = excluded.category_name,
               tracking_mode = excluded.tracking_mode,
               prefix_code = excluded.prefix_code,
               qr_required = excluded.qr_required,
+              has_computer_name = excluded.has_computer_name,
               is_active = 1,
               updated_at = datetime('now')
             "#,
@@ -626,10 +657,33 @@ fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
                 tracking_mode,
                 prefix_code,
                 qr_required,
+                has_computer_name,
             ],
         )
         .map_err(|err| format!("failed to seed asset category '{category_code}': {err}"))?;
     }
+
+    conn.execute(
+        r#"
+        UPDATE asset_categories
+        SET has_computer_name = 1,
+            updated_at = datetime('now')
+        WHERE category_code IN ('laptop', 'macpro', 'macair', 'imacpro', 'wks')
+        "#,
+        [],
+    )
+    .map_err(|err| format!("failed to backfill asset category computer-name flags: {err}"))?;
+
+    conn.execute(
+        r#"
+        UPDATE asset_categories
+        SET has_computer_name = 0,
+            updated_at = datetime('now')
+        WHERE category_code IN ('monitor', 'keyboard', 'mouse', 'headset', 'usb_type_c_hub')
+        "#,
+        [],
+    )
+    .map_err(|err| format!("failed to normalize non-network asset category flags: {err}"))?;
 
     ensure_seeded_asset_category_prefixes(conn)?;
 
@@ -1194,6 +1248,7 @@ mod tests {
               category_id INTEGER REFERENCES asset_categories(id) ON UPDATE CASCADE ON DELETE SET NULL,
               asset_type TEXT NOT NULL,
               display_name TEXT NOT NULL,
+                            computer_name TEXT,
               model TEXT,
               serial_number TEXT,
               notes TEXT,
@@ -1252,8 +1307,12 @@ mod tests {
             "expected assets.display_name_short to be added for legacy databases"
         );
         assert!(
-            column_exists(&conn, "assets", "computer_name"),
-            "expected assets.computer_name to be added for legacy databases"
+            !column_exists(&conn, "assets", "computer_name"),
+            "expected assets.computer_name to be dropped for legacy databases"
+        );
+        assert!(
+            column_exists(&conn, "asset_categories", "has_computer_name"),
+            "expected asset_categories.has_computer_name to be added for legacy databases"
         );
         assert!(
             column_exists(&conn, "assets", "usage_location"),
@@ -1300,6 +1359,21 @@ mod tests {
             .expect("load migrated tablet prefix");
 
         assert_eq!(tablet_prefix, "ASWTABLET");
+
+        let category_flags = conn
+            .prepare(
+                "SELECT category_code, has_computer_name FROM asset_categories WHERE category_code IN ('laptop', 'monitor') ORDER BY category_code ASC",
+            )
+            .expect("prepare category flag query")
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
+            .expect("query category flags")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect category flags");
+
+        assert_eq!(
+            category_flags,
+            vec![("laptop".to_string(), 1_i64), ("monitor".to_string(), 0_i64)]
+        );
     }
 
     #[test]
