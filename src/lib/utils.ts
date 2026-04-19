@@ -3,6 +3,10 @@ import type { StaffGroupKey } from "../types/app"
 
 // ── Pure utilities ────────────────────────────────────────────────────────────
 
+/**
+ * Extracts a human-readable message from any thrown value.
+ * @deprecated Use `getUserErrorMessage` from `lib/errorHandling` for user-facing errors.
+ */
 export const getErrorMessage = (error: unknown): string => {
     if (error instanceof Error) {
         return error.message
@@ -10,6 +14,7 @@ export const getErrorMessage = (error: unknown): string => {
     return String(error)
 }
 
+/** Formats an ISO date string into a localized short date (e.g. "Apr 09, 2026"). Returns "-" for null/empty. */
 export const formatDate = (value: string | null) => {
     if (!value) {
         return "-"
@@ -27,6 +32,7 @@ export const formatDate = (value: string | null) => {
     })
 }
 
+/** Returns the employee count for a given staff group key. */
 export const getGroupCount = (counts: EmployeeGroupCounts, key: StaffGroupKey): number => {
     switch (key) {
         case "employee_list":
@@ -42,6 +48,7 @@ export const getGroupCount = (counts: EmployeeGroupCounts, key: StaffGroupKey): 
     }
 }
 
+/** Normalizes a display name into a safe localStorage scope key (lowercase, underscore-separated). */
 export const normalizeUserScope = (name: string): string => {
     const normalized = name
         .trim()
@@ -52,5 +59,7 @@ export const normalizeUserScope = (name: string): string => {
     return normalized || "default_user"
 }
 
+/** Builds a namespaced localStorage key: `{baseKey}:{scope}`. */
 export const buildScopedStorageKey = (baseKey: string, scope: string): string =>
     `${baseKey}:${scope}`
+

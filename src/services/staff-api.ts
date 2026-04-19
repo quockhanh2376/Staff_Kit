@@ -63,6 +63,7 @@ declare global {
   }
 }
 
+/** Checks if running inside a Tauri webview (desktop runtime). */
 const isTauriRuntime = () =>
   typeof window !== "undefined" && (window.__TAURI__ !== undefined || window.__TAURI_INTERNALS__ !== undefined)
 
@@ -72,11 +73,19 @@ const ensureTauriRuntime = () => {
   }
 }
 
+/**
+ * Type-safe wrapper around Tauri's `invoke`.
+ * Ensures runtime check and consistent argument passing for all Tauri commands.
+ */
 const call = async <T>(command: string, args?: Record<string, unknown>): Promise<T> => {
   ensureTauriRuntime()
   return invoke<T>(command, args)
 }
 
+/**
+ * Staff Kit API facade — thin typed layer over Tauri IPC commands.
+ * Each method maps 1:1 to a `#[tauri::command]` in the Rust backend.
+ */
 export const staffApi = {
   ping: () => call<string>("ping"),
 
