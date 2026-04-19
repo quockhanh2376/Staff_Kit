@@ -48,7 +48,7 @@ export type ClassifiedError = {
  * Extracts a string message from any thrown value.
  * Handles Error instances, strings, and unknown types.
  */
-export function getErrorMessage(error: unknown): string {
+function getErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message
   }
@@ -76,8 +76,8 @@ export function classifyError(error: unknown): ClassifiedError {
     return { isBusiness: true, rawMessage, userMessage: rawMessage }
   }
 
-  // Technical error — log the raw message, show generic to user
-  console.error("[Staff Kit] Unexpected error:", rawMessage)
+  // Technical error — log the original error (preserves stack), show generic to user
+  console.error("[Staff Kit] Unexpected error:", error instanceof Error ? error : rawMessage)
   return {
     isBusiness: false,
     rawMessage,

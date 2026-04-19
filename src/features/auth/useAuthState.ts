@@ -87,7 +87,7 @@ export function useAuthState({
                 }
             } catch (error) {
                 // propagate to caller
-                console.error(getUserErrorMessage(error))
+                console.error(error)
             } finally {
                 if (!disposed) {
                     setLoadingAccounts(false)
