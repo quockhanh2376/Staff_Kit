@@ -3,7 +3,7 @@ import { open as openFileDialog } from "@tauri-apps/plugin-dialog"
 import { staffApi } from "../../services/staff-api"
 import type { ImportColumnsPreview, ImportPreviewResult, ImportReport } from "../../types/staff"
 import type { StaffGroupKey } from "../../types/app"
-import { getErrorMessage } from "../../lib/utils"
+import { getUserErrorMessage } from "../../lib/errorHandling"
 
 type UseImportStateOptions = {
     staffGroupFilter: StaffGroupKey
@@ -77,7 +77,7 @@ export function useImportState({
             )
             setImportDrawerOpen(true)
         } catch (error) {
-            const msg = getErrorMessage(error)
+            const msg = getUserErrorMessage(error)
             if (!msg.toLowerCase().includes("cancel")) {
                 setGlobalError(msg)
             }
@@ -117,7 +117,7 @@ export function useImportState({
             setImportPreviewResult(preview)
             setShowImportPreviewModal(true)
         } catch (error) {
-            setGlobalError(getErrorMessage(error))
+            setGlobalError(getUserErrorMessage(error))
         } finally {
             setImporting(false)
         }
@@ -138,7 +138,7 @@ export function useImportState({
             setShowImportPreviewModal(false)
             triggerReload()
         } catch (error) {
-            setGlobalError(getErrorMessage(error))
+            setGlobalError(getUserErrorMessage(error))
         } finally {
             setImporting(false)
         }

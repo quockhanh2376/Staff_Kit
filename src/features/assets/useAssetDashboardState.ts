@@ -8,7 +8,7 @@ import type {
   AssetDashboardSummary,
   StockItemQuantityUpdateInput,
 } from "../../types/staff"
-import { getErrorMessage } from "../../lib/utils"
+import { getUserErrorMessage } from "../../lib/errorHandling"
 
 type UseAssetDashboardStateOptions = {
   dbReady: boolean
@@ -65,7 +65,7 @@ export function useAssetDashboardState({
         setSerializedRows(nextSerializedRows)
         setQuantityRows(nextQuantityRows)
       } catch (error) {
-        setGlobalError(getErrorMessage(error))
+        setGlobalError(getUserErrorMessage(error))
       } finally {
         setLoadingDashboard(false)
         setRefreshingDashboard(false)
@@ -85,7 +85,7 @@ export function useAssetDashboardState({
       const nextCategoryDetails = await staffApi.listAssetCategoryDetails()
       setCategoryDetails(nextCategoryDetails)
     } catch (error) {
-      setGlobalError(getErrorMessage(error))
+      setGlobalError(getUserErrorMessage(error))
     } finally {
       setLoadingCategories(false)
     }
@@ -115,7 +115,7 @@ export function useAssetDashboardState({
         await loadDashboard({ refresh: true })
         return updatedRow
       } catch (error) {
-        setGlobalError(getErrorMessage(error))
+        setGlobalError(getUserErrorMessage(error))
         return null
       } finally {
         setUpdatingStockItemId(null)
@@ -138,7 +138,7 @@ export function useAssetDashboardState({
         ])
         return savedCategory
       } catch (error) {
-        setGlobalError(getErrorMessage(error))
+        setGlobalError(getUserErrorMessage(error))
         return null
       } finally {
         setSavingCategory(false)
@@ -159,7 +159,7 @@ export function useAssetDashboardState({
         ])
         return updatedCategory
       } catch (error) {
-        setGlobalError(getErrorMessage(error))
+        setGlobalError(getUserErrorMessage(error))
         return null
       } finally {
         setDeactivatingCategoryId(null)

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { staffApi } from "../../services/staff-api"
 import type { EmployeeRecord, TeamRecord } from "../../types/staff"
 import type { StaffGroupKey, EmployeeSortState } from "../../types/app"
-import { getErrorMessage } from "../../lib/utils"
+import { getUserErrorMessage } from "../../lib/errorHandling"
 import { ALL_TEAMS_OPTION } from "../../lib/constants"
 
 type UseEmployeeStateOptions = {
@@ -55,7 +55,7 @@ export function useEmployeeState({
                 const data = await staffApi.listTeams()
                 if (!disposed) setTeams(data)
             } catch (error) {
-                if (!disposed) setGlobalError(getErrorMessage(error))
+                if (!disposed) setGlobalError(getUserErrorMessage(error))
             } finally {
                 if (!disposed) setLoadingTeams(false)
             }
@@ -75,7 +75,7 @@ export function useEmployeeState({
                 const counts = await staffApi.listEmployeeGroupCounts()
                 if (!disposed) setEmployeeGroupCounts(counts)
             } catch (error) {
-                if (!disposed) setGlobalError(getErrorMessage(error))
+                if (!disposed) setGlobalError(getUserErrorMessage(error))
             }
         })()
 
@@ -112,7 +112,7 @@ export function useEmployeeState({
                 setEmployees(response.items)
                 setTotalEmployees(response.total)
             } catch (error) {
-                if (!disposed) setGlobalError(getErrorMessage(error))
+                if (!disposed) setGlobalError(getUserErrorMessage(error))
             } finally {
                 if (!disposed) setLoadingEmployees(false)
             }

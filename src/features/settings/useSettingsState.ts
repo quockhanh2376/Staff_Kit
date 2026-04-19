@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog"
 import { staffApi } from "../../services/staff-api"
 import type { AssetRecord, AssetSeedItemInput, BackupSettings, BorrowLanSettings, SnapshotInfo } from "../../types/staff"
-import { getErrorMessage } from "../../lib/utils"
+import { getUserErrorMessage } from "../../lib/errorHandling"
 import {
     applyDetectedBorrowLanSettings,
     buildBorrowLanUrlPreview,
@@ -161,7 +161,7 @@ export function useSettingsState({
                     })
                 }
             } catch (error) {
-                if (!disposed) setGlobalError(getErrorMessage(error))
+                if (!disposed) setGlobalError(getUserErrorMessage(error))
             }
         })()
 
@@ -176,7 +176,7 @@ export function useSettingsState({
             const list = await staffApi.listHistorySnapshots()
             setSnapshots(list)
         } catch (error) {
-            setGlobalError(getErrorMessage(error))
+            setGlobalError(getUserErrorMessage(error))
         } finally {
             setLoadingSnapshots(false)
         }
@@ -204,7 +204,7 @@ export function useSettingsState({
             setBackupAutoEnabled(settings.autoBackupEnabled)
             setBackupStatusMessage("Backup settings saved.")
         } catch (error) {
-            setGlobalError(getErrorMessage(error))
+            setGlobalError(getUserErrorMessage(error))
         } finally {
             setSavingBackupSettings(false)
         }
@@ -217,7 +217,7 @@ export function useSettingsState({
             const result = await staffApi.backupDatabaseNow()
             setBackupStatusMessage(`Backup created: ${result.backupFilePath}`)
         } catch (error) {
-            setGlobalError(getErrorMessage(error))
+            setGlobalError(getUserErrorMessage(error))
         } finally {
             setBackingUpData(false)
         }
@@ -230,7 +230,7 @@ export function useSettingsState({
             setSnapshotMessage(`Snapshot saved: ${snap.timestamp}`)
             await loadSnapshots()
         } catch (error) {
-            setGlobalError(getErrorMessage(error))
+            setGlobalError(getUserErrorMessage(error))
         }
     }
 
@@ -248,7 +248,7 @@ export function useSettingsState({
             await loadSnapshots()
             triggerReload()
         } catch (error) {
-            setGlobalError(getErrorMessage(error))
+            setGlobalError(getUserErrorMessage(error))
         } finally {
             setRestoringSnapshot(null)
         }
@@ -286,7 +286,7 @@ export function useSettingsState({
                 )
             }
         } catch (error) {
-            setDbPathMessage(`❌ ${getErrorMessage(error)}`)
+            setDbPathMessage(`❌ ${getUserErrorMessage(error)}`)
             setDbMovePending(false)
         } finally {
             setMovingDb(false)
@@ -319,7 +319,7 @@ export function useSettingsState({
             await loadSnapshots()
             triggerReload()
         } catch (error) {
-            setGlobalError(getErrorMessage(error))
+            setGlobalError(getUserErrorMessage(error))
         }
     }
 
@@ -338,7 +338,7 @@ export function useSettingsState({
             await staffApi.resetAllData()
             triggerReload()
         } catch (error) {
-            setGlobalError(getErrorMessage(error))
+            setGlobalError(getUserErrorMessage(error))
         } finally {
             setResettingData(false)
         }
@@ -366,7 +366,7 @@ export function useSettingsState({
             borrowLanHostTouchedRef.current = false
             setBorrowLanMessage("Borrow LAN settings saved.")
         } catch (error) {
-            setBorrowLanMessage(getErrorMessage(error))
+            setBorrowLanMessage(getUserErrorMessage(error))
         } finally {
             setSavingBorrowLanSettings(false)
         }
@@ -411,7 +411,7 @@ export function useSettingsState({
             setAssetSeedMessage(`Seeded ${result.length} asset(s).`)
             triggerReload()
         } catch (error) {
-            setAssetSeedMessage(getErrorMessage(error))
+            setAssetSeedMessage(getUserErrorMessage(error))
         } finally {
             setSeedingAssets(false)
         }

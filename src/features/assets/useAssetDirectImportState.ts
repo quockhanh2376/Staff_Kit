@@ -10,7 +10,7 @@ import type {
     AssetRecord,
     AssetSeedItemInput,
 } from "../../types/staff"
-import { getErrorMessage } from "../../lib/utils"
+import { getUserErrorMessage } from "../../lib/errorHandling"
 import {
     buildManualSerializedAssetCreatedMessage,
     buildManualSerializedAssetRequiredMessage,
@@ -81,7 +81,7 @@ export function useAssetDirectImportState({
             const categories = await staffApi.listAssetCategories()
             setAssetCategories(categories)
         } catch (error) {
-            setGlobalError(getErrorMessage(error))
+            setGlobalError(getUserErrorMessage(error))
         } finally {
             setLoadingCategories(false)
         }
@@ -133,7 +133,7 @@ export function useAssetDirectImportState({
                 setPreview(null)
                 setReport(null)
             } catch (error) {
-                setGlobalError(getErrorMessage(error))
+                setGlobalError(getUserErrorMessage(error))
             } finally {
                 setInspectingFile(false)
             }
@@ -157,7 +157,7 @@ export function useAssetDirectImportState({
             setWizardOpen(true)
             setPanelMode("import")
         } catch (error) {
-            const message = getErrorMessage(error)
+            const message = getUserErrorMessage(error)
             if (!message.toLowerCase().includes("cancel")) {
                 setGlobalError(message)
             }
@@ -189,7 +189,7 @@ export function useAssetDirectImportState({
             setPreview(nextPreview)
             setReport(null)
         } catch (error) {
-            setGlobalError(getErrorMessage(error))
+            setGlobalError(getUserErrorMessage(error))
         } finally {
             setPreviewingImport(false)
         }
@@ -212,7 +212,7 @@ export function useAssetDirectImportState({
             )
             triggerReload()
         } catch (error) {
-            setGlobalError(getErrorMessage(error))
+            setGlobalError(getUserErrorMessage(error))
         } finally {
             setApprovingImport(false)
         }
@@ -262,7 +262,7 @@ export function useAssetDirectImportState({
             setManualAssetForm(EMPTY_MANUAL_ASSET_FORM)
             triggerReload()
         } catch (error) {
-            setManualAssetMessage(getErrorMessage(error))
+            setManualAssetMessage(getUserErrorMessage(error))
         } finally {
             setCreatingManualAsset(false)
         }
