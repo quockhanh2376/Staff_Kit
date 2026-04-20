@@ -91,7 +91,7 @@ export const SERIALIZED_ASSET_COLUMN_MAP: Record<
   },
   note: { key: "note", label: "Note", defaultWidth: 180, minWidth: 140 },
   status: { key: "status", label: "Status", defaultWidth: 120, minWidth: 100 },
-  holder: { key: "holder", label: "Holder", defaultWidth: 180, minWidth: 150 },
+  holder: { key: "holder", label: "Holder", defaultWidth: 220, minWidth: 190 },
 }
 
 const STORAGE_PREFIX = "staffkit:asset-dashboard-serialized-grid"

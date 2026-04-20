@@ -2,15 +2,23 @@ import { useMemo, useState } from "react"
 import {
   ArrowUpDown,
   Boxes,
+  Cpu,
+  Database,
   FileSpreadsheet,
-  GripVertical,
+  Headphones,
+  Keyboard,
+  Laptop,
+  Layers,
   LoaderCircle,
+  Monitor,
+  Mouse,
   PencilLine,
   PlusCircle,
-  RefreshCw,
   Search,
   Settings,
   Trash2,
+  Usb,
+  X,
 } from "lucide-react"
 import type { AssetCategoryDetailRecord } from "../../types/staff"
 import type { AuthState } from "../auth/useAuthState"
@@ -179,10 +187,88 @@ const dashboardShellPrimaryButtonClass =
   "inline-flex h-10 items-center gap-2 rounded-md border border-transparent bg-[#00d68f] px-5 text-sm font-semibold text-[#08130f] transition hover:bg-[#17e29a] disabled:cursor-not-allowed disabled:opacity-50"
 const dashboardShellSecondaryButtonClass =
   "inline-flex h-10 items-center gap-2 rounded-md border border-[#283140] bg-[#1a202b] px-4 text-sm font-medium text-slate-100 transition hover:bg-[#202737] disabled:cursor-not-allowed disabled:opacity-50"
-const dashboardShellIconButtonClass =
-  "flex h-10 w-10 items-center justify-center rounded-md border border-[#283140] bg-[#1a202b] text-[#c7cfdb] transition hover:bg-[#202737] disabled:cursor-not-allowed disabled:opacity-50"
 const dashboardShellLabelClass =
   "text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8a93a4]"
+
+const SERIALIZED_OVERVIEW_CARD_VISUALS = {
+  laptop: {
+    accentTextClass: "text-blue-400",
+    headerBgClass: "bg-blue-500/10",
+    contentBgClass: "bg-blue-500/[0.02]",
+    glowClass: "shadow-[0_0_12px_rgba(96,165,250,0.22)]",
+    Icon: Laptop,
+  },
+  wks: {
+    accentTextClass: "text-indigo-400",
+    headerBgClass: "bg-indigo-500/10",
+    contentBgClass: "bg-indigo-500/[0.02]",
+    glowClass: "shadow-[0_0_12px_rgba(129,140,248,0.22)]",
+    Icon: Monitor,
+  },
+  macair: {
+    accentTextClass: "text-purple-400",
+    headerBgClass: "bg-purple-500/10",
+    contentBgClass: "bg-purple-500/[0.02]",
+    glowClass: "shadow-[0_0_12px_rgba(192,132,252,0.22)]",
+    Icon: Cpu,
+  },
+  macmini: {
+    accentTextClass: "text-amber-400",
+    headerBgClass: "bg-amber-500/10",
+    contentBgClass: "bg-amber-500/[0.02]",
+    glowClass: "shadow-[0_0_12px_rgba(251,191,36,0.22)]",
+    Icon: Layers,
+  },
+  macpro: {
+    accentTextClass: "text-rose-400",
+    headerBgClass: "bg-rose-500/10",
+    contentBgClass: "bg-rose-500/[0.02]",
+    glowClass: "shadow-[0_0_12px_rgba(251,113,133,0.22)]",
+    Icon: Database,
+  },
+  imacpro: {
+    accentTextClass: "text-cyan-400",
+    headerBgClass: "bg-cyan-500/10",
+    contentBgClass: "bg-cyan-500/[0.02]",
+    glowClass: "shadow-[0_0_12px_rgba(34,211,238,0.22)]",
+    Icon: Monitor,
+  },
+  monitor: {
+    accentTextClass: "text-emerald-400",
+    headerBgClass: "bg-emerald-500/10",
+    contentBgClass: "bg-emerald-500/[0.02]",
+    glowClass: "shadow-[0_0_12px_rgba(16,185,129,0.22)]",
+    Icon: Monitor,
+  },
+  headset: {
+    accentTextClass: "text-orange-400",
+    headerBgClass: "bg-orange-500/10",
+    contentBgClass: "bg-orange-500/[0.02]",
+    glowClass: "shadow-[0_0_12px_rgba(251,146,60,0.22)]",
+    Icon: Headphones,
+  },
+  keyboard: {
+    accentTextClass: "text-lime-400",
+    headerBgClass: "bg-lime-500/10",
+    contentBgClass: "bg-lime-500/[0.02]",
+    glowClass: "shadow-[0_0_12px_rgba(163,230,53,0.22)]",
+    Icon: Keyboard,
+  },
+  mouse: {
+    accentTextClass: "text-pink-400",
+    headerBgClass: "bg-pink-500/10",
+    contentBgClass: "bg-pink-500/[0.02]",
+    glowClass: "shadow-[0_0_12px_rgba(244,114,182,0.22)]",
+    Icon: Mouse,
+  },
+  usb_type_c_hub: {
+    accentTextClass: "text-sky-400",
+    headerBgClass: "bg-sky-500/10",
+    contentBgClass: "bg-sky-500/[0.02]",
+    glowClass: "shadow-[0_0_12px_rgba(56,189,248,0.22)]",
+    Icon: Usb,
+  },
+} as const
 export function AssetDashboard({
   activeUserScope,
   auth,
@@ -206,6 +292,96 @@ export function AssetDashboard({
         : [],
     [assetDashboard.summary],
   )
+
+  const serializedOverviewCards = useMemo(() => {
+    const preferredCategoryCards = [
+      { key: "wks", label: "DESKTOP" },
+      { key: "imacpro", label: "IMAC PRO" },
+      { key: "laptop", label: "LAPTOP" },
+      { key: "macair", label: "MAC AIR" },
+      { key: "macmini", label: "MAC MINI" },
+      { key: "macpro", label: "MAC PRO" },
+      { key: "monitor", label: "MONITOR" },
+      { key: "headset", label: "HEADSET" },
+      { key: "keyboard", label: "KEYBOARD" },
+      { key: "mouse", label: "MOUSE" },
+      { key: "usb_type_c_hub", label: "USB TYPE-C HUB" },
+    ] as const
+
+    const counts = {
+      wks: 0,
+      imacpro: 0,
+      laptop: 0,
+      macair: 0,
+      macmini: 0,
+      macpro: 0,
+      monitor: 0,
+      headset: 0,
+      keyboard: 0,
+      mouse: 0,
+      usb_type_c_hub: 0,
+    }
+
+    for (const row of assetDashboard.serializedRows) {
+      const assetCode = row.assetCode.trim().toUpperCase()
+      const normalizedCategoryCode = normalizeSerializedAssetFilterText(row.categoryCode)
+
+      if (assetCode.startsWith("VNIMACPRO")) {
+        counts.imacpro += 1
+        continue
+      }
+      if (assetCode.startsWith("VNMACMINI")) {
+        counts.macmini += 1
+        continue
+      }
+      if (assetCode.startsWith("VNMACAIR")) {
+        counts.macair += 1
+        continue
+      }
+      if (assetCode.startsWith("VNMACPRO")) {
+        counts.macpro += 1
+        continue
+      }
+      if (assetCode.startsWith("VNWKS")) {
+        counts.wks += 1
+        continue
+      }
+      if (assetCode.startsWith("VNMON")) {
+        counts.monitor += 1
+        continue
+      }
+      if (assetCode.startsWith("VNLAP")) {
+        counts.laptop += 1
+        continue
+      }
+
+      if (normalizedCategoryCode === "monitor") {
+        counts.monitor += 1
+        continue
+      }
+      if (normalizedCategoryCode === "headset") {
+        counts.headset += 1
+        continue
+      }
+      if (normalizedCategoryCode === "keyboard") {
+        counts.keyboard += 1
+        continue
+      }
+      if (normalizedCategoryCode === "mouse") {
+        counts.mouse += 1
+        continue
+      }
+      if (normalizedCategoryCode === "usb_type_c_hub") {
+        counts.usb_type_c_hub += 1
+      }
+    }
+
+    return preferredCategoryCards.map((card) => ({
+      ...card,
+      value: counts[card.key],
+      isWide: card.key === "usb_type_c_hub",
+    }))
+  }, [assetDashboard.serializedRows])
 
   const quantityRowsById = useMemo(
     () =>
@@ -244,11 +420,11 @@ export function AssetDashboard({
 
   const serializedCategoryOptions = useMemo(() => {
     if (activeTab !== "serialized") {
-      return [{ value: ALL_SERIALIZED_ASSET_CATEGORY_FILTER, label: "All Categories" }]
+      return [{ value: ALL_SERIALIZED_ASSET_CATEGORY_FILTER, label: "Categories" }]
     }
 
     const options = new Map<string, string>([
-      [ALL_SERIALIZED_ASSET_CATEGORY_FILTER, "All Categories"],
+      [ALL_SERIALIZED_ASSET_CATEGORY_FILTER, "Categories"],
     ])
 
     for (const detail of assetDashboard.categoryDetails) {
@@ -318,25 +494,44 @@ export function AssetDashboard({
     setSerializedCategoryFilter(ALL_SERIALIZED_ASSET_CATEGORY_FILTER)
   }
 
-  const filterControls = activeTab === "serialized" ? (
-    <div className="flex min-w-[320px] flex-1 flex-wrap items-center gap-3">
-      <label className="relative min-w-[260px] flex-1">
+  const hasActiveSerializedFilters =
+    serializedSearchTerm.trim().length > 0 ||
+    serializedCategoryFilter !== ALL_SERIALIZED_ASSET_CATEGORY_FILTER
+
+  const searchControl = activeTab === "serialized" ? (
+    <label className="relative w-full sm:w-[384px] xl:w-[432px]">
         <Search
           size={15}
           className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#8f98a8]"
         />
         <input
           aria-label="Search serialized assets"
-          className={`${dashboardInputClass} pl-9`}
+          className={`${dashboardInputClass} pl-9 pr-10`}
           onChange={(event) => setSerializedSearchTerm(event.target.value)}
           placeholder="Search computer, asset code, holder, model..."
           type="text"
           value={serializedSearchTerm}
         />
+        <button
+          aria-label="Clear serialized search and filters"
+          className={`absolute right-2 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-[#8f98a8] transition hover:bg-[#202737] hover:text-slate-100 disabled:cursor-default disabled:hover:bg-transparent ${
+            hasActiveSerializedFilters ? "opacity-100" : "opacity-35"
+          }`}
+          disabled={!hasActiveSerializedFilters}
+          onClick={clearSerializedFilters}
+          type="button"
+          title="Clear"
+        >
+          <X size={14} />
+        </button>
       </label>
+  ) : null
+
+  const filterControls = activeTab === "serialized" ? (
+    <div className="flex min-w-0 flex-wrap items-center gap-2 max-lg:w-full">
       <select
         aria-label="Filter serialized assets by category"
-        className={`${dashboardInputClass} w-full sm:w-[220px]`}
+        className={`${dashboardInputClass} w-full sm:w-[170px] xl:w-[180px]`}
         onChange={(event) => setSerializedCategoryFilter(event.target.value)}
         value={serializedCategoryFilter}
       >
@@ -346,15 +541,27 @@ export function AssetDashboard({
           </option>
         ))}
       </select>
-      <button
-        className={dashboardShellSecondaryButtonClass}
-        onClick={clearSerializedFilters}
-        type="button"
-      >
-        Clear Filters
-      </button>
     </div>
   ) : null
+
+  const tabControls = (
+    <div className="flex flex-wrap items-center gap-2">
+      {(["serialized", "quantity", "categories"] as const).map((tab) => (
+        <button
+          key={tab}
+          className={
+            activeTab === tab
+              ? "rounded-full border border-[#00d68f] bg-[#0d1f18] px-5 py-2 text-sm font-semibold text-[#00d68f]"
+              : "rounded-full border border-[#293244] bg-[#1a202b] px-5 py-2 text-sm font-semibold text-[#8f98a8] transition hover:border-[#354055] hover:bg-[#202737] hover:text-slate-100"
+          }
+          onClick={() => setActiveTab(tab)}
+          type="button"
+        >
+          {getAssetDashboardTabLabel(tab)}
+        </button>
+      ))}
+    </div>
+  )
 
   const openNewCategoryDraft = () => {
     setCategoryDraft(buildEmptyAssetCategoryDraft())
@@ -480,37 +687,16 @@ export function AssetDashboard({
   return (
     <div className={dashboardShellClass}>
       <div className="w-full">
-        <div className="flex flex-col items-start gap-4">
+        <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2 text-sm font-semibold text-white">
             <Boxes size={16} className="text-[#00d68f]" />
             <span className="text-[17px] font-bold tracking-[0.01em]">Asset Dashboard</span>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            <button
-              className={dashboardShellIconButtonClass}
-              onClick={() => void assetDashboard.refreshDashboard()}
-              type="button"
-              disabled={assetDashboard.isRefreshingDashboard || assetDashboard.isLoadingDashboard}
-              aria-label={
-                assetDashboard.isRefreshingDashboard || assetDashboard.isLoadingDashboard
-                  ? "Refreshing asset dashboard"
-                  : "Refresh asset dashboard"
-              }
-              aria-busy={
-                assetDashboard.isRefreshingDashboard || assetDashboard.isLoadingDashboard
-              }
-              title="Refresh"
-            >
-              <RefreshCw
-                className={
-                  assetDashboard.isRefreshingDashboard || assetDashboard.isLoadingDashboard
-                    ? "animate-spin"
-                    : undefined
-                }
-                size={16}
-              />
-            </button>
+          {searchControl}
+          {filterControls}
+
+          <div className="ml-auto flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2 max-lg:w-full max-lg:justify-start">
             <button
               className={dashboardShellPrimaryButtonClass}
               onClick={assetImport.openImportWizard}
@@ -518,7 +704,7 @@ export function AssetDashboard({
               disabled={!auth.canImportData}
             >
               <FileSpreadsheet size={16} />
-              Import Asset
+              Import
             </button>
             <button
               className={dashboardShellSecondaryButtonClass}
@@ -527,10 +713,9 @@ export function AssetDashboard({
               disabled={!auth.isAdminAccount}
             >
               <PlusCircle size={16} />
-              Add Asset
+              Add
             </button>
-
-            {filterControls}
+            {tabControls}
           </div>
 
           {assetDashboard.statusMessage && (
@@ -539,44 +724,89 @@ export function AssetDashboard({
             </div>
           )}
 
-          <div className="grid w-full gap-4 sm:grid-cols-2 xl:grid-cols-5">
-            {assetDashboard.isLoadingDashboard && !assetDashboard.summary
-              ? Array.from({ length: 5 }, (_, index) => (
-                  <div
-                    key={index}
-                    className="flex min-h-[98px] flex-col justify-between rounded-[10px] border border-[#252d3b] bg-[#0b0f15] px-5 py-4"
-                  >
-                    <div className="h-3 w-24 animate-pulse rounded bg-[#1c2430]" />
-                    <div className="mt-4 h-8 w-14 animate-pulse rounded bg-[#1c2430]" />
-                  </div>
-                ))
-              : summaryCards.map((card) => (
-                  <div
-                    key={card.key}
-                    className="flex min-h-[98px] flex-col justify-between rounded-[10px] border border-[#252d3b] bg-[#0b0f15] px-5 py-4"
-                  >
-                    <div className={dashboardShellLabelClass}>{card.label}</div>
-                    <div className="mt-4 text-[28px] font-bold leading-none text-white">{card.value}</div>
-                  </div>
-                ))}
-          </div>
+          {activeTab === "serialized" ? (
+            <div className="w-full overflow-x-auto rounded-[12px] border border-[#273041] bg-[#171c24]">
+              <div className="flex min-w-max items-stretch">
+                {assetDashboard.isLoadingDashboard && assetDashboard.serializedRows.length === 0
+                  ? Array.from({ length: 11 }, (_, index) => (
+                      <div
+                        key={index}
+                        className={`flex shrink-0 flex-col border-r border-[#273041] ${index === 10 ? "w-[150px]" : "w-[118px]"}`}
+                      >
+                        <div className="border-b border-[#273041] px-3 py-3">
+                          <div
+                            className={`h-3 animate-pulse rounded bg-[#243041] ${index === 10 ? "w-24" : "w-16"}`}
+                          />
+                        </div>
+                        <div className="flex flex-1 items-center justify-center px-4 py-5">
+                          <div className="h-8 w-10 animate-pulse rounded bg-[#243041]" />
+                        </div>
+                      </div>
+                    ))
+                  : serializedOverviewCards.map((card) => (
+                      (() => {
+                        const visual = SERIALIZED_OVERVIEW_CARD_VISUALS[card.key]
+                        const Icon = visual.Icon
+                        return (
+                          <div
+                            key={card.key}
+                            className={`group relative flex shrink-0 flex-col border-r border-[#273041]/70 transition-all duration-300 last:border-r-0 ${card.isWide ? "w-[150px]" : "w-[118px]"}`}
+                          >
+                            <div className="border-b border-[#273041]/70 bg-[#151921] px-3 py-3 transition-colors group-hover:bg-[#1a212c]">
+                              <div className="flex items-center justify-between gap-2">
+                                <span
+                                  className={`truncate pr-1 text-[12.5px] font-bold uppercase tracking-tight ${visual.accentTextClass}`}
+                                  title={card.label}
+                                >
+                                  {card.label}
+                                </span>
+                                <span className={`shrink-0 opacity-70 transition-opacity group-hover:opacity-100 ${visual.accentTextClass}`}>
+                                  <Icon size={14} />
+                                </span>
+                              </div>
+                            </div>
+                            <div
+                              className={`flex flex-1 items-center justify-center px-4 py-5 transition-colors duration-300 group-hover:bg-white/[0.04] ${visual.contentBgClass}`}
+                            >
+                              <span
+                                className={`text-[21px] font-black leading-none tracking-tight text-white transition-transform duration-300 group-hover:scale-110 ${visual.glowClass}`}
+                              >
+                                {card.value}
+                              </span>
+                            </div>
+                            <div
+                              className={`absolute bottom-0 left-0 right-0 h-[2.5px] opacity-25 transition-all duration-300 group-hover:opacity-100 ${visual.headerBgClass}`}
+                            />
+                          </div>
+                        )
+                      })()
+                    ))}
+              </div>
+            </div>
+          ) : (
+            <div className="grid w-full gap-4 sm:grid-cols-2 xl:grid-cols-5">
+              {assetDashboard.isLoadingDashboard && !assetDashboard.summary
+                ? Array.from({ length: 5 }, (_, index) => (
+                    <div
+                      key={index}
+                      className="flex min-h-[98px] flex-col justify-between rounded-[10px] border border-[#252d3b] bg-[#0b0f15] px-5 py-4"
+                    >
+                      <div className="h-3 w-24 animate-pulse rounded bg-[#1c2430]" />
+                      <div className="mt-4 h-8 w-14 animate-pulse rounded bg-[#1c2430]" />
+                    </div>
+                  ))
+                : summaryCards.map((card) => (
+                    <div
+                      key={card.key}
+                      className="flex min-h-[98px] flex-col justify-between rounded-[10px] border border-[#252d3b] bg-[#0b0f15] px-5 py-4"
+                    >
+                      <div className={dashboardShellLabelClass}>{card.label}</div>
+                      <div className="mt-4 text-[28px] font-bold leading-none text-white">{card.value}</div>
+                    </div>
+                  ))}
+            </div>
+          )}
 
-          <div className="flex flex-wrap items-center gap-3">
-            {(["serialized", "quantity", "categories"] as const).map((tab) => (
-              <button
-                key={tab}
-                className={
-                  activeTab === tab
-                    ? "rounded-full border border-[#00d68f] bg-[#0d1f18] px-5 py-2 text-sm font-semibold text-[#00d68f]"
-                    : "rounded-full border border-[#293244] bg-[#1a202b] px-5 py-2 text-sm font-semibold text-[#8f98a8] transition hover:border-[#354055] hover:bg-[#202737] hover:text-slate-100"
-                }
-                onClick={() => setActiveTab(tab)}
-                type="button"
-              >
-                {getAssetDashboardTabLabel(tab)}
-              </button>
-            ))}
-          </div>
         </div>
       </div>
 
@@ -636,7 +866,9 @@ const dashboardInputClass =
 const dashboardTableShellClass =
   "overflow-hidden rounded-[12px] border border-slate-800 bg-[#0d1117]"
 const dashboardTableHeadClass =
-  "bg-[#1c2128] text-[11px] uppercase tracking-[0.08em] text-slate-400"
+  "bg-[#1c2128] text-[13px] uppercase tracking-[0.06em] text-emerald-400/90"
+const dashboardTableHeaderButtonClass =
+  "flex min-w-0 flex-1 items-center gap-2 text-left text-[13px] font-black uppercase tracking-wider text-emerald-400/90 transition-colors hover:text-emerald-400"
 
 function stripDiacriticsForSearch(str: string): string {
   return str.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase()
@@ -689,6 +921,12 @@ function getCellSearchText(
     case "status": return ""
     case "holder": return [row.holderFullName, row.holderEmployeeId].filter(Boolean).join(" ")
   }
+}
+
+function formatSerializedAssetIdDisplay(assetCode: string): string {
+  const trimmed = assetCode.trim()
+  const numericSuffix = trimmed.match(/(\d+)$/)?.[1]
+  return numericSuffix && numericSuffix.length > 0 ? numericSuffix : trimmed
 }
 
 function SerializedDashboardTable({
@@ -756,14 +994,16 @@ function SerializedDashboardTable({
               <thead className={dashboardTableHeadClass}>
                 <tr>
                   {orderedColumns.map((column) => {
-                    const sortIndicator =
-                      sort.key !== column.key ? (
-                        <ArrowUpDown size={12} />
-                      ) : sort.direction === "asc" ? (
-                        <span className="text-[10px]">ASC</span>
-                      ) : (
-                        <span className="text-[10px]">DESC</span>
-                      )
+                    const sortIndicator = (
+                      <ArrowUpDown
+                        size={14}
+                        className={`transition-colors ${
+                          sort.key === column.key
+                            ? "text-emerald-400/70"
+                            : "text-slate-600 group-hover:text-emerald-500/50"
+                        }`}
+                      />
+                    )
 
                     return (
                       <th
@@ -794,16 +1034,12 @@ function SerializedDashboardTable({
                             </button>
                           ) : null}
                           <button
-                            className="flex min-w-0 flex-1 items-center gap-2 text-left font-semibold"
+                            className={dashboardTableHeaderButtonClass}
                             onClick={() => toggleSort(column.key)}
                             type="button"
                           >
-                            <GripVertical
-                              size={12}
-                              className="shrink-0 text-slate-600 transition group-hover:text-slate-500"
-                            />
                             <span className="truncate">{column.label}</span>
-                            <span className="ml-auto inline-flex shrink-0 items-center text-slate-500">
+                            <span className="ml-auto inline-flex shrink-0 items-center">
                               {sortIndicator}
                             </span>
                           </button>
@@ -867,8 +1103,12 @@ function renderSerializedCellValue(
 ) {
   switch (columnKey) {
     case "id": {
-      const id = row.assetCode
-      return <span className="whitespace-nowrap"><HighlightText text={id} query={searchTerm} /></span>
+      const id = formatSerializedAssetIdDisplay(row.assetCode)
+      return (
+        <span className="whitespace-nowrap font-black text-emerald-400">
+          <HighlightText text={id} query={searchTerm} />
+        </span>
+      )
     }
     case "category": {
       const cat = row.categoryName ?? row.categoryCode ?? "\u2014"
@@ -914,10 +1154,14 @@ function renderSerializedCellValue(
       const holderName = row.holderFullName?.trim()
       const holderId = formatAssetDashboardHolderEmployeeId(row.holderEmployeeId)
       return (
-        <div className="flex flex-col gap-0.5">
-          {holderName && <span><HighlightText text={holderName} query={searchTerm} /></span>}
+        <div className="flex min-w-0 flex-col gap-1">
+          {holderName && (
+            <span className="truncate font-semibold leading-tight text-slate-100" title={holderName}>
+              <HighlightText text={holderName} query={searchTerm} />
+            </span>
+          )}
           {holderId && (
-            <span className="text-xs font-semibold text-emerald-400">
+            <span className="truncate text-xs font-bold leading-tight text-emerald-400" title={holderId}>
               <HighlightText text={holderId} query={searchTerm} />
             </span>
           )}
@@ -1132,11 +1376,9 @@ function QuantityDashboardTable({
                           <Settings size={14} />
                         </button>
                       ) : null}
-                      <GripVertical
-                        size={12}
-                        className="shrink-0 text-slate-600 transition group-hover:text-slate-500"
-                      />
-                      <span className="truncate font-semibold">{column.label}</span>
+                      <span className="truncate text-[13px] font-black uppercase tracking-wider text-emerald-400/90">
+                        {column.label}
+                      </span>
                     </div>
                     <span
                       className="absolute inset-y-0 right-0 flex w-3 cursor-col-resize items-center justify-center"
@@ -1146,7 +1388,9 @@ function QuantityDashboardTable({
                     </span>
                   </th>
                 ))}
-                <th className="px-3 py-2.5 font-semibold">Action</th>
+                <th className="px-3 py-2.5 text-[13px] font-black uppercase tracking-wider text-emerald-400/90">
+                  Action
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -1356,11 +1600,9 @@ function CategoryManagementPanel({
                               <Settings size={14} />
                             </button>
                           ) : null}
-                          <GripVertical
-                            size={12}
-                            className="shrink-0 text-slate-600 transition group-hover:text-slate-500"
-                          />
-                          <span className="truncate font-semibold">{column.label}</span>
+                          <span className="truncate text-[13px] font-black uppercase tracking-wider text-emerald-400/90">
+                            {column.label}
+                          </span>
                         </div>
                         <span
                           className="absolute inset-y-0 right-0 flex w-3 cursor-col-resize items-center justify-center"

@@ -1,6 +1,46 @@
 # Daily Log - 2026-04-20
 
 ## Objective
+Polish the `Asset Dashboard` serialized UI so the table header, ID presentation, holder layout, and category overview cards align more closely with the approved compact mock.
+
+## Work Completed
+- Updated the serialized table header in [AssetDashboard.tsx](/e:/Staff_Kit/src/features/assets/AssetDashboard.tsx) to match the mock more closely:
+  - removed the leading drag icon before column labels
+  - switched header typography to the stronger emerald treatment
+  - removed `ASC / DESC` text in favor of the slimmer sort icon only
+- Changed serialized `ID` rendering on the UI:
+  - database value still keeps the full asset code like `VNWKS252`
+  - UI now shows only the numeric suffix like `252`
+  - search behavior still uses the full stored asset code
+- Refined serialized `Holder` rendering and width:
+  - name locked to the first line
+  - employee code locked to the second line
+  - widened the `Holder` column in [serializedAssetGridConfig.ts](/e:/Staff_Kit/src/features/assets/serializedAssetGridConfig.ts) for longer names
+- Restyled the serialized category overview strip to follow the visual reference in [AssetDashboard.jsx](/e:/Staff_Kit/ExSource/AssetDashboard.jsx):
+  - removed the colored title-strip background
+  - kept per-category text/icon colors
+  - kept the subtle body tint and bottom accent line
+- Updated the UI rail in [asset-dashboard-phase1-ui.test.ts](/e:/Staff_Kit/scripts/asset-dashboard-phase1-ui.test.ts):
+  - category filter default label now checks for `Categories`
+  - clear-filter behavior now checks the search-bar clear button instead of a standalone `Clear Filters` button
+
+## Validation
+- Ran `node --experimental-strip-types scripts/asset-dashboard-phase1-ui.test.ts`
+- Ran `npx eslint src/features/assets/AssetDashboard.tsx src/features/assets/serializedAssetGridConfig.ts scripts/asset-dashboard-phase1-ui.test.ts`
+- Ran `npx tsc -b --pretty false`
+- Result: passed
+
+## Current State
+The serialized Asset Dashboard now follows the current compact mock more closely:
+- stronger emerald table headers
+- cleaner header controls
+- numeric-only displayed IDs
+- two-line holder cells
+- neutral title strip for the category overview cards
+
+# Daily Log - 2026-04-20
+
+## Objective
 Audit the live `main` branch, confirm local/remote sync, verify the current codebase end-to-end, and capture the active task context before the next slice starts.
 
 ## Current Mainline State
