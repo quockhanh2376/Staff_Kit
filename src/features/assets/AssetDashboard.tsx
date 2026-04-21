@@ -687,7 +687,7 @@ export function AssetDashboard({
   return (
     <div className={dashboardShellClass}>
       <div className="w-full">
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <div className="flex items-center gap-2 text-sm font-semibold text-white">
             <Boxes size={16} className="text-[#00d68f]" />
             <span className="text-[17px] font-bold tracking-[0.01em]">Asset Dashboard</span>
@@ -733,13 +733,13 @@ export function AssetDashboard({
                         key={index}
                         className={`flex shrink-0 flex-col border-r border-[#273041] ${index === 10 ? "w-[150px]" : "w-[118px]"}`}
                       >
-                        <div className="border-b border-[#273041] px-3 py-3">
+                        <div className="border-b border-[#273041] px-3 py-2.5">
                           <div
                             className={`h-3 animate-pulse rounded bg-[#243041] ${index === 10 ? "w-24" : "w-16"}`}
                           />
                         </div>
-                        <div className="flex flex-1 items-center justify-center px-4 py-5">
-                          <div className="h-8 w-10 animate-pulse rounded bg-[#243041]" />
+                        <div className="flex flex-1 items-center justify-center px-4 py-3.5">
+                          <div className="h-7 w-9 animate-pulse rounded bg-[#243041]" />
                         </div>
                       </div>
                     ))
@@ -750,9 +750,9 @@ export function AssetDashboard({
                         return (
                           <div
                             key={card.key}
-                            className={`group relative flex shrink-0 flex-col border-r border-[#273041]/70 transition-all duration-300 last:border-r-0 ${card.isWide ? "w-[150px]" : "w-[118px]"}`}
+                            className={`group flex shrink-0 flex-col border-r border-[#273041]/70 transition-all duration-300 last:border-r-0 ${card.isWide ? "w-[150px]" : "w-[118px]"}`}
                           >
-                            <div className="border-b border-[#273041]/70 bg-[#151921] px-3 py-3 transition-colors group-hover:bg-[#1a212c]">
+                            <div className="border-b border-[#273041]/20 px-3 py-2.5">
                               <div className="flex items-center justify-between gap-2">
                                 <span
                                   className={`truncate pr-1 text-[12.5px] font-bold uppercase tracking-tight ${visual.accentTextClass}`}
@@ -760,23 +760,19 @@ export function AssetDashboard({
                                 >
                                   {card.label}
                                 </span>
-                                <span className={`shrink-0 opacity-70 transition-opacity group-hover:opacity-100 ${visual.accentTextClass}`}>
+                                <span className={`shrink-0 opacity-60 transition-opacity group-hover:opacity-100 ${visual.accentTextClass}`}>
                                   <Icon size={14} />
                                 </span>
                               </div>
                             </div>
-                            <div
-                              className={`flex flex-1 items-center justify-center px-4 py-5 transition-colors duration-300 group-hover:bg-white/[0.04] ${visual.contentBgClass}`}
-                            >
+                            <div className={`h-[3px] w-full bg-current opacity-50 transition-all group-hover:opacity-100 ${visual.accentTextClass}`} />
+                            <div className="flex flex-1 items-center justify-center px-4 py-3.5 transition-colors duration-300 group-hover:bg-white/[0.04]">
                               <span
-                                className={`text-[21px] font-black leading-none tracking-tight text-white transition-transform duration-300 group-hover:scale-110 ${visual.glowClass}`}
+                                className={`text-[19px] font-black leading-none tracking-tight text-white transition-transform duration-300 group-hover:scale-110 ${visual.glowClass}`}
                               >
                                 {card.value}
                               </span>
                             </div>
-                            <div
-                              className={`absolute bottom-0 left-0 right-0 h-[2.5px] opacity-25 transition-all duration-300 group-hover:opacity-100 ${visual.headerBgClass}`}
-                            />
                           </div>
                         )
                       })()
@@ -810,7 +806,7 @@ export function AssetDashboard({
         </div>
       </div>
 
-      <div className="mt-6">
+      <div className="mt-3">
         {activeTab === "serialized" ? (
           <SerializedDashboardTable
             key={activeUserScope}
