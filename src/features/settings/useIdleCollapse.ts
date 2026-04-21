@@ -6,8 +6,8 @@ type IdleCollapseBinding = Pick<
     "onPointerDownCapture" | "onFocusCapture" | "onInputCapture" | "onKeyDownCapture" | "onScrollCapture"
 >
 
-export function useIdleCollapse(idleMs: number) {
-    const [isExpanded, setExpanded] = useState(true)
+export function useIdleCollapse(idleMs: number, initialExpanded = true) {
+    const [isExpanded, setExpanded] = useState(initialExpanded)
     const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
     const clearIdleTimer = useCallback(() => {

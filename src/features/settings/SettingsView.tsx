@@ -81,8 +81,8 @@ export function SettingsView({
     triggerReload,
 }: SettingsViewProps) {
     const imp = importState
-    const adminPortalCard = useIdleCollapse(60000)
-    const databaseBackupCard = useIdleCollapse(60000)
+    const adminPortalCard = useIdleCollapse(60000, false)
+    const databaseBackupCard = useIdleCollapse(60000, false)
 
     return (
         <section className="bg-[#0f141b] px-4 py-7 text-slate-300 md:px-8">
