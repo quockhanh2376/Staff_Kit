@@ -499,7 +499,7 @@ export function AssetDashboard({
     serializedCategoryFilter !== ALL_SERIALIZED_ASSET_CATEGORY_FILTER
 
   const searchControl = activeTab === "serialized" ? (
-    <label className="relative w-full sm:w-[384px] xl:w-[432px]">
+    <label className="relative min-w-0 flex-1 max-sm:w-full sm:w-[320px] xl:w-[280px] 2xl:w-[360px]">
         <Search
           size={15}
           className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#8f98a8]"
@@ -528,10 +528,10 @@ export function AssetDashboard({
   ) : null
 
   const filterControls = activeTab === "serialized" ? (
-    <div className="flex min-w-0 flex-wrap items-center gap-2 max-lg:w-full">
+    <div className="flex min-w-0 items-center gap-2 max-lg:w-full">
       <select
         aria-label="Filter serialized assets by category"
-        className={`${dashboardInputClass} w-full sm:w-[170px] xl:w-[180px]`}
+        className={`${dashboardInputClass} w-full sm:w-[170px] xl:w-[160px] 2xl:w-[180px]`}
         onChange={(event) => setSerializedCategoryFilter(event.target.value)}
         value={serializedCategoryFilter}
       >
@@ -545,14 +545,14 @@ export function AssetDashboard({
   ) : null
 
   const tabControls = (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="flex flex-wrap items-center gap-2 xl:flex-nowrap">
       {(["serialized", "quantity", "categories"] as const).map((tab) => (
         <button
           key={tab}
           className={
             activeTab === tab
-              ? "rounded-full border border-[#00d68f] bg-[#0d1f18] px-5 py-2 text-sm font-semibold text-[#00d68f]"
-              : "rounded-full border border-[#293244] bg-[#1a202b] px-5 py-2 text-sm font-semibold text-[#8f98a8] transition hover:border-[#354055] hover:bg-[#202737] hover:text-slate-100"
+              ? "rounded-full border border-[#00d68f] bg-[#0d1f18] px-4 py-2 text-[13px] font-semibold text-[#00d68f] xl:px-3.5"
+              : "rounded-full border border-[#293244] bg-[#1a202b] px-4 py-2 text-[13px] font-semibold text-[#8f98a8] transition hover:border-[#354055] hover:bg-[#202737] hover:text-slate-100 xl:px-3.5"
           }
           onClick={() => setActiveTab(tab)}
           type="button"
@@ -687,39 +687,42 @@ export function AssetDashboard({
   return (
     <div className={dashboardShellClass}>
       <div className="w-full">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <div className="flex items-center gap-2 text-sm font-semibold text-white">
-            <Boxes size={16} className="text-[#00d68f]" />
-            <span className="text-[17px] font-bold tracking-[0.01em]">Asset Dashboard</span>
-          </div>
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 xl:flex-nowrap">
+              <div className="flex shrink-0 items-center gap-2 text-sm font-semibold text-white">
+                <Boxes size={16} className="text-[#00d68f]" />
+                <span className="text-[17px] font-bold tracking-[0.01em]">Asset Dashboard</span>
+              </div>
+              {searchControl}
+              {filterControls}
+            </div>
 
-          {searchControl}
-          {filterControls}
-
-          <div className="ml-auto flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2 max-lg:w-full max-lg:justify-start">
-            <button
-              className={dashboardShellPrimaryButtonClass}
-              onClick={assetImport.openImportWizard}
-              type="button"
-              disabled={!auth.canImportData}
-            >
-              <FileSpreadsheet size={16} />
-              Import
-            </button>
-            <button
-              className={dashboardShellSecondaryButtonClass}
-              onClick={assetImport.openManualAssetPanel}
-              type="button"
-              disabled={!auth.isAdminAccount}
-            >
-              <PlusCircle size={16} />
-              Add
-            </button>
-            {tabControls}
+            <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 xl:flex-nowrap">
+              <button
+                className={dashboardShellPrimaryButtonClass}
+                onClick={assetImport.openImportWizard}
+                type="button"
+                disabled={!auth.canImportData}
+              >
+                <FileSpreadsheet size={16} />
+                Import
+              </button>
+              <button
+                className={dashboardShellSecondaryButtonClass}
+                onClick={assetImport.openManualAssetPanel}
+                type="button"
+                disabled={!auth.isAdminAccount}
+              >
+                <PlusCircle size={16} />
+                Add
+              </button>
+              {tabControls}
+            </div>
           </div>
 
           {assetDashboard.statusMessage && (
-            <div className="mt-4 rounded-[10px] border border-emerald-500/25 bg-emerald-500/8 px-3 py-2 text-xs text-emerald-100">
+            <div className="rounded-[10px] border border-emerald-500/25 bg-emerald-500/8 px-3 py-2 text-xs text-emerald-100">
               {assetDashboard.statusMessage}
             </div>
           )}
