@@ -252,6 +252,33 @@ pub(crate) fn import_employee_asset_seed_conn(
             .clone()
             .unwrap_or_else(|| "Laptop".to_string());
 
+        let employee_row_id: Option<i64> = tx
+            .query_row(
+                "SELECT id FROM employees WHERE employee_id = ? LIMIT 1",
+                params![row.employee_id.as_str()],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|err| {
+                format!(
+                    "failed to find employee '{}' for loan: {err}",
+                    row.employee_id
+                )
+            })?;
+
+        let Some(emp_id) = employee_row_id else {
+            failed += 1;
+            errors.push(EmployeeAssetSeedErrorItem {
+                row_number: row.row_number,
+                entity_key: Some(asset_code.to_string()),
+                reason: format!(
+                    "employee '{}' was removed after preview; review and retry",
+                    row.employee_id
+                ),
+            });
+            continue;
+        };
+
         match asset::create_asset_tx(
             &tx,
             &asset::AssetUpsertInput {
@@ -270,43 +297,26 @@ pub(crate) fn import_employee_asset_seed_conn(
             },
         ) {
             Ok(record) => {
-                // Look up employee internal row id and create an active loan
-                let employee_row_id: Option<i64> = tx
-                    .query_row(
-                        "SELECT id FROM employees WHERE employee_id = ? LIMIT 1",
-                        params![row.employee_id.as_str()],
-                        |r| r.get(0),
+                tx.execute(
+                    "INSERT INTO asset_loans(asset_id, employee_id_fk, borrowed_at) VALUES(?, ?, datetime('now'))",
+                    params![record.id, emp_id],
+                )
+                .map_err(|err| {
+                    format!(
+                        "failed to create loan for asset '{}': {err}",
+                        record.asset_code
                     )
-                    .optional()
-                    .map_err(|err| {
-                        format!(
-                            "failed to find employee '{}' for loan: {err}",
-                            row.employee_id
-                        )
-                    })?;
-
-                if let Some(emp_id) = employee_row_id {
-                    tx.execute(
-                        "INSERT INTO asset_loans(asset_id, employee_id_fk, borrowed_at) VALUES(?, ?, datetime('now'))",
-                        params![record.id, emp_id],
+                })?;
+                tx.execute(
+                    "UPDATE assets SET status = 'assigned', updated_at = datetime('now') WHERE id = ?",
+                    params![record.id],
+                )
+                .map_err(|err| {
+                    format!(
+                        "failed to mark asset '{}' as assigned: {err}",
+                        record.asset_code
                     )
-                    .map_err(|err| {
-                        format!(
-                            "failed to create loan for asset '{}': {err}",
-                            record.asset_code
-                        )
-                    })?;
-                    tx.execute(
-                        "UPDATE assets SET status = 'assigned', updated_at = datetime('now') WHERE id = ?",
-                        params![record.id],
-                    )
-                    .map_err(|err| {
-                        format!(
-                            "failed to mark asset '{}' as assigned: {err}",
-                            record.asset_code
-                        )
-                    })?;
-                }
+                })?;
 
                 imported += 1;
                 imported_asset_codes.push(record.asset_code);
@@ -1169,6 +1179,59 @@ mod tests {
                 ("VNLAP294".to_string(), "ASWVN1303".to_string(), "assigned".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn import_employee_asset_seed_fails_rows_if_employee_disappears_after_preview() {
+        let mut conn = open_test_connection();
+        seed_employee(
+            &conn,
+            "ASWVN1302",
+            "Nguyen Van A",
+            Some("ASWVNLAP293"),
+            "employee_list",
+        );
+
+        let preview = preview_employee_asset_seed_conn(
+            &mut conn,
+            &EmployeeAssetSeedInput {
+                staff_group: Some("employee_list".to_string()),
+                ..EmployeeAssetSeedInput::default()
+            },
+        )
+        .expect("preview employee asset seed before employee removal");
+
+        conn.execute("DELETE FROM employees WHERE employee_id = 'ASWVN1302'", [])
+            .expect("remove employee after preview");
+
+        let report = import_employee_asset_seed_conn(
+            &mut conn,
+            &EmployeeAssetSeedInput {
+                snapshot_id: Some(preview.snapshot_id),
+                ..EmployeeAssetSeedInput::default()
+            },
+        )
+        .expect("import employee asset seed after employee removal");
+
+        assert_eq!(report.snapshot_id, preview.snapshot_id);
+        assert_eq!(report.total_rows, 1);
+        assert_eq!(report.imported, 0);
+        assert_eq!(report.failed, 1);
+        assert_eq!(report.imported_asset_codes, Vec::<String>::new());
+        assert!(report
+            .errors
+            .iter()
+            .any(|item| item.reason.contains("removed after preview")));
+
+        let asset_count = conn
+            .query_row("SELECT COUNT(*) FROM assets", [], |row| row.get::<_, i64>(0))
+            .expect("count assets after failed import");
+        assert_eq!(asset_count, 0);
+
+        let loan_count = conn
+            .query_row("SELECT COUNT(*) FROM asset_loans", [], |row| row.get::<_, i64>(0))
+            .expect("count loans after failed import");
+        assert_eq!(loan_count, 0);
     }
 
     #[test]

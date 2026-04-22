@@ -793,6 +793,9 @@ fn ensure_asset_loan_schema(conn: &Connection) -> Result<(), String> {
     conn.execute("PRAGMA foreign_keys = OFF", [])
         .map_err(|err| format!("failed to disable foreign keys for asset_loans migration: {err}"))?;
 
+    conn.execute_batch("SAVEPOINT ensure_asset_loan_schema;")
+        .map_err(|err| format!("failed to open asset_loans migration savepoint: {err}"))?;
+
     let result = conn.execute_batch(
         r#"
         CREATE TABLE asset_loans_new (
@@ -814,10 +817,27 @@ fn ensure_asset_loan_schema(conn: &Connection) -> Result<(), String> {
         "#,
     );
 
-    conn.execute("PRAGMA foreign_keys = ON", [])
-        .map_err(|err| format!("failed to re-enable foreign keys after asset_loans migration: {err}"))?;
+    let finalize_result = match result {
+        Ok(()) => conn
+            .execute_batch("RELEASE SAVEPOINT ensure_asset_loan_schema;")
+            .map_err(|err| format!("failed to release asset_loans migration savepoint: {err}")),
+        Err(err) => {
+            let _ = conn.execute_batch(
+                "ROLLBACK TO SAVEPOINT ensure_asset_loan_schema; RELEASE SAVEPOINT ensure_asset_loan_schema;",
+            );
+            Err(format!(
+                "failed to migrate asset_loans to nullable borrow_request_id: {err}"
+            ))
+        }
+    };
 
-    result.map_err(|err| format!("failed to migrate asset_loans to nullable borrow_request_id: {err}"))
+    let foreign_key_result = conn
+        .execute("PRAGMA foreign_keys = ON", [])
+        .map_err(|err| format!("failed to re-enable foreign keys after asset_loans migration: {err}"));
+
+    finalize_result?;
+    foreign_key_result?;
+    Ok(())
 }
 
 fn ensure_borrow_request_columns(conn: &Connection) -> Result<(), String> {
