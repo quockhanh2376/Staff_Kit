@@ -1379,4 +1379,4 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - `npx tsc -b --pretty false`
 
 ## Git History Added
-- `TODO`
+- `7a42311` - `refactor: deprecate employee asset seed ui`
