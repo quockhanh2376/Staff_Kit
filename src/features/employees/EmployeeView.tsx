@@ -6,7 +6,6 @@ import {
     LoaderCircle,
     Search,
     Settings,
-    Upload,
     Users,
 } from "lucide-react"
 import { useState, useCallback } from "react"
@@ -66,8 +65,6 @@ type EmployeeViewProps = {
     columnState: ColumnState
     canEditEmployeeTable: boolean
     canEditEmployeeComputerName: boolean
-    canSeedEmployeeAssets: boolean
-    onOpenEmployeeAssetSeedDrawer: () => void
     selectedGroupLabel: string
     selectedGroupTotal: number
 }
@@ -78,8 +75,6 @@ export function EmployeeView({
     columnState,
     canEditEmployeeTable,
     canEditEmployeeComputerName,
-    canSeedEmployeeAssets,
-    onOpenEmployeeAssetSeedDrawer,
     selectedGroupLabel,
     selectedGroupTotal,
 }: EmployeeViewProps) {
@@ -465,17 +460,6 @@ export function EmployeeView({
                             >
                                 {edit.isTableEditMode ? "Cancel Edit" : "Edit"}
                             </button>
-                            {canSeedEmployeeAssets && (
-                                <button
-                                    className="inline-flex items-center gap-1.5 rounded-[8px] border border-[var(--border)] px-3 py-1.5 text-sm font-medium text-[var(--text-secondary)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
-                                    onClick={onOpenEmployeeAssetSeedDrawer}
-                                    type="button"
-                                    title="Preview serialized asset creation from the current Employee List filters"
-                                >
-                                    <Upload size={14} />
-                                    Seed Assets
-                                </button>
-                            )}
                             <button
                                 className="rounded-[8px] bg-[var(--primary)] px-3 py-1.5 text-sm font-semibold text-[#00131c] transition hover:brightness-110 disabled:opacity-50"
                                 onClick={() => void edit.handleSaveTableEdits()}

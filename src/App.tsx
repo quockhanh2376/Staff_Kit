@@ -16,7 +16,6 @@ import {
 import { useAuthState } from "./features/auth/useAuthState"
 import { useColumnState } from "./features/columns/useColumnState"
 import { useEmployeeState } from "./features/employees/useEmployeeState"
-import { useEmployeeAssetSeedState } from "./features/employees/useEmployeeAssetSeedState"
 import { useTableEdit } from "./features/employees/useTableEdit"
 import { useImportState } from "./features/import/useImportState"
 import { useTeamState } from "./features/teams/useTeamState"
@@ -28,7 +27,6 @@ import { useSettingsState } from "./features/settings/useSettingsState"
 // Feature views
 import { LoginPage } from "./features/auth/LoginPage"
 import { EmployeeView } from "./features/employees/EmployeeView"
-import { EmployeeAssetSeedDrawer } from "./features/employees/EmployeeAssetSeedDrawer"
 import { ColumnsDrawer } from "./features/columns/ColumnsDrawer"
 import { ImportDrawer } from "./features/import/ImportDrawer"
 import { TeamView } from "./features/teams/TeamView"
@@ -140,19 +138,6 @@ function App() {
   // ── Import state ─────────────────────────────────────────────────────────────
   const imp = useImportState({
     staffGroupFilter: emp.staffGroupFilter,
-    setGlobalError,
-    triggerReload,
-  })
-
-  const employeeAssetSeed = useEmployeeAssetSeedState({
-    dbReady,
-    isAuthenticated,
-    canImportData: auth.canImportData,
-    staffGroupFilter: emp.staffGroupFilter,
-    searchTerm: emp.searchTerm,
-    teamFilter: emp.teamFilter,
-    startDateFrom: emp.startDateFilter,
-    startDateTo: "",
     setGlobalError,
     triggerReload,
   })
@@ -443,8 +428,6 @@ function App() {
               columnState={col}
               canEditEmployeeTable={auth.canEditEmployeeTable}
               canEditEmployeeComputerName={auth.canEditEmployeeComputerName}
-              canSeedEmployeeAssets={employeeAssetSeed.canOpenDrawer}
-              onOpenEmployeeAssetSeedDrawer={employeeAssetSeed.openDrawer}
               selectedGroupLabel={selectedGroupLabel}
               selectedGroupTotal={selectedGroupTotal}
             />
@@ -526,7 +509,6 @@ function App() {
       />
 
       <ImportDrawer importState={imp} />
-      <EmployeeAssetSeedDrawer seedState={employeeAssetSeed} />
       <AssetImportWizard assetImport={assetImport} />
     </div>
   )

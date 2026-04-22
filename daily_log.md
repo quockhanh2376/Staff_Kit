@@ -1349,3 +1349,34 @@ Ship `Staff_Kit` `2.0.1` as `project ST` with a LAN-only fixed-QR borrow flow, u
 - `7f9612a` - `feat: expose borrow admin commands`
 - `a046edd` - `feat: add lan borrow server`
 - `b16fdfe` - `feat: add desktop borrow approval ui`
+
+# Daily Log - 2026-04-22
+
+## Objective
+Deprecate the `employee_asset_seed` flow at the UI level while keeping the backend/API path intact as a fallback during transition, then sync repository state and NotebookLM context.
+
+## Work Completed
+- Removed `employee_asset_seed` wiring from [App.tsx](/e:/Staff_Kit/src/App.tsx):
+  - no `useEmployeeAssetSeedState`
+  - no `EmployeeAssetSeedDrawer` mount
+- Removed the `Seed Assets` action from [EmployeeView.tsx](/e:/Staff_Kit/src/features/employees/EmployeeView.tsx).
+- Kept backend/API contracts untouched:
+  - Rust commands still exist
+  - TypeScript API methods still exist
+  - snapshot/review/import backend path remains available for future fallback or controlled reintroduction
+- Updated [employee-asset-seed-ui.test.ts](/e:/Staff_Kit/scripts/employee-asset-seed-ui.test.ts) to assert the new state:
+  - backend/API still present
+  - UI entry points removed
+
+## Product Decision Locked
+- `Asset List import` is now the primary source-of-truth onboarding flow for assets.
+- `employee_asset_seed` is deprecated from the visible UI first.
+- Backend cleanup or full removal should happen in a later dedicated slice after confirming the fallback path is no longer needed.
+
+## Verification
+- `node --experimental-strip-types scripts/employee-asset-seed-ui.test.ts`
+- `npx eslint src/App.tsx src/features/employees/EmployeeView.tsx scripts/employee-asset-seed-ui.test.ts`
+- `npx tsc -b --pretty false`
+
+## Git History Added
+- `TODO`
