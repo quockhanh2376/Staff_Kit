@@ -299,6 +299,7 @@ pub(crate) fn apply_migrations(conn: &Connection) -> Result<(), String> {
     ensure_team_columns(conn)?;
     ensure_local_account_columns(conn)?;
     ensure_asset_model_tables(conn)?;
+    ensure_asset_loan_schema(conn)?;
     ensure_borrow_request_columns(conn)?;
     auth::ensure_local_accounts_seed(conn)?;
     normalize_staff_group_values(conn)?;
@@ -771,6 +772,52 @@ fn ensure_seeded_asset_category_prefixes(conn: &Connection) -> Result<(), String
             Err(err)
         }
     }
+}
+
+/// Ensures asset_loans.borrow_request_id is nullable so direct-assignment
+/// loans created by the employee seed fallback can exist without a borrow request.
+fn ensure_asset_loan_schema(conn: &Connection) -> Result<(), String> {
+    let borrow_request_id_notnull: Option<i64> = conn
+        .query_row(
+            "SELECT \"notnull\" FROM pragma_table_info('asset_loans') WHERE name = 'borrow_request_id'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|err| format!("failed to inspect asset_loans.borrow_request_id: {err}"))?;
+
+    if borrow_request_id_notnull != Some(1) {
+        return Ok(());
+    }
+
+    conn.execute("PRAGMA foreign_keys = OFF", [])
+        .map_err(|err| format!("failed to disable foreign keys for asset_loans migration: {err}"))?;
+
+    let result = conn.execute_batch(
+        r#"
+        CREATE TABLE asset_loans_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          asset_id INTEGER NOT NULL REFERENCES assets(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+          employee_id_fk INTEGER NOT NULL REFERENCES employees(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+          borrow_request_id INTEGER REFERENCES borrow_requests(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+          approved_by_account_id INTEGER REFERENCES app_local_accounts(id) ON UPDATE CASCADE ON DELETE SET NULL,
+          borrowed_at TEXT NOT NULL DEFAULT (datetime('now')),
+          returned_at TEXT
+        );
+        INSERT INTO asset_loans_new SELECT * FROM asset_loans;
+        DROP TABLE asset_loans;
+        ALTER TABLE asset_loans_new RENAME TO asset_loans;
+        CREATE INDEX IF NOT EXISTS idx_asset_loans_employee_active
+          ON asset_loans(employee_id_fk, returned_at);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_loans_asset_active_unique
+          ON asset_loans(asset_id) WHERE returned_at IS NULL;
+        "#,
+    );
+
+    conn.execute("PRAGMA foreign_keys = ON", [])
+        .map_err(|err| format!("failed to re-enable foreign keys after asset_loans migration: {err}"))?;
+
+    result.map_err(|err| format!("failed to migrate asset_loans to nullable borrow_request_id: {err}"))
 }
 
 fn ensure_borrow_request_columns(conn: &Connection) -> Result<(), String> {
@@ -1513,5 +1560,88 @@ mod tests {
             laptop_primary_after, laptop_primary_before,
             "laptop primary flags should stay unchanged when reseed fails"
         );
+    }
+
+    #[test]
+    fn apply_migrations_recreates_asset_loans_with_nullable_borrow_request_id() {
+        let conn = Connection::open_in_memory().expect("open in-memory sqlite database");
+        configure_connection(&conn).expect("configure sqlite pragmas");
+        apply_migrations(&conn).expect("apply baseline database migrations");
+
+        conn.execute_batch(
+            r#"
+            INSERT INTO employees(employee_id, full_name) VALUES('ASWVN9999', 'Legacy User');
+            INSERT INTO assets(asset_code, asset_type, display_name, status, category_id)
+            VALUES(
+                'VNLAP999',
+                'Laptop',
+                'LAP999',
+                'assigned',
+                (SELECT id FROM asset_categories WHERE category_code = 'laptop')
+            );
+            INSERT INTO borrow_requests(
+                request_key,
+                employee_id_fk,
+                submitted_employee_id,
+                submitted_full_name,
+                status,
+                request_type
+            )
+            VALUES('BR-LEGACY-1', 1, 'ASWVN9999', 'Legacy User', 'approved', 'borrow');
+
+            PRAGMA foreign_keys = OFF;
+            ALTER TABLE asset_loans RENAME TO asset_loans_old;
+            CREATE TABLE asset_loans (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                asset_id INTEGER NOT NULL REFERENCES assets(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+                employee_id_fk INTEGER NOT NULL REFERENCES employees(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+                borrow_request_id INTEGER NOT NULL REFERENCES borrow_requests(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+                approved_by_account_id INTEGER REFERENCES app_local_accounts(id) ON UPDATE CASCADE ON DELETE SET NULL,
+                borrowed_at TEXT NOT NULL DEFAULT (datetime('now')),
+                returned_at TEXT
+            );
+            INSERT INTO asset_loans(id, asset_id, employee_id_fk, borrow_request_id, approved_by_account_id, borrowed_at, returned_at)
+            VALUES(1, 1, 1, 1, NULL, datetime('now'), NULL);
+            DROP TABLE asset_loans_old;
+            CREATE INDEX idx_asset_loans_employee_active ON asset_loans(employee_id_fk, returned_at);
+            CREATE UNIQUE INDEX idx_asset_loans_asset_active_unique ON asset_loans(asset_id) WHERE returned_at IS NULL;
+            PRAGMA foreign_keys = ON;
+            "#,
+        )
+        .expect("downgrade asset_loans to legacy schema");
+
+        apply_migrations(&conn).expect("apply migrations to legacy asset_loans schema");
+
+        let borrow_request_id_notnull: i64 = conn
+            .query_row(
+                "SELECT \"notnull\" FROM pragma_table_info('asset_loans') WHERE name = 'borrow_request_id'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("inspect asset_loans.borrow_request_id nullability");
+        assert_eq!(borrow_request_id_notnull, 0, "borrow_request_id should be nullable after migration");
+
+        let migrated_rows = conn
+            .query_row("SELECT COUNT(*) FROM asset_loans", [], |row| row.get::<_, i64>(0))
+            .expect("count migrated asset loans");
+        assert_eq!(migrated_rows, 1, "existing asset_loans rows should be preserved");
+
+        conn.execute(
+            "INSERT INTO asset_loans(asset_id, employee_id_fk, borrowed_at) VALUES(?, ?, datetime('now'))",
+            params![1_i64, 1_i64],
+        )
+        .expect_err("active-loan uniqueness should still prevent a duplicate open loan");
+
+        conn.execute(
+            "UPDATE asset_loans SET returned_at = datetime('now') WHERE id = 1",
+            [],
+        )
+        .expect("close legacy loan");
+
+        conn.execute(
+            "INSERT INTO asset_loans(asset_id, employee_id_fk, borrowed_at) VALUES(?, ?, datetime('now'))",
+            params![1_i64, 1_i64],
+        )
+        .expect("should allow direct assignment loan without borrow request after migration");
     }
 }

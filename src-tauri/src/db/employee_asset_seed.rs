@@ -270,6 +270,44 @@ pub(crate) fn import_employee_asset_seed_conn(
             },
         ) {
             Ok(record) => {
+                // Look up employee internal row id and create an active loan
+                let employee_row_id: Option<i64> = tx
+                    .query_row(
+                        "SELECT id FROM employees WHERE employee_id = ? LIMIT 1",
+                        params![row.employee_id.as_str()],
+                        |r| r.get(0),
+                    )
+                    .optional()
+                    .map_err(|err| {
+                        format!(
+                            "failed to find employee '{}' for loan: {err}",
+                            row.employee_id
+                        )
+                    })?;
+
+                if let Some(emp_id) = employee_row_id {
+                    tx.execute(
+                        "INSERT INTO asset_loans(asset_id, employee_id_fk, borrowed_at) VALUES(?, ?, datetime('now'))",
+                        params![record.id, emp_id],
+                    )
+                    .map_err(|err| {
+                        format!(
+                            "failed to create loan for asset '{}': {err}",
+                            record.asset_code
+                        )
+                    })?;
+                    tx.execute(
+                        "UPDATE assets SET status = 'assigned', updated_at = datetime('now') WHERE id = ?",
+                        params![record.id],
+                    )
+                    .map_err(|err| {
+                        format!(
+                            "failed to mark asset '{}' as assigned: {err}",
+                            record.asset_code
+                        )
+                    })?;
+                }
+
                 imported += 1;
                 imported_asset_codes.push(record.asset_code);
             }
@@ -1098,6 +1136,37 @@ mod tests {
             vec![
                 ("VNLAP293".to_string(), "LAP293".to_string()),
                 ("VNLAP294".to_string(), "LAP294".to_string()),
+            ]
+        );
+
+        // Each imported asset should be assigned to its employee via an active loan
+        let loan_rows = conn
+            .prepare(
+                r#"
+                SELECT a.asset_code, e.employee_id, a.status
+                FROM asset_loans al
+                INNER JOIN assets a ON a.id = al.asset_id
+                INNER JOIN employees e ON e.id = al.employee_id_fk
+                WHERE al.returned_at IS NULL
+                ORDER BY a.asset_code ASC
+                "#,
+            )
+            .expect("prepare loan query")
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .expect("query loans")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect loans");
+        assert_eq!(
+            loan_rows,
+            vec![
+                ("VNLAP293".to_string(), "ASWVN1302".to_string(), "assigned".to_string()),
+                ("VNLAP294".to_string(), "ASWVN1303".to_string(), "assigned".to_string()),
             ]
         );
     }
