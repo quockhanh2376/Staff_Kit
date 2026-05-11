@@ -695,6 +695,17 @@ fn ensure_seeded_asset_category_prefixes(conn: &Connection) -> Result<(), String
         .map_err(|err| format!("failed to open asset category prefix savepoint: {err}"))?;
 
     let result = (|| {
+        // Deactivate hardcoded seed prefixes before any upsert. Legacy/manual
+        // data can leave one of these values active on another category, which
+        // would otherwise trip the partial unique index on active prefix values.
+        for prefix_value in ["VNLAP", "VNIMACPRO", "VNMACAIR", "VNMACPRO", "VNMON"] {
+            conn.execute(
+                "UPDATE asset_category_prefixes SET is_primary = 0, is_active = 0, updated_at = datetime('now') WHERE prefix_value = ? COLLATE NOCASE",
+                params![prefix_value],
+            )
+            .map_err(|err| format!("failed to pre-clear hardcoded prefix '{prefix_value}': {err}"))?;
+        }
+
         let mut category_stmt = conn
             .prepare(
                 r#"
@@ -739,6 +750,14 @@ fn ensure_seeded_asset_category_prefixes(conn: &Connection) -> Result<(), String
                     |row| row.get::<_, i64>(0),
                 )
                 .map_err(|err| format!("failed to load seeded category '{category_code}' for prefixes: {err}"))?;
+
+            for prefix_value in active_prefixes.iter() {
+                conn.execute(
+                    "UPDATE asset_category_prefixes SET is_primary = 0, is_active = 0, updated_at = datetime('now') WHERE prefix_value = ? COLLATE NOCASE AND category_id != ?",
+                    params![*prefix_value, category_id],
+                )
+                .map_err(|err| format!("failed to release conflicting prefix '{prefix_value}' from other categories for '{category_code}': {err}"))?;
+            }
 
             conn.execute(
                 "UPDATE asset_category_prefixes SET is_primary = 0, is_active = 0, updated_at = datetime('now') WHERE category_id = ?",
@@ -1377,18 +1396,11 @@ mod tests {
     }
 
     #[test]
-    fn ensure_seeded_asset_category_prefixes_rolls_back_if_reseed_hits_conflict() {
+    fn ensure_seeded_asset_category_prefixes_resolves_cross_category_prefix_conflict() {
         let conn = Connection::open_in_memory().expect("open in-memory sqlite database");
         configure_connection(&conn).expect("configure sqlite pragmas");
         apply_migrations(&conn).expect("apply database migrations");
 
-        let laptop_category_id = conn
-            .query_row(
-                "SELECT id FROM asset_categories WHERE category_code = 'laptop'",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
-            .expect("load laptop category id");
         let monitor_category_id = conn
             .query_row(
                 "SELECT id FROM asset_categories WHERE category_code = 'monitor'",
@@ -1397,16 +1409,6 @@ mod tests {
             )
             .expect("load monitor category id");
 
-        conn.execute(
-            "UPDATE asset_category_prefixes SET is_active = 0, is_primary = 0, updated_at = datetime('now') WHERE category_id = ?",
-            params![laptop_category_id],
-        )
-        .expect("deactivate laptop prefixes for pre-seed state");
-        conn.execute(
-            "UPDATE asset_category_prefixes SET is_active = 1, is_primary = 0, updated_at = datetime('now') WHERE category_id = ? AND prefix_value = 'VNLAP'",
-            params![laptop_category_id],
-        )
-        .expect("keep one non-primary laptop prefix active");
         conn.execute(
             "UPDATE asset_category_prefixes SET is_active = 0, is_primary = 0, updated_at = datetime('now') WHERE category_id = ?",
             params![monitor_category_id],
@@ -1442,76 +1444,39 @@ mod tests {
         asset::upsert_asset_category_prefix_conn(&conn, conflict_category_id, "VNMON", true, true)
             .expect("seed conflicting prefix");
 
-        let laptop_active_before = conn
-            .query_row(
-                r#"
-                SELECT COUNT(*)
-                FROM asset_category_prefixes p
-                INNER JOIN asset_categories c ON c.id = p.category_id
-                WHERE c.category_code = 'laptop'
-                  AND p.is_active = 1
-                "#,
-                [],
-                |row| row.get::<_, i64>(0),
-            )
-            .expect("count active laptop prefixes before conflict");
-        let laptop_primary_before = conn
-            .query_row(
-                r#"
-                SELECT COUNT(*)
-                FROM asset_category_prefixes p
-                INNER JOIN asset_categories c ON c.id = p.category_id
-                WHERE c.category_code = 'laptop'
-                  AND p.is_active = 1
-                  AND p.is_primary = 1
-                "#,
-                [],
-                |row| row.get::<_, i64>(0),
-            )
-            .expect("count active laptop primary prefixes before conflict");
+        ensure_seeded_asset_category_prefixes(&conn)
+            .expect("conflicting seed prefix should be reclaimed by seeded category");
 
-        let seed_error = ensure_seeded_asset_category_prefixes(&conn)
-            .expect_err("conflicting active prefix should abort reseed atomically");
-
-        let laptop_active_after = conn
+        let monitor_active_after = conn
             .query_row(
                 r#"
                 SELECT COUNT(*)
                 FROM asset_category_prefixes p
                 INNER JOIN asset_categories c ON c.id = p.category_id
-                WHERE c.category_code = 'laptop'
+                WHERE c.category_code = 'monitor'
                   AND p.is_active = 1
+                  AND p.prefix_value = 'VNMON' COLLATE NOCASE
                 "#,
                 [],
                 |row| row.get::<_, i64>(0),
             )
-            .expect("count active laptop prefixes after rollback");
-        let laptop_primary_after = conn
+            .expect("count active monitor prefix after conflict resolution");
+        let conflict_active_after = conn
             .query_row(
                 r#"
                 SELECT COUNT(*)
                 FROM asset_category_prefixes p
                 INNER JOIN asset_categories c ON c.id = p.category_id
-                WHERE c.category_code = 'laptop'
+                WHERE c.category_code = 'conflict_category'
                   AND p.is_active = 1
-                  AND p.is_primary = 1
+                  AND p.prefix_value = 'VNMON' COLLATE NOCASE
                 "#,
                 [],
                 |row| row.get::<_, i64>(0),
             )
-            .expect("count active laptop primary prefixes after rollback");
+            .expect("count active conflict prefix after conflict resolution");
 
-        assert!(
-            seed_error.contains("VNMON") || seed_error.to_lowercase().contains("unique"),
-            "expected conflict from active prefix uniqueness, got: {seed_error}"
-        );
-        assert_eq!(
-            laptop_active_after, laptop_active_before,
-            "laptop prefixes should stay unchanged when reseed fails"
-        );
-        assert_eq!(
-            laptop_primary_after, laptop_primary_before,
-            "laptop primary flags should stay unchanged when reseed fails"
-        );
+        assert_eq!(monitor_active_after, 1);
+        assert_eq!(conflict_active_after, 0);
     }
 }
