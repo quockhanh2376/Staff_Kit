@@ -26,6 +26,7 @@ import { STAFF_GROUP_BUTTONS, DEFAULT_NEW_ACCOUNT_PASSWORD } from "../../lib/con
 import { getGroupCount } from "../../lib/utils"
 import { AssetDashboard } from "../assets/AssetDashboard"
 import { useIdleCollapse } from "./useIdleCollapse"
+import { BorrowLanQrCard } from "../borrow/BorrowLanQrCard"
 
 type SettingsViewProps = {
     auth: AuthState
@@ -866,6 +867,10 @@ export function SettingsView({
                 assetDashboard={assetDashboard}
                 assetImport={assetImport}
             />
+
+            {auth.isAdminAccount && (
+                <BorrowLanQrCard settings={settings} isAdmin={auth.isAdminAccount} />
+            )}
 
 
 
