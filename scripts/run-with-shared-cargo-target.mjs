@@ -21,6 +21,7 @@ function resolveGitCommonDir() {
 
 const gitCommonDir = resolveGitCommonDir();
 const sharedTargetDir = join(dirname(gitCommonDir), "src-tauri", "target");
+const needsShell = process.platform === "win32" && /\.(cmd|bat)$/i.test(command);
 
 const child = spawn(command, args, {
   cwd: repoRoot,
@@ -28,6 +29,7 @@ const child = spawn(command, args, {
     ...process.env,
     CARGO_TARGET_DIR: sharedTargetDir,
   },
+  shell: needsShell,
   stdio: "inherit",
 });
 

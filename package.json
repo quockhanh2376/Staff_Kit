@@ -12,9 +12,9 @@
     "check:tauri": "node ./scripts/run-with-shared-cargo-target.mjs cargo check --manifest-path src-tauri/Cargo.toml",
     "check:quality": "npm run check:frontend; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; npm run check:tauri",
     "preview": "vite preview",
-    "tauri": "tauri.cmd",
-    "tauri:dev": "tauri.cmd dev",
-    "tauri:build": "tauri.cmd build",
+    "tauri": "node ./scripts/run-with-shared-cargo-target.mjs tauri.cmd",
+    "tauri:dev": "node ./scripts/run-with-shared-cargo-target.mjs tauri.cmd dev",
+    "tauri:build": "node ./scripts/run-with-shared-cargo-target.mjs tauri.cmd build",
     "test:tauri": "node ./scripts/run-with-shared-cargo-target.mjs cargo test --manifest-path src-tauri/Cargo.toml"
   },
   "dependencies": {

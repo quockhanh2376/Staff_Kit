@@ -54,6 +54,7 @@ export function useSettingsState({
     const [borrowLanDetectionNote, setBorrowLanDetectionNote] = useState("")
     const [isDetectingBorrowLanHost, setDetectingBorrowLanHost] = useState(false)
     const [isSavingBorrowLanSettings, setSavingBorrowLanSettings] = useState(false)
+    const [lanServerAlive, setLanServerAlive] = useState<boolean | null>(null)
     const borrowLanHostTouchedRef = useRef(false)
 
     // Asset seed utility
@@ -391,6 +392,27 @@ export function useSettingsState({
         [borrowLanHostInput, borrowLanPortInput],
     )
 
+    useEffect(() => {
+        const port = borrowLanSettings?.port
+        if (!port) {
+            setLanServerAlive(null)
+            return
+        }
+        let disposed = false
+        setLanServerAlive(null)
+        void staffApi
+            .probeLanServer(port)
+            .then((alive) => {
+                if (!disposed) setLanServerAlive(alive)
+            })
+            .catch(() => {
+                if (!disposed) setLanServerAlive(false)
+            })
+        return () => {
+            disposed = true
+        }
+    }, [borrowLanSettings?.port])
+
     const handleSeedAssets = async () => {
         try {
             const items = assetSeedText
@@ -459,6 +481,7 @@ export function useSettingsState({
         isSavingBorrowLanSettings,
         handleRefreshBorrowLanHost,
         handleSaveBorrowLanSettings,
+        lanServerAlive,
         // Asset seed
         assetSeedText,
         setAssetSeedText,

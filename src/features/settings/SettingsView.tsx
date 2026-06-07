@@ -866,9 +866,6 @@ export function SettingsView({
                 assetDashboard={assetDashboard}
                 assetImport={assetImport}
             />
-
-
-
             {/* Data Reset — admin only */}
             {auth.canResetData && (
                 <div className="mt-4 max-w-3xl rounded-[12px] border border-red-500/45 bg-red-500/10 p-4">

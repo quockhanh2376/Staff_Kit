@@ -165,7 +165,6 @@ function App() {
     isAuthenticated,
     isAdminAccount: auth.isAdminAccount,
     reloadToken,
-    borrowLanSettings: settings.borrowLanSettings,
     setGlobalError,
     triggerReload,
   })

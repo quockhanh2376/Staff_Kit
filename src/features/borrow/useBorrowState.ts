@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { staffApi } from "../../services/staff-api"
-import type { BorrowLanSettings, BorrowRequestRecord } from "../../types/staff"
+import type { BorrowRequestRecord } from "../../types/staff"
 import { getUserErrorMessage } from "../../lib/errorHandling"
 import {
   buildBorrowReviewApproveSuccessMessage,
@@ -12,7 +12,6 @@ type UseBorrowStateOptions = {
   isAuthenticated: boolean
   isAdminAccount: boolean
   reloadToken: number
-  borrowLanSettings: BorrowLanSettings | null
   setGlobalError: (msg: string | null) => void
   triggerReload: () => void
 }
@@ -24,7 +23,6 @@ export function useBorrowState({
   isAuthenticated,
   isAdminAccount,
   reloadToken,
-  borrowLanSettings,
   setGlobalError,
   triggerReload,
 }: UseBorrowStateOptions) {
@@ -37,28 +35,6 @@ export function useBorrowState({
   const [isLoadingDetail, setLoadingDetail] = useState(false)
   const [isApproving, setApproving] = useState(false)
   const [isRejecting, setRejecting] = useState(false)
-  const [lanServerAlive, setLanServerAlive] = useState<boolean | null>(null)
-
-  useEffect(() => {
-    const port = borrowLanSettings?.port
-    if (!port) {
-      setLanServerAlive(null)
-      return
-    }
-    let disposed = false
-    setLanServerAlive(null)
-    void staffApi
-      .probeLanServer(port)
-      .then((alive) => {
-        if (!disposed) setLanServerAlive(alive)
-      })
-      .catch(() => {
-        if (!disposed) setLanServerAlive(false)
-      })
-    return () => {
-      disposed = true
-    }
-  }, [borrowLanSettings?.port])
 
   const loadRequestDetail = useCallback(
     async (requestId: number | null) => {
@@ -181,8 +157,6 @@ export function useBorrowState({
   }
 
   return {
-    borrowLanSettings,
-    lanServerAlive,
     pendingRequests,
     selectedRequestId,
     selectedRequest,
