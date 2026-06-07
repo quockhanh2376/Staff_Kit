@@ -1,5 +1,7 @@
 import { RefreshCw } from "lucide-react"
 import type { AuthState } from "../auth/useAuthState"
+import type { SettingsState } from "../settings/useSettingsState"
+import { BorrowLanQrCard } from "./BorrowLanQrCard"
 import type { BorrowState } from "./useBorrowState"
 import { buildBorrowReviewHeaderDescription, buildBorrowReviewHeading } from "./borrowReviewCopy"
 import { BorrowPendingQueue } from "./BorrowPendingQueue"
@@ -8,9 +10,10 @@ import { BorrowRequestDetail } from "./BorrowRequestDetail"
 type BorrowAdminViewProps = {
   auth: AuthState
   borrow: BorrowState
+  settings: SettingsState
 }
 
-export function BorrowAdminView({ auth, borrow }: BorrowAdminViewProps) {
+export function BorrowAdminView({ auth, borrow, settings }: BorrowAdminViewProps) {
   if (!auth.isAdminAccount) {
     return (
       <section className="px-4 py-7 md:px-8">
@@ -41,6 +44,8 @@ export function BorrowAdminView({ auth, borrow }: BorrowAdminViewProps) {
           Refresh Queue
         </button>
       </div>
+
+      <BorrowLanQrCard settings={settings} isAdmin={auth.isAdminAccount} />
 
       <div className="mt-4">
         <BorrowPendingQueue borrow={borrow} />

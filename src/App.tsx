@@ -438,6 +438,7 @@ function App() {
             <BorrowAdminView
               auth={auth}
               borrow={borrow}
+              settings={settings}
             />
           )}
 
