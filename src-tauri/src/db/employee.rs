@@ -1042,12 +1042,15 @@ fn build_fts_query(raw: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use rusqlite::{params, Connection};
 
     use crate::db::{apply_migrations, configure_connection};
 
     use super::{
-        build_employee_from_clause, query_employees, EmployeeQuery, EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL,
+        build_employee_from_clause, query_employees, upsert_employee_from_payload, EmployeePayload,
+        EmployeeQuery, EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL,
     };
 
     fn open_test_connection() -> Connection {
@@ -1137,6 +1140,72 @@ mod tests {
             params![asset_id, employee_row_id, borrow_request_id],
         )
         .expect("insert active asset loan");
+    }
+
+    #[test]
+    fn upsert_employee_from_payload_clears_blank_dynamic_fields() {
+        let mut conn = open_test_connection();
+        let employee_row_id = seed_employee(&conn, "ASWVN1302", "Luu The Hung");
+        conn.execute(
+            r#"
+            INSERT INTO employee_dynamic_fields(field_key, field_label, updated_at)
+            VALUES('computer_name_2', 'Computer Name 2', datetime('now'))
+            "#,
+            [],
+        )
+        .expect("insert dynamic field definition");
+        conn.execute(
+            r#"
+            INSERT INTO employee_dynamic_values(employee_id, field_key, value, updated_at)
+            VALUES(?, 'computer_name_2', 'ASWVNLAP244', datetime('now'))
+            "#,
+            params![employee_row_id],
+        )
+        .expect("insert dynamic field value");
+
+        let tx = conn.transaction().expect("start transaction");
+        upsert_employee_from_payload(
+            &tx,
+            EmployeePayload {
+                employee_id: "ASWVN1302".to_string(),
+                full_name: "Luu The Hung".to_string(),
+                nick_name: None,
+                team_name: Some("Examworks".to_string()),
+                project: None,
+                job_title: None,
+                email: None,
+                cellphone: None,
+                date_of_birth: None,
+                gender: None,
+                asw_start_date: None,
+                client_start_date: None,
+                contract_end_date: None,
+                client_year_of_services: None,
+                computer_name: None,
+                notes: None,
+                staff_group: Some("employee_list".to_string()),
+                dynamic_fields: Some(HashMap::from([(
+                    "computer_name_2".to_string(),
+                    "   ".to_string(),
+                )])),
+            },
+            "employee_list",
+        )
+        .expect("clear dynamic field through employee payload");
+        tx.commit().expect("commit transaction");
+
+        let exists: i64 = conn
+            .query_row(
+                r#"
+                SELECT COUNT(*)
+                FROM employee_dynamic_values
+                WHERE employee_id = ? AND field_key = 'computer_name_2'
+                "#,
+                params![employee_row_id],
+                |row| row.get(0),
+            )
+            .expect("count dynamic field values");
+        assert_eq!(exists, 0);
     }
 
     #[test]

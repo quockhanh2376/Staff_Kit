@@ -1064,10 +1064,7 @@ pub(crate) fn normalize_dynamic_fields(
             continue;
         }
 
-        let Some(value) = normalize_optional_text(Some(raw_value)) else {
-            continue;
-        };
-
+        let value = normalize_optional_text(Some(raw_value)).unwrap_or_default();
         fields.insert(key, value);
     }
 

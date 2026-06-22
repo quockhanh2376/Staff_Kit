@@ -187,6 +187,15 @@ pub(crate) fn upsert_dynamic_fields_tx(
     fields: &HashMap<String, String>,
 ) -> Result<(), String> {
     for (field_key, value) in fields {
+        if value.trim().is_empty() {
+            tx.execute(
+                "DELETE FROM employee_dynamic_values WHERE employee_id = ? AND field_key = ?",
+                params![employee_id, field_key.as_str()],
+            )
+            .map_err(humanize_sqlite_error)?;
+            continue;
+        }
+
         tx.execute(
             r#"
             INSERT INTO employee_dynamic_values(employee_id, field_key, value, updated_at)
