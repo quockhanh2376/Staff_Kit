@@ -12,6 +12,8 @@ export default defineConfig([
     '.worktrees/**',
     '.agent/**',
     '.agents/**',
+    '.codex/**',
+    '.codex-runtime/**',
     '.opencode/**',
     'bmad_method_ref/**',
     '_tmp_staffkit/**',

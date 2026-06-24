@@ -697,3 +697,36 @@ export type ImportPreviewResult = {
   totalUpdates: number
   errors: ImportErrorItem[]
 }
+
+export type MssqlConnectionDefaults = {
+  host: string
+  port: number
+  user: string
+  password: string
+}
+
+export type MssqlStaffRecord = {
+  code: string
+  name: string
+  nickName: string | null
+  workEmail: string | null
+}
+
+export type MssqlImportPreview = {
+  totalRows: number
+  records: MssqlStaffRecord[]
+}
+
+export type MssqlImportError = {
+  code: string
+  action: string
+  error: string | null
+}
+
+export type MssqlImportReport = {
+  totalRows: number
+  imported: number
+  updated: number
+  failed: number
+  errors: MssqlImportError[]
+}

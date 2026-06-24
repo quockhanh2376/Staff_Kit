@@ -7,18 +7,18 @@ use chrono::{Duration as ChronoDuration, NaiveDate, NaiveDateTime};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
-use super::{
-    ensure_database_ready, normalize_optional_text, normalize_staff_group, open_runtime_connection,
-};
 use super::column::upsert_dynamic_field_definitions_tx;
 use super::employee::{
-    load_employee_by_employee_id, load_employees_by_email_normalized,
-    upsert_employee_from_payload, EmployeePayload, UpsertAction,
+    load_employee_by_employee_id, load_employees_by_email_normalized, upsert_employee_from_payload,
+    EmployeePayload, UpsertAction,
 };
 use super::schema::{
     COMPUTER_NAME_2_FIELD_KEY, COMPUTER_NAME_2_FIELD_LABEL, CORE_COLUMN_DEFINITIONS,
     STAFF_GROUP_EMPLOYEE_LIST, STAFF_GROUP_INTERNAL_MOVEMENT, STAFF_GROUP_OFFBOARDING,
     STAFF_GROUP_ONBOARDING,
+};
+use super::{
+    ensure_database_ready, normalize_optional_text, normalize_staff_group, open_runtime_connection,
 };
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -392,7 +392,11 @@ pub fn import_excel(app: &AppHandle, payload: ImportExcelInput) -> Result<Import
 
                 let incoming_computer_1 = extract_optional_value(
                     row,
-                    selected_column_index(&selected_column_keys, "computerName", columns.computer_name),
+                    selected_column_index(
+                        &selected_column_keys,
+                        "computerName",
+                        columns.computer_name,
+                    ),
                 );
                 let incoming_computer_2 = extract_optional_value(
                     row,
@@ -448,10 +452,8 @@ pub fn import_excel(app: &AppHandle, payload: ImportExcelInput) -> Result<Import
                     }
                 }
 
-                let (computer_name, computer_name_2) = normalize_computer_name_slots(
-                    computer_name_primary,
-                    computer_name_secondary,
-                );
+                let (computer_name, computer_name_2) =
+                    normalize_computer_name_slots(computer_name_primary, computer_name_secondary);
 
                 if let Some(value) = computer_name_2 {
                     dynamic_fields.insert(COMPUTER_NAME_2_FIELD_KEY.to_string(), value);
@@ -671,7 +673,9 @@ pub fn preview_import_excel(
                     .and_then(|value| normalize_optional_text(Some(value)));
 
                 let existing = if let Some(id_value) = parsed_employee_id.clone() {
-                    load_employee_by_employee_id(&conn, &id_value).ok().flatten()
+                    load_employee_by_employee_id(&conn, &id_value)
+                        .ok()
+                        .flatten()
                 } else {
                     let email = extract_optional_value(row, columns.email)
                         .and_then(|value| normalize_optional_text(Some(value)))
@@ -699,7 +703,9 @@ pub fn preview_import_excel(
                 let existing_ref = existing.as_ref();
                 let used_email_fallback = !matched_by_id && existing_ref.is_some();
                 let employee_id = if used_email_fallback {
-                    existing_ref.map(|e| e.employee_id.clone()).unwrap_or_default()
+                    existing_ref
+                        .map(|e| e.employee_id.clone())
+                        .unwrap_or_default()
                 } else if let Some(id) = parsed_employee_id {
                     id
                 } else {
@@ -734,9 +740,7 @@ pub fn preview_import_excel(
                 match (&old_computer_name, &new_computer_name) {
                     // Employee already has a computer, incoming is different and slot 2 is empty →
                     // this is a SECOND machine, not an overwrite of the first one.
-                    (Some(old1), Some(new1))
-                        if old1 != new1 && old_computer_2.is_none() =>
-                    {
+                    (Some(old1), Some(new1)) if old1 != new1 && old_computer_2.is_none() => {
                         changes.push(FieldChange {
                             field_key: COMPUTER_NAME_2_FIELD_KEY.to_string(),
                             field_label: "Computer Name (2)".to_string(),
@@ -993,50 +997,98 @@ fn normalize_computer_name_slots(
     (first, second)
 }
 
-fn detect_import_columns(
-    range: &calamine::Range<Data>,
-) -> Result<(usize, ImportColumns), String> {
+fn detect_import_columns(range: &calamine::Range<Data>) -> Result<(usize, ImportColumns), String> {
     const HEADER_EMPLOYEE_ID: &[&str] = &[
-        "eeid", "emid", "employeeid", "employeecode", "staffid", "staffcode",
-        "staffcodeid", "manhanvien", "m\u{00E3}nh\u{00E2}nvi\u{00EA}n", "m\u{00E3}nv", "manv",
+        "eeid",
+        "emid",
+        "employeeid",
+        "employeecode",
+        "staffid",
+        "staffcode",
+        "staffcodeid",
+        "manhanvien",
+        "m\u{00E3}nh\u{00E2}nvi\u{00EA}n",
+        "m\u{00E3}nv",
+        "manv",
     ];
     const HEADER_FULL_NAME: &[&str] = &[
-        "vietnamesename", "fullname", "yourfullname", "hoten",
-        "h\u{1ECD}t\u{00EA}n", "name", "englishname",
+        "vietnamesename",
+        "fullname",
+        "yourfullname",
+        "hoten",
+        "h\u{1ECD}t\u{00EA}n",
+        "name",
+        "englishname",
     ];
     const HEADER_ASW_START_DATE: &[&str] = &["aswstartdate", "aswigstartdate", "startdate"];
     const HEADER_CLIENT_START_DATE: &[&str] = &[
-        "clientstartdate", "currentclientstartdate",
-        "newclientpmdjoindate", "lastclientstartdate",
+        "clientstartdate",
+        "currentclientstartdate",
+        "newclientpmdjoindate",
+        "lastclientstartdate",
     ];
     const HEADER_NICK_NAME: &[&str] = &["nickname", "nick"];
     const HEADER_CLIENT_PMD: &[&str] = &[
-        "clientpmd", "newclientpmd", "formerclientpmd", "formerclient",
-        "newclient", "client", "team", "department",
+        "clientpmd",
+        "newclientpmd",
+        "formerclientpmd",
+        "formerclient",
+        "newclient",
+        "client",
+        "team",
+        "department",
     ];
     const HEADER_PROJECT: &[&str] = &["project", "projectdeprt", "projectdept"];
     const HEADER_JOB_TITLE: &[&str] = &[
-        "currentjobtitle", "offeredjobtitle", "lastedjobtitle",
-        "newjobtitle", "startingtitlee", "jobtitle", "title",
+        "currentjobtitle",
+        "offeredjobtitle",
+        "lastedjobtitle",
+        "newjobtitle",
+        "startingtitlee",
+        "jobtitle",
+        "title",
     ];
     const HEADER_EMAIL: &[&str] = &[
-        "workingemail", "formerworkingemail", "newworkingemail",
-        "personalemail", "email",
+        "workingemail",
+        "formerworkingemail",
+        "newworkingemail",
+        "personalemail",
+        "email",
     ];
-    const HEADER_CELLPHONE: &[&str] =
-        &["cellphone", "phone", "mobilenumber", "mobile", "phonenumber"];
+    const HEADER_CELLPHONE: &[&str] = &[
+        "cellphone",
+        "phone",
+        "mobilenumber",
+        "mobile",
+        "phonenumber",
+    ];
     const HEADER_DOB: &[&str] = &["dob", "dateofbirth", "birthday", "yob", "yearofbirth"];
     const HEADER_GENDER: &[&str] = &["gender", "sex"];
     const HEADER_CONTRACT_END: &[&str] = &[
-        "contractenddate", "aswlwd", "aswenddate", "formerenddate", "enddate",
+        "contractenddate",
+        "aswlwd",
+        "aswenddate",
+        "formerenddate",
+        "enddate",
     ];
     const HEADER_CLIENT_YOS: &[&str] = &[
-        "clientyearofservices", "yearofservices", "services", "formerservices",
+        "clientyearofservices",
+        "yearofservices",
+        "services",
+        "formerservices",
     ];
-    const HEADER_COMPUTER_NAME: &[&str] =
-        &["computername", "computer", "tenmay", "computername1", "computer1"];
+    const HEADER_COMPUTER_NAME: &[&str] = &[
+        "computername",
+        "computer",
+        "tenmay",
+        "computername1",
+        "computer1",
+    ];
     const HEADER_COMPUTER_NAME_SECONDARY: &[&str] = &[
-        "computername2", "computer2", "computername02", "computername2nd",
+        "computername2",
+        "computer2",
+        "computername02",
+        "computername2nd",
     ];
     const HEADER_NOTES: &[&str] = &["notes", "note", "ghichu", "remark", "remarkdetails"];
 
@@ -1083,9 +1135,23 @@ fn detect_import_columns(
         let notes = find_column_index(&headers, HEADER_NOTES);
 
         let known_indexes = [
-            employee_id, full_name, asw_start_date, client_start_date, nick_name, client_pmd,
-            project, job_title, email, cellphone, date_of_birth, gender, contract_end_date,
-            client_year_of_services, computer_name, computer_name_secondary, notes,
+            employee_id,
+            full_name,
+            asw_start_date,
+            client_start_date,
+            nick_name,
+            client_pmd,
+            project,
+            job_title,
+            email,
+            cellphone,
+            date_of_birth,
+            gender,
+            contract_end_date,
+            client_year_of_services,
+            computer_name,
+            computer_name_secondary,
+            notes,
         ]
         .into_iter()
         .flatten()
@@ -1144,7 +1210,6 @@ fn detect_import_columns(
 fn should_skip_dynamic_import_column(header_key: &str) -> bool {
     header_key == "question" || header_key.contains("ctyaswhitevn")
 }
-
 
 fn infer_staff_group_from_source(source_name: &str, sheet_name: &str) -> &'static str {
     let normalized = normalize_header_key(format!("{source_name} {sheet_name}").as_str());

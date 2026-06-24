@@ -1096,7 +1096,12 @@ mod tests {
         .expect("load asset category id")
     }
 
-    fn seed_asset(conn: &Connection, asset_code: &str, asset_type: &str, category_code: &str) -> i64 {
+    fn seed_asset(
+        conn: &Connection,
+        asset_code: &str,
+        asset_type: &str,
+        category_code: &str,
+    ) -> i64 {
         conn.execute(
             r#"
             INSERT INTO assets(asset_code, category_id, asset_type, display_name, status, created_at, updated_at)

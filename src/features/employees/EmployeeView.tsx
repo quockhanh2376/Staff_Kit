@@ -219,6 +219,23 @@ export function EmployeeView({
                     >
                         Clear Filters
                     </button>
+
+                    <button
+                        className="inline-flex h-8 items-center rounded-[8px] border border-emerald-500/70 bg-emerald-500/10 px-3 text-sm font-bold text-emerald-300 shadow-[0_0_0_1px_rgba(16,185,129,0.2)] transition hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                        onClick={() => void emp.updateEmployeeListFromMssql()}
+                        type="button"
+                        disabled={emp.isUpdatingEmployeeListFromMssql}
+                        title="Update Employee list from MSSQL"
+                    >
+                        {emp.isUpdatingEmployeeListFromMssql ? (
+                            <span className="inline-flex items-center gap-2">
+                                <LoaderCircle className="animate-spin" size={14} />
+                                updating
+                            </span>
+                        ) : (
+                            "update"
+                        )}
+                    </button>
                 </div>
             </div>
 

@@ -26,6 +26,7 @@ const BUSINESS_ERROR_PREFIXES = [
   "Team",
   "Column",
   "Import",
+  "MSSQL",
   "Batch",
   "Category",
   "No valid",

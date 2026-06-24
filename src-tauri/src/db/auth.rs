@@ -6,15 +6,16 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
-use super::{
-    humanize_sqlite_error, normalize_dynamic_key, normalize_optional_text,
-    open_runtime_connection, require_text,
-};
 use super::schema::{
     ACTIVE_LOCAL_ACCOUNT_SETTING_KEY, DEFAULT_ADMIN_SEED_SETTING_KEY, DEFAULT_LOCAL_ACCOUNT_KEY,
     DEFAULT_LOCAL_ACCOUNT_NAME, DEFAULT_LOCAL_ACCOUNT_PASSWORD,
     DEFAULT_LOCAL_ACCOUNT_RECOVERY_CODE, DEFAULT_LOCAL_ACCOUNT_USERNAME,
-    DEFAULT_NEW_LOCAL_ACCOUNT_PASSWORD, LOCAL_ACCOUNT_ROLE_ADMIN, LOCAL_ACCOUNT_ROLE_SUPER_ADMIN, LOCAL_ACCOUNT_ROLE_USER,
+    DEFAULT_NEW_LOCAL_ACCOUNT_PASSWORD, LOCAL_ACCOUNT_ROLE_ADMIN, LOCAL_ACCOUNT_ROLE_SUPER_ADMIN,
+    LOCAL_ACCOUNT_ROLE_USER,
+};
+use super::{
+    humanize_sqlite_error, normalize_dynamic_key, normalize_optional_text, open_runtime_connection,
+    require_text,
 };
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -278,7 +279,10 @@ pub fn change_local_account_password(
         .map_err(|err| format!("failed to load password for change: {err}"))?;
 
     let Some(stored_hash) = maybe else {
-        return Err(format!("local account with id {} was not found", payload.id));
+        return Err(format!(
+            "local account with id {} was not found",
+            payload.id
+        ));
     };
 
     if !verify_password(payload.current_password.as_str(), stored_hash.as_str())? {
@@ -368,7 +372,9 @@ pub fn forgot_local_account_password(
 
 pub(super) fn ensure_local_accounts_seed(conn: &Connection) -> Result<(), String> {
     let total_accounts: i64 = conn
-        .query_row("SELECT COUNT(*) FROM app_local_accounts", [], |row| row.get(0))
+        .query_row("SELECT COUNT(*) FROM app_local_accounts", [], |row| {
+            row.get(0)
+        })
         .map_err(|err| format!("failed to count local accounts: {err}"))?;
 
     if total_accounts <= 0 {
@@ -470,8 +476,16 @@ fn query_local_accounts(conn: &Connection) -> Result<Vec<LocalAccountRecord>, St
 
     let mut items = Vec::new();
     for row in rows {
-        let (id, account_key, display_name, username, role_raw, force_password_reset, created_at, updated_at) =
-            row.map_err(|err| format!("failed to read local account row: {err}"))?;
+        let (
+            id,
+            account_key,
+            display_name,
+            username,
+            role_raw,
+            force_password_reset,
+            created_at,
+            updated_at,
+        ) = row.map_err(|err| format!("failed to read local account row: {err}"))?;
         let role = parse_account_role(&role_raw);
 
         items.push(LocalAccountRecord {
@@ -572,8 +586,6 @@ fn set_active_local_account_id(conn: &Connection, id: i64) -> Result<(), String>
     Ok(())
 }
 
-
-
 fn normalize_local_account_role(value: Option<String>) -> String {
     let normalized =
         normalize_optional_text(value).unwrap_or_else(|| LOCAL_ACCOUNT_ROLE_USER.to_string());
@@ -612,8 +624,9 @@ fn normalize_local_account_username(value: String) -> Option<String> {
 }
 
 fn require_local_account_username(value: String) -> Result<String, String> {
-    normalize_local_account_username(value)
-        .ok_or_else(|| "username must be 3-48 chars and contain only letters, numbers, ., _, -".to_string())
+    normalize_local_account_username(value).ok_or_else(|| {
+        "username must be 3-48 chars and contain only letters, numbers, ., _, -".to_string()
+    })
 }
 
 fn require_local_account_password(value: String) -> Result<String, String> {

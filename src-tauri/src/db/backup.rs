@@ -7,13 +7,13 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
-use super::{get_setting_value, open_runtime_connection, require_text, set_setting_value};
 use super::schema::{
     AUTO_BACKUP_ENABLED_SETTING_KEY, AUTO_BACKUP_INTERVAL_DAYS, AUTO_BACKUP_LAST_DATE_SETTING_KEY,
     AUTO_BACKUP_RETENTION_DAYS, AUTO_BACKUP_RETENTION_FILES, BACKUP_DIRECTORY_SETTING_KEY,
-    BACKUP_FILE_PREFIX, DB_FILE_NAME, DB_SETTINGS_FILE_NAME,
-    HISTORY_FILE_PREFIX, HISTORY_FOLDER_NAME, HISTORY_RETENTION_COUNT,
+    BACKUP_FILE_PREFIX, DB_FILE_NAME, DB_SETTINGS_FILE_NAME, HISTORY_FILE_PREFIX,
+    HISTORY_FOLDER_NAME, HISTORY_RETENTION_COUNT,
 };
+use super::{get_setting_value, open_runtime_connection, require_text, set_setting_value};
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -90,7 +90,11 @@ pub fn update_backup_settings(
     set_setting_value(
         &conn,
         AUTO_BACKUP_ENABLED_SETTING_KEY,
-        Some(if payload.auto_backup_enabled { "1" } else { "0" }),
+        Some(if payload.auto_backup_enabled {
+            "1"
+        } else {
+            "0"
+        }),
     )?;
 
     read_backup_settings(&conn, app)
@@ -141,7 +145,11 @@ pub fn run_auto_backup_if_due(app: &AppHandle) -> Result<BackupRunResult, String
     }
 
     let result = run_backup(app, settings.backup_directory_path.as_str(), true)?;
-    set_setting_value(&conn, AUTO_BACKUP_LAST_DATE_SETTING_KEY, Some(today_str.as_str()))?;
+    set_setting_value(
+        &conn,
+        AUTO_BACKUP_LAST_DATE_SETTING_KEY,
+        Some(today_str.as_str()),
+    )?;
     Ok(result)
 }
 
@@ -183,12 +191,11 @@ pub fn move_database_to(app: &AppHandle, target_folder: &str) -> Result<String, 
     if target_path.exists() {
         // ── LINK MODE: shared DB already exists → just point to it ──────────
         // Validate it is a valid (openable) SQLite / SQLCipher file first
-        super::open_encrypted_connection(&target_path)
-            .map_err(|_| {
-                "The database at the target path could not be opened. \
+        super::open_encrypted_connection(&target_path).map_err(|_| {
+            "The database at the target path could not be opened. \
                  Make sure it is a valid Staff Kit database encrypted with the same version."
-                    .to_string()
-            })?;
+                .to_string()
+        })?;
 
         set_db_custom_path(app, Some(target_folder))?;
 
@@ -350,7 +357,9 @@ pub fn restore_database_from_file(app: &AppHandle, source_path: &str) -> Result<
     }
     let ext = source.extension().and_then(|e| e.to_str()).unwrap_or("");
     if ext != "sqlite3" && ext != "sqlite" && ext != "db" {
-        return Err("selected file is not a SQLite database (.sqlite3 / .sqlite / .db)".to_string());
+        return Err(
+            "selected file is not a SQLite database (.sqlite3 / .sqlite / .db)".to_string(),
+        );
     }
 
     // Open and validate the source backup (confirm it is a valid Staff Kit DB)
@@ -364,7 +373,8 @@ pub fn restore_database_from_file(app: &AppHandle, source_path: &str) -> Result<
 
     // Open the active DB and fully checkpoint WAL so all pages are in the main file
     let mut dst_conn = open_runtime_connection(app)?;
-    dst_conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+    dst_conn
+        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
         .map_err(|err| format!("failed to checkpoint active database: {err}"))?;
 
     // SQLite Online Backup API: stream every page from src → dst.
@@ -389,8 +399,8 @@ pub(super) fn read_backup_settings(
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
 
-    let backup_directory_path = stored_backup_dir
-        .unwrap_or_else(|| default_backup_dir.to_string_lossy().to_string());
+    let backup_directory_path =
+        stored_backup_dir.unwrap_or_else(|| default_backup_dir.to_string_lossy().to_string());
 
     fs::create_dir_all(backup_directory_path.as_str())
         .map_err(|err| format!("failed to prepare backup directory: {err}"))?;
@@ -435,7 +445,10 @@ fn run_backup(
 
     let now = Local::now();
     let file_name = if automatic {
-        format!("{BACKUP_FILE_PREFIX}_auto_{}.sqlite3", now.format("%Y-%m-%d"))
+        format!(
+            "{BACKUP_FILE_PREFIX}_auto_{}.sqlite3",
+            now.format("%Y-%m-%d")
+        )
     } else {
         format!(
             "{BACKUP_FILE_PREFIX}_manual_{}.sqlite3",
@@ -453,9 +466,7 @@ fn run_backup(
     conn.execute_batch("PRAGMA wal_checkpoint(FULL);")
         .map_err(|err| format!("failed to checkpoint sqlite WAL before backup: {err}"))?;
 
-    let escaped_path = backup_file_path
-        .to_string_lossy()
-        .replace('\'', "''");
+    let escaped_path = backup_file_path.to_string_lossy().replace('\'', "''");
     conn.execute_batch(&format!("VACUUM INTO '{escaped_path}';"))
         .map_err(|err| format!("failed to create backup file: {err}"))?;
 
@@ -591,9 +602,6 @@ fn write_db_settings(app: &AppHandle, settings: &DbSettings) -> Result<(), Strin
     let path = resolve_db_settings_path(app)?;
     let contents = serde_json::to_string_pretty(settings)
         .map_err(|err| format!("failed to serialize db_settings: {err}"))?;
-    fs::write(&path, contents)
-        .map_err(|err| format!("failed to write db_settings.json: {err}"))?;
+    fs::write(&path, contents).map_err(|err| format!("failed to write db_settings.json: {err}"))?;
     Ok(())
 }
-
-

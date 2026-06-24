@@ -73,6 +73,9 @@ Thumbs.db
 # Local AI/tooling workdirs
 .opencode/
 .worktrees/
+.codex-runtime/
+.codex/*
+!.codex/config.toml
 
 # Local research cache
 bmad_method_ref/
@@ -80,6 +83,7 @@ bmad_method_ref/
 
 # Python
 .venv/
+.headroom-venv/
 __pycache__/
 *.pyc
 *.pyo

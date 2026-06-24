@@ -127,11 +127,17 @@ impl BuiltPreview {
     }
 
     fn valid_rows(&self) -> i64 {
-        self.rows.iter().filter(|row| row.status == ROW_STATUS_VALID).count() as i64
+        self.rows
+            .iter()
+            .filter(|row| row.status == ROW_STATUS_VALID)
+            .count() as i64
     }
 
     fn error_rows(&self) -> i64 {
-        self.rows.iter().filter(|row| row.status == ROW_STATUS_ERROR).count() as i64
+        self.rows
+            .iter()
+            .filter(|row| row.status == ROW_STATUS_ERROR)
+            .count() as i64
     }
 
     fn errors(&self) -> Vec<EmployeeAssetSeedErrorItem> {
@@ -139,11 +145,13 @@ impl BuiltPreview {
             .rows
             .iter()
             .filter_map(|row| {
-                row.reason.as_ref().map(|reason| EmployeeAssetSeedErrorItem {
-                    row_number: row.row_number,
-                    entity_key: Some(row.employee_id.clone()),
-                    reason: reason.clone(),
-                })
+                row.reason
+                    .as_ref()
+                    .map(|reason| EmployeeAssetSeedErrorItem {
+                        row_number: row.row_number,
+                        entity_key: Some(row.employee_id.clone()),
+                        reason: reason.clone(),
+                    })
             })
             .collect::<Vec<_>>();
         errors.extend(self.excluded_errors.clone());
@@ -193,7 +201,9 @@ pub(crate) fn import_employee_asset_seed_conn(
     let snapshot = load_preview_snapshot_tx(&tx, snapshot_id)?;
 
     if snapshot.actor_account_id != Some(actor_id) {
-        return Err("employee asset seed snapshot belongs to a different active account".to_string());
+        return Err(
+            "employee asset seed snapshot belongs to a different active account".to_string(),
+        );
     }
 
     let mut imported = 0_i64;
@@ -227,7 +237,8 @@ pub(crate) fn import_employee_asset_seed_conn(
             continue;
         }
 
-        let Some(category_id) = load_category_id_by_code_tx(&tx, row.category_code.as_deref())? else {
+        let Some(category_id) = load_category_id_by_code_tx(&tx, row.category_code.as_deref())?
+        else {
             skipped += 1;
             errors.push(EmployeeAssetSeedErrorItem {
                 row_number: row.row_number,
@@ -356,7 +367,9 @@ fn build_preview(
 
     let employees = employee::query_all_employees_for_filters(conn, query)?;
     let mut built = build_candidate_rows(conn, employees)?;
-    built.rows.sort_by(|left, right| left.row_number.cmp(&right.row_number));
+    built
+        .rows
+        .sort_by(|left, right| left.row_number.cmp(&right.row_number));
     Ok(built)
 }
 
@@ -446,7 +459,9 @@ fn build_candidate_rows(
                 category_code: None,
                 category_name: None,
                 status: ROW_STATUS_ERROR.to_string(),
-                reason: Some("duplicate computer name maps to the same asset across employees".to_string()),
+                reason: Some(
+                    "duplicate computer name maps to the same asset across employees".to_string(),
+                ),
             });
             continue;
         }
@@ -602,8 +617,9 @@ fn persist_preview_snapshot(
         .map_err(|err| format!("failed to save employee asset seed snapshot row: {err}"))?;
     }
 
-    tx.commit()
-        .map_err(|err| format!("failed to commit employee asset seed preview transaction: {err}"))?;
+    tx.commit().map_err(|err| {
+        format!("failed to commit employee asset seed preview transaction: {err}")
+    })?;
 
     Ok(snapshot_id)
 }
@@ -680,7 +696,9 @@ fn load_preview_snapshot_tx(
             ORDER BY row_number ASC
             "#,
         )
-        .map_err(|err| format!("failed to prepare employee asset seed snapshot rows query: {err}"))?;
+        .map_err(|err| {
+            format!("failed to prepare employee asset seed snapshot rows query: {err}")
+        })?;
 
     let rows = stmt
         .query_map(params![snapshot_id], |row| {
@@ -773,10 +791,7 @@ fn strip_vn_prefix(asset_code: &str) -> String {
     }
 }
 
-fn asset_exists_for_seed_conn(
-    conn: &Connection,
-    asset_code: &str,
-) -> Result<bool, String> {
+fn asset_exists_for_seed_conn(conn: &Connection, asset_code: &str) -> Result<bool, String> {
     conn.query_row(
         r#"
         SELECT 1
@@ -792,10 +807,7 @@ fn asset_exists_for_seed_conn(
     .map_err(|err| format!("failed to inspect existing seeded assets: {err}"))
 }
 
-fn asset_exists_for_seed_tx(
-    tx: &Transaction<'_>,
-    asset_code: &str,
-) -> Result<bool, String> {
+fn asset_exists_for_seed_tx(tx: &Transaction<'_>, asset_code: &str) -> Result<bool, String> {
     tx.query_row(
         r#"
         SELECT 1
@@ -924,7 +936,8 @@ mod tests {
     }
 
     #[test]
-    fn preview_employee_asset_seed_derives_asset_code_computer_name_and_category_from_stored_value() {
+    fn preview_employee_asset_seed_derives_asset_code_computer_name_and_category_from_stored_value()
+    {
         let mut conn = open_test_connection();
         seed_employee(
             &conn,
@@ -952,7 +965,10 @@ mod tests {
         assert_eq!(preview.error_rows, 0);
         assert_eq!(preview.rows[0].employee_id, "ASWVN1302");
         assert_eq!(preview.rows[0].asset_code.as_deref(), Some("VNLAP293"));
-        assert_eq!(preview.rows[0].computer_name.as_deref(), Some("ASWVNLAP293"));
+        assert_eq!(
+            preview.rows[0].computer_name.as_deref(),
+            Some("ASWVNLAP293")
+        );
         assert_eq!(preview.rows[0].category_code.as_deref(), Some("laptop"));
     }
 
@@ -987,7 +1003,10 @@ mod tests {
         assert_eq!(preview.valid_rows, 0);
         assert_eq!(preview.error_rows, 2);
         assert_eq!(preview.errors.len(), 2);
-        assert!(preview.errors[0].reason.to_lowercase().contains("duplicate"));
+        assert!(preview.errors[0]
+            .reason
+            .to_lowercase()
+            .contains("duplicate"));
     }
 
     #[test]
@@ -1000,13 +1019,7 @@ mod tests {
             Some("ASWVNLAP293"),
             "employee_list",
         );
-        seed_employee(
-            &conn,
-            "ASWVN1303",
-            "Nguyen Van B",
-            None,
-            "employee_list",
-        );
+        seed_employee(&conn, "ASWVN1303", "Nguyen Van B", None, "employee_list");
 
         let preview = preview_employee_asset_seed_conn(
             &mut conn,
@@ -1022,7 +1035,10 @@ mod tests {
         assert_eq!(preview.valid_rows, 1);
         assert_eq!(preview.error_rows, 0);
         assert_eq!(preview.excluded_rows, 1);
-        assert!(preview.errors.iter().any(|item| item.reason.contains("blank or invalid")));
+        assert!(preview
+            .errors
+            .iter()
+            .any(|item| item.reason.contains("blank or invalid")));
     }
 
     #[test]
@@ -1084,12 +1100,17 @@ mod tests {
             .expect("query imported asset codes")
             .collect::<Result<Vec<_>, _>>()
             .expect("collect imported asset codes");
-        assert_eq!(imported_codes, vec!["VNLAP293".to_string(), "VNLAP294".to_string()]);
+        assert_eq!(
+            imported_codes,
+            vec!["VNLAP293".to_string(), "VNLAP294".to_string()]
+        );
 
         let imported_display_names = conn
             .prepare("SELECT asset_code, display_name FROM assets ORDER BY asset_code ASC")
             .expect("prepare imported asset display-name query")
-            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
             .expect("query imported asset display names")
             .collect::<Result<Vec<_>, _>>()
             .expect("collect imported asset display names");
@@ -1146,9 +1167,11 @@ mod tests {
         assert_eq!(report.imported_asset_codes, vec!["VNLAP294".to_string()]);
 
         let asset_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM assets WHERE asset_code LIKE 'VNLAP29%'", [], |row| {
-                row.get(0)
-            })
+            .query_row(
+                "SELECT COUNT(*) FROM assets WHERE asset_code LIKE 'VNLAP29%'",
+                [],
+                |row| row.get(0),
+            )
             .expect("count seeded laptop assets");
         assert_eq!(asset_count, 2);
     }

@@ -233,6 +233,54 @@ fn preview_import_excel(
 }
 
 #[tauri::command]
+async fn get_mssql_connection_defaults() -> db::mssql_import::MssqlConnectionDefaults {
+    db::mssql_import::get_mssql_connection_defaults().await
+}
+
+#[tauri::command]
+async fn test_mssql_connection(
+    host: String,
+    port: u16,
+    user: String,
+    password: String,
+) -> Result<bool, String> {
+    db::mssql_import::test_mssql_connection(&host, port, &user, &password).await
+}
+
+#[tauri::command]
+async fn preview_mssql_staff(
+    host: String,
+    port: u16,
+    user: String,
+    password: String,
+    query: Option<String>,
+) -> Result<db::mssql_import::MssqlImportPreview, String> {
+    db::mssql_import::preview_mssql_staff(&host, port, &user, &password, query.as_deref()).await
+}
+
+#[tauri::command]
+async fn import_mssql_staff(
+    app: tauri::AppHandle,
+    host: String,
+    port: u16,
+    user: String,
+    password: String,
+    query: Option<String>,
+    staff_group: Option<String>,
+) -> Result<db::mssql_import::MssqlImportReport, String> {
+    db::mssql_import::import_mssql_staff(
+        &app,
+        &host,
+        port,
+        &user,
+        &password,
+        query.as_deref(),
+        staff_group.as_deref(),
+    )
+    .await
+}
+
+#[tauri::command]
 fn inspect_import_columns(
     app: tauri::AppHandle,
     payload: db::ImportExcelInput,
@@ -432,9 +480,7 @@ fn deactivate_asset_category(
 }
 
 #[tauri::command]
-fn get_asset_dashboard_summary(
-    app: tauri::AppHandle,
-) -> Result<db::AssetDashboardSummary, String> {
+fn get_asset_dashboard_summary(app: tauri::AppHandle) -> Result<db::AssetDashboardSummary, String> {
     db::get_asset_dashboard_summary(&app)
 }
 
@@ -577,7 +623,11 @@ pub fn run() {
             reset_all_data,
             inspect_import_columns,
             import_excel,
-            preview_import_excel
+            preview_import_excel,
+            get_mssql_connection_defaults,
+            test_mssql_connection,
+            preview_mssql_staff,
+            import_mssql_staff
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {

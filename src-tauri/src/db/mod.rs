@@ -24,7 +24,6 @@ use schema::*;
 
 // ── Sub-modules ───────────────────────────────────────────────────────────────
 pub(crate) mod asset;
-pub(crate) mod employee_asset_seed;
 pub(crate) mod asset_import;
 pub(crate) mod audit;
 pub mod auth;
@@ -32,19 +31,21 @@ pub mod backup;
 pub mod borrow;
 pub mod column;
 pub mod employee;
+pub(crate) mod employee_asset_seed;
 pub mod import;
+pub mod mssql_import;
 mod schema;
 pub mod team;
 
 // ── Re-exports (all public types bubble up to `db::`) ─────────────────────────
 pub use asset::*;
-pub use employee_asset_seed::*;
 pub use asset_import::*;
 pub use auth::*;
 pub use backup::*;
 pub use borrow::*;
 pub use column::*;
 pub use employee::*;
+pub use employee_asset_seed::*;
 pub use import::*;
 pub use team::*;
 
@@ -606,7 +607,10 @@ fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
         ),
         ("resolved_full_name", "TEXT"),
         ("resolved_team_name", "TEXT"),
-        ("owner_match_status", "TEXT NOT NULL DEFAULT 'not_applicable'"),
+        (
+            "owner_match_status",
+            "TEXT NOT NULL DEFAULT 'not_applicable'",
+        ),
         ("owner_warnings_json", "TEXT NOT NULL DEFAULT '[]'"),
     ] {
         if existing_row_columns.iter().any(|name| name == column_name) {
@@ -620,13 +624,41 @@ fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
         .map_err(|err| format!("failed to add asset_import_rows.{column_name} column: {err}"))?;
     }
 
-    for (category_code, category_name, tracking_mode, prefix_code, qr_required, has_computer_name) in [
-        ("laptop", "Laptop", "serialized", Some("VNLAP"), 1_i64, 1_i64),
-        ("monitor", "Monitor", "serialized", Some("VNMON"), 1_i64, 0_i64),
+    for (
+        category_code,
+        category_name,
+        tracking_mode,
+        prefix_code,
+        qr_required,
+        has_computer_name,
+    ) in [
+        (
+            "laptop",
+            "Laptop",
+            "serialized",
+            Some("VNLAP"),
+            1_i64,
+            1_i64,
+        ),
+        (
+            "monitor",
+            "Monitor",
+            "serialized",
+            Some("VNMON"),
+            1_i64,
+            0_i64,
+        ),
         ("mouse", "Mouse", "quantity", None, 0_i64, 0_i64),
         ("keyboard", "Keyboard", "quantity", None, 0_i64, 0_i64),
         ("headset", "Headset", "quantity", None, 0_i64, 0_i64),
-        ("usb_type_c_hub", "USB Type-C Hub", "quantity", None, 0_i64, 0_i64),
+        (
+            "usb_type_c_hub",
+            "USB Type-C Hub",
+            "quantity",
+            None,
+            0_i64,
+            0_i64,
+        ),
     ] {
         conn.execute(
             r#"
@@ -715,7 +747,9 @@ fn ensure_seeded_asset_category_prefixes(conn: &Connection) -> Result<(), String
                   AND trim(prefix_code) <> ''
                 "#,
             )
-            .map_err(|err| format!("failed to prepare asset category prefix backfill query: {err}"))?;
+            .map_err(|err| {
+                format!("failed to prepare asset category prefix backfill query: {err}")
+            })?;
 
         let seeded_rows = category_stmt
             .query_map([], |row| {
@@ -727,7 +761,9 @@ fn ensure_seeded_asset_category_prefixes(conn: &Connection) -> Result<(), String
             })
             .map_err(|err| format!("failed to read asset category prefix backfill rows: {err}"))?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|err| format!("failed to collect asset category prefix backfill rows: {err}"))?;
+            .map_err(|err| {
+                format!("failed to collect asset category prefix backfill rows: {err}")
+            })?;
 
         for (category_id, _category_code, prefix_code) in seeded_rows {
             asset::upsert_asset_category_prefix_conn(
@@ -740,7 +776,10 @@ fn ensure_seeded_asset_category_prefixes(conn: &Connection) -> Result<(), String
         }
 
         for (category_code, active_prefixes) in [
-            ("laptop", &["VNLAP", "VNIMACPRO", "VNMACAIR", "VNMACPRO"][..]),
+            (
+                "laptop",
+                &["VNLAP", "VNIMACPRO", "VNMACAIR", "VNMACPRO"][..],
+            ),
             ("monitor", &["VNMON"][..]),
         ] {
             let category_id = conn
@@ -1388,7 +1427,10 @@ mod tests {
 
         assert_eq!(
             category_flags,
-            vec![("laptop".to_string(), 1_i64), ("monitor".to_string(), 0_i64)]
+            vec![
+                ("laptop".to_string(), 1_i64),
+                ("monitor".to_string(), 0_i64)
+            ]
         );
     }
 

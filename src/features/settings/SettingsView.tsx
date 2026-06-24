@@ -404,6 +404,14 @@ export function SettingsView({
                                             )}
                                             {imp.isImporting ? "Preparing import..." : "Import Excel"}
                                         </button>
+                                        <button
+                                            className={`mt-2 ${settingsSecondaryButtonClass}`}
+                                            onClick={() => void imp.handleOpenMssqlImport()}
+                                            type="button"
+                                        >
+                                            <Database size={14} />
+                                            Import from MSSQL
+                                        </button>
                                     </>
                                 ) : (
                                     <p className={`mt-2 text-xs ${settingsMutedTextClass} opacity-60`}>

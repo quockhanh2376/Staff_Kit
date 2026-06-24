@@ -4,11 +4,11 @@ use rusqlite::{params, Connection, Transaction};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
+use super::schema::CORE_COLUMN_DEFINITIONS;
 use super::{
     dynamic_key_to_label, humanize_sqlite_error, is_reserved_column_key, normalize_dynamic_key,
     open_runtime_connection, require_text,
 };
-use super::schema::CORE_COLUMN_DEFINITIONS;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

@@ -149,6 +149,14 @@ export function useImportState({
         setShowImportPreviewModal(false)
     }, [])
 
+    const handleClose = useCallback(() => {
+        setImportDrawerOpen(false)
+    }, [])
+
+    const handleOpenMssqlImport = useCallback(() => {
+        setImportDrawerOpen(true)
+    }, [])
+
     return {
         isImportDrawerOpen,
         setImportDrawerOpen,
@@ -170,5 +178,9 @@ export function useImportState({
         handleImportSelectedColumns,
         handleApprovePreviewRows,
         handleRejectPreviewRows,
+        handleClose,
+        handleOpenMssqlImport,
+        setGlobalError,
+        triggerReload,
     }
 }

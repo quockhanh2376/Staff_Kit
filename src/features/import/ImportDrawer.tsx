@@ -1,13 +1,19 @@
+import { useState } from "react"
+import { FileSpreadsheet, Database } from "lucide-react"
 import { Drawer } from "../../components/Drawer"
 import { SharedImportShell } from "./sharedImportShell"
+import { MssqlImportPanel } from "./MssqlImportPanel"
 import type { ImportState } from "./useImportState"
 
 type ImportDrawerProps = {
     importState: ImportState
 }
 
+type ImportSource = "excel" | "mssql"
+
 export function ImportDrawer({ importState }: ImportDrawerProps) {
     const imp = importState
+    const [source, setSource] = useState<ImportSource>("excel")
 
     const preview = imp.importPreviewResult
         ? {
@@ -94,9 +100,43 @@ export function ImportDrawer({ importState }: ImportDrawerProps) {
         <Drawer
             open={imp.isImportDrawerOpen}
             onClose={() => imp.setImportDrawerOpen(false)}
-            title="Import from Excel"
-            widthClass="w-[560px]"
+            title="Import Data"
+            widthClass={source === "mssql" ? "w-[640px]" : "w-[560px]"}
         >
+            <div className="mb-5 flex gap-2">
+                <button
+                    className={`inline-flex items-center gap-2 rounded-[8px] border px-3 py-2 text-sm font-medium ${
+                        source === "excel"
+                            ? "border-[var(--primary)]/60 bg-[var(--primary)]/10 text-[var(--primary)]"
+                            : "border-[var(--border)] text-[var(--text-secondary)]"
+                    }`}
+                    onClick={() => setSource("excel")}
+                    type="button"
+                >
+                    <FileSpreadsheet size={16} />
+                    Excel
+                </button>
+                <button
+                    className={`inline-flex items-center gap-2 rounded-[8px] border px-3 py-2 text-sm font-medium ${
+                        source === "mssql"
+                            ? "border-[var(--primary)]/60 bg-[var(--primary)]/10 text-[var(--primary)]"
+                            : "border-[var(--border)] text-[var(--text-secondary)]"
+                    }`}
+                    onClick={() => setSource("mssql")}
+                    type="button"
+                >
+                    <Database size={16} />
+                    MSSQL
+                </button>
+            </div>
+
+            {source === "mssql" ? (
+                <MssqlImportPanel
+                    onClose={imp.handleClose}
+                    triggerReload={imp.triggerReload}
+                    setGlobalError={imp.setGlobalError}
+                />
+            ) : (
             <SharedImportShell
                 fileSectionTitle="Step 1: Select Excel files"
                 fileSectionDescription={`You can select one or multiple files. The app will detect Staff ID and merge data by employee. Import target group: ${imp.importTargetGroupLabel}`}
@@ -177,6 +217,7 @@ export function ImportDrawer({ importState }: ImportDrawerProps) {
                     </div>
                 )}
             </SharedImportShell>
+            )}
         </Drawer>
     )
 }

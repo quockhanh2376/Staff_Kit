@@ -1,4 +1,4 @@
-﻿pub(crate) fn borrow_page_html() -> &'static str {
+pub(crate) fn borrow_page_html() -> &'static str {
     r#"<!doctype html>
 <html lang="en">
   <head>
@@ -427,7 +427,6 @@
   </body>
 </html>"#
 }
-
 
 #[cfg(test)]
 mod tests {
