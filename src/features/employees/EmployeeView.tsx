@@ -6,6 +6,7 @@ import {
     LoaderCircle,
     Search,
     Settings,
+    Trash2,
     Users,
 } from "lucide-react"
 import { useState, useCallback } from "react"
@@ -552,6 +553,30 @@ export function EmployeeView({
                                     >
                                         {edit.isMovingEmployees ? "Moving..." : "Move"}
                                     </button>
+                                    {emp.staffGroupFilter === "offboarding" && (
+                                        <button
+                                            className="inline-flex items-center gap-1 rounded-[8px] border border-red-500/60 px-3 py-1.5 text-sm font-medium text-red-400 transition hover:bg-red-500/10 disabled:opacity-50"
+                                            onClick={() => void edit.handleDeleteSelectedEmployee()}
+                                            type="button"
+                                            disabled={
+                                                !canEditEmployeeTable ||
+                                                !edit.canDeleteSelectedEmployee ||
+                                                edit.isDeletingSelectedEmployee
+                                            }
+                                            title={
+                                                edit.selectedMoveEmployeeIds.length === 1
+                                                    ? "Delete selected Offboarding employee"
+                                                    : "Select exactly one Offboarding employee to delete."
+                                            }
+                                        >
+                                            {edit.isDeletingSelectedEmployee ? (
+                                                <LoaderCircle className="animate-spin" size={14} />
+                                            ) : (
+                                                <Trash2 size={14} />
+                                            )}
+                                            {edit.isDeletingSelectedEmployee ? "Deleting..." : "Delete"}
+                                        </button>
+                                    )}
                                     <button
                                         className="rounded-[8px] border border-[var(--border)] px-3 py-1.5 text-sm font-medium text-[var(--text-secondary)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] disabled:opacity-50"
                                         onClick={edit.toggleSelectCurrentPageEmployees}
