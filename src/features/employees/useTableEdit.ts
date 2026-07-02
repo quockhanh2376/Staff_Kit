@@ -71,6 +71,7 @@ export function useTableEdit({
     const [selectedMoveEmployeeIds, setSelectedMoveEmployeeIds] = useState<number[]>([])
     const [moveTargetGroup, setMoveTargetGroup] = useState<StaffGroupKey>("employee_list")
     const [isMovingEmployees, setMovingEmployees] = useState(false)
+    const [isDeletingSelectedEmployee, setDeletingSelectedEmployee] = useState(false)
 
     // ── Inactivity auto-exit ──────────────────────────────────────────────────────
     const inactivityTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -124,6 +125,21 @@ export function useTableEdit({
     const canMoveSelectedRows = useMemo(
         () => selectedMoveEmployeeIds.length > 0 && moveTargetGroup !== staffGroupFilter,
         [moveTargetGroup, selectedMoveEmployeeIds.length, staffGroupFilter],
+    )
+
+    const selectedEmployeeForDelete = useMemo(() => {
+        if (staffGroupFilter !== "offboarding" || selectedMoveEmployeeIds.length !== 1) {
+            return null
+        }
+        return employees.find((employee) => employee.id === selectedMoveEmployeeIds[0]) ?? null
+    }, [employees, selectedMoveEmployeeIds, staffGroupFilter])
+
+    const canDeleteSelectedEmployee = Boolean(
+        canEditEmployeeTable &&
+        selectedEmployeeForDelete &&
+        !isDeletingSelectedEmployee &&
+        !isMovingEmployees &&
+        !isSavingTableEdits,
     )
 
     // ── Cell draft helpers ───────────────────────────────────────────────────────
@@ -282,12 +298,44 @@ export function useTableEdit({
 
     const clearMoveSelection = () => setSelectedMoveEmployeeIds([])
 
+    const handleDeleteSelectedEmployee = async () => {
+        if (!selectedEmployeeForDelete || !canDeleteSelectedEmployee) return
+
+        const confirmed = window.confirm(
+            `Delete ${selectedEmployeeForDelete.fullName} (${selectedEmployeeForDelete.employeeId}) from Offboarding? This will remove the employee record and related borrow/asset links.`,
+        )
+        if (!confirmed) return
+
+        try {
+            setDeletingSelectedEmployee(true)
+            await staffApi.deleteEmployee(selectedEmployeeForDelete.id)
+            setSelectedMoveEmployeeIds((prev) =>
+                prev.filter((id) => id !== selectedEmployeeForDelete.id),
+            )
+            setTableEditDrafts((prev) => {
+                if (!(selectedEmployeeForDelete.id in prev)) return prev
+                const next = { ...prev }
+                delete next[selectedEmployeeForDelete.id]
+                return next
+            })
+            setActiveTableEditCell((prev) =>
+                prev?.employeeId === selectedEmployeeForDelete.id ? null : prev,
+            )
+            triggerReload()
+        } catch (error) {
+            setGlobalError(getUserErrorMessage(error))
+        } finally {
+            setDeletingSelectedEmployee(false)
+        }
+    }
+
     const resetTableEditStateOnLogout = useCallback(() => {
         clearInactivityTimer()
         setTableEditMode(false)
         setTableEditDrafts({})
         setActiveTableEditCell(null)
         setSelectedMoveEmployeeIds([])
+        setDeletingSelectedEmployee(false)
     }, [clearInactivityTimer])
 
     return {
@@ -307,6 +355,8 @@ export function useTableEdit({
         setMoveTargetGroup,
         isMovingEmployees,
         canMoveSelectedRows,
+        isDeletingSelectedEmployee,
+        canDeleteSelectedEmployee,
         getDraftCellText,
         getEditableCellText,
         setDraftCellText,
@@ -314,6 +364,7 @@ export function useTableEdit({
         handleToggleTableEditMode,
         handleSaveTableEdits,
         handleMoveSelectedEmployees,
+        handleDeleteSelectedEmployee,
         toggleMoveEmployeeSelection,
         toggleSelectCurrentPageEmployees,
         clearMoveSelection,

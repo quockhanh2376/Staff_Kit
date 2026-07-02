@@ -6,6 +6,7 @@ import {
     LoaderCircle,
     Search,
     Settings,
+    Trash2,
     Users,
 } from "lucide-react"
 import { useState, useCallback } from "react"
@@ -218,6 +219,23 @@ export function EmployeeView({
                         type="button"
                     >
                         Clear Filters
+                    </button>
+
+                    <button
+                        className="inline-flex h-8 items-center rounded-[8px] border border-emerald-500/70 bg-emerald-500/10 px-3 text-sm font-bold text-emerald-300 shadow-[0_0_0_1px_rgba(16,185,129,0.2)] transition hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                        onClick={() => void emp.updateEmployeeListFromMssql()}
+                        type="button"
+                        disabled={emp.isUpdatingEmployeeListFromMssql}
+                        title="Update Employee list from MSSQL"
+                    >
+                        {emp.isUpdatingEmployeeListFromMssql ? (
+                            <span className="inline-flex items-center gap-2">
+                                <LoaderCircle className="animate-spin" size={14} />
+                                updating
+                            </span>
+                        ) : (
+                            "update"
+                        )}
                     </button>
                 </div>
             </div>
@@ -535,6 +553,30 @@ export function EmployeeView({
                                     >
                                         {edit.isMovingEmployees ? "Moving..." : "Move"}
                                     </button>
+                                    {emp.staffGroupFilter === "offboarding" && (
+                                        <button
+                                            className="inline-flex items-center gap-1 rounded-[8px] border border-red-500/60 px-3 py-1.5 text-sm font-medium text-red-400 transition hover:bg-red-500/10 disabled:opacity-50"
+                                            onClick={() => void edit.handleDeleteSelectedEmployee()}
+                                            type="button"
+                                            disabled={
+                                                !canEditEmployeeTable ||
+                                                !edit.canDeleteSelectedEmployee ||
+                                                edit.isDeletingSelectedEmployee
+                                            }
+                                            title={
+                                                edit.selectedMoveEmployeeIds.length === 1
+                                                    ? "Delete selected Offboarding employee"
+                                                    : "Select exactly one Offboarding employee to delete."
+                                            }
+                                        >
+                                            {edit.isDeletingSelectedEmployee ? (
+                                                <LoaderCircle className="animate-spin" size={14} />
+                                            ) : (
+                                                <Trash2 size={14} />
+                                            )}
+                                            {edit.isDeletingSelectedEmployee ? "Deleting..." : "Delete"}
+                                        </button>
+                                    )}
                                     <button
                                         className="rounded-[8px] border border-[var(--border)] px-3 py-1.5 text-sm font-medium text-[var(--text-secondary)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] disabled:opacity-50"
                                         onClick={edit.toggleSelectCurrentPageEmployees}

@@ -2,7 +2,9 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
-use super::{humanize_sqlite_error, normalize_optional_text, open_runtime_connection, require_text};
+use super::{
+    humanize_sqlite_error, normalize_optional_text, open_runtime_connection, require_text,
+};
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -81,8 +83,11 @@ pub fn upsert_team(app: &AppHandle, payload: TeamUpsertInput) -> Result<TeamReco
         .map(Some)
         .or_else(|_| {
             // Parent doesn't exist yet — create it first
-            conn.execute("INSERT OR IGNORE INTO teams(name) VALUES (?)", params![pname.as_str()])
-                .map_err(humanize_sqlite_error)?;
+            conn.execute(
+                "INSERT OR IGNORE INTO teams(name) VALUES (?)",
+                params![pname.as_str()],
+            )
+            .map_err(humanize_sqlite_error)?;
             conn.query_row(
                 "SELECT id FROM teams WHERE name = ?",
                 params![pname.as_str()],

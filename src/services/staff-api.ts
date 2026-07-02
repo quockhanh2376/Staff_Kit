@@ -54,6 +54,9 @@ import type {
   BorrowRequestRejectInput,
   TeamRecord,
   TeamUpsertInput,
+  MssqlConnectionDefaults,
+  MssqlImportPreview,
+  MssqlImportReport,
 } from "../types/staff"
 
 declare global {
@@ -492,5 +495,24 @@ export const staffApi = {
         filePath: payload.filePath ?? null,
         filePaths: payload.filePaths ?? null,
       },
+    }),
+
+  getMssqlConnectionDefaults: () =>
+    call<MssqlConnectionDefaults>("get_mssql_connection_defaults"),
+
+  testMssqlConnection: (host: string, port: number, user: string, password: string) =>
+    call<boolean>("test_mssql_connection", { host, port, user, password }),
+
+  previewMssqlStaff: (host: string, port: number, user: string, password: string, query?: string) =>
+    call<MssqlImportPreview>("preview_mssql_staff", {
+      host, port, user, password,
+      query: query ?? null,
+    }),
+
+  importMssqlStaff: (host: string, port: number, user: string, password: string, query?: string, staffGroup?: string) =>
+    call<MssqlImportReport>("import_mssql_staff", {
+      host, port, user, password,
+      query: query ?? null,
+      staffGroup: staffGroup ?? null,
     }),
 }

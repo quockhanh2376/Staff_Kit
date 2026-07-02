@@ -51,7 +51,10 @@ fn ensure_firewall_rule(port: u16) {
     // Both commands are fire-and-forget; errors are silently ignored.
     let _ = Command::new("netsh")
         .args([
-            "advfirewall", "firewall", "delete", "rule",
+            "advfirewall",
+            "firewall",
+            "delete",
+            "rule",
             &format!("name={RULE_NAME}"),
         ])
         .creation_flags(CREATE_NO_WINDOW)

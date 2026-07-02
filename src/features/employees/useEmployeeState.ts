@@ -40,6 +40,8 @@ export function useEmployeeState({
     const [currentPage, setCurrentPage] = useState(1)
     const [isLoadingEmployees, setLoadingEmployees] = useState(false)
     const [isLoadingTeams, setLoadingTeams] = useState(false)
+    const [isUpdatingEmployeeListFromMssql, setUpdatingEmployeeListFromMssql] = useState(false)
+    const [mssqlRefreshToken, setMssqlRefreshToken] = useState(0)
 
     const teamFilterMenuRef = useRef<HTMLDivElement | null>(null)
 
@@ -62,7 +64,7 @@ export function useEmployeeState({
         })()
 
         return () => { disposed = true }
-    }, [dbReady, isAuthenticated, reloadToken, setGlobalError])
+    }, [dbReady, isAuthenticated, reloadToken, mssqlRefreshToken, setGlobalError])
 
     // Load group counts
     useEffect(() => {
@@ -80,7 +82,7 @@ export function useEmployeeState({
         })()
 
         return () => { disposed = true }
-    }, [dbReady, isAuthenticated, reloadToken, setGlobalError])
+    }, [dbReady, isAuthenticated, reloadToken, mssqlRefreshToken, setGlobalError])
 
     // Reset to page 1 when filters change
     useEffect(() => {
@@ -129,6 +131,7 @@ export function useEmployeeState({
         rowsPerPage,
         currentPage,
         reloadToken,
+        mssqlRefreshToken,
         employeeSort,
         setGlobalError,
     ])
@@ -235,6 +238,34 @@ export function useEmployeeState({
         })
     }
 
+    const updateEmployeeListFromMssql = async () => {
+        try {
+            setUpdatingEmployeeListFromMssql(true)
+            setGlobalError(null)
+            const defaults = await staffApi.getMssqlConnectionDefaults()
+            if (!defaults.host || !defaults.user || !defaults.password) {
+                throw new Error("Missing MSSQL configuration. Set STAFFKIT_MSSQL_HOST, STAFFKIT_MSSQL_USER, and STAFFKIT_MSSQL_PASSWORD.")
+            }
+            const report = await staffApi.importMssqlStaff(
+                defaults.host,
+                defaults.port,
+                defaults.user,
+                defaults.password,
+                undefined,
+                "employee_list",
+            )
+            console.info("[Staff Kit] MSSQL employee update report:", report)
+            setStaffGroupFilter("employee_list")
+            setCurrentPage(1)
+            setMssqlRefreshToken((value) => value + 1)
+        } catch (error) {
+            console.error("[Staff Kit] MSSQL employee update failed:", error)
+            setGlobalError(getUserErrorMessage(error))
+        } finally {
+            setUpdatingEmployeeListFromMssql(false)
+        }
+    }
+
     return {
         employees,
         teams,
@@ -259,6 +290,7 @@ export function useEmployeeState({
         totalPages,
         isLoadingEmployees,
         isLoadingTeams,
+        isUpdatingEmployeeListFromMssql,
         teamOptions,
         teamFilterOptions,
         filteredTeamFilterOptions,
@@ -267,6 +299,7 @@ export function useEmployeeState({
         selectTeamFilter,
         commitTypedTeamSelection,
         toggleColumnSort,
+        updateEmployeeListFromMssql,
         resetEmployeeStateOnLogout,
     }
 }

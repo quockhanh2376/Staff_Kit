@@ -97,8 +97,16 @@ const USAGE_LOCATION_ALIASES: &[&str] = &[
     "workinglocation",
 ];
 const NOTES_ALIASES: &[&str] = &["notes", "note", "remark", "remarks", "ghichu"];
-const OWNER_STAFF_ID_ALIASES: &[&str] = &["staffid", "eeid", "employeeid", "mãnhânviên", "manhanvien"];
-const OWNER_FULL_NAME_ALIASES: &[&str] = &["tênnhânviên", "tennhanvien", "vietnamesename", "fullname", "hoten", "họtên"];
+const OWNER_STAFF_ID_ALIASES: &[&str] =
+    &["staffid", "eeid", "employeeid", "mãnhânviên", "manhanvien"];
+const OWNER_FULL_NAME_ALIASES: &[&str] = &[
+    "tênnhânviên",
+    "tennhanvien",
+    "vietnamesename",
+    "fullname",
+    "hoten",
+    "họtên",
+];
 const OWNER_TEAM_ALIASES: &[&str] = &["team", "client", "clientpmd", "client(pmd)"];
 const OWNER_PHONE_NUMBER_ALIASES: &[&str] = &["phonenumber", "phone", "cellphone", "mobilenumber"];
 
@@ -433,9 +441,11 @@ pub fn inspect_asset_import_file(
         available_sheets: inspection.available_sheets,
         header_row: inspection.header_row,
         headers: inspection.headers,
-        requires_manual_mapping:
-            mapping_missing_required_fields(AssetImportMode::Serialized, &inspection.auto_mapping)
-                .is_some(),
+        requires_manual_mapping: mapping_missing_required_fields(
+            AssetImportMode::Serialized,
+            &inspection.auto_mapping,
+        )
+        .is_some(),
         mapping: inspection.auto_mapping,
     })
 }
@@ -482,7 +492,10 @@ pub fn preview_asset_import_file(
     )?;
 
     let mut conn = open_runtime_connection(app)?;
-    preview_asset_import_seed_conn(&mut conn, asset_import_seed_from_parsed(parsed, payload.import_type))
+    preview_asset_import_seed_conn(
+        &mut conn,
+        asset_import_seed_from_parsed(parsed, payload.import_type),
+    )
 }
 
 pub fn import_asset_import_file(
@@ -498,7 +511,10 @@ pub fn import_asset_import_file(
     )?;
 
     let mut conn = open_runtime_connection(app)?;
-    import_asset_import_seed_conn(&mut conn, asset_import_seed_from_parsed(parsed, payload.import_type))
+    import_asset_import_seed_conn(
+        &mut conn,
+        asset_import_seed_from_parsed(parsed, payload.import_type),
+    )
 }
 
 pub fn list_asset_import_batches(app: &AppHandle) -> Result<Vec<AssetImportBatchSummary>, String> {
@@ -1007,8 +1023,9 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
             let category_value = asset_type
                 .clone()
                 .ok_or_else(|| format!("row {row_id} is missing assetType"))?;
-            let category = asset::load_asset_category_by_code_or_name_tx(&tx, category_value.as_str())?
-                .ok_or_else(|| format!("asset category '{category_value}' was not found"))?;
+            let category =
+                asset::load_asset_category_by_code_or_name_tx(&tx, category_value.as_str())?
+                    .ok_or_else(|| format!("asset category '{category_value}' was not found"))?;
 
             if category.tracking_mode != AssetImportMode::Quantity.as_str() {
                 return Err(format!(
@@ -1152,13 +1169,12 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
 
     drop(stmt);
 
-    if rows
-        .iter()
-        .any(|(row_id, asset_code, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _)| {
+    if rows.iter().any(
+        |(row_id, asset_code, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _)| {
             let _ = row_id;
             asset_code.as_deref().is_none()
-        })
-    {
+        },
+    ) {
         return Err("serialized asset rows require assetCode before import".to_string());
     }
 
@@ -1302,7 +1318,11 @@ pub(crate) fn preview_asset_import_seed_conn(
     conn: &mut Connection,
     input: AssetImportBatchSeedInput,
 ) -> Result<AssetDirectImportPreview, String> {
-    preview_asset_import_seed_conn_with_cleanup(conn, input, delete_asset_import_batch_conn_internal)
+    preview_asset_import_seed_conn_with_cleanup(
+        conn,
+        input,
+        delete_asset_import_batch_conn_internal,
+    )
 }
 
 fn preview_asset_import_seed_conn_with_cleanup<F>(
@@ -1458,9 +1478,7 @@ fn asset_direct_report_from_batch_detail(
     }
 }
 
-fn asset_direct_preview_row_from_record(
-    row: &AssetImportRowRecord,
-) -> AssetDirectImportPreviewRow {
+fn asset_direct_preview_row_from_record(row: &AssetImportRowRecord) -> AssetDirectImportPreviewRow {
     let holder_label = row
         .resolved_full_name
         .clone()
@@ -1491,11 +1509,13 @@ fn asset_direct_error_items_from_rows(
 ) -> Vec<AssetDirectImportErrorItem> {
     rows.iter()
         .flat_map(|row| {
-            row.validation_errors.iter().map(|reason| AssetDirectImportErrorItem {
-                row_number: row.row_number,
-                entity_key: row.asset_code.clone().or_else(|| row.display_name.clone()),
-                reason: reason.clone(),
-            })
+            row.validation_errors
+                .iter()
+                .map(|reason| AssetDirectImportErrorItem {
+                    row_number: row.row_number,
+                    entity_key: row.asset_code.clone().or_else(|| row.display_name.clone()),
+                    reason: reason.clone(),
+                })
         })
         .collect()
 }
@@ -1883,12 +1903,17 @@ fn build_row_seed_from_raw_values(
     }
 }
 
-fn find_value_by_header_alias(raw_values: &[AssetImportRawValue], aliases: &[&str]) -> Option<String> {
+fn find_value_by_header_alias(
+    raw_values: &[AssetImportRawValue],
+    aliases: &[&str],
+) -> Option<String> {
     raw_values
         .iter()
         .find(|item| {
             let normalized = normalize_header_key(item.header.as_str());
-            aliases.iter().any(|alias| normalized == normalize_header_key(alias))
+            aliases
+                .iter()
+                .any(|alias| normalized == normalize_header_key(alias))
         })
         .map(|item| item.value.clone())
 }
@@ -2022,8 +2047,7 @@ fn detect_field_mapping(headers: &[String]) -> AssetImportFieldMapping {
             mapping.computer_name = Some(header.clone());
             continue;
         }
-        if mapping.usage_location.is_none()
-            && USAGE_LOCATION_ALIASES.contains(&normalized.as_str())
+        if mapping.usage_location.is_none() && USAGE_LOCATION_ALIASES.contains(&normalized.as_str())
         {
             mapping.usage_location = Some(header.clone());
             continue;
@@ -2040,8 +2064,7 @@ fn detect_field_mapping(headers: &[String]) -> AssetImportFieldMapping {
             mapping.serial_number = Some(header.clone());
             continue;
         }
-        if mapping.adapter_number.is_none()
-            && ADAPTER_NUMBER_ALIASES.contains(&normalized.as_str())
+        if mapping.adapter_number.is_none() && ADAPTER_NUMBER_ALIASES.contains(&normalized.as_str())
         {
             mapping.adapter_number = Some(header.clone());
             continue;
@@ -2115,13 +2138,10 @@ fn mapping_missing_required_fields(
 }
 
 fn mapping_score(mapping: &AssetImportFieldMapping) -> i64 {
-    let required_matches = [
-        mapping.asset_type.as_ref(),
-        mapping.display_name.as_ref(),
-    ]
-    .into_iter()
-    .flatten()
-    .count() as i64;
+    let required_matches = [mapping.asset_type.as_ref(), mapping.display_name.as_ref()]
+        .into_iter()
+        .flatten()
+        .count() as i64;
     let optional_matches = [
         mapping.asset_code.as_ref(),
         mapping.computer_name.as_ref(),
@@ -2207,9 +2227,7 @@ fn normalize_import_field_key(value: &str) -> Result<String, String> {
         | "submittedStaffId"
         | "submittedFullName"
         | "submittedTeam"
-        | "submittedPhoneNumber" => {
-            Ok(value.trim().to_string())
-        }
+        | "submittedPhoneNumber" => Ok(value.trim().to_string()),
         _ => Err(format!("unsupported asset import field '{value}'")),
     }
 }
@@ -2469,7 +2487,9 @@ fn resolve_owner_state(
             resolved_team_name: None,
             owner_match_status: OWNER_MATCH_UNRESOLVED.to_string(),
             owner_warnings: Vec::new(),
-            blocking_error: Some("employee owner could not be resolved because StaffID is missing".to_string()),
+            blocking_error: Some(
+                "employee owner could not be resolved because StaffID is missing".to_string(),
+            ),
         };
     };
 
@@ -2518,8 +2538,11 @@ fn resolve_owner_state(
     let candidate = &candidates[0];
     let mut owner_warnings = Vec::new();
     if let Some(submitted_name) = row.submitted_full_name.as_deref() {
-        if normalize_compare_text(submitted_name) != normalize_compare_text(candidate.full_name.as_str()) {
-            owner_warnings.push("submitted employee name does not match employee master".to_string());
+        if normalize_compare_text(submitted_name)
+            != normalize_compare_text(candidate.full_name.as_str())
+        {
+            owner_warnings
+                .push("submitted employee name does not match employee master".to_string());
         }
     }
     if let Some(submitted_team) = row.submitted_team.as_deref() {
@@ -3046,9 +3069,8 @@ mod tests {
         import_asset_import_seed_conn, import_asset_import_seed_conn_with_cleanup,
         load_asset_import_batch_detail_conn, parse_asset_import_source,
         preview_asset_import_seed_conn, preview_asset_import_seed_conn_with_cleanup,
-        update_asset_import_row_conn,
-        AssetImportBatchSeedInput, AssetImportFieldMapping, AssetImportMode,
-        AssetImportRawValue, AssetImportRowSeedInput, AssetImportRowUpdateInput,
+        update_asset_import_row_conn, AssetImportBatchSeedInput, AssetImportFieldMapping,
+        AssetImportMode, AssetImportRawValue, AssetImportRowSeedInput, AssetImportRowUpdateInput,
     };
 
     fn open_test_connection() -> Connection {
@@ -3488,13 +3510,9 @@ mod tests {
             ],
         );
 
-        let parsed = parse_asset_import_source(
-            csv_path.as_path(),
-            AssetImportMode::Serialized,
-            None,
-            None,
-        )
-        .expect("parse asset list style csv");
+        let parsed =
+            parse_asset_import_source(csv_path.as_path(), AssetImportMode::Serialized, None, None)
+                .expect("parse asset list style csv");
 
         assert_eq!(parsed.auto_mapping.asset_code.as_deref(), Some("Assetcode"));
         assert_eq!(
@@ -3502,15 +3520,16 @@ mod tests {
             Some("Serrial Number")
         );
         assert_eq!(parsed.rows.len(), 2);
-        assert_eq!(parsed.rows[0].submitted_staff_id.as_deref(), Some("ASW1302"));
+        assert_eq!(
+            parsed.rows[0].submitted_staff_id.as_deref(),
+            Some("ASW1302")
+        );
         assert_eq!(parsed.rows[1].submitted_staff_id, None);
         assert_eq!(parsed.rows[0].asset_code.as_deref(), Some("VNLAP235"));
-        assert!(
-            parsed.rows[0]
-                .raw_values
-                .iter()
-                .any(|item| item.header == "Adapter number" && item.value == "7900LG3")
-        );
+        assert!(parsed.rows[0]
+            .raw_values
+            .iter()
+            .any(|item| item.header == "Adapter number" && item.value == "7900LG3"));
 
         let _ = fs::remove_file(csv_path);
     }
@@ -3526,13 +3545,9 @@ mod tests {
             ],
         );
 
-        let parsed = parse_asset_import_source(
-            csv_path.as_path(),
-            AssetImportMode::Serialized,
-            None,
-            None,
-        )
-        .expect("parse workbook with explicit computer name");
+        let parsed =
+            parse_asset_import_source(csv_path.as_path(), AssetImportMode::Serialized, None, None)
+                .expect("parse workbook with explicit computer name");
 
         let batch = create_asset_import_batch_seed_conn(
             &mut conn,
@@ -3578,13 +3593,9 @@ mod tests {
             ],
         );
 
-        let parsed = parse_asset_import_source(
-            csv_path.as_path(),
-            AssetImportMode::Serialized,
-            None,
-            None,
-        )
-        .expect("parse workbook with blank computer name");
+        let parsed =
+            parse_asset_import_source(csv_path.as_path(), AssetImportMode::Serialized, None, None)
+                .expect("parse workbook with blank computer name");
 
         let batch = create_asset_import_batch_seed_conn(
             &mut conn,
@@ -3629,13 +3640,9 @@ mod tests {
             ],
         );
 
-        let parsed = parse_asset_import_source(
-            csv_path.as_path(),
-            AssetImportMode::Serialized,
-            None,
-            None,
-        )
-        .expect("parse monitor style csv");
+        let parsed =
+            parse_asset_import_source(csv_path.as_path(), AssetImportMode::Serialized, None, None)
+                .expect("parse monitor style csv");
 
         assert_eq!(
             parsed.auto_mapping.usage_location.as_deref(),
@@ -3665,12 +3672,10 @@ mod tests {
         assert_eq!(parsed.auto_mapping.asset_code.as_deref(), Some("Assetcode"));
         assert_eq!(parsed.auto_mapping.quantity.as_deref(), Some("Quantity"));
         assert_eq!(parsed.rows[0].quantity.as_deref(), Some("50"));
-        assert!(
-            parsed.rows[0]
-                .raw_values
-                .iter()
-                .any(|item| item.header == "Quantity" && item.value == "50")
-        );
+        assert!(parsed.rows[0]
+            .raw_values
+            .iter()
+            .any(|item| item.header == "Quantity" && item.value == "50"));
 
         let _ = fs::remove_file(csv_path);
     }
@@ -3681,10 +3686,13 @@ mod tests {
 
         let batch = create_asset_import_batch_seed_conn(
             &mut conn,
-            sample_batch(AssetImportMode::Serialized, vec![
-                row(2, "asset-001", "Laptop", "Dell Latitude 7440"),
-                row(3, "ASSET-001", "Laptop", "Dell Latitude 7450"),
-            ]),
+            sample_batch(
+                AssetImportMode::Serialized,
+                vec![
+                    row(2, "asset-001", "Laptop", "Dell Latitude 7440"),
+                    row(3, "ASSET-001", "Laptop", "Dell Latitude 7450"),
+                ],
+            ),
         )
         .expect("create asset import batch");
 
@@ -3704,12 +3712,10 @@ mod tests {
 
         let batch = create_asset_import_batch_seed_conn(
             &mut conn,
-            sample_batch(AssetImportMode::Serialized, vec![row(
-                2,
-                "asset-existing",
-                "Laptop",
-                "Dell Latitude 7440",
-            )]),
+            sample_batch(
+                AssetImportMode::Serialized,
+                vec![row(2, "asset-existing", "Laptop", "Dell Latitude 7440")],
+            ),
         )
         .expect("create asset import batch");
 
@@ -3818,12 +3824,10 @@ mod tests {
 
         assert_eq!(batch.summary.valid_rows, 0);
         assert_eq!(batch.summary.error_rows, 1);
-        assert!(
-            batch.rows[0]
-                .validation_errors
-                .iter()
-                .any(|item| item == "quantity must be a positive integer")
-        );
+        assert!(batch.rows[0]
+            .validation_errors
+            .iter()
+            .any(|item| item == "quantity must be a positive integer"));
 
         let updated = update_asset_import_row_conn(
             &mut conn,
@@ -3960,7 +3964,9 @@ mod tests {
         assert_eq!(preview.errors.len(), 1);
 
         let batch_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM asset_import_batches", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM asset_import_batches", [], |row| {
+                row.get(0)
+            })
             .expect("count temporary batches after preview");
         assert_eq!(batch_count, 0);
     }
@@ -3973,7 +3979,12 @@ mod tests {
             &mut conn,
             sample_batch(
                 AssetImportMode::Quantity,
-                vec![quantity_row_without_asset_code(2, "Mouse", "Logitech M650", "10")],
+                vec![quantity_row_without_asset_code(
+                    2,
+                    "Mouse",
+                    "Logitech M650",
+                    "10",
+                )],
             ),
             |_, _, _| Err("cleanup failed".to_string()),
         )
@@ -4012,7 +4023,9 @@ mod tests {
         assert_eq!(stock_count, 1);
 
         let batch_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM asset_import_batches", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM asset_import_batches", [], |row| {
+                row.get(0)
+            })
             .expect("count temporary batches after direct import");
         assert_eq!(batch_count, 0);
     }
@@ -4025,7 +4038,12 @@ mod tests {
             &mut conn,
             sample_batch(
                 AssetImportMode::Quantity,
-                vec![quantity_row_without_asset_code(2, "Mouse", "Logitech M650", "10")],
+                vec![quantity_row_without_asset_code(
+                    2,
+                    "Mouse",
+                    "Logitech M650",
+                    "10",
+                )],
             ),
             |_, _, _| Err("cleanup failed".to_string()),
         )
@@ -4067,10 +4085,13 @@ mod tests {
 
         let batch = create_asset_import_batch_seed_conn(
             &mut conn,
-            sample_batch(AssetImportMode::Serialized, vec![
-                row(2, "ASSET-001", "Laptop", "Dell Latitude 7440"),
-                row(3, "ASSET-EXISTING", "Laptop", "Dell Latitude Existing"),
-            ]),
+            sample_batch(
+                AssetImportMode::Serialized,
+                vec![
+                    row(2, "ASSET-001", "Laptop", "Dell Latitude 7440"),
+                    row(3, "ASSET-EXISTING", "Laptop", "Dell Latitude Existing"),
+                ],
+            ),
         )
         .expect("create asset import batch");
 
@@ -4128,7 +4149,10 @@ mod tests {
         assert_eq!(batch.summary.valid_rows, 1);
         assert_eq!(batch.summary.error_rows, 0);
         assert_eq!(batch.rows[0].status, "valid");
-        assert_eq!(batch.rows[0].resolved_employee_id.as_deref(), Some("ASWVN729"));
+        assert_eq!(
+            batch.rows[0].resolved_employee_id.as_deref(),
+            Some("ASWVN729")
+        );
         assert_eq!(
             batch.rows[0].resolved_full_name.as_deref(),
             Some("Trần Tú Linh")
@@ -4148,7 +4172,13 @@ mod tests {
             &mut conn,
             sample_batch(
                 AssetImportMode::Serialized,
-                vec![owner_row(2, "ASWVN9999", "Unknown User", "Unknown Team", "VNLAP999")],
+                vec![owner_row(
+                    2,
+                    "ASWVN9999",
+                    "Unknown User",
+                    "Unknown Team",
+                    "VNLAP999",
+                )],
             ),
         )
         .expect("create unresolved owner batch");
@@ -4181,7 +4211,13 @@ mod tests {
             &mut conn,
             sample_batch(
                 AssetImportMode::Serialized,
-                vec![owner_row(2, "ASWVN9999", "LÆ° Tháº¿ HÃ¹ng", "Examworks", "VNLAP777")],
+                vec![owner_row(
+                    2,
+                    "ASWVN9999",
+                    "LÆ° Tháº¿ HÃ¹ng",
+                    "Examworks",
+                    "VNLAP777",
+                )],
             ),
         )
         .expect("create unresolved owner batch");
@@ -4206,19 +4242,20 @@ mod tests {
     #[test]
     fn import_valid_rows_creates_active_loan_for_resolved_laptop_owner_rows() {
         let mut conn = open_test_connection();
-        let employee_row_id = seed_employee(
-            &conn,
-            "ASWVN1302",
-            "Lư Thế Hùng",
-            "Examworks",
-            "onboarding",
-        );
+        let employee_row_id =
+            seed_employee(&conn, "ASWVN1302", "Lư Thế Hùng", "Examworks", "onboarding");
 
         let batch = create_asset_import_batch_seed_conn(
             &mut conn,
             sample_batch(
                 AssetImportMode::Serialized,
-                vec![owner_row(2, "ASW1302", "Lư Thế Hùng", "ExamWorks", "VNLAP235")],
+                vec![owner_row(
+                    2,
+                    "ASW1302",
+                    "Lư Thế Hùng",
+                    "ExamWorks",
+                    "VNLAP235",
+                )],
             ),
         )
         .expect("create resolved owner batch");
@@ -4248,7 +4285,8 @@ mod tests {
     }
 
     #[test]
-    fn import_valid_rows_creates_active_loan_for_resolved_monitor_owner_rows_and_persists_dashboard_metadata() {
+    fn import_valid_rows_creates_active_loan_for_resolved_monitor_owner_rows_and_persists_dashboard_metadata(
+    ) {
         let mut conn = open_test_connection();
         let employee_row_id = seed_employee(
             &conn,

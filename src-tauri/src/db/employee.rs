@@ -426,10 +426,46 @@ pub fn move_employees_group(
 }
 
 pub fn delete_employee(app: &AppHandle, id: i64) -> Result<bool, String> {
-    let conn = open_runtime_connection(app)?;
-    let changed = conn
+    let mut conn = open_runtime_connection(app)?;
+    let tx = conn
+        .transaction()
+        .map_err(|err| format!("failed to start employee delete transaction: {err}"))?;
+
+    tx.execute(
+        r#"
+        UPDATE assets
+        SET status = 'in_stock',
+            updated_at = datetime('now')
+        WHERE id IN (
+          SELECT asset_id
+          FROM asset_loans
+          WHERE employee_id_fk = ?
+            AND returned_at IS NULL
+        )
+        "#,
+        params![id],
+    )
+    .map_err(humanize_sqlite_error)?;
+
+    tx.execute(
+        "DELETE FROM asset_loans WHERE employee_id_fk = ?",
+        params![id],
+    )
+    .map_err(humanize_sqlite_error)?;
+
+    tx.execute(
+        "DELETE FROM borrow_requests WHERE employee_id_fk = ?",
+        params![id],
+    )
+    .map_err(humanize_sqlite_error)?;
+
+    let changed = tx
         .execute("DELETE FROM employees WHERE id = ?", params![id])
         .map_err(humanize_sqlite_error)?;
+
+    tx.commit()
+        .map_err(|err| format!("failed to commit employee delete: {err}"))?;
+
     Ok(changed > 0)
 }
 
@@ -1096,7 +1132,12 @@ mod tests {
         .expect("load asset category id")
     }
 
-    fn seed_asset(conn: &Connection, asset_code: &str, asset_type: &str, category_code: &str) -> i64 {
+    fn seed_asset(
+        conn: &Connection,
+        asset_code: &str,
+        asset_type: &str,
+        category_code: &str,
+    ) -> i64 {
         conn.execute(
             r#"
             INSERT INTO assets(asset_code, category_id, asset_type, display_name, status, created_at, updated_at)

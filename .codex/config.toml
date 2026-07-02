@@ -1,3 +1,10 @@
+# --- Headroom proxy (auto-injected by headroom wrap codex) ---
+model_provider = "headroom"
+openai_base_url = "http://127.0.0.1:8787/v1"
+model = "gpt-5.4"
+model_reasoning_effort = "high"
+# --- end Headroom ---
+
 [features]
 multi_agent = true
 
@@ -8,3 +15,23 @@ max_threads = 6
 max_depth = 1
 # Default timeout for longer research or coordination jobs.
 job_max_runtime_seconds = 1800
+
+[mcp_servers.headroom]
+# Repo-local Headroom MCP server for compressed-context retrieval.
+command = "headroom"
+args = ["mcp", "serve"]
+
+# --- Headroom proxy (auto-injected by headroom wrap codex) ---
+[model_providers.headroom]
+name = "OpenAI via Headroom proxy"
+base_url = "http://127.0.0.1:8787/v1"
+supports_websockets = true
+requires_openai_auth = true
+env_http_headers = { "X-Headroom-Project" = "HEADROOM_PROJECT" }
+
+[projects.'e:\staff_kit']
+trust_level = "trusted"
+
+[windows]
+sandbox = "elevated"
+# --- end Headroom ---

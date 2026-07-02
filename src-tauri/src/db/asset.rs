@@ -404,7 +404,9 @@ pub(crate) fn upsert_asset_category_prefix_conn(
         return Err("asset category prefix cannot be blank".to_string());
     };
     if normalized_prefix.contains('%') || normalized_prefix.contains('_') {
-        return Err("asset category prefix cannot contain SQL wildcard characters (% or _)".to_string());
+        return Err(
+            "asset category prefix cannot contain SQL wildcard characters (% or _)".to_string(),
+        );
     }
 
     let existing_id = conn
@@ -420,7 +422,9 @@ pub(crate) fn upsert_asset_category_prefix_conn(
             |row| row.get::<_, i64>(0),
         )
         .optional()
-        .map_err(|err| format!("failed to inspect asset category prefix '{normalized_prefix}': {err}"))?;
+        .map_err(|err| {
+            format!("failed to inspect asset category prefix '{normalized_prefix}': {err}")
+        })?;
 
     if let Some(prefix_id) = existing_id {
         conn.execute(
@@ -431,7 +435,11 @@ pub(crate) fn upsert_asset_category_prefix_conn(
                 updated_at = datetime('now')
             WHERE id = ?
             "#,
-            params![if is_primary { 1_i64 } else { 0_i64 }, if is_active { 1_i64 } else { 0_i64 }, prefix_id],
+            params![
+                if is_primary { 1_i64 } else { 0_i64 },
+                if is_active { 1_i64 } else { 0_i64 },
+                prefix_id
+            ],
         )
         .map_err(humanize_sqlite_error)?;
     } else {
@@ -981,7 +989,8 @@ fn load_asset_category_prefix_records_conn(
 
     let mut prefixes = Vec::new();
     for row in rows {
-        prefixes.push(row.map_err(|err| format!("failed to read asset category prefix row: {err}"))?);
+        prefixes
+            .push(row.map_err(|err| format!("failed to read asset category prefix row: {err}"))?);
     }
 
     Ok(prefixes)
@@ -1015,9 +1024,9 @@ fn load_asset_category_prefix_records_by_category_ids_conn(
         "#
     );
 
-    let mut stmt = conn
-        .prepare(&sql)
-        .map_err(|err| format!("failed to prepare batched asset category prefix detail query: {err}"))?;
+    let mut stmt = conn.prepare(&sql).map_err(|err| {
+        format!("failed to prepare batched asset category prefix detail query: {err}")
+    })?;
 
     let rows = stmt
         .query_map(rusqlite::params_from_iter(category_ids.iter()), |row| {
@@ -1146,7 +1155,9 @@ pub(crate) fn list_asset_category_details_conn(
     let mut prefixes_by_category_id =
         load_asset_category_prefix_records_by_category_ids_conn(conn, &category_ids)?;
     for detail in &mut details {
-        detail.prefixes = prefixes_by_category_id.remove(&detail.id).unwrap_or_default();
+        detail.prefixes = prefixes_by_category_id
+            .remove(&detail.id)
+            .unwrap_or_default();
     }
 
     Ok(details)
@@ -1180,14 +1191,18 @@ pub(crate) fn upsert_asset_category_conn(
                         params![existing_id],
                         |row| row.get(0),
                     )
-                    .map_err(|err| format!("failed to inspect asset category asset references: {err}"))?;
+                    .map_err(|err| {
+                        format!("failed to inspect asset category asset references: {err}")
+                    })?;
                 let stock_item_count: i64 = conn
                     .query_row(
                         "SELECT COUNT(*) FROM stock_items WHERE category_id = ?",
                         params![existing_id],
                         |row| row.get(0),
                     )
-                    .map_err(|err| format!("failed to inspect asset category stock references: {err}"))?;
+                    .map_err(|err| {
+                        format!("failed to inspect asset category stock references: {err}")
+                    })?;
 
                 if asset_count > 0 || stock_item_count > 0 {
                     return Err("cannot change tracking mode for a category already referenced by assets or stock items".to_string());
@@ -1300,7 +1315,9 @@ pub(crate) fn deactivate_asset_category_conn(
             .map_err(humanize_sqlite_error)?;
 
         if changed == 0 {
-            return Err(format!("asset category with id {category_id} was not found"));
+            return Err(format!(
+                "asset category with id {category_id} was not found"
+            ));
         }
 
         conn.execute(
@@ -1541,7 +1558,12 @@ pub(crate) fn update_stock_item_quantity_conn(
                 })
             },
         )
-        .map_err(|err| format!("failed to load updated stock item {}: {err}", payload.stock_item_id))?;
+        .map_err(|err| {
+            format!(
+                "failed to load updated stock item {}: {err}",
+                payload.stock_item_id
+            )
+        })?;
 
     tx.commit()
         .map_err(|err| format!("failed to commit stock item quantity update: {err}"))?;
@@ -1594,11 +1616,8 @@ mod tests {
     }
 
     fn seed_team(conn: &Connection, team_name: &str) -> i64 {
-        conn.execute(
-            "INSERT INTO teams(name) VALUES(?)",
-            params![team_name],
-        )
-        .expect("insert team");
+        conn.execute("INSERT INTO teams(name) VALUES(?)", params![team_name])
+            .expect("insert team");
         conn.last_insert_rowid()
     }
 
@@ -1614,7 +1633,12 @@ mod tests {
         conn.last_insert_rowid()
     }
 
-    fn seed_borrow_request(conn: &Connection, employee_row_id: i64, employee_id: &str, full_name: &str) -> i64 {
+    fn seed_borrow_request(
+        conn: &Connection,
+        employee_row_id: i64,
+        employee_id: &str,
+        full_name: &str,
+    ) -> i64 {
         conn.execute(
             r#"
             INSERT INTO borrow_requests(
@@ -1628,7 +1652,12 @@ mod tests {
             )
             VALUES(?, ?, ?, ?, 'approved', 'borrow', datetime('now'))
             "#,
-            params![format!("REQ-{employee_id}"), employee_row_id, employee_id, full_name],
+            params![
+                format!("REQ-{employee_id}"),
+                employee_row_id,
+                employee_id,
+                full_name
+            ],
         )
         .expect("insert borrow request");
         conn.last_insert_rowid()
@@ -1867,7 +1896,8 @@ mod tests {
         )
         .expect("insert active monitor loan");
 
-        let rows = list_asset_dashboard_serialized_conn(&conn).expect("load serialized dashboard rows");
+        let rows =
+            list_asset_dashboard_serialized_conn(&conn).expect("load serialized dashboard rows");
         let monitor = rows
             .iter()
             .find(|row| row.asset_code == "VNMON709")
@@ -1878,7 +1908,7 @@ mod tests {
             .expect("find laptop row");
 
         assert_eq!(monitor.category_code.as_deref(), Some("monitor"));
-    assert!(monitor.computer_name.is_none());
+        assert!(monitor.computer_name.is_none());
         assert_eq!(monitor.display_name_short.as_deref(), Some("Mon709"));
         assert_eq!(monitor.adapter_number.as_deref(), Some("ADP-709"));
         assert_eq!(monitor.usage_location.as_deref(), Some("office"));
@@ -2017,8 +2047,8 @@ mod tests {
             )
             .expect("load monitor category id");
 
-        let laptop_category =
-            load_asset_category_by_prefix_conn(&conn, "VNMACPRO003").expect("resolve laptop prefix");
+        let laptop_category = load_asset_category_by_prefix_conn(&conn, "VNMACPRO003")
+            .expect("resolve laptop prefix");
         let monitor_category =
             load_asset_category_by_prefix_conn(&conn, "VNMON709").expect("resolve monitor prefix");
 
@@ -2031,7 +2061,9 @@ mod tests {
             Some(expected_monitor_id)
         );
         assert_eq!(
-            laptop_category.as_ref().map(|record| record.tracking_mode.as_str()),
+            laptop_category
+                .as_ref()
+                .map(|record| record.tracking_mode.as_str()),
             Some("serialized")
         );
         assert_eq!(
@@ -2082,10 +2114,13 @@ mod tests {
         upsert_asset_category_prefix_conn(&conn, device_category_id, "VN", true, true)
             .expect("seed shorter broad prefix");
 
-        let resolved =
-            load_asset_category_by_prefix_conn(&conn, "VNMACPRO003").expect("resolve longest prefix");
+        let resolved = load_asset_category_by_prefix_conn(&conn, "VNMACPRO003")
+            .expect("resolve longest prefix");
 
-        assert_eq!(resolved.as_ref().map(|record| record.id), Some(laptop_category_id));
+        assert_eq!(
+            resolved.as_ref().map(|record| record.id),
+            Some(laptop_category_id)
+        );
     }
 
     #[test]
@@ -2135,8 +2170,9 @@ mod tests {
             )
             .expect("load mouse category id");
 
-        let wildcard_error = upsert_asset_category_prefix_conn(&conn, mouse_category_id, "VN%", false, true)
-            .expect_err("wildcard characters should be rejected");
+        let wildcard_error =
+            upsert_asset_category_prefix_conn(&conn, mouse_category_id, "VN%", false, true)
+                .expect_err("wildcard characters should be rejected");
 
         assert!(
             wildcard_error.contains("wildcard"),
@@ -2242,10 +2278,7 @@ mod tests {
                 .iter()
                 .map(|prefix| (prefix.prefix_value.clone(), prefix.is_primary))
                 .collect::<Vec<_>>(),
-            vec![
-                ("VNDOCK".to_string(), true),
-                ("DOCK".to_string(), false),
-            ]
+            vec![("VNDOCK".to_string(), true), ("DOCK".to_string(), false),]
         );
     }
 
@@ -2349,10 +2382,7 @@ mod tests {
                 .iter()
                 .map(|prefix| (prefix.prefix_value.clone(), prefix.is_primary))
                 .collect::<Vec<_>>(),
-            vec![
-                ("VNHUB".to_string(), true),
-                ("VNDOCK".to_string(), false),
-            ]
+            vec![("VNHUB".to_string(), true), ("VNDOCK".to_string(), false),]
         );
     }
 
@@ -2382,10 +2412,10 @@ mod tests {
         )
         .expect("seed mouse stock");
 
-        let deactivated_monitor =
-            deactivate_asset_category_conn(&conn, monitor_category_id).expect("deactivate monitor category");
-        let deactivated_mouse =
-            deactivate_asset_category_conn(&conn, mouse_category_id).expect("deactivate mouse category");
+        let deactivated_monitor = deactivate_asset_category_conn(&conn, monitor_category_id)
+            .expect("deactivate monitor category");
+        let deactivated_mouse = deactivate_asset_category_conn(&conn, mouse_category_id)
+            .expect("deactivate mouse category");
 
         assert!(!deactivated_monitor.is_active);
         assert!(!deactivated_mouse.is_active);
@@ -2445,7 +2475,10 @@ fn normalize_asset_category_code(value: String) -> Result<String, String> {
     {
         Ok(normalized)
     } else {
-        Err("categoryCode can only contain letters, numbers, hyphen, underscore, and spaces".to_string())
+        Err(
+            "categoryCode can only contain letters, numbers, hyphen, underscore, and spaces"
+                .to_string(),
+        )
     }
 }
 
@@ -2469,10 +2502,14 @@ fn normalize_asset_category_prefix_inputs(
             return Err("asset category prefix cannot be blank".to_string());
         };
         if normalized_prefix.contains('%') || normalized_prefix.contains('_') {
-            return Err("asset category prefix cannot contain SQL wildcard characters (% or _)".to_string());
+            return Err(
+                "asset category prefix cannot contain SQL wildcard characters (% or _)".to_string(),
+            );
         }
         if !seen.insert(normalized_prefix.clone()) {
-            return Err(format!("duplicate prefix '{normalized_prefix}' in category payload"));
+            return Err(format!(
+                "duplicate prefix '{normalized_prefix}' in category payload"
+            ));
         }
         if prefix.is_primary {
             primary_count += 1;

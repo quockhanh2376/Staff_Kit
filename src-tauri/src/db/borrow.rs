@@ -25,11 +25,7 @@ const REQUEST_TYPE_RETURN: &str = "return";
 const ASSET_STATUS_IN_STOCK: &str = "in_stock";
 const ASSET_STATUS_ASSIGNED: &str = "assigned";
 const DEFAULT_BORROW_LAN_PORT: u16 = 8787;
-const BORROW_LAN_DETECTION_TARGETS: [&str; 3] = [
-    "1.1.1.1:80",
-    "8.8.8.8:80",
-    "208.67.222.222:80",
-];
+const BORROW_LAN_DETECTION_TARGETS: [&str; 3] = ["1.1.1.1:80", "8.8.8.8:80", "208.67.222.222:80"];
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -668,7 +664,10 @@ fn generate_request_key_tx(tx: &Transaction<'_>) -> Result<String, String> {
     Err("failed to generate a unique borrow request key".to_string())
 }
 
-fn load_request_state_tx(tx: &Transaction<'_>, request_id: i64) -> Result<(i64, String, String), String> {
+fn load_request_state_tx(
+    tx: &Transaction<'_>,
+    request_id: i64,
+) -> Result<(i64, String, String), String> {
     tx.query_row(
         "SELECT employee_id_fk, status, COALESCE(request_type, 'borrow') FROM borrow_requests WHERE id = ?",
         params![request_id],
@@ -1105,18 +1104,42 @@ mod tests {
 
     #[test]
     fn normalize_detected_borrow_lan_host_candidate_accepts_real_ips_and_rejects_loopback() {
-        assert_eq!(normalize_detected_borrow_lan_host_candidate("192.168.2.15"), Some("192.168.2.15".to_string()));
-        assert_eq!(normalize_detected_borrow_lan_host_candidate("10.24.8.9\n"), Some("10.24.8.9".to_string()));
-        assert_eq!(normalize_detected_borrow_lan_host_candidate(" 2001:db8::10 "), Some("2001:db8::10".to_string()));
-        assert_eq!(normalize_detected_borrow_lan_host_candidate("127.0.0.1"), None);
-        assert_eq!(normalize_detected_borrow_lan_host_candidate("0.0.0.0"), None);
-        assert_eq!(normalize_detected_borrow_lan_host_candidate("not-an-ip"), None);
+        assert_eq!(
+            normalize_detected_borrow_lan_host_candidate("192.168.2.15"),
+            Some("192.168.2.15".to_string())
+        );
+        assert_eq!(
+            normalize_detected_borrow_lan_host_candidate("10.24.8.9\n"),
+            Some("10.24.8.9".to_string())
+        );
+        assert_eq!(
+            normalize_detected_borrow_lan_host_candidate(" 2001:db8::10 "),
+            Some("2001:db8::10".to_string())
+        );
+        assert_eq!(
+            normalize_detected_borrow_lan_host_candidate("127.0.0.1"),
+            None
+        );
+        assert_eq!(
+            normalize_detected_borrow_lan_host_candidate("0.0.0.0"),
+            None
+        );
+        assert_eq!(
+            normalize_detected_borrow_lan_host_candidate("not-an-ip"),
+            None
+        );
     }
 
     #[test]
     fn build_borrow_lan_url_wraps_ipv6_hosts() {
-        assert_eq!(build_borrow_lan_url("203.0.113.45", 8787), "http://203.0.113.45:8787/borrow");
-        assert_eq!(build_borrow_lan_url("2001:db8::10", 8787), "http://[2001:db8::10]:8787/borrow");
+        assert_eq!(
+            build_borrow_lan_url("203.0.113.45", 8787),
+            "http://203.0.113.45:8787/borrow"
+        );
+        assert_eq!(
+            build_borrow_lan_url("2001:db8::10", 8787),
+            "http://[2001:db8::10]:8787/borrow"
+        );
     }
 
     #[test]
