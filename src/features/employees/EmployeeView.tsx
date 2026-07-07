@@ -237,6 +237,20 @@ export function EmployeeView({
                             "update"
                         )}
                     </button>
+
+                    {emp.mssqlUpdateMessage && (
+                        <span
+                            className={`max-w-[360px] truncate text-xs ${
+                                emp.mssqlUpdateStatus === "success"
+                                    ? "text-emerald-300"
+                                    : "text-red-300"
+                            }`}
+                            title={emp.mssqlUpdateMessage}
+                            aria-live="polite"
+                        >
+                            {emp.mssqlUpdateMessage}
+                        </span>
+                    )}
                 </div>
             </div>
 

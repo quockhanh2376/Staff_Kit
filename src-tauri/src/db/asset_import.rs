@@ -2082,6 +2082,10 @@ fn detect_field_mapping(headers: &[String]) -> AssetImportFieldMapping {
         }
     }
 
+    if mapping.display_name.is_none() {
+        mapping.display_name = mapping.computer_name.clone();
+    }
+
     mapping
 }
 
@@ -3530,6 +3534,34 @@ mod tests {
             .raw_values
             .iter()
             .any(|item| item.header == "Adapter number" && item.value == "7900LG3"));
+
+        let _ = fs::remove_file(csv_path);
+    }
+
+    #[test]
+    fn parse_csv_source_uses_computer_name_as_display_name_when_asset_name_is_missing() {
+        let csv_path = write_temp_csv(
+            "asset-list-no-asset-name",
+            &[
+                "StaffID,Team,Phone Number,Assetcode,Category,Computer Name,Model,Serrial Number",
+                "ASWVN1001,Medhealth Team,0908207111,VNLAP518,Laptop,ASWVNLAP518,Lenovo E14,PF-5MBN9A",
+            ],
+        );
+
+        let parsed =
+            parse_asset_import_source(csv_path.as_path(), AssetImportMode::Serialized, None, None)
+                .expect("parse asset list without asset name");
+
+        assert_eq!(
+            parsed.auto_mapping.display_name.as_deref(),
+            Some("Computer Name")
+        );
+        assert_eq!(
+            parsed.auto_mapping.computer_name.as_deref(),
+            Some("Computer Name")
+        );
+        assert_eq!(parsed.rows[0].display_name.as_deref(), Some("ASWVNLAP518"));
+        assert_eq!(parsed.rows[0].computer_name.as_deref(), Some("ASWVNLAP518"));
 
         let _ = fs::remove_file(csv_path);
     }

@@ -41,6 +41,8 @@ export function useEmployeeState({
     const [isLoadingEmployees, setLoadingEmployees] = useState(false)
     const [isLoadingTeams, setLoadingTeams] = useState(false)
     const [isUpdatingEmployeeListFromMssql, setUpdatingEmployeeListFromMssql] = useState(false)
+    const [mssqlUpdateMessage, setMssqlUpdateMessage] = useState<string | null>(null)
+    const [mssqlUpdateStatus, setMssqlUpdateStatus] = useState<"idle" | "success" | "error">("idle")
     const [mssqlRefreshToken, setMssqlRefreshToken] = useState(0)
 
     const teamFilterMenuRef = useRef<HTMLDivElement | null>(null)
@@ -239,12 +241,16 @@ export function useEmployeeState({
     }
 
     const updateEmployeeListFromMssql = async () => {
+        if (isUpdatingEmployeeListFromMssql) return
+
         try {
             setUpdatingEmployeeListFromMssql(true)
+            setMssqlUpdateMessage(null)
+            setMssqlUpdateStatus("idle")
             setGlobalError(null)
             const defaults = await staffApi.getMssqlConnectionDefaults()
             if (!defaults.host || !defaults.user || !defaults.password) {
-                throw new Error("Missing MSSQL configuration. Set STAFFKIT_MSSQL_HOST, STAFFKIT_MSSQL_USER, and STAFFKIT_MSSQL_PASSWORD.")
+                throw new Error("Missing MSSQL configuration. Open Settings > Import from MSSQL, or set STAFFKIT_MSSQL_HOST, STAFFKIT_MSSQL_USER, and STAFFKIT_MSSQL_PASSWORD.")
             }
             const report = await staffApi.importMssqlStaff(
                 defaults.host,
@@ -255,12 +261,21 @@ export function useEmployeeState({
                 "employee_list",
             )
             console.info("[Staff Kit] MSSQL employee update report:", report)
+            setMssqlUpdateStatus("success")
+            setMssqlUpdateMessage(`Updated ${report.updated}, imported ${report.imported}, failed ${report.failed}.`)
             setStaffGroupFilter("employee_list")
+            setTeamFilter(ALL_TEAMS_OPTION)
+            setTeamFilterSearchTerm("")
+            setStartDateFilter("")
+            setTeamFilterMenuOpen(false)
             setCurrentPage(1)
             setMssqlRefreshToken((value) => value + 1)
         } catch (error) {
             console.error("[Staff Kit] MSSQL employee update failed:", error)
-            setGlobalError(getUserErrorMessage(error))
+            const message = getUserErrorMessage(error)
+            setMssqlUpdateStatus("error")
+            setMssqlUpdateMessage(message)
+            setGlobalError(message)
         } finally {
             setUpdatingEmployeeListFromMssql(false)
         }
@@ -291,6 +306,8 @@ export function useEmployeeState({
         isLoadingEmployees,
         isLoadingTeams,
         isUpdatingEmployeeListFromMssql,
+        mssqlUpdateMessage,
+        mssqlUpdateStatus,
         teamOptions,
         teamFilterOptions,
         filteredTeamFilterOptions,
