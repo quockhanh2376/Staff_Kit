@@ -1,6 +1,6 @@
 [package]
 name = "staff-kit"
-version = "2.0.8"
+version = "2.0.9"
 description = "Staff Kit desktop employee management tool"
 authors = ["Staff Kit Team"]
 edition = "2021"

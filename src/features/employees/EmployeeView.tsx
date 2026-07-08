@@ -8,6 +8,7 @@ import {
     Settings,
     Trash2,
     Users,
+    X,
 } from "lucide-react"
 import { useState, useCallback } from "react"
 import { staffApi } from "../../services/staff-api"
@@ -141,15 +142,27 @@ export function EmployeeView({
                 <div className="flex flex-wrap items-center gap-3 xl:flex-nowrap">
                     <div className="relative min-w-[280px] flex-1 xl:max-w-[560px]">
                         <Search
-                            className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--text-secondary)]"
+                            className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[var(--text-secondary)]"
                             size={18}
                         />
                         <input
-                            className="h-10 w-full rounded-[8px] border border-[var(--border)] bg-[var(--surface)] pl-11 pr-4 text-sm text-[var(--text-primary)] outline-none transition focus:border-[var(--primary)]"
+                            className="h-10 w-full rounded-[8px] border border-[var(--border)] bg-[var(--surface)] pl-11 pr-11 text-sm text-[var(--text-primary)] outline-none transition focus:border-[var(--primary)]"
                             placeholder="Search name, EE.ID, email, computer (e.g. ASWVNLAP)..."
                             value={emp.searchTerm}
                             onChange={(event) => emp.setSearchTerm(event.target.value)}
                         />
+                        <button
+                            aria-label="Clear employee search"
+                            className={`absolute right-2 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-[6px] text-[var(--text-secondary)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] disabled:cursor-default disabled:hover:bg-transparent ${
+                                emp.searchTerm.trim() ? "opacity-100" : "opacity-35"
+                            }`}
+                            disabled={!emp.searchTerm.trim()}
+                            onClick={() => emp.setSearchTerm("")}
+                            title="Clear"
+                            type="button"
+                        >
+                            <X size={14} />
+                        </button>
                     </div>
 
                     {/* Team filter */}
