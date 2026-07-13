@@ -1,13 +1,14 @@
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, OptionalExtension, Transaction};
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
 use tiberius::{Client, Config};
 use tokio::net::TcpStream;
+use tokio::time::{sleep, timeout};
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
 use super::column::{upsert_dynamic_field_definitions_for_map, upsert_dynamic_fields_tx};
@@ -21,6 +22,9 @@ const MSSQL_HOST_ENV: &str = "STAFFKIT_MSSQL_HOST";
 const MSSQL_PORT_ENV: &str = "STAFFKIT_MSSQL_PORT";
 const MSSQL_USER_ENV: &str = "STAFFKIT_MSSQL_USER";
 const MSSQL_PASSWORD_ENV: &str = "STAFFKIT_MSSQL_PASSWORD";
+const MSSQL_CONNECT_ATTEMPTS: usize = 3;
+const MSSQL_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const MSSQL_CONNECT_RETRY_DELAY: Duration = Duration::from_millis(250);
 
 const DEFAULT_MSSQL_QUERY: &str = r#"
 WITH StaffList AS
@@ -142,6 +146,31 @@ fn format_mssql_connect_error(error: impl std::fmt::Display) -> String {
     }
 
     format!("MSSQL authentication failed. Verify the SQL username and password. Details: {detail}")
+}
+
+fn is_retryable_mssql_connect_error(detail: &str) -> bool {
+    let normalized = detail.to_ascii_lowercase();
+    normalized.contains("10054")
+        || normalized.contains("10060")
+        || normalized.contains("forcibly closed")
+        || normalized.contains("connection reset")
+        || normalized.contains("timed out")
+        || normalized.contains("timeout")
+        || normalized.contains("connection error")
+        || normalized.contains("i/o")
+}
+
+fn format_mssql_tcp_connect_error(addr: &str, detail: &str) -> String {
+    let normalized = detail.to_ascii_lowercase();
+    if normalized.contains("10060") || normalized.contains("timed out") {
+        return format!(
+            "MSSQL network connection failed for {addr}: the server did not respond within the timeout (Windows error 10060). Check that the computer is connected to the company network/VPN, SQL Server is running, TCP is enabled, and firewall port 1433 is open. Details: {detail}"
+        );
+    }
+
+    format!(
+        "MSSQL network connection failed for {addr}. Check the host, port, network/VPN, and firewall settings. Details: {detail}"
+    )
 }
 
 fn append_import_log(app: &AppHandle, message: impl AsRef<str>) {
@@ -314,18 +343,56 @@ fn upsert_mssql_azure_ad_account(
 async fn connect(connection_string: &str) -> Result<MssqlClient, String> {
     let config = Config::from_ado_string(connection_string)
         .map_err(|err| format!("invalid connection string: {err}"))?;
+    let addr = config.get_addr();
+    let mut last_error = None;
 
-    let tcp = TcpStream::connect(config.get_addr())
-        .await
-        .map_err(|err| format!("failed to connect to MSSQL server: {err}"))?;
+    for attempt in 1..=MSSQL_CONNECT_ATTEMPTS {
+        let tcp_result = timeout(MSSQL_CONNECT_TIMEOUT, TcpStream::connect(&addr)).await;
+        let tcp = match tcp_result {
+            Ok(Ok(tcp)) => tcp,
+            Ok(Err(err)) => {
+                last_error = Some(format_mssql_tcp_connect_error(&addr, &err.to_string()));
+                if attempt == MSSQL_CONNECT_ATTEMPTS {
+                    break;
+                }
+                sleep(MSSQL_CONNECT_RETRY_DELAY).await;
+                continue;
+            }
+            Err(_) => {
+                last_error = Some(format_mssql_tcp_connect_error(
+                    &addr,
+                    &format!(
+                        "connection timed out after {} seconds",
+                        MSSQL_CONNECT_TIMEOUT.as_secs()
+                    ),
+                ));
+                if attempt == MSSQL_CONNECT_ATTEMPTS {
+                    break;
+                }
+                sleep(MSSQL_CONNECT_RETRY_DELAY).await;
+                continue;
+            }
+        };
 
-    tcp.set_nodelay(true).ok();
+        tcp.set_nodelay(true).ok();
 
-    let client = Client::connect(config, tcp.compat_write())
-        .await
-        .map_err(format_mssql_connect_error)?;
+        match Client::connect(config.clone(), tcp.compat_write()).await {
+            Ok(client) => return Ok(client),
+            Err(err) => {
+                let detail = err.to_string();
+                let formatted_error = format_mssql_connect_error(&detail);
+                if !is_retryable_mssql_connect_error(&detail) || attempt == MSSQL_CONNECT_ATTEMPTS {
+                    return Err(formatted_error);
+                }
+                last_error = Some(formatted_error);
+                sleep(MSSQL_CONNECT_RETRY_DELAY).await;
+            }
+        }
+    }
 
-    Ok(client)
+    Err(last_error.unwrap_or_else(|| {
+        format!("MSSQL connection failed for {addr}. No connection attempt completed.")
+    }))
 }
 
 pub async fn get_mssql_connection_defaults() -> MssqlConnectionDefaults {
@@ -501,6 +568,18 @@ mod tests {
         assert!(connection_string.contains("pwd=secret;"));
         assert!(connection_string.contains("encrypt=true;"));
         assert!(connection_string.contains("TrustServerCertificate=yes;"));
+    }
+
+    #[test]
+    fn tcp_timeout_error_identifies_endpoint_and_network_action() {
+        let message = format_mssql_tcp_connect_error(
+            "10.184.0.19:1433",
+            "connection timed out (os error 10060)",
+        );
+
+        assert!(message.contains("10.184.0.19:1433"));
+        assert!(message.contains("Windows error 10060"));
+        assert!(message.contains("network/VPN"));
     }
 
     #[test]
