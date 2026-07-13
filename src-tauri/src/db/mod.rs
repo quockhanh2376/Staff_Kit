@@ -303,6 +303,7 @@ pub(crate) fn apply_migrations(conn: &Connection) -> Result<(), String> {
     ensure_borrow_request_columns(conn)?;
     auth::ensure_local_accounts_seed(conn)?;
     normalize_staff_group_values(conn)?;
+    normalize_legacy_dynamic_field_aliases(conn)?;
     normalize_eml_security_tool_values(conn)?;
     ensure_search_index(conn)?;
 
@@ -861,6 +862,94 @@ fn normalize_staff_group_values(conn: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+fn normalize_legacy_dynamic_field_aliases(conn: &Connection) -> Result<(), String> {
+    const LEGACY_KEY: &str = "azuread_account";
+
+    let legacy_exists: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM employee_dynamic_fields WHERE field_key = ?)",
+            params![LEGACY_KEY],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|value| value > 0)
+        .map_err(|err| format!("failed to inspect legacy AzureAD field: {err}"))?;
+
+    if !legacy_exists {
+        return Ok(());
+    }
+
+    conn.execute(
+        r#"
+        INSERT INTO employee_dynamic_fields(field_key, field_label, updated_at)
+        SELECT ?, field_label, datetime('now')
+        FROM employee_dynamic_fields
+        WHERE field_key = ?
+        ON CONFLICT(field_key) DO NOTHING
+        "#,
+        params![AZURE_AD_ACCOUNT_FIELD_KEY, LEGACY_KEY],
+    )
+    .map_err(|err| format!("failed to create canonical AzureAD field: {err}"))?;
+
+    conn.execute(
+        r#"
+        UPDATE employee_dynamic_values
+        SET value = (
+                SELECT legacy.value
+                FROM employee_dynamic_values legacy
+                WHERE legacy.employee_id = employee_dynamic_values.employee_id
+                  AND legacy.field_key = ?
+                  AND trim(COALESCE(legacy.value, '')) <> ''
+            ),
+            updated_at = datetime('now')
+        WHERE field_key = ?
+          AND EXISTS (
+                SELECT 1
+                FROM employee_dynamic_values legacy
+                WHERE legacy.employee_id = employee_dynamic_values.employee_id
+                  AND legacy.field_key = ?
+                  AND trim(COALESCE(legacy.value, '')) <> ''
+            )
+        "#,
+        params![LEGACY_KEY, AZURE_AD_ACCOUNT_FIELD_KEY, LEGACY_KEY],
+    )
+    .map_err(|err| format!("failed to merge AzureAD field values: {err}"))?;
+
+    conn.execute(
+        r#"
+        INSERT INTO employee_dynamic_values(employee_id, field_key, value, updated_at)
+        SELECT legacy.employee_id, ?, legacy.value, datetime('now')
+        FROM employee_dynamic_values legacy
+        WHERE legacy.field_key = ?
+          AND trim(COALESCE(legacy.value, '')) <> ''
+          AND NOT EXISTS (
+                SELECT 1
+                FROM employee_dynamic_values canonical
+                WHERE canonical.employee_id = legacy.employee_id
+                  AND canonical.field_key = ?
+            )
+        "#,
+        params![
+            AZURE_AD_ACCOUNT_FIELD_KEY,
+            LEGACY_KEY,
+            AZURE_AD_ACCOUNT_FIELD_KEY
+        ],
+    )
+    .map_err(|err| format!("failed to copy AzureAD field values: {err}"))?;
+
+    conn.execute(
+        "DELETE FROM employee_dynamic_values WHERE field_key = ?",
+        params![LEGACY_KEY],
+    )
+    .map_err(|err| format!("failed to remove legacy AzureAD field values: {err}"))?;
+    conn.execute(
+        "DELETE FROM employee_dynamic_fields WHERE field_key = ?",
+        params![LEGACY_KEY],
+    )
+    .map_err(|err| format!("failed to remove legacy AzureAD field: {err}"))?;
+
+    Ok(())
+}
+
 fn normalize_eml_security_tool_values(conn: &Connection) -> Result<(), String> {
     conn.execute(
         r#"
@@ -1089,6 +1178,15 @@ pub(crate) fn normalize_dynamic_key(value: &str) -> String {
     output.trim_matches('_').to_string()
 }
 
+pub(crate) fn normalize_dynamic_field_key(value: &str) -> String {
+    let normalized = normalize_dynamic_key(value);
+    if normalized.replace('_', "") == "azureadaccount" {
+        return AZURE_AD_ACCOUNT_FIELD_KEY.to_string();
+    }
+
+    normalized
+}
+
 pub(crate) fn normalize_dynamic_fields(
     input: Option<HashMap<String, String>>,
 ) -> HashMap<String, String> {
@@ -1098,7 +1196,7 @@ pub(crate) fn normalize_dynamic_fields(
     };
 
     for (raw_key, raw_value) in items {
-        let key = normalize_dynamic_key(&raw_key);
+        let key = normalize_dynamic_field_key(&raw_key);
         if key.is_empty() {
             continue;
         }
@@ -1187,6 +1285,68 @@ mod tests {
         )
         .map(|exists| exists > 0)
         .unwrap_or(false)
+    }
+
+    #[test]
+    fn azure_ad_dynamic_field_alias_is_canonical_and_merged() {
+        assert_eq!(
+            normalize_dynamic_field_key("AzureAD Account"),
+            AZURE_AD_ACCOUNT_FIELD_KEY
+        );
+        assert_eq!(
+            normalize_dynamic_field_key("azure_ad_account"),
+            AZURE_AD_ACCOUNT_FIELD_KEY
+        );
+
+        let conn = Connection::open_in_memory().expect("open in-memory sqlite database");
+        configure_connection(&conn).expect("configure sqlite pragmas");
+        apply_migrations(&conn).expect("apply database migrations");
+
+        conn.execute(
+            "INSERT INTO employees(employee_id, full_name) VALUES('ASWVN001', 'Test User')",
+            [],
+        )
+        .expect("insert employee");
+        conn.execute(
+            "INSERT INTO employee_dynamic_fields(field_key, field_label) VALUES(?, ?)",
+            params![AZURE_AD_ACCOUNT_FIELD_KEY, "AzureAD Account"],
+        )
+        .expect("insert canonical field");
+        conn.execute(
+            "INSERT INTO employee_dynamic_fields(field_key, field_label) VALUES('azuread_account', 'AzureAD Account')",
+            [],
+        )
+        .expect("insert legacy field");
+        conn.execute(
+            "INSERT INTO employee_dynamic_values(employee_id, field_key, value) VALUES(1, ?, 'old@example.com')",
+            params![AZURE_AD_ACCOUNT_FIELD_KEY],
+        )
+        .expect("insert canonical value");
+        conn.execute(
+            "INSERT INTO employee_dynamic_values(employee_id, field_key, value) VALUES(1, 'azuread_account', 'new@example.com')",
+            [],
+        )
+        .expect("insert legacy value");
+
+        normalize_legacy_dynamic_field_aliases(&conn).expect("merge legacy field");
+
+        let value: String = conn
+            .query_row(
+                "SELECT value FROM employee_dynamic_values WHERE employee_id = 1 AND field_key = ?",
+                params![AZURE_AD_ACCOUNT_FIELD_KEY],
+                |row| row.get(0),
+            )
+            .expect("read canonical value");
+        assert_eq!(value, "new@example.com");
+
+        let legacy_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM employee_dynamic_fields WHERE field_key = 'azuread_account'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count legacy fields");
+        assert_eq!(legacy_count, 0);
     }
 
     #[test]

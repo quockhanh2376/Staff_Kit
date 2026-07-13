@@ -6,8 +6,8 @@ use tauri::AppHandle;
 
 use super::schema::CORE_COLUMN_DEFINITIONS;
 use super::{
-    dynamic_key_to_label, humanize_sqlite_error, is_reserved_column_key, normalize_dynamic_key,
-    open_runtime_connection, require_text,
+    dynamic_key_to_label, humanize_sqlite_error, is_reserved_column_key,
+    normalize_dynamic_field_key, open_runtime_connection, require_text,
 };
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -72,7 +72,7 @@ pub fn upsert_employee_column(
     let label = require_text(payload.label, "label")?;
 
     let key = if let Some(raw_key) = payload.key {
-        let normalized_key = normalize_dynamic_key(raw_key.as_str());
+        let normalized_key = normalize_dynamic_field_key(raw_key.as_str());
         if normalized_key.is_empty() {
             return Err("column key is invalid".to_string());
         }
@@ -107,7 +107,7 @@ pub fn upsert_employee_column(
 
 pub fn delete_employee_column(app: &AppHandle, key: String) -> Result<bool, String> {
     let conn = open_runtime_connection(app)?;
-    let normalized = normalize_dynamic_key(key.as_str());
+    let normalized = normalize_dynamic_field_key(key.as_str());
     if normalized.is_empty() {
         return Err("column key is invalid".to_string());
     }
@@ -215,7 +215,7 @@ pub(crate) fn upsert_dynamic_fields_tx(
 // ── Private helpers ───────────────────────────────────────────────────────────
 
 fn generate_dynamic_field_key(conn: &Connection, label: &str) -> Result<String, String> {
-    let base_key = normalize_dynamic_key(label);
+    let base_key = normalize_dynamic_field_key(label);
     if base_key.is_empty() {
         return Err("column title is invalid".to_string());
     }

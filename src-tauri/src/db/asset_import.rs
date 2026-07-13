@@ -67,15 +67,12 @@ const ASSET_TYPE_ALIASES: &[&str] = &[
     "type",
     "loaitaisan",
     "category",
+    "cateagory",
     "assetcategory",
 ];
-const DISPLAY_NAME_ALIASES: &[&str] = &[
-    "displayname",
-    "name",
-    "assetname",
-    "tentaisan",
-    "description",
-];
+const DISPLAY_NAME_PRIMARY_ALIASES: &[&str] =
+    &["displayname", "assetname", "tentaisan", "description"];
+const DISPLAY_NAME_FALLBACK_ALIASES: &[&str] = &["name"];
 const COMPUTER_NAME_ALIASES: &[&str] = &["computername", "computer", "pcname", "hostname"];
 const MODEL_ALIASES: &[&str] = &["model", "modelnumber", "modelno"];
 const SERIAL_NUMBER_ALIASES: &[&str] = &[
@@ -93,6 +90,7 @@ const WAREHOUSE_ALIASES: &[&str] = &["warehouse", "location", "stocklocation", "
 const USAGE_LOCATION_ALIASES: &[&str] = &[
     "usagelocation",
     "usuagelocation",
+    "location",
     "usageplace",
     "workinglocation",
 ];
@@ -104,6 +102,7 @@ const OWNER_FULL_NAME_ALIASES: &[&str] = &[
     "tennhanvien",
     "vietnamesename",
     "fullname",
+    "name",
     "hoten",
     "họtên",
 ];
@@ -1840,11 +1839,14 @@ fn build_row_seed_from_raw_values(
     row_number: i64,
     mapping: &AssetImportResolvedMapping,
 ) -> AssetImportRowSeedInput {
-    let asset_code = mapping
-        .asset_code_index
-        .and_then(|index| mapped_value(&raw_values, index));
     let asset_type = mapped_value(&raw_values, mapping.asset_type_index);
     let display_name = mapped_value(&raw_values, mapping.display_name_index);
+    let asset_code = mapping
+        .asset_code_index
+        .and_then(|index| mapped_value(&raw_values, index))
+        .or_else(|| {
+            derive_asset_code_from_display_name(asset_type.as_deref(), display_name.as_deref())
+        });
     let display_name_short = derive_display_name_short(
         asset_type.as_deref(),
         display_name.as_deref(),
@@ -2039,10 +2041,6 @@ fn detect_field_mapping(headers: &[String]) -> AssetImportFieldMapping {
             mapping.asset_type = Some(header.clone());
             continue;
         }
-        if mapping.display_name.is_none() && DISPLAY_NAME_ALIASES.contains(&normalized.as_str()) {
-            mapping.display_name = Some(header.clone());
-            continue;
-        }
         if mapping.computer_name.is_none() && COMPUTER_NAME_ALIASES.contains(&normalized.as_str()) {
             mapping.computer_name = Some(header.clone());
             continue;
@@ -2083,10 +2081,24 @@ fn detect_field_mapping(headers: &[String]) -> AssetImportFieldMapping {
     }
 
     if mapping.display_name.is_none() {
-        mapping.display_name = mapping.computer_name.clone();
+        mapping.display_name = find_header_by_alias(headers, DISPLAY_NAME_PRIMARY_ALIASES)
+            .or_else(|| find_header_by_alias(headers, DISPLAY_NAME_FALLBACK_ALIASES))
+            .or_else(|| mapping.computer_name.clone());
     }
 
     mapping
+}
+
+fn find_header_by_alias(headers: &[String], aliases: &[&str]) -> Option<String> {
+    headers
+        .iter()
+        .find(|header| {
+            let normalized = normalize_header_key(header);
+            aliases
+                .iter()
+                .any(|alias| normalized == normalize_header_key(alias))
+        })
+        .cloned()
 }
 
 fn merge_field_mapping(
@@ -2246,6 +2258,37 @@ fn extract_numeric_suffix(value: &str) -> Option<String> {
     } else {
         Some(digits)
     }
+}
+
+fn derive_asset_code_from_display_name(
+    asset_type: Option<&str>,
+    display_name: Option<&str>,
+) -> Option<String> {
+    let normalized_type = asset_type.map(normalize_compare_text).unwrap_or_default();
+    if normalized_type != "monitor" {
+        return None;
+    }
+
+    let display_name = normalize_optional_asset_text(display_name.map(str::to_string))?;
+    let compact = display_name
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .collect::<String>()
+        .to_ascii_uppercase();
+
+    if let Some(suffix) = compact.strip_prefix("VNMON") {
+        if !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()) {
+            return Some(format!("VNMON{suffix}"));
+        }
+    }
+
+    if let Some(suffix) = compact.strip_prefix("MON") {
+        if !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()) {
+            return Some(format!("VNMON{suffix}"));
+        }
+    }
+
+    None
 }
 
 fn normalize_compare_text(value: &str) -> String {
@@ -3683,6 +3726,86 @@ mod tests {
         assert_eq!(parsed.rows[0].usage_location.as_deref(), Some("office"));
         assert_eq!(parsed.rows[0].display_name.as_deref(), Some("Mon709"));
         assert_eq!(parsed.rows[0].display_name_short.as_deref(), Some("Mon709"));
+
+        let _ = fs::remove_file(csv_path);
+    }
+
+    #[test]
+    fn import_monitor_owner_sheet_with_typo_category_and_generic_name_columns() {
+        let mut conn = open_test_connection();
+        seed_employee(
+            &conn,
+            "ASWVN1004",
+            "Nguyen Thi Thu Trang",
+            "Operations",
+            "employee_list",
+        );
+
+        let csv_path = write_temp_csv(
+            "monitor-owner-mon-workbook",
+            &[
+                "STAFF ID,CATEAGORY,Name,LOCATION,Asset name,Aset name 2",
+                "ASWVN1004,Monitor,Nguyen Thi Thu Trang,Tại NHÀ,MON475,",
+            ],
+        );
+
+        let parsed =
+            parse_asset_import_source(csv_path.as_path(), AssetImportMode::Serialized, None, None)
+                .expect("parse monitor owner sheet");
+
+        assert_eq!(parsed.auto_mapping.asset_type.as_deref(), Some("CATEAGORY"));
+        assert_eq!(
+            parsed.auto_mapping.display_name.as_deref(),
+            Some("Asset name")
+        );
+        assert_eq!(
+            parsed.auto_mapping.usage_location.as_deref(),
+            Some("LOCATION")
+        );
+        assert_eq!(parsed.rows[0].asset_code.as_deref(), Some("VNMON475"));
+        assert_eq!(parsed.rows[0].display_name.as_deref(), Some("MON475"));
+        assert_eq!(parsed.rows[0].usage_location.as_deref(), Some("home"));
+        assert_eq!(
+            parsed.rows[0].submitted_full_name.as_deref(),
+            Some("Nguyen Thi Thu Trang")
+        );
+
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            AssetImportBatchSeedInput {
+                import_type: AssetImportMode::Serialized,
+                source_file_name: parsed.source_file_name,
+                source_file_path: parsed.source_file_path,
+                source_file_type: parsed.source_file_type,
+                sheet_name: parsed.sheet_name,
+                header_row: parsed.header_row,
+                headers: parsed.headers,
+                mapping: parsed.auto_mapping,
+                rows: parsed.rows,
+            },
+        )
+        .expect("create parsed monitor owner batch");
+
+        assert_eq!(batch.summary.valid_rows, 1);
+        assert_eq!(batch.summary.error_rows, 0);
+
+        let result = import_asset_import_batch_valid_rows_conn(&mut conn, batch.summary.id)
+            .expect("import parsed monitor owner batch");
+        assert_eq!(result.imported_count, 1);
+
+        let dashboard_row = crate::db::asset::list_asset_dashboard_serialized_conn(&conn)
+            .expect("load serialized dashboard rows")
+            .into_iter()
+            .find(|row| row.asset_code == "VNMON475")
+            .expect("find imported monitor in dashboard rows");
+
+        assert_eq!(dashboard_row.display_name, "MON475");
+        assert_eq!(dashboard_row.display_name_short.as_deref(), Some("MON475"));
+        assert_eq!(dashboard_row.usage_location.as_deref(), Some("home"));
+        assert_eq!(
+            dashboard_row.holder_employee_id.as_deref(),
+            Some("ASWVN1004")
+        );
 
         let _ = fs::remove_file(csv_path);
     }

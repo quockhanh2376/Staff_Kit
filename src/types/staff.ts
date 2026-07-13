@@ -710,6 +710,7 @@ export type MssqlStaffRecord = {
   name: string
   nickName: string | null
   workEmail: string | null
+  azureAdAccount: string | null
 }
 
 export type MssqlImportPreview = {

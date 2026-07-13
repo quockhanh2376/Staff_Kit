@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -9,8 +10,9 @@ use tiberius::{Client, Config};
 use tokio::net::TcpStream;
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
+use super::column::{upsert_dynamic_field_definitions_for_map, upsert_dynamic_fields_tx};
 use super::employee::UpsertAction;
-use super::schema::STAFF_GROUP_EMPLOYEE_LIST;
+use super::schema::{AZURE_AD_ACCOUNT_FIELD_KEY, STAFF_GROUP_EMPLOYEE_LIST};
 use super::{
     humanize_sqlite_error, normalize_optional_text, open_runtime_connection, require_text,
 };
@@ -21,22 +23,29 @@ const MSSQL_USER_ENV: &str = "STAFFKIT_MSSQL_USER";
 const MSSQL_PASSWORD_ENV: &str = "STAFFKIT_MSSQL_PASSWORD";
 
 const DEFAULT_MSSQL_QUERY: &str = r#"
-WITH StaffList AS (
+WITH StaffList AS
+(
     SELECT
-        [Code],
-        [Name],
-        COALESCE([WorkEmail], [WorkEmail2]) AS [WorkEmail],
+        S.[Code],
+        S.[Name],
+        S.[NickName],
+        COALESCE(S.[WorkEmail], S.[WorkEmail2]) AS [WorkEmail],
+        ASPU.UserName AS [AzureAD],
         ROW_NUMBER() OVER (
-            PARTITION BY [Code]
-            ORDER BY [Code]
+            PARTITION BY S.[Code]
+            ORDER BY S.[Code]
         ) AS RowNum
-    FROM [AssetManagement].[dbo].[Staffs]
-    WHERE [Resigned] = 0
+    FROM [AssetManagement].[dbo].[Staffs] AS S
+    INNER JOIN [AssetManagement].[dbo].[AspNetUsers] AS ASPU
+        ON S.Id = ASPU.StaffId
+    WHERE S.[Resigned] = 0
 )
 SELECT TOP (1000)
-    CONVERT(NVARCHAR(64), [Code]) AS [Code],
-    CONVERT(NVARCHAR(255), [Name]) AS [Name],
-    CONVERT(NVARCHAR(255), [WorkEmail]) AS [WorkEmail]
+    [Code],
+    [Name],
+    [NickName],
+    [WorkEmail],
+    [AzureAD]
 FROM StaffList
 WHERE RowNum = 1
 ORDER BY [Code]
@@ -76,7 +85,9 @@ impl Default for MssqlConnectionDefaults {
 pub struct MssqlStaffRecord {
     pub code: String,
     pub name: String,
+    pub nick_name: Option<String>,
     pub work_email: Option<String>,
+    pub azure_ad_account: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -165,12 +176,21 @@ fn get_required_mssql_text(
     Err(format!("MSSQL row missing {label} column"))
 }
 
-fn get_optional_mssql_text(row: &tiberius::Row, index: usize) -> Option<String> {
+fn get_optional_mssql_text(row: &tiberius::Row, index: Option<usize>) -> Option<String> {
+    let index = index?;
     if let Some(value) = row.get::<&str, _>(index) {
         return Some(value.trim().to_string()).filter(|value| !value.is_empty());
     }
 
     None
+}
+
+fn find_mssql_column_index(row: &tiberius::Row, aliases: &[&str]) -> Option<usize> {
+    row.columns().iter().position(|column| {
+        aliases
+            .iter()
+            .any(|alias| column.name().eq_ignore_ascii_case(alias))
+    })
 }
 
 fn upsert_mssql_staff_record(
@@ -184,6 +204,7 @@ fn upsert_mssql_staff_record(
     let full_name = require_text(record.name.clone(), "fullName")?;
     let email =
         normalize_optional_text(record.work_email.clone()).map(|value| value.to_lowercase());
+    let nick_name = normalize_optional_text(record.nick_name.clone());
 
     let existing_id: Option<i64> = tx
         .query_row(
@@ -200,13 +221,21 @@ fn upsert_mssql_staff_record(
             UPDATE employees
             SET
               full_name = ?,
+              nick_name = COALESCE(?, nick_name),
               email = ?,
               updated_at = datetime('now')
             WHERE id = ?
             "#,
-            params![full_name.as_str(), email.as_deref(), id],
+            params![
+                full_name.as_str(),
+                nick_name.as_deref(),
+                email.as_deref(),
+                id
+            ],
         )
         .map_err(humanize_sqlite_error)?;
+
+        upsert_mssql_azure_ad_account(tx, id, record.azure_ad_account.as_deref())?;
 
         return Ok(UpsertAction::Updated);
     }
@@ -216,23 +245,43 @@ fn upsert_mssql_staff_record(
         INSERT INTO employees (
           employee_id,
           full_name,
+          nick_name,
           email,
           staff_group,
           updated_at
         ) VALUES (
-          ?, ?, ?, ?, datetime('now')
+          ?, ?, ?, ?, ?, datetime('now')
         )
         "#,
         params![
             employee_id.as_str(),
             full_name.as_str(),
+            nick_name.as_deref(),
             email.as_deref(),
             staff_group,
         ],
     )
     .map_err(humanize_sqlite_error)?;
 
+    let inserted_id = tx.last_insert_rowid();
+    upsert_mssql_azure_ad_account(tx, inserted_id, record.azure_ad_account.as_deref())?;
+
     Ok(UpsertAction::Inserted)
+}
+
+fn upsert_mssql_azure_ad_account(
+    tx: &Transaction<'_>,
+    employee_id: i64,
+    value: Option<&str>,
+) -> Result<(), String> {
+    let Some(value) = normalize_optional_text(value.map(str::to_string)) else {
+        return Ok(());
+    };
+
+    let mut fields = HashMap::new();
+    fields.insert(AZURE_AD_ACCOUNT_FIELD_KEY.to_string(), value);
+    upsert_dynamic_field_definitions_for_map(tx, &fields)?;
+    upsert_dynamic_fields_tx(tx, employee_id, &fields)
 }
 
 async fn connect(connection_string: &str) -> Result<MssqlClient, String> {
@@ -297,14 +346,27 @@ pub async fn preview_mssql_staff(
     let mut records = Vec::with_capacity(rows.len());
 
     for row in &rows {
-        let code = get_required_mssql_text(row, 0, "Code")?;
-        let name = get_required_mssql_text(row, 1, "Name")?;
-        let email = get_optional_mssql_text(row, 2);
+        let code_index = find_mssql_column_index(row, &["Code"])
+            .ok_or_else(|| "MSSQL row missing Code column".to_string())?;
+        let name_index = find_mssql_column_index(row, &["Name"])
+            .ok_or_else(|| "MSSQL row missing Name column".to_string())?;
+        let code = get_required_mssql_text(row, code_index, "Code")?;
+        let name = get_required_mssql_text(row, name_index, "Name")?;
+        let nick_name =
+            get_optional_mssql_text(row, find_mssql_column_index(row, &["NickName", "Nickname"]));
+        let email =
+            get_optional_mssql_text(row, find_mssql_column_index(row, &["WorkEmail", "Email"]));
+        let azure_ad_account = get_optional_mssql_text(
+            row,
+            find_mssql_column_index(row, &["AzureAD", "AzureAdAccount", "AzureADAccount"]),
+        );
 
         records.push(MssqlStaffRecord {
             code,
             name,
+            nick_name,
             work_email: email,
+            azure_ad_account,
         });
     }
 
@@ -396,4 +458,51 @@ pub async fn import_mssql_staff(
     );
 
     Ok(report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    #[test]
+    fn upsert_mssql_staff_record_persists_nickname_and_azure_ad_account() {
+        let conn = Connection::open_in_memory().expect("open in-memory sqlite database");
+        super::super::configure_connection(&conn).expect("configure sqlite pragmas");
+        super::super::apply_migrations(&conn).expect("apply database migrations");
+
+        let mut conn = conn;
+        let tx = conn.transaction().expect("start transaction");
+        let record = MssqlStaffRecord {
+            code: "ASWVN001".to_string(),
+            name: "Test User".to_string(),
+            nick_name: Some("Tester".to_string()),
+            work_email: Some("test@example.com".to_string()),
+            azure_ad_account: Some("tester@example.com".to_string()),
+        };
+
+        assert!(matches!(
+            upsert_mssql_staff_record(&tx, &record, STAFF_GROUP_EMPLOYEE_LIST),
+            Ok(UpsertAction::Inserted)
+        ));
+        tx.commit().expect("commit transaction");
+
+        let (nick_name, azure_ad_account): (Option<String>, Option<String>) = conn
+            .query_row(
+                r#"
+                SELECT e.nick_name, v.value
+                FROM employees e
+                LEFT JOIN employee_dynamic_values v
+                  ON v.employee_id = e.id
+                 AND v.field_key = ?
+                WHERE e.employee_id = ?
+                "#,
+                params![AZURE_AD_ACCOUNT_FIELD_KEY, "ASWVN001"],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("read imported employee");
+
+        assert_eq!(nick_name.as_deref(), Some("Tester"));
+        assert_eq!(azure_ad_account.as_deref(), Some("tester@example.com"));
+    }
 }

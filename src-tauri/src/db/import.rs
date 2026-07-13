@@ -18,7 +18,8 @@ use super::schema::{
     STAFF_GROUP_ONBOARDING,
 };
 use super::{
-    ensure_database_ready, normalize_optional_text, normalize_staff_group, open_runtime_connection,
+    ensure_database_ready, normalize_dynamic_field_key, normalize_optional_text,
+    normalize_staff_group, open_runtime_connection,
 };
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -610,7 +611,7 @@ pub fn preview_import_excel(
     } = payload;
 
     let source_paths = resolve_import_source_paths(file_path, file_paths)?;
-    let _selected_column_keys = normalize_selected_column_keys(selected_column_keys);
+    let selected_column_keys = normalize_selected_column_keys(selected_column_keys);
     let forced_staff_group = match normalize_optional_text(target_staff_group) {
         Some(raw_group) => Some(
             normalize_staff_group(raw_group.as_str())
@@ -657,6 +658,12 @@ pub fn preview_import_excel(
                 Ok(value) => value,
                 Err(_) => continue,
             };
+
+            let selected_dynamic_columns = columns
+                .dynamic_columns
+                .iter()
+                .filter(|column| column_selected(&selected_column_keys, column.field_key.as_str()))
+                .collect::<Vec<_>>();
 
             if preview_result.sheet_name.is_empty() {
                 preview_result.sheet_name = sheet_name.clone();
@@ -782,6 +789,21 @@ pub fn preview_import_excel(
                         old_value: old_project,
                         new_value: new_project,
                     });
+                }
+
+                for column in &selected_dynamic_columns {
+                    let new_value = extract_optional_value(row, Some(column.index));
+                    let old_value = existing_ref.and_then(|employee| {
+                        employee.dynamic_fields.get(&column.field_key).cloned()
+                    });
+                    if new_value.is_some() && new_value != old_value {
+                        changes.push(FieldChange {
+                            field_key: column.field_key.clone(),
+                            field_label: column.field_label.clone(),
+                            old_value,
+                            new_value,
+                        });
+                    }
                 }
 
                 let has_changes = !changes.is_empty();
@@ -1168,7 +1190,7 @@ fn detect_import_columns(range: &calamine::Range<Data>) -> Result<(usize, Import
                 continue;
             }
 
-            let key = normalize_dynamic_key(label);
+            let key = normalize_dynamic_field_key(label);
             if key.is_empty() || !seen_dynamic_keys.insert(key.clone()) {
                 continue;
             }
@@ -1245,26 +1267,6 @@ fn normalize_header_key(value: &str) -> String {
         .filter(|ch| ch.is_alphanumeric())
         .flat_map(|ch| ch.to_lowercase())
         .collect::<String>()
-}
-
-fn normalize_dynamic_key(value: &str) -> String {
-    let mut output = String::new();
-    let mut last_is_separator = false;
-
-    for ch in value.trim().chars() {
-        if ch.is_alphanumeric() {
-            output.push(ch.to_ascii_lowercase());
-            last_is_separator = false;
-            continue;
-        }
-
-        if !output.is_empty() && !last_is_separator {
-            output.push('_');
-            last_is_separator = true;
-        }
-    }
-
-    output.trim_matches('_').to_string()
 }
 
 fn resolve_import_source_paths(
