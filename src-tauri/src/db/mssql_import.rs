@@ -571,6 +571,51 @@ mod tests {
     }
 
     #[test]
+    fn upsert_existing_staff_record_updates_azure_ad_account() {
+        let conn = Connection::open_in_memory().expect("open in-memory sqlite database");
+        super::super::configure_connection(&conn).expect("configure sqlite pragmas");
+        super::super::apply_migrations(&conn).expect("apply database migrations");
+        conn.execute(
+            "INSERT INTO employees (employee_id, full_name, staff_group) VALUES (?, ?, ?)",
+            params!["ASWVN405", "Le Thanh Dat", STAFF_GROUP_EMPLOYEE_LIST],
+        )
+        .expect("seed existing employee");
+
+        let mut conn = conn;
+        let tx = conn.transaction().expect("start transaction");
+        let record = MssqlStaffRecord {
+            code: "ASWVN405".to_string(),
+            name: "Lê Thanh Đạt".to_string(),
+            nick_name: None,
+            work_email: Some("d.lethanh@eml.com.au".to_string()),
+            azure_ad_account: Some("d.le2@aswhiteglobal.com".to_string()),
+        };
+
+        assert!(matches!(
+            upsert_mssql_staff_record(&tx, &record, STAFF_GROUP_EMPLOYEE_LIST),
+            Ok(UpsertAction::Updated)
+        ));
+        tx.commit().expect("commit transaction");
+
+        let azure_ad_account: Option<String> = conn
+            .query_row(
+                r#"
+                SELECT v.value
+                FROM employees e
+                LEFT JOIN employee_dynamic_values v
+                  ON v.employee_id = e.id
+                 AND v.field_key = ?
+                WHERE e.employee_id = ?
+                "#,
+                params![AZURE_AD_ACCOUNT_FIELD_KEY, "ASWVN405"],
+                |row| row.get(0),
+            )
+            .expect("read updated AzureAD account");
+
+        assert_eq!(azure_ad_account.as_deref(), Some("d.le2@aswhiteglobal.com"));
+    }
+
+    #[test]
     fn tcp_timeout_error_identifies_endpoint_and_network_action() {
         let message = format_mssql_tcp_connect_error(
             "10.184.0.19:1433",
