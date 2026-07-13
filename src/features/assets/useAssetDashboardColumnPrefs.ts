@@ -9,6 +9,7 @@ type ColumnDefinition<Key extends string> = {
 }
 
 type WidthMap<Key extends string> = Partial<Record<Key, number>>
+type LabelOverrideMap<Key extends string> = Partial<Record<Key, string>>
 
 type DropTarget<Key extends string> = {
   key: Key
@@ -37,6 +38,7 @@ export function useAssetDashboardColumnPrefs<Key extends string>({
       order: `${storagePrefix}:${activeUserScope}:order`,
       hidden: `${storagePrefix}:${activeUserScope}:hidden`,
       widths: `${storagePrefix}:${activeUserScope}:widths`,
+      labels: `${storagePrefix}:${activeUserScope}:labels`,
     }),
     [activeUserScope, storagePrefix],
   )
@@ -50,6 +52,9 @@ export function useAssetDashboardColumnPrefs<Key extends string>({
   const [columnWidths, setColumnWidths] = useState<WidthMap<Key>>(() =>
     readStoredColumnWidths(storageKeys.widths),
   )
+  const [labelOverrides, setLabelOverrides] = useState<LabelOverrideMap<Key>>(() =>
+    readStoredLabelOverrides(storageKeys.labels),
+  )
   const [draggingColumnKey, setDraggingColumnKey] = useState<Key | null>(null)
   const [drawerDraggingColumnKey, setDrawerDraggingColumnKey] = useState<Key | null>(null)
   const [drawerDropTarget, setDrawerDropTarget] = useState<DropTarget<Key> | null>(null)
@@ -59,6 +64,7 @@ export function useAssetDashboardColumnPrefs<Key extends string>({
     order: Key[]
     hidden: Key[]
     widths: WidthMap<Key>
+    labels: LabelOverrideMap<Key>
   } | null>(null)
   const [resizeState, setResizeState] = useState<{
     key: Key
@@ -84,6 +90,13 @@ export function useAssetDashboardColumnPrefs<Key extends string>({
   useEffect(() => {
     latestColumnWidthsRef.current = columnWidths
   }, [columnWidths])
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return
+    }
+    window.localStorage.setItem(storageKeys.labels, JSON.stringify(labelOverrides))
+  }, [labelOverrides, storageKeys.labels])
 
   useEffect(() => {
     if (!resizeState) {
@@ -134,12 +147,20 @@ export function useAssetDashboardColumnPrefs<Key extends string>({
     [columnOrder, defaultOrder],
   )
 
+  const columnLabels = useMemo(() => {
+    const labels = {} as Record<Key, string>
+    for (const key of defaultOrder) {
+      labels[key] = resolveColumnDefinition(columnMap[key], labelOverrides[key]).label
+    }
+    return labels
+  }, [columnMap, defaultOrder, labelOverrides])
+
   const orderedColumns = useMemo(
     () =>
       orderedColumnKeys
         .filter((key) => !hiddenColumns.includes(key))
-        .map((key) => columnMap[key]),
-    [columnMap, hiddenColumns, orderedColumnKeys],
+        .map((key) => ({ ...columnMap[key], label: columnLabels[key] })),
+    [columnLabels, columnMap, hiddenColumns, orderedColumnKeys],
   )
 
   const filteredColumnKeys = useMemo(() => {
@@ -149,10 +170,10 @@ export function useAssetDashboardColumnPrefs<Key extends string>({
     }
 
     return orderedColumnKeys.filter((key) => {
-      const column = columnMap[key]
+      const column = { ...columnMap[key], label: columnLabels[key] }
       return `${column.label} ${column.key}`.toLowerCase().includes(keyword)
     })
-  }, [columnMap, columnSearchTerm, orderedColumnKeys])
+  }, [columnLabels, columnMap, columnSearchTerm, orderedColumnKeys])
 
   const effectiveWidths = useMemo(() => {
     const widths = {} as Record<Key, number>
@@ -285,10 +306,12 @@ export function useAssetDashboardColumnPrefs<Key extends string>({
       order: columnOrder,
       hidden: hiddenColumns,
       widths: columnWidths,
+      labels: labelOverrides,
     })
     setColumnOrder(defaultOrder.slice())
     setHiddenColumns(buildDefaultHiddenColumns(defaultOrder, defaultVisibleKeys))
     setColumnWidths({})
+    setLabelOverrides({})
   }
 
   const undoResetColumnPreferences = () => {
@@ -299,7 +322,21 @@ export function useAssetDashboardColumnPrefs<Key extends string>({
     setColumnOrder(undoResetSnapshot.order)
     setHiddenColumns(undoResetSnapshot.hidden)
     setColumnWidths(undoResetSnapshot.widths)
+    setLabelOverrides(undoResetSnapshot.labels)
     setUndoResetSnapshot(null)
+  }
+
+  const renameColumnLabel = (key: Key, label: string) => {
+    const trimmed = label.trim()
+    setLabelOverrides((current) => {
+      const next = { ...current }
+      if (!trimmed || trimmed === columnMap[key].label) {
+        delete next[key]
+      } else {
+        next[key] = trimmed
+      }
+      return next
+    })
   }
 
   const beginColumnResize = (key: Key, event: ReactMouseEvent<HTMLElement>) => {
@@ -315,6 +352,7 @@ export function useAssetDashboardColumnPrefs<Key extends string>({
   return {
     orderedColumns,
     orderedColumnKeys,
+    columnLabels,
     hiddenColumns,
     filteredColumnKeys,
     effectiveWidths,
@@ -331,10 +369,19 @@ export function useAssetDashboardColumnPrefs<Key extends string>({
     startDrawerColumnDrag,
     resetColumnPreferences,
     undoResetColumnPreferences,
+    renameColumnLabel,
     setDraggingColumnKey,
     setColumnsDrawerOpen,
     setColumnSearchTerm,
   }
+}
+
+function resolveColumnDefinition<Key extends string>(
+  column: ColumnDefinition<Key>,
+  labelOverride: string | undefined,
+): ColumnDefinition<Key> {
+  const label = labelOverride?.trim()
+  return label ? { ...column, label } : column
 }
 
 function reconcileColumnOrder<Key extends string>(order: Key[], defaultOrder: Key[]): Key[] {
@@ -411,6 +458,29 @@ function readStoredColumnWidths<Key extends string>(storageKey: string): WidthMa
 
   try {
     return JSON.parse(savedWidths) as WidthMap<Key>
+  } catch {
+    return {}
+  }
+}
+
+function readStoredLabelOverrides<Key extends string>(storageKey: string): LabelOverrideMap<Key> {
+  if (typeof window === "undefined") {
+    return {}
+  }
+
+  try {
+    const raw = window.localStorage.getItem(storageKey)
+    if (!raw) {
+      return {}
+    }
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    const labels = {} as LabelOverrideMap<Key>
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value === "string" && value.trim()) {
+        labels[key as Key] = value.trim()
+      }
+    }
+    return labels
   } catch {
     return {}
   }

@@ -296,6 +296,9 @@ export function MssqlImportPanel({ onClose, triggerReload, setGlobalError }: Mss
                                 {record.workEmail && (
                                     <span className="text-xs text-[var(--text-secondary)]">{record.workEmail}</span>
                                 )}
+                                {record.azureAdAccount && (
+                                    <span className="text-xs text-[var(--text-secondary)]">{record.azureAdAccount}</span>
+                                )}
                             </div>
                         ))}
                         {preview.totalRows > 50 && (

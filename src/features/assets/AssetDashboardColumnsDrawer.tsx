@@ -1,4 +1,4 @@
-import { GripVertical } from "lucide-react"
+import { GripVertical, PencilLine } from "lucide-react"
 import { Drawer } from "../../components/Drawer"
 
 type ColumnDefinition<Key extends string> = {
@@ -9,6 +9,7 @@ type ColumnDefinition<Key extends string> = {
 type ColumnStateLike<Key extends string> = {
   orderedColumns: ColumnDefinition<Key>[]
   orderedColumnKeys: Key[]
+  columnLabels: Record<Key, string>
   hiddenColumns: Key[]
   filteredColumnKeys: Key[]
   drawerDraggingColumnKey: Key | null
@@ -20,6 +21,7 @@ type ColumnStateLike<Key extends string> = {
   setColumnSearchTerm: (term: string) => void
   startDrawerColumnDrag: (key: Key) => void
   toggleColumnVisibility: (key: Key) => void
+  renameColumnLabel: (key: Key, label: string) => void
   resetColumnPreferences: () => void
   undoResetColumnPreferences: () => void
 }
@@ -37,6 +39,14 @@ export function AssetDashboardColumnsDrawer<Key extends string>({
   columnMap,
   grid,
 }: AssetDashboardColumnsDrawerProps<Key>) {
+  const handleRenameColumn = (column: ColumnDefinition<Key>) => {
+    const nextLabel = window.prompt("Column label", column.label)
+    if (nextLabel === null) {
+      return
+    }
+    grid.renameColumnLabel(column.key, nextLabel)
+  }
+
   return (
     <Drawer
       open={grid.isColumnsDrawerOpen}
@@ -71,7 +81,7 @@ export function AssetDashboardColumnsDrawer<Key extends string>({
 
         <div className="space-y-2">
           {grid.filteredColumnKeys.map((key) => {
-            const column = columnMap[key]
+            const column = { ...columnMap[key], label: grid.columnLabels[key] ?? columnMap[key].label }
             const visible = !grid.hiddenColumns.includes(key)
             const isDragging = grid.drawerDraggingColumnKey === key
             const dropBefore =
@@ -113,12 +123,22 @@ export function AssetDashboardColumnsDrawer<Key extends string>({
                   aria-label={`Toggle ${column.label} column visibility`}
                 />
 
-                <div className="flex-1">
+                <div className="min-w-0 flex-1">
                   <div className="text-sm font-medium text-slate-100">{column.label}</div>
                   <div className="text-[11px] uppercase tracking-[0.06em] text-slate-500">
                     {column.key}
                   </div>
                 </div>
+
+                <button
+                  className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] border border-[#283140] bg-[#151b26] text-slate-400 transition hover:bg-[#1b2230] hover:text-slate-100"
+                  onClick={() => handleRenameColumn(column)}
+                  type="button"
+                  aria-label={`Rename ${column.label} column`}
+                  title={`Rename ${column.label}`}
+                >
+                  <PencilLine size={15} />
+                </button>
               </div>
             )
           })}

@@ -970,7 +970,7 @@ fn resolve_employee_sort_spec(
         });
     }
 
-    let dynamic_key = super::normalize_dynamic_key(raw_key);
+    let dynamic_key = super::normalize_dynamic_field_key(raw_key);
     if dynamic_key.is_empty() || !dynamic_field_exists(conn, dynamic_key.as_str())? {
         return Ok(EmployeeSortSpec {
             order_sql: build_core_order_sql(default_expression, sort_direction),

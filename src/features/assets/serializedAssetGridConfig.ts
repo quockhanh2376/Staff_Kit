@@ -101,6 +101,7 @@ export function buildSerializedAssetGridStorageKeys(activeUserScope: string) {
     order: `${STORAGE_PREFIX}:${activeUserScope}:order`,
     hidden: `${STORAGE_PREFIX}:${activeUserScope}:hidden`,
     widths: `${STORAGE_PREFIX}:${activeUserScope}:widths`,
+    labels: `${STORAGE_PREFIX}:${activeUserScope}:labels`,
   }
 }
 

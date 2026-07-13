@@ -60,6 +60,7 @@ pub(super) const DB_CUSTOM_PATH_KEY: &str = "custom_path";
 // ── Computer Name dynamic field ───────────────────────────────────────────────
 pub(crate) const COMPUTER_NAME_2_FIELD_KEY: &str = "computer_2";
 pub(crate) const COMPUTER_NAME_2_FIELD_LABEL: &str = "Computer (2)";
+pub(crate) const AZURE_AD_ACCOUNT_FIELD_KEY: &str = "azure_account";
 
 // ── FTS columns ───────────────────────────────────────────────────────────────
 pub(super) const FTS_COLUMNS: &[&str] = &[

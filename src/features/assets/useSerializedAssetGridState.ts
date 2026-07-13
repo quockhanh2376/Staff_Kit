@@ -18,6 +18,7 @@ type UseSerializedAssetGridStateOptions = {
 }
 
 type WidthMap = Partial<Record<SerializedAssetColumnKey, number>>
+type LabelOverrideMap = Partial<Record<SerializedAssetColumnKey, string>>
 
 const MAX_COLUMN_WIDTH = 480
 
@@ -46,6 +47,9 @@ export function useSerializedAssetGridState({
   const [columnWidths, setColumnWidths] = useState<WidthMap>(() =>
     readStoredColumnWidths(storageKeys.widths),
   )
+  const [labelOverrides, setLabelOverrides] = useState<LabelOverrideMap>(() =>
+    readStoredLabelOverrides(storageKeys.labels),
+  )
   const [sort, setSort] = useState<SerializedAssetGridSort>({
     key: null,
     direction: null,
@@ -61,6 +65,7 @@ export function useSerializedAssetGridState({
     order: SerializedAssetColumnKey[]
     hidden: SerializedAssetColumnKey[]
     widths: WidthMap
+    labels: LabelOverrideMap
   } | null>(null)
   const [resizeState, setResizeState] = useState<{
     key: SerializedAssetColumnKey
@@ -86,6 +91,13 @@ export function useSerializedAssetGridState({
   useEffect(() => {
     latestColumnWidthsRef.current = columnWidths
   }, [columnWidths])
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return
+    }
+    window.localStorage.setItem(storageKeys.labels, JSON.stringify(labelOverrides))
+  }, [labelOverrides, storageKeys.labels])
 
   useEffect(() => {
     if (!resizeState) {
@@ -131,12 +143,20 @@ export function useSerializedAssetGridState({
     }
   }, [resizeState, storageKeys.widths])
 
+  const columnLabels = useMemo(() => {
+    const labels = {} as Record<SerializedAssetColumnKey, string>
+    for (const key of DEFAULT_SERIALIZED_ASSET_COLUMN_ORDER) {
+      labels[key] = resolveColumnLabel(SERIALIZED_ASSET_COLUMN_MAP[key].label, labelOverrides[key])
+    }
+    return labels
+  }, [labelOverrides])
+
   const orderedColumns = useMemo(
     () =>
       reconcileColumnOrder(columnOrder)
         .filter((key) => !hiddenColumns.includes(key))
-        .map((key) => SERIALIZED_ASSET_COLUMN_MAP[key]),
-    [columnOrder, hiddenColumns],
+        .map((key) => ({ ...SERIALIZED_ASSET_COLUMN_MAP[key], label: columnLabels[key] })),
+    [columnLabels, columnOrder, hiddenColumns],
   )
 
   const orderedColumnKeys = useMemo(() => reconcileColumnOrder(columnOrder), [columnOrder])
@@ -148,10 +168,10 @@ export function useSerializedAssetGridState({
     }
 
     return orderedColumnKeys.filter((key) => {
-      const column = SERIALIZED_ASSET_COLUMN_MAP[key]
+      const column = { ...SERIALIZED_ASSET_COLUMN_MAP[key], label: columnLabels[key] }
       return `${column.label} ${column.key}`.toLowerCase().includes(keyword)
     })
-  }, [columnSearchTerm, orderedColumnKeys])
+  }, [columnLabels, columnSearchTerm, orderedColumnKeys])
 
   const effectiveWidths = useMemo(() => {
     const widths: Record<SerializedAssetColumnKey, number> = {} as Record<
@@ -293,10 +313,12 @@ export function useSerializedAssetGridState({
       order: columnOrder,
       hidden: hiddenColumns,
       widths: columnWidths,
+      labels: labelOverrides,
     })
     setColumnOrder(DEFAULT_SERIALIZED_ASSET_COLUMN_ORDER.slice())
     setHiddenColumns(buildDefaultHiddenColumns())
     setColumnWidths({})
+    setLabelOverrides({})
   }
 
   const undoResetColumnPreferences = () => {
@@ -307,7 +329,21 @@ export function useSerializedAssetGridState({
     setColumnOrder(undoResetSnapshot.order)
     setHiddenColumns(undoResetSnapshot.hidden)
     setColumnWidths(undoResetSnapshot.widths)
+    setLabelOverrides(undoResetSnapshot.labels)
     setUndoResetSnapshot(null)
+  }
+
+  const renameColumnLabel = (key: SerializedAssetColumnKey, label: string) => {
+    const trimmed = label.trim()
+    setLabelOverrides((current) => {
+      const next = { ...current }
+      if (!trimmed || trimmed === SERIALIZED_ASSET_COLUMN_MAP[key].label) {
+        delete next[key]
+      } else {
+        next[key] = trimmed
+      }
+      return next
+    })
   }
 
   const beginColumnResize = (
@@ -326,6 +362,7 @@ export function useSerializedAssetGridState({
   return {
     orderedColumns,
     orderedColumnKeys,
+    columnLabels,
     hiddenColumns,
     filteredColumnKeys,
     sortedRows,
@@ -345,6 +382,7 @@ export function useSerializedAssetGridState({
     startDrawerColumnDrag,
     resetColumnPreferences,
     undoResetColumnPreferences,
+    renameColumnLabel,
     setDraggingColumnKey,
     setColumnsDrawerOpen,
     setColumnSearchTerm,
@@ -430,6 +468,39 @@ function readStoredColumnWidths(storageKey: string): WidthMap {
 
   try {
     return JSON.parse(savedWidths) as WidthMap
+  } catch {
+    return {}
+  }
+}
+
+function resolveColumnLabel(defaultLabel: string, labelOverride: string | undefined): string {
+  const label = labelOverride?.trim()
+  return label || defaultLabel
+}
+
+function readStoredLabelOverrides(storageKey: string): LabelOverrideMap {
+  if (typeof window === "undefined") {
+    return {}
+  }
+
+  const savedLabels = window.localStorage.getItem(storageKey)
+  if (!savedLabels) {
+    return {}
+  }
+
+  try {
+    const parsed = JSON.parse(savedLabels) as Record<string, unknown>
+    const labels: LabelOverrideMap = {}
+    for (const [key, value] of Object.entries(parsed)) {
+      if (
+        DEFAULT_SERIALIZED_ASSET_COLUMN_ORDER.includes(key as SerializedAssetColumnKey) &&
+        typeof value === "string" &&
+        value.trim()
+      ) {
+        labels[key as SerializedAssetColumnKey] = value.trim()
+      }
+    }
+    return labels
   } catch {
     return {}
   }
