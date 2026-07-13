@@ -52,7 +52,9 @@ ORDER BY [Code]
 "#;
 
 pub fn build_connection_string(host: &str, port: u16, user: &str, password: &str) -> String {
-    format!("server=tcp:{host},{port};uid={user};pwd={password};TrustServerCertificate=yes;")
+    format!(
+        "server=tcp:{host},{port};uid={user};pwd={password};encrypt=true;TrustServerCertificate=yes;"
+    )
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -116,6 +118,31 @@ pub struct MssqlImportError {
 }
 
 type MssqlClient = Client<Compat<TcpStream>>;
+
+fn format_mssql_connect_error(error: impl std::fmt::Display) -> String {
+    let detail = error.to_string();
+    let normalized = detail.to_ascii_lowercase();
+
+    if normalized.contains("10054")
+        || normalized.contains("forcibly closed")
+        || normalized.contains("connection reset")
+    {
+        return format!(
+            "MSSQL connection failed: the server closed the connection during TLS/authentication negotiation (Windows error 10054). Verify the SQL Server port, TLS/encryption settings, firewall, and SQL credentials. Details: {detail}"
+        );
+    }
+
+    if normalized.contains("tls")
+        || normalized.contains("handshake")
+        || normalized.contains("certificate")
+    {
+        return format!(
+            "MSSQL connection failed during TLS negotiation. Verify the SQL Server encryption settings and certificate configuration. Details: {detail}"
+        );
+    }
+
+    format!("MSSQL authentication failed. Verify the SQL username and password. Details: {detail}")
+}
 
 fn append_import_log(app: &AppHandle, message: impl AsRef<str>) {
     let Ok(mut log_dir) = app.path().app_local_data_dir() else {
@@ -296,7 +323,7 @@ async fn connect(connection_string: &str) -> Result<MssqlClient, String> {
 
     let client = Client::connect(config, tcp.compat_write())
         .await
-        .map_err(|err| format!("failed to authenticate with MSSQL: {err}"))?;
+        .map_err(format_mssql_connect_error)?;
 
     Ok(client)
 }
@@ -464,6 +491,17 @@ pub async fn import_mssql_staff(
 mod tests {
     use super::*;
     use rusqlite::Connection;
+
+    #[test]
+    fn build_connection_string_requires_encryption_and_trusted_certificate() {
+        let connection_string = build_connection_string("sql.example", 1433, "staff", "secret");
+
+        assert!(connection_string.contains("server=tcp:sql.example,1433;"));
+        assert!(connection_string.contains("uid=staff;"));
+        assert!(connection_string.contains("pwd=secret;"));
+        assert!(connection_string.contains("encrypt=true;"));
+        assert!(connection_string.contains("TrustServerCertificate=yes;"));
+    }
 
     #[test]
     fn upsert_mssql_staff_record_persists_nickname_and_azure_ad_account() {
