@@ -114,7 +114,7 @@ pub(super) const EMPLOYEE_SELECT_COLUMNS: &str = r#"
   e.contract_end_date,
   e.client_year_of_services,
   COALESCE(e.asw_start_date, e.start_date) AS start_date,
-  COALESCE(NULLIF(lc.computer_name, ''), e.computername) AS computer_name,
+  COALESCE(NULLIF(e.computername, ''), NULLIF(lc.computer_name, '')) AS computer_name,
   e.computername AS stored_computer_name,
   e.notes,
   CASE

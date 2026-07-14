@@ -694,13 +694,16 @@ fn query_employees(
         let query_like = format!("%{}%", query.to_lowercase());
         if let Some(fts_query) = build_fts_query(&query) {
             where_clauses.push(
-                "(e.id IN (SELECT rowid FROM employees_fts WHERE employees_fts MATCH ?) OR lower(COALESCE(lc.computer_name, '')) LIKE ?)"
+                "(e.id IN (SELECT rowid FROM employees_fts WHERE employees_fts MATCH ?) OR lower(COALESCE(NULLIF(e.computername, ''), NULLIF(lc.computer_name, ''), '')) LIKE ?)"
                     .to_string(),
             );
             filter_params.push(Value::Text(fts_query));
             filter_params.push(Value::Text(query_like));
         } else {
-            where_clauses.push("lower(COALESCE(lc.computer_name, '')) LIKE ?".to_string());
+            where_clauses.push(
+                "lower(COALESCE(NULLIF(e.computername, ''), NULLIF(lc.computer_name, ''), '')) LIKE ?"
+                    .to_string(),
+            );
             filter_params.push(Value::Text(query_like));
         }
     }
@@ -930,7 +933,7 @@ fn resolve_core_sort_expression(sort_key: &str) -> Option<&'static str> {
         "contractenddate" => "COALESCE(e.contract_end_date, '')",
         "clientyearofservices" => "COALESCE(e.client_year_of_services, '') COLLATE NOCASE",
         "computername" => {
-            "COALESCE(NULLIF(lc.computer_name, ''), e.computername, '') COLLATE NOCASE"
+            "COALESCE(NULLIF(e.computername, ''), NULLIF(lc.computer_name, ''), '') COLLATE NOCASE"
         }
         "notes" => "COALESCE(e.notes, '') COLLATE NOCASE",
         _ => return None,
@@ -1374,5 +1377,68 @@ mod tests {
             .find(|item| item.employee_id == "ASWVN1302")
             .expect("find seeded employee");
         assert_eq!(employee.computer_name.as_deref(), Some("ASWVNLAP293"));
+    }
+
+    #[test]
+    fn saved_computer_name_overrides_active_laptop_display() {
+        let mut conn = open_test_connection();
+        let employee_row_id = seed_employee(&conn, "ASWVN1202", "Huỳnh Nguyễn Minh Thắng");
+        let laptop_asset_id = seed_asset(&conn, "VNLAP264", "Laptop", "laptop");
+        seed_active_loan(&conn, employee_row_id, laptop_asset_id);
+
+        let tx = conn.transaction().expect("start transaction");
+        upsert_employee_from_payload(
+            &tx,
+            EmployeePayload {
+                employee_id: "ASWVN1202".to_string(),
+                full_name: "Huỳnh Nguyễn Minh Thắng".to_string(),
+                nick_name: None,
+                team_name: Some("Examworks".to_string()),
+                project: None,
+                job_title: None,
+                email: None,
+                cellphone: None,
+                date_of_birth: None,
+                gender: None,
+                asw_start_date: None,
+                client_start_date: None,
+                contract_end_date: None,
+                client_year_of_services: None,
+                computer_name: Some("ASWVNLAP445".to_string()),
+                notes: None,
+                staff_group: Some("employee_list".to_string()),
+                dynamic_fields: None,
+            },
+            "employee_list",
+        )
+        .expect("save employee computer name");
+        tx.commit().expect("commit transaction");
+
+        let response = query_employees(
+            &conn,
+            EmployeeQuery {
+                query: None,
+                team_name: None,
+                staff_group: None,
+                sort_key: None,
+                sort_direction: None,
+                start_date_from: None,
+                start_date_to: None,
+                limit: Some(20),
+                offset: Some(0),
+            },
+        )
+        .expect("query employees after computer name save");
+        let employee = response
+            .items
+            .iter()
+            .find(|item| item.employee_id == "ASWVN1202")
+            .expect("find saved employee");
+
+        assert_eq!(employee.computer_name.as_deref(), Some("ASWVNLAP445"));
+        assert_eq!(
+            employee.stored_computer_name.as_deref(),
+            Some("ASWVNLAP445")
+        );
     }
 }

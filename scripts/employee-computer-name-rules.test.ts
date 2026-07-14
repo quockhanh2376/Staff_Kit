@@ -70,7 +70,7 @@ assert.deepEqual(extractComputerNameTokens("ASWVNMACPRO010,\nASWVNLAP293"), [
 
 assert.equal(readEmployeeCellText(employeeA, "computerName"), "ASWVNMACPRO010,\nASWVNLAP293")
 assert.equal(readEmployeeEditableCellText(employeeA, "computerName", true), "LEGACY-RAW-01")
-assert.equal(readEmployeeEditableCellText(employeeC, "computerName", true), "")
+assert.equal(readEmployeeEditableCellText(employeeC, "computerName", true), "ASW-DERIVED-DISPLAY")
 
 assert.equal(isEmployeeTableEditableColumn("computerName", false), false)
 assert.equal(isEmployeeTableEditableColumn("computerName", true), true)

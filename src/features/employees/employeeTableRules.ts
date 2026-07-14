@@ -14,7 +14,7 @@ export function readEmployeeEditableCellText(
     canEditComputerName: boolean,
 ): string {
     if (key === "computerName" && canEditComputerName) {
-        return employee.storedComputerName ?? ""
+        return employee.storedComputerName ?? employee.computerName ?? ""
     }
     return readEmployeeCellText(employee, key)
 }
