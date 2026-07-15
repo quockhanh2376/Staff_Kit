@@ -391,7 +391,7 @@ pub fn import_excel(app: &AppHandle, payload: ImportExcelInput) -> Result<Import
                 let existing_computer_2 = existing_ref
                     .and_then(|item| item.dynamic_fields.get(COMPUTER_NAME_2_FIELD_KEY).cloned());
 
-                let incoming_computer_1 = extract_optional_value(
+                let incoming_computer_1_raw = extract_optional_value(
                     row,
                     selected_column_index(
                         &selected_column_keys,
@@ -399,7 +399,7 @@ pub fn import_excel(app: &AppHandle, payload: ImportExcelInput) -> Result<Import
                         columns.computer_name,
                     ),
                 );
-                let incoming_computer_2 = extract_optional_value(
+                let incoming_computer_2_raw = extract_optional_value(
                     row,
                     selected_column_index(
                         &selected_column_keys,
@@ -407,6 +407,8 @@ pub fn import_excel(app: &AppHandle, payload: ImportExcelInput) -> Result<Import
                         columns.computer_name_secondary,
                     ),
                 );
+                let (incoming_computer_1, incoming_computer_2) =
+                    normalize_computer_name_slots(incoming_computer_1_raw, incoming_computer_2_raw);
 
                 // If employee already has a computer and the new row brings a different value,
                 // preserve slot 1 and push the new one to slot 2 (handles asset-list files where
@@ -738,8 +740,10 @@ pub fn preview_import_excel(
 
                 let is_update = existing_ref.is_some();
 
-                let new_computer_name = extract_optional_value(row, columns.computer_name)
-                    .and_then(|value| normalize_optional_text(Some(value)));
+                let (new_computer_name, new_computer_2) = normalize_computer_name_slots(
+                    extract_optional_value(row, columns.computer_name),
+                    extract_optional_value(row, columns.computer_name_secondary),
+                );
                 let old_computer_name = existing_ref.and_then(|e| e.computer_name.clone());
                 let old_computer_2 = existing_ref
                     .and_then(|e| e.dynamic_fields.get(COMPUTER_NAME_2_FIELD_KEY).cloned());
@@ -765,6 +769,17 @@ pub fn preview_import_excel(
                         });
                     }
                     _ => {}
+                }
+
+                if let Some(new2) = new_computer_2 {
+                    if old_computer_2.as_deref() != Some(new2.as_str()) {
+                        changes.push(FieldChange {
+                            field_key: COMPUTER_NAME_2_FIELD_KEY.to_string(),
+                            field_label: "Computer Name (2)".to_string(),
+                            old_value: old_computer_2,
+                            new_value: Some(new2),
+                        });
+                    }
                 }
 
                 let new_team = extract_optional_value(row, columns.client_pmd)
@@ -1004,19 +1019,28 @@ fn normalize_computer_name_slots(
     computer_name_1: Option<String>,
     computer_name_2: Option<String>,
 ) -> (Option<String>, Option<String>) {
-    let mut first = normalize_optional_text(computer_name_1);
-    let mut second = normalize_optional_text(computer_name_2);
-
-    if first.is_none() {
-        first = second.clone();
-        second = None;
+    let mut slots = Vec::new();
+    for value in [computer_name_1, computer_name_2].into_iter().flatten() {
+        for token in value.split(|ch| matches!(ch, ',' | '\n' | '\r')) {
+            let Some(token) = normalize_optional_text(Some(token.to_string())) else {
+                continue;
+            };
+            if !slots
+                .iter()
+                .any(|existing: &String| existing.eq_ignore_ascii_case(&token))
+            {
+                slots.push(token);
+            }
+            if slots.len() == 2 {
+                break;
+            }
+        }
+        if slots.len() == 2 {
+            break;
+        }
     }
 
-    if first.is_some() && first == second {
-        second = None;
-    }
-
-    (first, second)
+    (slots.first().cloned(), slots.get(1).cloned())
 }
 
 fn detect_import_columns(range: &calamine::Range<Data>) -> Result<(usize, ImportColumns), String> {

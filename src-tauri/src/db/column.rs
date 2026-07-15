@@ -57,8 +57,11 @@ pub fn list_employee_columns(app: &AppHandle) -> Result<Vec<EmployeeColumnDefini
         .map_err(|err| format!("failed to query employee dynamic columns: {err}"))?;
 
     for row in rows {
-        columns
-            .push(row.map_err(|err| format!("failed to read employee dynamic column row: {err}"))?);
+        let column =
+            row.map_err(|err| format!("failed to read employee dynamic column row: {err}"))?;
+        if !columns.iter().any(|item| item.key == column.key) {
+            columns.push(column);
+        }
     }
 
     Ok(columns)
@@ -187,7 +190,7 @@ pub(crate) fn upsert_dynamic_fields_tx(
     fields: &HashMap<String, String>,
 ) -> Result<(), String> {
     for (field_key, value) in fields {
-        if value.trim().is_empty() {
+        if value.trim().is_empty() && !is_computer_name_2_key(field_key.as_str()) {
             tx.execute(
                 "DELETE FROM employee_dynamic_values WHERE employee_id = ? AND field_key = ?",
                 params![employee_id, field_key.as_str()],
@@ -210,6 +213,10 @@ pub(crate) fn upsert_dynamic_fields_tx(
     }
 
     Ok(())
+}
+
+fn is_computer_name_2_key(field_key: &str) -> bool {
+    matches!(field_key, "computer_2" | "computer_name_2")
 }
 
 // ── Private helpers ───────────────────────────────────────────────────────────

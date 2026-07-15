@@ -26,6 +26,14 @@ export function extractComputerNameTokens(value: string): string[] {
         .filter(Boolean)
 }
 
+function normalizeSingleComputerName(value: string | null | undefined): string {
+    return extractComputerNameTokens(value ?? "")[0] ?? ""
+}
+
+function isSecondaryComputerNameKey(key: string): boolean {
+    return key === "computer_2" || key === "computer_name_2"
+}
+
 export function collectDuplicateComputerEmployeeIds(
     employees: EmployeeRecord[],
     computerKeys: string[],
@@ -64,11 +72,6 @@ export function isEmployeeTableEditableColumn(
     return true
 }
 
-function normalizeOptionalDraft(value: string | null | undefined): string | null {
-    const normalized = value?.trim()
-    return normalized ? normalized : null
-}
-
 export function buildEmployeePayloadForSave(
     employee: EmployeeRecord,
     drafts: Record<string, string>,
@@ -98,7 +101,9 @@ export function buildEmployeePayloadForSave(
             continue
         }
         if (!TOP_LEVEL_KEYS.has(key)) {
-            dynamicDrafts[key] = value
+            dynamicDrafts[key] = isSecondaryComputerNameKey(key)
+                ? normalizeSingleComputerName(value)
+                : value
         }
     }
 
@@ -120,9 +125,13 @@ export function buildEmployeePayloadForSave(
             drafts.clientYearOfServices ?? employee.clientYearOfServices ?? null,
         computerName: canEditComputerName
             ? ("computerName" in drafts
-                ? normalizeOptionalDraft(drafts.computerName)
-                : (employee.storedComputerName ?? null))
-            : employee.storedComputerName ?? null,
+                ? normalizeSingleComputerName(drafts.computerName)
+                : (employee.storedComputerName !== null
+                    ? normalizeSingleComputerName(employee.storedComputerName)
+                    : employee.computerName ?? null))
+            : (employee.storedComputerName !== null
+                ? normalizeSingleComputerName(employee.storedComputerName)
+                : null),
         notes: drafts.notes ?? employee.notes ?? null,
         staffGroup: employee.staffGroup,
         dynamicFields:

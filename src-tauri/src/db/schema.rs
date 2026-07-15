@@ -92,6 +92,7 @@ pub(crate) const CORE_COLUMN_DEFINITIONS: &[(&str, &str)] = &[
     ("contractEndDate", "Contract End Date"),
     ("clientYearOfServices", "Client Year Of Services"),
     ("computerName", "Computer Name"),
+    ("computer_2", "Computer (2)"),
     ("notes", "Notes"),
 ];
 
@@ -114,8 +115,13 @@ pub(super) const EMPLOYEE_SELECT_COLUMNS: &str = r#"
   e.contract_end_date,
   e.client_year_of_services,
   COALESCE(e.asw_start_date, e.start_date) AS start_date,
-  COALESCE(NULLIF(e.computername, ''), NULLIF(lc.computer_name, '')) AS computer_name,
+  CASE
+    WHEN e.computername IS NOT NULL THEN NULLIF(e.computername, '')
+    ELSE NULLIF(lc.computer_name_1, '')
+  END AS computer_name,
   e.computername AS stored_computer_name,
+  lc.computer_name_1 AS active_computer_name_1,
+  lc.computer_name_2 AS active_computer_name_2,
   e.notes,
   CASE
     WHEN COALESCE(NULLIF(TRIM(e.staff_group), ''), 'employee_list') = 'internal_movent' THEN 'internal_movement'

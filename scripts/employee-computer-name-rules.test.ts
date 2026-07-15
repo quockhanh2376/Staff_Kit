@@ -90,7 +90,19 @@ assert.equal(superAdminPayload.computerName, "SUPER-ADMIN-EDIT")
 const superAdminUnchangedPayload = buildEmployeePayloadForSave(employeeD, {
   notes: "still updated",
 }, true)
-assert.equal(superAdminUnchangedPayload.computerName, "  RAW-WITH-SPACES  ")
+assert.equal(superAdminUnchangedPayload.computerName, "RAW-WITH-SPACES")
+
+const multiDevicePayload = buildEmployeePayloadForSave(employeeC, {
+  computerName: "ASWVNLAP326,\nASWVNLAP163",
+  computer_2: "ASWVNLAP163, ASWVNLAP326",
+}, true)
+assert.equal(multiDevicePayload.computerName, "ASWVNLAP326")
+assert.equal(multiDevicePayload.dynamicFields?.computer_2, "ASWVNLAP163")
+
+const clearDevicePayload = buildEmployeePayloadForSave(employeeA, {
+  computer_2: "",
+}, true)
+assert.equal(clearDevicePayload.dynamicFields?.computer_2, "")
 
 const duplicateIds = collectDuplicateComputerEmployeeIds(
   [employeeA, employeeB],

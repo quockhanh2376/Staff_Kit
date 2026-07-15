@@ -32,7 +32,7 @@ export const DEFAULT_VISIBLE_COLUMN_KEYS = [
     "teamName",
     "email",
     "computerName",
-    "computer_name_2",
+    "computer_2",
 ]
 
 export const DATE_COLUMN_KEYS = new Set([

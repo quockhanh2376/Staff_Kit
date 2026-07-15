@@ -8,8 +8,8 @@ use super::column::{
     dynamic_field_exists, upsert_dynamic_field_definitions_for_map, upsert_dynamic_fields_tx,
 };
 use super::schema::{
-    EMPLOYEE_SELECT_COLUMNS, STAFF_GROUP_EMPLOYEE_LIST, STAFF_GROUP_INTERNAL_MOVEMENT,
-    STAFF_GROUP_OFFBOARDING, STAFF_GROUP_ONBOARDING,
+    COMPUTER_NAME_2_FIELD_KEY, EMPLOYEE_SELECT_COLUMNS, STAFF_GROUP_EMPLOYEE_LIST,
+    STAFF_GROUP_INTERNAL_MOVEMENT, STAFF_GROUP_OFFBOARDING, STAFF_GROUP_ONBOARDING,
 };
 use super::team::resolve_team_id_tx;
 use super::{
@@ -41,6 +41,14 @@ pub struct EmployeeRecord {
     pub start_date: Option<String>,
     pub computer_name: Option<String>,
     pub stored_computer_name: Option<String>,
+    #[serde(skip_serializing)]
+    pub(crate) active_computer_name_1: Option<String>,
+    #[serde(skip_serializing)]
+    pub(crate) active_computer_name_2: Option<String>,
+    #[serde(skip_serializing)]
+    pub(crate) legacy_stored_computer_name_2: Option<String>,
+    #[serde(skip_serializing)]
+    pub(crate) suppress_active_computer_names: bool,
     pub notes: Option<String>,
     pub staff_group: String,
     pub dynamic_fields: HashMap<String, String>,
@@ -156,9 +164,9 @@ impl TryFrom<EmployeePayload> for NormalizedEmployeePayload {
             contract_end_date: normalize_optional_or_date(payload.contract_end_date),
             client_year_of_services: normalize_optional_text(payload.client_year_of_services),
             start_date: normalize_date_value(payload.asw_start_date),
-            computer_name: normalize_optional_text(payload.computer_name),
+            computer_name: normalize_computer_name_override(payload.computer_name),
             notes: normalize_optional_text(payload.notes),
-            dynamic_fields: normalize_dynamic_fields(payload.dynamic_fields),
+            dynamic_fields: normalize_employee_dynamic_fields(payload.dynamic_fields),
         })
     }
 }
@@ -179,26 +187,23 @@ const EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL: &str = r#"
 LEFT JOIN (
     SELECT
       laptop_names.employee_id_fk,
-      laptop_names.computer_name
+      MAX(CASE WHEN laptop_names.row_num = 1 THEN laptop_names.computer_name END) AS computer_name_1,
+      MAX(CASE WHEN laptop_names.row_num = 2 THEN laptop_names.computer_name END) AS computer_name_2
     FROM (
       SELECT
         al.employee_id_fk,
-        GROUP_CONCAT('ASW' || a.asset_code, ',' || char(10)) OVER (
-          PARTITION BY al.employee_id_fk
-          ORDER BY al.id ASC
-          ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
-        ) AS computer_name,
+        'ASW' || a.asset_code AS computer_name,
         ROW_NUMBER() OVER (
           PARTITION BY al.employee_id_fk
-          ORDER BY al.id DESC
+          ORDER BY al.id ASC
         ) AS row_num
       FROM asset_loans al
       INNER JOIN assets a ON a.id = al.asset_id
-    INNER JOIN asset_categories c ON c.id = a.category_id
+      INNER JOIN asset_categories c ON c.id = a.category_id
       WHERE al.returned_at IS NULL
-    AND COALESCE(c.has_computer_name, 0) = 1
+        AND COALESCE(c.has_computer_name, 0) = 1
     ) laptop_names
-    WHERE laptop_names.row_num = 1
+    GROUP BY laptop_names.employee_id_fk
 ) lc ON lc.employee_id_fk = e.id
 "#;
 
@@ -380,6 +385,7 @@ pub fn update_employee(
         upsert_dynamic_field_definitions_for_map(&tx, &normalized.dynamic_fields)?;
         upsert_dynamic_fields_tx(&tx, row_id, &normalized.dynamic_fields)?;
     }
+    reconcile_employee_laptop_loans_tx(&tx, row_id, &normalized)?;
     normalize_eml_security_tool_values_for_employee_tx(
         &tx,
         row_id,
@@ -391,6 +397,78 @@ pub fn update_employee(
 
     let conn2 = open_runtime_connection(app)?;
     load_employee_by_id(&conn2, row_id)
+}
+
+fn reconcile_employee_laptop_loans_tx(
+    tx: &Transaction<'_>,
+    employee_id: i64,
+    payload: &NormalizedEmployeePayload,
+) -> Result<(), String> {
+    let Some(primary) = payload.computer_name.as_deref() else {
+        return Ok(());
+    };
+
+    let mut desired_names = split_computer_name_tokens(Some(primary));
+    for key in [COMPUTER_NAME_2_FIELD_KEY, "computer_name_2"] {
+        if let Some(value) = payload.dynamic_fields.get(key) {
+            for token in split_computer_name_tokens(Some(value.as_str())) {
+                if !desired_names
+                    .iter()
+                    .any(|existing| same_computer_name(Some(existing.as_str()), &token))
+                {
+                    desired_names.push(token);
+                }
+            }
+        }
+    }
+
+    let mut stmt = tx
+        .prepare(
+            r#"
+            SELECT al.id, al.asset_id, 'ASW' || a.asset_code
+            FROM asset_loans al
+            INNER JOIN assets a ON a.id = al.asset_id
+            INNER JOIN asset_categories c ON c.id = a.category_id
+            WHERE al.employee_id_fk = ?
+              AND al.returned_at IS NULL
+              AND COALESCE(c.has_computer_name, 0) = 1
+            "#,
+        )
+        .map_err(|err| format!("failed to prepare employee laptop reconciliation: {err}"))?;
+    let active_loans = stmt
+        .query_map(params![employee_id], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(|err| format!("failed to query employee laptop loans: {err}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("failed to read employee laptop loans: {err}"))?;
+    drop(stmt);
+
+    for (loan_id, asset_id, active_name) in active_loans {
+        if desired_names
+            .iter()
+            .any(|desired| same_computer_name(Some(desired.as_str()), &active_name))
+        {
+            continue;
+        }
+
+        tx.execute(
+            "UPDATE assets SET status = 'in_stock', updated_at = datetime('now') WHERE id = ?",
+            params![asset_id],
+        )
+        .map_err(humanize_sqlite_error)?;
+        tx.execute(
+            "UPDATE asset_loans SET returned_at = datetime('now') WHERE id = ? AND returned_at IS NULL",
+            params![loan_id],
+        )
+        .map_err(humanize_sqlite_error)?;
+    }
+
+    Ok(())
 }
 
 pub fn move_employees_group(
@@ -694,16 +772,20 @@ fn query_employees(
         let query_like = format!("%{}%", query.to_lowercase());
         if let Some(fts_query) = build_fts_query(&query) {
             where_clauses.push(
-                "(e.id IN (SELECT rowid FROM employees_fts WHERE employees_fts MATCH ?) OR lower(COALESCE(NULLIF(e.computername, ''), NULLIF(lc.computer_name, ''), '')) LIKE ?)"
+                "(e.id IN (SELECT rowid FROM employees_fts WHERE employees_fts MATCH ?) OR lower(COALESCE(NULLIF(e.computername, ''), NULLIF(lc.computer_name_1, ''), '')) LIKE ? OR lower(COALESCE(lc.computer_name_2, '')) LIKE ? OR EXISTS (SELECT 1 FROM employee_dynamic_values edv WHERE edv.employee_id = e.id AND lower(COALESCE(edv.value, '')) LIKE ?))"
                     .to_string(),
             );
             filter_params.push(Value::Text(fts_query));
+            filter_params.push(Value::Text(query_like.clone()));
+            filter_params.push(Value::Text(query_like.clone()));
             filter_params.push(Value::Text(query_like));
         } else {
             where_clauses.push(
-                "lower(COALESCE(NULLIF(e.computername, ''), NULLIF(lc.computer_name, ''), '')) LIKE ?"
+                "(lower(COALESCE(NULLIF(e.computername, ''), NULLIF(lc.computer_name_1, ''), '')) LIKE ? OR lower(COALESCE(lc.computer_name_2, '')) LIKE ? OR EXISTS (SELECT 1 FROM employee_dynamic_values edv WHERE edv.employee_id = e.id AND lower(COALESCE(edv.value, '')) LIKE ?))"
                     .to_string(),
             );
+            filter_params.push(Value::Text(query_like.clone()));
+            filter_params.push(Value::Text(query_like.clone()));
             filter_params.push(Value::Text(query_like));
         }
     }
@@ -853,15 +935,88 @@ pub(crate) fn hydrate_dynamic_fields(
             continue;
         };
 
+        let is_secondary_computer_key =
+            field_key == COMPUTER_NAME_2_FIELD_KEY || field_key == "computer_name_2";
         if let Some(text) = normalize_optional_text(value) {
             items[index].dynamic_fields.insert(field_key, text);
+        } else if is_secondary_computer_key {
+            items[index].dynamic_fields.insert(field_key, String::new());
         }
+    }
+
+    for item in items.iter_mut() {
+        let primary = item.computer_name.clone();
+        let has_current_secondary_override =
+            item.dynamic_fields.contains_key(COMPUTER_NAME_2_FIELD_KEY);
+        let has_legacy_secondary_override = item.dynamic_fields.contains_key("computer_name_2");
+        let dynamic_secondary = item.dynamic_fields.get(COMPUTER_NAME_2_FIELD_KEY).cloned();
+        let legacy_dynamic_secondary = item.dynamic_fields.get("computer_name_2").cloned();
+        let has_secondary_override =
+            has_current_secondary_override || has_legacy_secondary_override;
+        let candidates = if has_secondary_override {
+            vec![dynamic_secondary, legacy_dynamic_secondary]
+        } else if item.suppress_active_computer_names {
+            vec![item.legacy_stored_computer_name_2.clone()]
+        } else {
+            vec![
+                item.legacy_stored_computer_name_2.clone(),
+                item.active_computer_name_1.clone(),
+                item.active_computer_name_2.clone(),
+            ]
+        };
+
+        let secondary = candidates
+            .into_iter()
+            .flatten()
+            .flat_map(|value| split_computer_name_tokens(Some(value.as_str())))
+            .find(|value| !same_computer_name(primary.as_deref(), value));
+
+        if let Some(secondary) = secondary {
+            if item.dynamic_fields.contains_key(COMPUTER_NAME_2_FIELD_KEY)
+                || !item.dynamic_fields.contains_key("computer_name_2")
+            {
+                item.dynamic_fields
+                    .insert(COMPUTER_NAME_2_FIELD_KEY.to_string(), secondary);
+            } else {
+                item.dynamic_fields
+                    .insert("computer_name_2".to_string(), secondary);
+            }
+        } else if !has_secondary_override {
+            item.dynamic_fields.remove(COMPUTER_NAME_2_FIELD_KEY);
+            if item.dynamic_fields.contains_key("computer_name_2") {
+                item.dynamic_fields.remove("computer_name_2");
+            }
+        }
+
+        item.active_computer_name_1 = None;
+        item.active_computer_name_2 = None;
+        item.legacy_stored_computer_name_2 = None;
     }
 
     Ok(())
 }
 
 fn map_employee_row(row: &Row<'_>) -> rusqlite::Result<EmployeeRecord> {
+    let raw_computer_name: Option<String> = row.get(17)?;
+    let raw_stored_computer_name: Option<String> = row.get(18)?;
+    let active_computer_name_1: Option<String> = row.get(19)?;
+    let active_computer_name_2: Option<String> = row.get(20)?;
+    let stored_slots = split_computer_name_tokens(raw_stored_computer_name.as_deref());
+    let display_slots = split_computer_name_tokens(raw_computer_name.as_deref());
+    let stored_computer_name = raw_stored_computer_name
+        .as_ref()
+        .map(|_| stored_slots.first().cloned().unwrap_or_default());
+    let computer_name = if raw_stored_computer_name.is_some() {
+        stored_computer_name
+            .clone()
+            .filter(|value| !value.is_empty())
+    } else {
+        display_slots
+            .first()
+            .cloned()
+            .or_else(|| active_computer_name_1.clone())
+    };
+
     Ok(EmployeeRecord {
         id: row.get(0)?,
         employee_id: row.get(1)?,
@@ -880,13 +1035,68 @@ fn map_employee_row(row: &Row<'_>) -> rusqlite::Result<EmployeeRecord> {
         contract_end_date: row.get(14)?,
         client_year_of_services: row.get(15)?,
         start_date: row.get(16)?,
-        computer_name: row.get(17)?,
-        stored_computer_name: row.get(18)?,
-        notes: row.get(19)?,
-        staff_group: row.get(20)?,
+        computer_name,
+        stored_computer_name,
+        active_computer_name_1,
+        active_computer_name_2,
+        legacy_stored_computer_name_2: stored_slots.get(1).cloned(),
+        suppress_active_computer_names: raw_stored_computer_name
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty()),
+        notes: row.get(21)?,
+        staff_group: row.get(22)?,
         dynamic_fields: HashMap::new(),
-        updated_at: row.get(21)?,
+        updated_at: row.get(23)?,
     })
+}
+
+fn split_computer_name_tokens(value: Option<&str>) -> Vec<String> {
+    value
+        .into_iter()
+        .flat_map(|raw| raw.split(|ch| matches!(ch, ',' | '\n' | '\r')))
+        .filter_map(|token| normalize_optional_text(Some(token.to_string())))
+        .fold(Vec::new(), |mut values, token| {
+            if !values
+                .iter()
+                .any(|existing: &String| existing.eq_ignore_ascii_case(&token))
+            {
+                values.push(token);
+            }
+            values
+        })
+}
+
+fn first_computer_name(value: Option<String>) -> Option<String> {
+    split_computer_name_tokens(value.as_deref())
+        .into_iter()
+        .next()
+}
+
+fn normalize_computer_name_override(value: Option<String>) -> Option<String> {
+    value.map(|raw| first_computer_name(Some(raw)).unwrap_or_default())
+}
+
+fn normalize_employee_dynamic_fields(
+    input: Option<HashMap<String, String>>,
+) -> HashMap<String, String> {
+    let mut fields = normalize_dynamic_fields(input);
+    for key in [COMPUTER_NAME_2_FIELD_KEY, "computer_name_2"] {
+        if let Some(value) = fields.get_mut(key) {
+            *value = first_computer_name(Some(value.clone())).unwrap_or_default();
+        }
+    }
+    fields
+}
+
+fn same_computer_name(left: Option<&str>, right: &str) -> bool {
+    let Some(left) = left else {
+        return false;
+    };
+    let left = left.trim().to_uppercase();
+    let right = right.trim().to_uppercase();
+    left == right
+        || left.strip_prefix("ASW").unwrap_or(left.as_str())
+            == right.strip_prefix("ASW").unwrap_or(right.as_str())
 }
 
 fn build_employee_from_clause(include_active_laptop_join: bool) -> String {
@@ -933,7 +1143,7 @@ fn resolve_core_sort_expression(sort_key: &str) -> Option<&'static str> {
         "contractenddate" => "COALESCE(e.contract_end_date, '')",
         "clientyearofservices" => "COALESCE(e.client_year_of_services, '') COLLATE NOCASE",
         "computername" => {
-            "COALESCE(NULLIF(e.computername, ''), NULLIF(lc.computer_name, ''), '') COLLATE NOCASE"
+            "COALESCE(NULLIF(e.computername, ''), NULLIF(lc.computer_name_1, ''), '') COLLATE NOCASE"
         }
         "notes" => "COALESCE(e.notes, '') COLLATE NOCASE",
         _ => return None,
@@ -1085,11 +1295,12 @@ mod tests {
 
     use rusqlite::{params, Connection};
 
-    use crate::db::{apply_migrations, configure_connection};
+    use crate::db::{apply_migrations, configure_connection, COMPUTER_NAME_2_FIELD_KEY};
 
     use super::{
-        build_employee_from_clause, query_employees, upsert_employee_from_payload, EmployeePayload,
-        EmployeeQuery, EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL,
+        build_employee_from_clause, query_employees, reconcile_employee_laptop_loans_tx,
+        upsert_employee_from_payload, EmployeePayload, EmployeeQuery, NormalizedEmployeePayload,
+        EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL,
     };
 
     fn open_test_connection() -> Connection {
@@ -1187,7 +1398,7 @@ mod tests {
     }
 
     #[test]
-    fn upsert_employee_from_payload_clears_blank_dynamic_fields() {
+    fn upsert_employee_from_payload_preserves_blank_secondary_device_override() {
         let mut conn = open_test_connection();
         let employee_row_id = seed_employee(&conn, "ASWVN1302", "Luu The Hung");
         conn.execute(
@@ -1249,7 +1460,19 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("count dynamic field values");
-        assert_eq!(exists, 0);
+        assert_eq!(exists, 1);
+        let value: String = conn
+            .query_row(
+                r#"
+                SELECT value
+                FROM employee_dynamic_values
+                WHERE employee_id = ? AND field_key = 'computer_name_2'
+                "#,
+                params![employee_row_id],
+                |row| row.get(0),
+            )
+            .expect("load blank secondary device override");
+        assert_eq!(value, "");
     }
 
     #[test]
@@ -1282,9 +1505,10 @@ mod tests {
             .iter()
             .find(|item| item.employee_id == "ASWVN1302")
             .expect("find seeded employee");
+        assert_eq!(employee.computer_name.as_deref(), Some("ASWVNMACPRO010"));
         assert_eq!(
-            employee.computer_name.as_deref(),
-            Some("ASWVNMACPRO010,\nASWVNLAP293")
+            employee.dynamic_fields.get(COMPUTER_NAME_2_FIELD_KEY),
+            Some(&"ASWVNLAP293".to_string())
         );
     }
 
@@ -1318,13 +1542,12 @@ mod tests {
     #[test]
     fn active_laptop_join_uses_ordered_window_aggregation() {
         assert!(
-            EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL.contains("GROUP_CONCAT('ASW' || a.asset_code"),
-            "active-laptop join should aggregate directly from ordered loan rows",
+            EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL.contains("MAX(CASE WHEN laptop_names.row_num = 1"),
+            "active-laptop join should expose the first ordered loan as Device 1",
         );
         assert!(
-            EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL
-                .contains("ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING"),
-            "active-laptop join should use a window frame to keep GROUP_CONCAT ordering stable",
+            EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL.contains("MAX(CASE WHEN laptop_names.row_num = 2"),
+            "active-laptop join should expose the second ordered loan as Device 2",
         );
         assert!(
             EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL.contains("ROW_NUMBER() OVER"),
@@ -1377,6 +1600,145 @@ mod tests {
             .find(|item| item.employee_id == "ASWVN1302")
             .expect("find seeded employee");
         assert_eq!(employee.computer_name.as_deref(), Some("ASWVNLAP293"));
+    }
+
+    #[test]
+    fn saved_primary_computer_name_keeps_second_active_laptop_in_device_two() {
+        let mut conn = open_test_connection();
+        let employee_row_id = seed_employee(&conn, "ASWVN1308", "Nguyen Pham Phuong Uyen");
+        let first_laptop_id = seed_asset(&conn, "VNLAP326", "Laptop", "laptop");
+        let second_laptop_id = seed_asset(&conn, "VNLAP163", "Laptop", "laptop");
+        seed_active_loan(&conn, employee_row_id, first_laptop_id);
+        seed_active_loan(&conn, employee_row_id, second_laptop_id);
+
+        let tx = conn.transaction().expect("start transaction");
+        upsert_employee_from_payload(
+            &tx,
+            EmployeePayload {
+                employee_id: "ASWVN1308".to_string(),
+                full_name: "Nguyen Pham Phuong Uyen".to_string(),
+                nick_name: None,
+                team_name: Some("ASW Consulting".to_string()),
+                project: None,
+                job_title: None,
+                email: None,
+                cellphone: None,
+                date_of_birth: None,
+                gender: None,
+                asw_start_date: None,
+                client_start_date: None,
+                contract_end_date: None,
+                client_year_of_services: None,
+                computer_name: Some("ASWVNLAP163".to_string()),
+                notes: None,
+                staff_group: Some("employee_list".to_string()),
+                dynamic_fields: None,
+            },
+            "employee_list",
+        )
+        .expect("save primary computer name");
+        tx.commit().expect("commit transaction");
+
+        let response = query_employees(
+            &conn,
+            EmployeeQuery {
+                query: Some("ASWVNLAP163".to_string()),
+                team_name: None,
+                staff_group: None,
+                sort_key: None,
+                sort_direction: None,
+                start_date_from: None,
+                start_date_to: None,
+                limit: Some(20),
+                offset: Some(0),
+            },
+        )
+        .expect("query employee after primary computer name save");
+        let employee = response
+            .items
+            .iter()
+            .find(|item| item.employee_id == "ASWVN1308")
+            .expect("find saved employee");
+
+        assert_eq!(employee.computer_name.as_deref(), Some("ASWVNLAP163"));
+        assert_eq!(
+            employee.dynamic_fields.get(COMPUTER_NAME_2_FIELD_KEY),
+            Some(&"ASWVNLAP326".to_string())
+        );
+    }
+
+    #[test]
+    fn clearing_secondary_device_returns_removed_active_laptop() {
+        let mut conn = open_test_connection();
+        let employee_row_id = seed_employee(&conn, "ASWVN1308", "Nguyen Pham Phuong Uyen");
+        let first_laptop_id = seed_asset(&conn, "VNLAP326", "Laptop", "laptop");
+        let second_laptop_id = seed_asset(&conn, "VNLAP163", "Laptop", "laptop");
+        seed_active_loan(&conn, employee_row_id, first_laptop_id);
+        seed_active_loan(&conn, employee_row_id, second_laptop_id);
+
+        let normalized = NormalizedEmployeePayload::try_from(EmployeePayload {
+            employee_id: "ASWVN1308".to_string(),
+            full_name: "Nguyen Pham Phuong Uyen".to_string(),
+            nick_name: None,
+            team_name: Some("ASW Consulting".to_string()),
+            project: None,
+            job_title: None,
+            email: None,
+            cellphone: None,
+            date_of_birth: None,
+            gender: None,
+            asw_start_date: None,
+            client_start_date: None,
+            contract_end_date: None,
+            client_year_of_services: None,
+            computer_name: Some("ASWVNLAP326".to_string()),
+            notes: None,
+            staff_group: Some("employee_list".to_string()),
+            dynamic_fields: Some(HashMap::from([(
+                COMPUTER_NAME_2_FIELD_KEY.to_string(),
+                String::new(),
+            )])),
+        })
+        .expect("normalize employee device payload");
+
+        let tx = conn.transaction().expect("start transaction");
+        reconcile_employee_laptop_loans_tx(&tx, employee_row_id, &normalized)
+            .expect("reconcile removed secondary laptop");
+        tx.commit().expect("commit transaction");
+
+        let first_active: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM asset_loans WHERE asset_id = ? AND returned_at IS NULL",
+                params![first_laptop_id],
+                |row| row.get(0),
+            )
+            .expect("count first active laptop loan");
+        let second_active: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM asset_loans WHERE asset_id = ? AND returned_at IS NULL",
+                params![second_laptop_id],
+                |row| row.get(0),
+            )
+            .expect("count second active laptop loan");
+        let first_status: String = conn
+            .query_row(
+                "SELECT status FROM assets WHERE id = ?",
+                params![first_laptop_id],
+                |row| row.get(0),
+            )
+            .expect("load first laptop status");
+        let second_status: String = conn
+            .query_row(
+                "SELECT status FROM assets WHERE id = ?",
+                params![second_laptop_id],
+                |row| row.get(0),
+            )
+            .expect("load second laptop status");
+
+        assert_eq!(first_active, 1);
+        assert_eq!(second_active, 0);
+        assert_eq!(first_status, "assigned");
+        assert_eq!(second_status, "in_stock");
     }
 
     #[test]
