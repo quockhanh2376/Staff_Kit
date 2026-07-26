@@ -2,6 +2,7 @@ $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $skillsRoot = Join-Path $repo '.agents\skills'
 $configPath = Join-Path $repo '.codex\config.toml'
+$runtimePathHelper = Join-Path $repo 'scripts\codex-runtime-path.ps1'
 $required = @(
     'using-superpowers','brainstorming','systematic-debugging','using-git-worktrees',
     'writing-plans','executing-plans','subagent-driven-development',
@@ -12,6 +13,35 @@ $approvedTools = @('headroom_stats','headroom_compress','headroom_retrieve')
 $eccNames = @('staffkit-research-first','staffkit-security-review','staffkit-architecture-review','staffkit-delivery-verification')
 $failures = [System.Collections.Generic.List[string]]::new()
 $configHashBefore = (Get-FileHash $configPath -Algorithm SHA256).Hash
+
+if (-not (Test-Path -LiteralPath $runtimePathHelper)) {
+    $failures.Add('Codex runtime-path helper is missing')
+} else {
+    . $runtimePathHelper
+    $sampleRoot = 'C:\Staff_Kit'
+    $sameRootVariant = 'c:\staff_kit\'
+    $otherRoot = 'C:\Staff_Kit\.worktrees\feature-a'
+    $sampleRuntime = Get-StaffKitCodexRuntimePath -RepoRoot $sampleRoot -LocalAppData $env:LOCALAPPDATA
+    $sameRuntime = Get-StaffKitCodexRuntimePath -RepoRoot $sameRootVariant -LocalAppData $env:LOCALAPPDATA
+    $otherRuntime = Get-StaffKitCodexRuntimePath -RepoRoot $otherRoot -LocalAppData $env:LOCALAPPDATA
+    if ($sampleRuntime -cne $sameRuntime) {
+        $failures.Add('same normalized repo root does not produce a stable runtime path')
+    }
+    if ($sampleRuntime -ceq $otherRuntime) {
+        $failures.Add('different worktree roots share a runtime path')
+    }
+    $expectedRuntimeBase = Join-Path $env:LOCALAPPDATA 'Staff_Kit\codex-runtime'
+    if (-not $sampleRuntime.StartsWith("$expectedRuntimeBase\", [System.StringComparison]::OrdinalIgnoreCase)) {
+        $failures.Add('runtime path is not under the machine-local Staff Kit runtime base')
+    }
+    $actualRuntime = Get-StaffKitCodexRuntimePath -RepoRoot $repo -LocalAppData $env:LOCALAPPDATA
+    if ($actualRuntime.StartsWith("$repo\", [System.StringComparison]::OrdinalIgnoreCase)) {
+        $failures.Add('runtime path is inside the repository')
+    }
+    if ((Split-Path -Leaf $actualRuntime) -notmatch '^[0-9a-f]{16}$') {
+        $failures.Add('runtime path does not end in a stable short SHA-256 identifier')
+    }
+}
 
 $activeNames = @()
 Get-ChildItem $skillsRoot -Directory | ForEach-Object {
@@ -78,6 +108,9 @@ if ($legacyConflict) { $failures.Add("legacy mandatory capability remains: $($le
 $errors = $null
 [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $repo 'scripts\run-codex-headroom.ps1'), [ref]$null, [ref]$errors) | Out-Null
 if ($errors.Count) { $failures.Add('wrapper PowerShell syntax is invalid') }
+$helperErrors = $null
+[System.Management.Automation.Language.Parser]::ParseFile($runtimePathHelper, [ref]$null, [ref]$helperErrors) | Out-Null
+if ($helperErrors.Count) { $failures.Add('runtime-path helper PowerShell syntax is invalid') }
 
 $configHashAfter = (Get-FileHash $configPath -Algorithm SHA256).Hash
 if ($configHashBefore -ne $configHashAfter) { $failures.Add('static verification changed tracked config') }

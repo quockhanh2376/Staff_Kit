@@ -1443,3 +1443,25 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Commit: `88d8e69` (`fix(tooling): stabilize Codex Headroom integration`), amended after this End entry.
 - Push: pending final remote verification; no merge into `main`.
 - Note: Headroom proxy emitted WebSocket 403 prewarm warnings before falling back to HTTPS; MCP operations still completed successfully.
+
+## Start — Per-worktree Codex runtime isolation — 2026-07-26 17:46 +07:00
+
+- Branch/base: `chore/codex-tooling-runtime-hardening` at `964389163f5444627d219aa773b8a626c8118f61`.
+- Objective: isolate writable Codex runtime state per resolved repository/worktree root while keeping it outside the repository.
+- Root cause: the fixed machine-local `Staff_Kit\codex-runtime` directory maps every clone and worktree on one machine to the same writable `CODEX_HOME`.
+- Scope: Headroom launcher runtime-path derivation, read-only verifier coverage, concise workflow documentation, and this session log.
+- Out of scope: `src/`, `src-tauri/`, `web/`, application dependencies, `scripts/db_query.py` unless inspection finds a concrete defect, and merging into `main`.
+- Planned validation: red/green runtime-path checks, PowerShell syntax, `STATIC READY`, direct-launch smoke test, distinct synthetic-root demonstration, config hash immutability, diff checks, and explicit product-scope review.
+
+## End — Per-worktree Codex runtime isolation — 2026-07-26 17:52 +07:00
+
+- Result: writable Codex runtime state is derived outside the repository as `%LOCALAPPDATA%\Staff_Kit\codex-runtime\<16-character-sha256-id>`, with the resolved absolute worktree root normalized to lowercase before hashing.
+- TDD evidence: the updated verifier first reported `STATIC NOT READY` because the shared production helper was absent; after adding the helper and wiring the launcher to it, the same verifier reported `STATIC READY`.
+- Determinism evidence: neutral sample roots `C:\Staff_Kit` and `c:\staff_kit\` both produced ID `7e3b96ab03c315ad`; `C:\Staff_Kit\.worktrees\feature-a` produced distinct ID `dcd891a52cf75248`.
+- Runtime boundary: the actual derived path was confirmed outside the resolved repository; no private absolute path was printed or recorded.
+- Launcher checks: `npm run codex:direct -- --version` and `npm run codex:headroom -- --version` both exited 0; direct fail-open warning and exit-code propagation remain intact.
+- Config immutability: `.codex/config.toml` SHA-256 remained `4FF2CF999260278C4711D19357B388E70DE86CAEDC9B005F4E793F1BCD033851` before and after launcher checks.
+- Exclusions: `.tokensave` remained absent; Headroom configuration retained `--no-tokensave` and `--no-serena`.
+- Review result: `scripts/db_query.py` retains its expected LOCALAPPDATA database path and required no change.
+- Scope: no files under `src/`, `src-tauri/`, or `web/` changed; `main` was not merged.
+- Commit/push: focused commit and remote SHA verification follow this End record.

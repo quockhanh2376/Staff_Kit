@@ -9,7 +9,8 @@ $ErrorActionPreference = 'Stop'
 # Resolve the repository from this script so the launcher is portable across
 # drives and machines.
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$runtimeRoot = Join-Path $env:LOCALAPPDATA 'Staff_Kit\codex-runtime'
+. (Join-Path $PSScriptRoot 'codex-runtime-path.ps1')
+$runtimeRoot = Get-StaffKitCodexRuntimePath -RepoRoot $repoRoot -LocalAppData $env:LOCALAPPDATA
 $runtimeConfig = Join-Path $runtimeRoot 'config.toml'
 $templateConfig = Join-Path $repoRoot '.codex\config.toml'
 $headroomExe = Join-Path $repoRoot '.headroom-venv\Scripts\headroom.exe'

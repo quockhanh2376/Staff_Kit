@@ -47,7 +47,8 @@ Neither replaces `daily_log.md` or Git history.
 
 Canonical launch: `npm run codex:headroom`. Explicit fail-open launch:
 `npm run codex:direct`. The wrapper resolves the repository from its own location,
-creates an isolated runtime under the machine-local application-data directory,
+creates an isolated runtime under the machine-local application-data directory
+namespaced by a case-normalized SHA-256 identifier for the resolved worktree root,
 keeps authentication outside Git, and invokes project-local Headroom with
 `--no-context-tool --no-tokensave --no-serena`. It never passes `--learn` or
 `--memory`. Headroom failure warns and falls back to direct Codex using the isolated
