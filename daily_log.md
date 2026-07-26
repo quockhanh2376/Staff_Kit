@@ -1380,3 +1380,31 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 
 ## Git History Added
 - `7a42311` - `refactor: deprecate employee asset seed ui`
+
+## Start — Codex tooling runtime hardening — 2026-07-26 13:33 +07:00
+
+- Session ID: `a38e47c0-6cb0-42d5-844e-8a63a69a4e1b`
+- Machine: Windows workstation (`D:\Staff_Kit`)
+- Branch: `main`
+- Worktree: `D:\Staff_Kit`
+- Base commit: `0c77d04dcd78b557fd23e00c7f976835b1ed0af0`
+- Objective: repair and harden the complete Codex tooling environment until a fresh audit reaches deterministic `READY`.
+- Known audit findings: global Superpowers is not project-local; legacy `.agent` workflows coexist with newer routers; `.tokensave` state and Headroom auto-registration exist; Headroom config contains stale `E:\Staff_Kit` and tracked-config mutation risk; wrapper auto-installs extra components; project-local runtime and fail-open behavior require verification.
+- In scope: project-local Superpowers, ECC Lite/focused-output inventory, Headroom wrapper/runtime/config isolation, tokensave removal, portable paths, docs, verification script, and daily-log protocol.
+- Out of scope: `src/`, `src-tauri/`, `web/`, database schema, application dependencies, global plugin cache deletion, secrets/auth, and unrelated user changes.
+- Planned validation: static tooling audit, fresh runtime discovery, Headroom MCP/config immutability checks, fail-open check, wrapper syntax, documentation consistency, and Git scope review.
+- Existing uncommitted changes: `.codex/config.toml` and `AGENTS.md` modified; `.agents/skills/staffkit-*`, `docs/CODEX_WORKFLOW.md`, `docs/ecc-lite-manifest.md`, and `.tokensave/` untracked. These are classified as expected tooling changes for this repair and were backed up outside the repository before edits.
+
+## End — Codex tooling runtime hardening — 2026-07-26 13:41 +07:00
+
+- Result: tooling repair completed; static audit is `READY`.
+- Files changed: project-local Superpowers skills and provenance, legacy `.agent/README.md`, `.codex/config.toml`, `.gitignore`, `AGENTS.md`, `docs/CODEX_WORKFLOW.md`, `scripts/run-codex-headroom.ps1`, `scripts/verify-codex-tooling.ps1`, `docs/ecc-lite-manifest.md`, and this log.
+- Exact commands executed: `git status/diff/remote`, backups to `%TEMP%`, cloned `obra/superpowers`, copied the pinned skill set, `npm run codex:headroom -- --version`, static verification, PowerShell fail-open smoke test, `git diff --check`, and tracked-scope checks.
+- Checks passed: required project-local Superpowers inventory, ECC Lite count, focused-output presence, Headroom MCP JSON syntax, no project `.tokensave`, no tracked runtime state, daily log tracking, wrapper syntax, stale-path scan, Headroom launch, config hash immutability, and fail-open direct Codex launch.
+- Checks failed: initial `git diff --check` reported three copied skills with extra blank EOF lines; normalized and reran successfully.
+- Checks not run: product quality gate and application tests, because product code and application dependencies were not changed; full MCP request/response protocol test was not run because it would require launching a persistent server.
+- Remaining risks: global Headroom history may retain prior logs/rtk artifacts, but the Staff Kit runtime does not discover or register them; the global Superpowers plugin cache remains installed but is not imported.
+- Branch status: `chore/codex-tooling-runtime-hardening`.
+- Commit status: committed as `eedc682` (`chore(tooling): harden portable Codex runtime`).
+- Push status: push attempted twice and timed out; remote branch has not been confirmed.
+- Second-machine availability: source-pinned Superpowers and portable wrapper/docs are ready; machine two must install prerequisites, create `.headroom-venv`, install `headroom-ai[all]`, then run `scripts/verify-codex-tooling.ps1`.

@@ -7,7 +7,7 @@ description: Use when facing 2+ independent tasks that can be worked on without 
 
 ## Overview
 
-You delegate tasks to specialized agents with isolated context. By precisely crafting their instructions and context, you ensure they stay focused and succeed at their task. They should never inherit your session's context or history — you construct exactly what they need. This also preserves your own context for coordination work.
+You delegate tasks to specialized agents with isolated context. By precisely crafting their instructions and context, you ensure they stay focused and succeed at their task. They should never inherit your session's context or history Ã¢â‚¬â€ you construct exactly what they need. This also preserves your own context for coordination work.
 
 When you have multiple unrelated failures (different test files, different subsystems, different bugs), investigating them sequentially wastes time. Each investigation is independent and can happen in parallel.
 
@@ -65,13 +65,16 @@ Each agent gets:
 
 ### 3. Dispatch in Parallel
 
-```typescript
-// In Claude Code / AI environment
-Task("Fix agent-tool-abort.test.ts failures")
-Task("Fix batch-completion-behavior.test.ts failures")
-Task("Fix tool-approval-race-conditions.test.ts failures")
-// All three run concurrently
+Issue all three subagent dispatches in the same response Ã¢â‚¬â€ they run in parallel:
+
+```text
+Subagent (general-purpose): "Fix agent-tool-abort.test.ts failures"
+Subagent (general-purpose): "Fix batch-completion-behavior.test.ts failures"
+Subagent (general-purpose): "Fix tool-approval-race-conditions.test.ts failures"
+# All three run concurrently.
 ```
+
+Multiple dispatch calls in one response = parallel execution. One per response = sequential.
 
 ### 4. Review and Integrate
 
@@ -111,17 +114,17 @@ Return: Summary of what you found and what you fixed.
 
 ## Common Mistakes
 
-**❌ Too broad:** "Fix all the tests" - agent gets lost
-**✅ Specific:** "Fix agent-tool-abort.test.ts" - focused scope
+**Ã¢ÂÅ’ Too broad:** "Fix all the tests" - agent gets lost
+**Ã¢Å“â€¦ Specific:** "Fix agent-tool-abort.test.ts" - focused scope
 
-**❌ No context:** "Fix the race condition" - agent doesn't know where
-**✅ Context:** Paste the error messages and test names
+**Ã¢ÂÅ’ No context:** "Fix the race condition" - agent doesn't know where
+**Ã¢Å“â€¦ Context:** Paste the error messages and test names
 
-**❌ No constraints:** Agent might refactor everything
-**✅ Constraints:** "Do NOT change production code" or "Fix tests only"
+**Ã¢ÂÅ’ No constraints:** Agent might refactor everything
+**Ã¢Å“â€¦ Constraints:** "Do NOT change production code" or "Fix tests only"
 
-**❌ Vague output:** "Fix it" - you don't know what changed
-**✅ Specific:** "Return summary of root cause and changes"
+**Ã¢ÂÅ’ Vague output:** "Fix it" - you don't know what changed
+**Ã¢Å“â€¦ Specific:** "Return summary of root cause and changes"
 
 ## When NOT to Use
 
@@ -143,9 +146,9 @@ Return: Summary of what you found and what you fixed.
 
 **Dispatch:**
 ```
-Agent 1 → Fix agent-tool-abort.test.ts
-Agent 2 → Fix batch-completion-behavior.test.ts
-Agent 3 → Fix tool-approval-race-conditions.test.ts
+Agent 1 Ã¢â€ â€™ Fix agent-tool-abort.test.ts
+Agent 2 Ã¢â€ â€™ Fix batch-completion-behavior.test.ts
+Agent 3 Ã¢â€ â€™ Fix tool-approval-race-conditions.test.ts
 ```
 
 **Results:**
@@ -155,15 +158,6 @@ Agent 3 → Fix tool-approval-race-conditions.test.ts
 
 **Integration:** All fixes independent, no conflicts, full suite green
 
-**Time saved:** 3 problems solved in parallel vs sequentially
-
-## Key Benefits
-
-1. **Parallelization** - Multiple investigations happen simultaneously
-2. **Focus** - Each agent has narrow scope, less context to track
-3. **Independence** - Agents don't interfere with each other
-4. **Speed** - 3 problems solved in time of 1
-
 ## Verification
 
 After agents return:
@@ -172,11 +166,8 @@ After agents return:
 3. **Run full suite** - Verify all fixes work together
 4. **Spot check** - Agents can make systematic errors
 
-## Real-World Impact
+## Staff Kit provenance
 
-From debugging session (2025-10-03):
-- 6 failures across 3 files
-- 3 agents dispatched in parallel
-- All investigations completed concurrently
-- All fixes integrated successfully
-- Zero conflicts between agent changes
+- Upstream: https://github.com/obra/superpowers
+- Pinned commit: 3dcbd5c4b48e02263fbf4a3c01e3fe4f81d584d9
+- Scope: project-local Staff Kit workflow capability; AGENTS.md and docs/CODEX_WORKFLOW.md remain authoritative.
