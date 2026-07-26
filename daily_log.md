@@ -1485,3 +1485,51 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Runtime/config checks: direct Codex launch exited 0; `.codex/config.toml` SHA-256 remained `4FF2CF999260278C4711D19357B388E70DE86CAEDC9B005F4E793F1BCD033851`; existing runtime-path isolation checks remained passing.
 - Scope: no changes under `src/`, `src-tauri/`, or `web/`; `scripts/db_query.py` and docs were unchanged.
 - Commit/push: focused commit and remote SHA verification follow this End record.
+
+## Start — Fix Vite Cargo target watcher EBUSY — 2026-07-26 18:38 +07:00
+
+- Branch: `main`.
+- Base commit: `282c7d3d3281644d2d625bee5ea009c27e77fdc8`.
+- Objective: prevent Vite from watching generated Cargo artifacts that are locked by Cargo/Tauri on Windows.
+- Confirmed error: `EBUSY: resource busy or locked` while watching `src-tauri/target/debug/deps/staff_kit_lib.dll`.
+- Root cause: Vite used the repository root and traversed `src-tauri/target`; `.gitignore` does not configure the Vite watcher.
+- In scope:
+  - `vite.config.ts` watcher exclusions;
+  - validation;
+  - this session log.
+- Out of scope:
+  - product business logic;
+  - Cargo configuration;
+  - pre-existing `src-tauri/Cargo.toml` changes;
+  - unrelated lint problems under reference-only `web/`.
+- Planned validation:
+  - resolved Vite watcher config;
+  - TypeScript build;
+  - frontend build;
+  - Tauri check;
+  - `tauri:dev` smoke test;
+  - `git diff --check`.
+
+## End — Fix Vite Cargo target watcher EBUSY — 2026-07-26 19:35 +07:00
+
+- Result: added repository-relative watcher exclusions for generated Cargo target directories.
+- Behavior: `npm run tauri:dev` no longer crashes when Vite encounters `staff_kit_lib.dll` locked by Cargo/Tauri.
+- Files changed:
+  - `vite.config.ts`;
+  - `daily_log.md`.
+- Validation passed:
+  - resolved Vite watcher regression assertion;
+  - `npx tsc -b --pretty false`;
+  - `npm run build`;
+  - `npm run check:tauri`;
+  - `npx eslint src vite.config.ts`;
+  - `npm run tauri:dev` for approximately 65 seconds;
+  - `git diff --check`.
+- Smoke evidence: Vite became ready on port 5173, Rust compilation completed, the app launched, no `EBUSY` or `staff_kit_lib.dll` watcher error appeared, the targeted process tree stopped with zero processes remaining, and port 5173 was released.
+- Validation limitations:
+  - GUI observation and a separate HMR edit test were not available in the headless validation session;
+  - repository-wide `npm run lint` remains affected by pre-existing issues under reference-only `web/`.
+- Preserved unrelated change: `src-tauri/Cargo.toml` remained untouched and unstaged.
+- Remaining risks: no known blocker for the watcher fix.
+- Commit status: pending focused commit.
+- Push status: pending governance check and remote verification.
