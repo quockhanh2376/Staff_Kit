@@ -3,6 +3,7 @@ $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $skillsRoot = Join-Path $repo '.agents\skills'
 $configPath = Join-Path $repo '.codex\config.toml'
 $runtimePathHelper = Join-Path $repo 'scripts\codex-runtime-path.ps1'
+$searchHelper = Join-Path $repo 'scripts\search-repository-text.ps1'
 $required = @(
     'using-superpowers','brainstorming','systematic-debugging','using-git-worktrees',
     'writing-plans','executing-plans','subagent-driven-development',
@@ -13,6 +14,12 @@ $approvedTools = @('headroom_stats','headroom_compress','headroom_retrieve')
 $eccNames = @('staffkit-research-first','staffkit-security-review','staffkit-architecture-review','staffkit-delivery-verification')
 $failures = [System.Collections.Generic.List[string]]::new()
 $configHashBefore = (Get-FileHash $configPath -Algorithm SHA256).Hash
+
+if (-not (Test-Path -LiteralPath $searchHelper)) {
+    $failures.Add('repository text-search helper is missing')
+} else {
+    . $searchHelper
+}
 
 if (-not (Test-Path -LiteralPath $runtimePathHelper)) {
     $failures.Add('Codex runtime-path helper is missing')
@@ -101,16 +108,25 @@ foreach ($runtimePath in @('.codex-runtime','.headroom-venv','.tokensave')) {
     if (git -C $repo ls-files $runtimePath | Select-String '.') { $failures.Add("$runtimePath is tracked") }
 }
 if (-not (git -C $repo ls-files daily_log.md)) { $failures.Add('daily_log.md is not tracked') }
-$stale = git -C $repo grep -Il -E '([Ee]:\\Staff_Kit|[Dd]:\\Staff_Kit|C:\\Users\\)' -- AGENTS.md .agent .agents .codex docs scripts 2>$null
-if ($stale) { $failures.Add("machine-specific path in active tooling/docs: $($stale -join ', ')") }
-$legacyConflict = rg -l -i 'mcp_sequential-thinking|mcp_context7|\*\*WAIT\*\*|\*\*MUST\*\* use `sequential-thinking`' (Join-Path $repo '.agent\workflows') 2>$null
-if ($legacyConflict) { $failures.Add("legacy mandatory capability remains: $($legacyConflict -join ', ')") }
+if (-not (Get-Command Search-RepositoryText -CommandType Function -ErrorAction SilentlyContinue)) {
+    $failures.Add('repository text-search helper cannot be executed')
+} else {
+    $staleSearch = Search-RepositoryText -RepoRoot $repo -Pattern '([Ee]:\\Staff_Kit|[Dd]:\\Staff_Kit|C:\\Users\\)' -Paths @('AGENTS.md','.agent','.agents','.codex','docs','scripts')
+    if ($staleSearch.Status -eq 'Failure') { $failures.Add("stale-path search failed: $($staleSearch.Error)") }
+    elseif ($staleSearch.Status -eq 'Matches') { $failures.Add("machine-specific path in active tooling/docs: $(($staleSearch.Records.Path | Sort-Object -Unique) -join ', ')") }
+    $legacySearch = Search-RepositoryText -RepoRoot $repo -Pattern 'mcp_sequential-thinking|mcp_context7|\*\*WAIT\*\*|\*\*MUST\*\* use `sequential-thinking`' -Paths @('.agent\workflows') -IgnoreCase
+    if ($legacySearch.Status -eq 'Failure') { $failures.Add("legacy-workflow search failed: $($legacySearch.Error)") }
+    elseif ($legacySearch.Status -eq 'Matches') { $failures.Add("legacy mandatory capability remains: $(($legacySearch.Records.Path | Sort-Object -Unique) -join ', ')") }
+}
 $errors = $null
 [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $repo 'scripts\run-codex-headroom.ps1'), [ref]$null, [ref]$errors) | Out-Null
 if ($errors.Count) { $failures.Add('wrapper PowerShell syntax is invalid') }
 $helperErrors = $null
 [System.Management.Automation.Language.Parser]::ParseFile($runtimePathHelper, [ref]$null, [ref]$helperErrors) | Out-Null
 if ($helperErrors.Count) { $failures.Add('runtime-path helper PowerShell syntax is invalid') }
+$searchHelperErrors = $null
+[System.Management.Automation.Language.Parser]::ParseFile($searchHelper, [ref]$null, [ref]$searchHelperErrors) | Out-Null
+if ($searchHelperErrors.Count) { $failures.Add('repository text-search helper PowerShell syntax is invalid') }
 
 $configHashAfter = (Get-FileHash $configPath -Algorithm SHA256).Hash
 if ($configHashBefore -ne $configHashAfter) { $failures.Add('static verification changed tracked config') }

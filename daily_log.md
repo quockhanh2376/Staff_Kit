@@ -1465,3 +1465,23 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Review result: `scripts/db_query.py` retains its expected LOCALAPPDATA database path and required no change.
 - Scope: no files under `src/`, `src-tauri/`, or `web/` changed; `main` was not merged.
 - Commit/push: focused commit and remote SHA verification follow this End record.
+
+## Start — Portable verifier search fallback — 2026-07-26 18:14 +07:00
+
+- Branch/base: `chore/codex-tooling-runtime-hardening` at `115ecb784f5099f494c096d47140b0b9d6c3fae8`.
+- Objective: remove the verifier's undeclared ripgrep dependency while preserving stale-path and legacy-MCP check semantics.
+- Root cause: `scripts/verify-codex-tooling.ps1` invokes `rg` directly, but ripgrep is unavailable on this machine.
+- Scope: verifier search backend selection, equivalent search semantics, this workflow documentation only if needed, and this session log.
+- Out of scope: product code, runtime-path helper/launcher behavior, `scripts/db_query.py`, executable installation, PATH changes, and merging into `main`.
+- Planned validation: no-`rg` static run, known-match and no-match fallback fixtures, runtime/config checks, diff checks, and explicit product-scope review.
+
+## End — Portable verifier search fallback — 2026-07-26 18:31 +07:00
+
+- Result: verifier no longer requires ripgrep; it selects `rg`, then `git grep`, then PowerShell `Select-String` without installing executables or changing PATH.
+- Root cause fixed: direct `rg` invocation at the stale-path and legacy-workflow checks was replaced by structured `Search-RepositoryText` results with `Matches`, `NoMatch`, and `Failure` statuses.
+- No-`rg` evidence: temporarily removed only the ripgrep directory from the current test process PATH; `Get-Command rg` returned no command, the verifier reported `Search backend: git grep`, and exited 0 with `STATIC READY`.
+- Fallback evidence: outside the Git worktree, PowerShell fallback detected a known text fixture (`Matches`, 1 record), returned clean `NoMatch` for an absent pattern, and excluded a binary fixture.
+- Normal backend evidence: with ripgrep available, verifier reported `Search backend: rg` and `STATIC READY`.
+- Runtime/config checks: direct Codex launch exited 0; `.codex/config.toml` SHA-256 remained `4FF2CF999260278C4711D19357B388E70DE86CAEDC9B005F4E793F1BCD033851`; existing runtime-path isolation checks remained passing.
+- Scope: no changes under `src/`, `src-tauri/`, or `web/`; `scripts/db_query.py` and docs were unchanged.
+- Commit/push: focused commit and remote SHA verification follow this End record.
