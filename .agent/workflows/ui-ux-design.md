@@ -1,3 +1,5 @@
+> **LEGACY REFERENCE ONLY.** Not authoritative for Codex. `AGENTS.md`, `docs/CODEX_WORKFLOW.md`, and project-local Superpowers override this file.
+
 ---
 description: Transform requirements into comprehensive UI/UX design deliverables.
 ---
@@ -13,7 +15,7 @@ description: Transform requirements into comprehensive UI/UX design deliverables
 
 | MCP Tool                  | When to Use                                     |
 | ------------------------- | ----------------------------------------------- |
-| `mcp_context7_query-docs` | Research UI libraries (shadcn, radix, tailwind) |
+| Official documentation search, when available | Research UI libraries (shadcn, radix, tailwind) |
 | `search_web`              | Research design trends and UX patterns          |
 | `generate_image`          | Create low-fi wireframes or conceptual assets   |
 
@@ -30,7 +32,7 @@ description: Transform requirements into comprehensive UI/UX design deliverables
    - Find innovative UX patterns (micro-interactions, navigation).
    - Gather reference images/styles for the mood board.
 2. Create `design-research.md` in `docs/050-Research/`.
-3. **WAIT** for user to approve the creative direction.
+3. Pause only when a user decision is required.
 
 ---
 
@@ -42,7 +44,7 @@ description: Transform requirements into comprehensive UI/UX design deliverables
    - Check if Design System exists in `docs/`
    - Analyze requirements/PRD
    - Determine design scope (New System vs New Feature)
-2. **WAIT** for analysis result
+2. Continue after analysis; pause only when a user decision is required.
 
 ---
 
@@ -52,14 +54,14 @@ description: Transform requirements into comprehensive UI/UX design deliverables
 
 **Skip if**: Design system already exists.
 
-> 💡 **MCP**: Use `context7` with `/tailwindcss/tailwindcss` or `/shadcn/ui` for config
+> 💡 Use official documentation or an available research capability for configuration guidance.
 
 1. **Invoke `[designer]` skill** to define:
    - Typography, Colors, Spacing scale
    - Component primitives (Buttons, Inputs, Cards)
    - Motion principles
 2. Create/Update Design System documentation
-3. **WAIT** for user approval
+3. Pause only when a user decision is required.
 
 ---
 
@@ -72,7 +74,7 @@ description: Transform requirements into comprehensive UI/UX design deliverables
    - Define necessary components (Reuse vs New)
    - Create component specifications
 2. Create flow and component documentation
-3. **WAIT** for user review
+3. Pause only when a user decision is required.
 
 ---
 

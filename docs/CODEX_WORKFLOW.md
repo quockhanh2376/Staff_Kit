@@ -45,13 +45,32 @@ Neither replaces `daily_log.md` or Git history.
 
 ## Headroom runtime
 
-Canonical launch: `npm run codex:headroom`. The wrapper resolves the repository
-from its own location, copies the tracked template to ignored `.codex-runtime/`,
-keeps authentication machine-local, and invokes project-local Headroom with
+Canonical launch: `npm run codex:headroom`. Explicit fail-open launch:
+`npm run codex:direct`. The wrapper resolves the repository from its own location,
+creates an isolated runtime under the machine-local application-data directory,
+keeps authentication outside Git, and invokes project-local Headroom with
 `--no-context-tool --no-tokensave --no-serena`. It never passes `--learn` or
 `--memory`. Headroom failure warns and falls back to direct Codex using the isolated
 runtime. `.codex/config.toml` is a portable template and must remain unchanged by
 runtime use. The only approved project MCP is Headroom.
+
+Headroom exposes only `headroom_stats`, `headroom_compress`, and
+`headroom_retrieve` to this project. Each has an explicit per-tool
+`approval_mode = "approve"` because it operates against the local Headroom context
+store and does not change project files. Adding another Headroom tool requires
+explicit review and a tracked config change; broad server-wide approval is forbidden.
+
+`codex_apps` is a built-in/host-provided Codex application capability. Evidence:
+it is absent from `codex mcp list`, absent from project/user MCP config, and appears
+only in Codex's host-managed app tool cache/namespace. It is not a
+project-configured external MCP. User-global capabilities are likewise outside the
+isolated Staff Kit project inventory. The acceptance rule is: no unapproved
+project-configured external MCP servers.
+
+`scripts/verify-codex-tooling.ps1` is a read-only static audit. `STATIC READY`
+means the tracked topology/configuration passes; only a separate fresh Headroom
+session that calls stats, compress, and retrieve without changing the tracked config
+may establish the final live `READY` verdict.
 
 The direct Codex session is the repair/fail-open path and must remain usable without
 Headroom. Do not launch tooling-repair work through the wrapper while repairing it.
@@ -59,10 +78,15 @@ Headroom. Do not launch tooling-repair work through the wrapper while repairing 
 ## Legacy compatibility
 
 `.agent/workflows/`, `.agent/rules/`, and `.agent/skills/` are legacy reference
-material only. They are not an operational authority and must not require unavailable
-MCPs, broad default research, mandatory waits, or a competing planning lifecycle.
+material only. Files with historic workflows carry an explicit legacy header. They
+are not an operational authority and must not require unavailable MCPs, broad
+default research, mandatory waits, or a competing planning lifecycle.
 Move useful Staff Kit business, Windows, Tauri, Rust, database, and security
 constraints into canonical documentation or a scoped project skill when needed.
+
+Tracked tooling and current documentation use repository-relative paths. Absolute
+machine paths belong only in ignored runtime state or clearly labeled historical
+diagnostics.
 
 ## Session continuity
 

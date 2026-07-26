@@ -67,5 +67,6 @@ Before any non-trivial implementation, debugging, security, database, architectu
 - ECC Lite is on-demand only: research, security, architecture, and delivery verification.
 - `staffkit-focused-output` controls presentation only.
 - Headroom is context infrastructure only; tokensave, Serena, learning, memory, and output shaping are not approved.
+- Use `npm run codex:headroom` normally and `npm run codex:direct` for the explicit no-Headroom fail-open path.
 - Read `docs/CODEX_WORKFLOW.md` before non-trivial implementation, debugging, security, architecture, release, or tooling work.
 - Append a Start record to `daily_log.md` before repository-changing work and an End record before handoff.

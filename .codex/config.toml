@@ -13,3 +13,17 @@ job_max_runtime_seconds = 1800
 # Runtime wrapper resolves this command to the project-local executable.
 command = "headroom"
 args = ["mcp", "serve"]
+enabled_tools = [
+  "headroom_stats",
+  "headroom_compress",
+  "headroom_retrieve",
+]
+
+[mcp_servers.headroom.tools.headroom_stats]
+approval_mode = "approve"
+
+[mcp_servers.headroom.tools.headroom_compress]
+approval_mode = "approve"
+
+[mcp_servers.headroom.tools.headroom_retrieve]
+approval_mode = "approve"

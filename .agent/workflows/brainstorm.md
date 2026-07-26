@@ -1,3 +1,5 @@
+> **LEGACY REFERENCE ONLY.** Not authoritative for Codex. `AGENTS.md`, `docs/CODEX_WORKFLOW.md`, and project-local Superpowers override this file.
+
 ---
 description: Analyze ideas with the user and create preliminary high-level documents (Roadmap, PRD).
 ---
@@ -13,9 +15,9 @@ description: Analyze ideas with the user and create preliminary high-level docum
 
 | MCP Tool                                     | When to Use                                            | Example                                 |
 | :------------------------------------------- | :----------------------------------------------------- | :-------------------------------------- |
-| `mcp_sequential-thinking_sequentialthinking` | Analyze requirements, feature dependencies, trade-offs | Break down ambiguous requests           |
-| `mcp_context7_resolve-library-id`            | Find library ID before querying                        | "mermaid js"                            |
-| `mcp_context7_query-docs`                    | Research library patterns, APIs, best practices        | "How to structure a Vite React feature" |
+| Optional structured reasoning, when available | Analyze requirements, feature dependencies, trade-offs | Break down ambiguous requests           |
+| Official documentation search, when available | Find library documentation                              | "mermaid js"                            |
+| Available research capability                 | Research library patterns, APIs, best practices         | "How to structure a Vite React feature" |
 | `search_web`                                 | Proactive research for implementation patterns         | "best architecture for agentic systems" |
 
 ---
@@ -31,7 +33,7 @@ description: Analyze ideas with the user and create preliminary high-level docum
    - Find "best-in-class" examples of similar products.
    - Identify common pitfalls and modern "Wow Factors".
 2. Create `research-insights.md` artifact in `docs/050-Research/`.
-3. **WAIT** for user to review the research findings.
+3. Pause only when a user decision is required.
 
 ---
 
@@ -51,13 +53,13 @@ Priority 1: PRD           ← Strategic Overview
 > [!NOTE]
 > This step is **MANDATORY**. Do NOT proceed without user confirmation.
 
-> 💡 **MCP**: Use `sequential-thinking` to analyze ambiguous or complex requests
+> 💡 Use an available structured-reasoning capability for ambiguous or complex requests.
 
 1. **Invoke `[product-manager]` skill** to:
    - Summarize understanding
    - Create clarification questions
 2. Create `clarification-questions.md` artifact
-3. **WAIT** for user to review and confirm
+3. Pause only when a user decision is required.
 
 ---
 
@@ -65,7 +67,7 @@ Priority 1: PRD           ← Strategic Overview
 
 // turbo
 
-> 💡 **MCP**: Use `sequential-thinking` for phased planning and risk assessment
+> 💡 Use an available structured-reasoning capability for phased planning and risk assessment.
 
 1. **Invoke `[product-manager]` skill** to draft:
    - Project timeline and milestones
@@ -73,7 +75,7 @@ Priority 1: PRD           ← Strategic Overview
    - Key deliverables per phase
 2. Create `draft-roadmap.md` artifact
 3. After approval → Save to `docs/010-Planning/Roadmap-{ProjectName}.md`
-4. **WAIT** for user response
+4. Pause only when a user decision is required.
 
 ---
 
@@ -87,7 +89,7 @@ Priority 1: PRD           ← Strategic Overview
    - Feature prioritization (MoSCoW)
 2. Create `draft-prd.md` artifact
 3. After approval → Save to `docs/020-Requirements/PRD-{ProjectName}.md`
-4. **WAIT** for user response
+4. Pause only when a user decision is required.
 
 ---
 

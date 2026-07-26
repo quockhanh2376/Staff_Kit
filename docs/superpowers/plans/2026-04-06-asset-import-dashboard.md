@@ -482,9 +482,9 @@ Expected: PASS across the targeted backend tests, the full quality gate, the Tau
 
 Use:
 
-- `E:\Staff_Kit\ExSource\AssetList.xlsx`
-- `E:\Staff_Kit\ExSource\Monitor.xlsx`
-- `E:\Staff_Kit\ExSource\Mouse-Key.xlsx`
+- `ExSource/AssetList.xlsx`
+- `ExSource/Monitor.xlsx`
+- `ExSource/Mouse-Key.xlsx`
 
 Verify:
 
@@ -516,4 +516,3 @@ git commit -m "feat: add asset dashboard category management"
 - Dashboard summary/detail views load inside Settings.
 - IT can adjust quantity stock and manage category prefixes from the dashboard.
 - `npm run check:quality` and `npm run test:tauri` pass after the slice lands.
-

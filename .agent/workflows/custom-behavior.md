@@ -1,3 +1,5 @@
+> **LEGACY REFERENCE ONLY.** Not authoritative for Codex. `AGENTS.md`, `docs/CODEX_WORKFLOW.md`, and project-local Superpowers override this file.
+
 ---
 description: Workflow for safely customizing Agent rules and workflows with impact analysis and user confirmation.
 ---
@@ -51,7 +53,7 @@ description: Workflow for safely customizing Agent rules and workflows with impa
 1.  **Notify User** with a summary of your analysis.
     - If **New**: "I will create a new rule `<filename>` that `<does X>`."
     - If **modifying**: "I will modify `<filename>`. \n**Current**: `<summary>`\n**Proposed**: `<summary>`\n**Impact**: `<side effects>`"
-2.  **WAIT** for user approval.
+2. Pause only when a user decision is required.
 
 ## Step 4: Execution
 

@@ -1,4 +1,5 @@
 param(
+    [switch] $NoHeadroom,
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]] $CodexArgs
 )
@@ -8,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 # Resolve the repository from this script so the launcher is portable across
 # drives and machines.
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$runtimeRoot = Join-Path $repoRoot '.codex-runtime'
+$runtimeRoot = Join-Path $env:LOCALAPPDATA 'Staff_Kit\codex-runtime'
 $runtimeConfig = Join-Path $runtimeRoot 'config.toml'
 $templateConfig = Join-Path $repoRoot '.codex\config.toml'
 $headroomExe = Join-Path $repoRoot '.headroom-venv\Scripts\headroom.exe'
@@ -32,6 +33,12 @@ if (Test-Path -LiteralPath $userAuth) {
 $codexDir = Split-Path -Parent $codexExe
 $env:CODEX_HOME = $runtimeRoot
 $env:PATH = "$codexDir;$(Split-Path -Parent $headroomExe);$env:PATH"
+
+if ($NoHeadroom) {
+    Write-Warning "Headroom compression is unavailable by request; launching Codex directly with the isolated Staff Kit runtime."
+    & $codexExe @CodexArgs
+    exit $LASTEXITCODE
+}
 
 if (-not (Test-Path -LiteralPath $headroomExe)) {
     Write-Warning "Headroom is unavailable; launching Codex directly with the isolated project runtime."

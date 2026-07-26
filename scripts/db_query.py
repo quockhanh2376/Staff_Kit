@@ -10,7 +10,11 @@ import sqlite3
 import sys
 import os
 
-DB_PATH = r"C:\Users\Zonzon\AppData\Local\io.staffkit.app\staff_kit.sqlite3"
+DB_PATH = os.path.join(
+    os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+    "io.staffkit.app",
+    "staff_kit.sqlite3",
+)
 
 
 def get_conn():

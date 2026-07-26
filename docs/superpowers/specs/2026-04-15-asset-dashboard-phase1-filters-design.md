@@ -206,7 +206,7 @@ Implementation should happen in a dedicated git worktree and branch, not on the 
 
 Approved isolation strategy:
 
-- worktree path: `E:\Staff_Kit\.worktrees\asset-dashboard-phase1-filters`
+- worktree path: `.worktrees/asset-dashboard-phase1-filters`
 - branch: `phase1-asset-dashboard-filters`
 - base: `origin/main`
 

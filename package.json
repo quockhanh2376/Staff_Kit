@@ -17,6 +17,7 @@
     "headroom:proxy": ".\\.headroom-venv\\Scripts\\headroom.exe proxy --port 8787",
     "headroom:perf": ".\\.headroom-venv\\Scripts\\headroom.exe perf",
     "codex:headroom": "& .\\scripts\\run-codex-headroom.ps1",
+    "codex:direct": "& .\\scripts\\run-codex-headroom.ps1 -NoHeadroom",
     "tauri": "node ./scripts/run-with-shared-cargo-target.mjs tauri.cmd",
     "tauri:dev": "node ./scripts/run-with-shared-cargo-target.mjs tauri.cmd dev",
     "tauri:build": "node ./scripts/run-with-shared-cargo-target.mjs tauri.cmd build",

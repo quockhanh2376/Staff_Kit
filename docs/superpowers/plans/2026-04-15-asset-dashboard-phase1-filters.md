@@ -31,7 +31,7 @@ This plan captures the original TDD execution order from the pre-implementation 
 
 ## Branch And Workspace
 
-- Worktree: `E:\Staff_Kit\.worktrees\asset-dashboard-phase1-filters`
+- Worktree: `.worktrees/asset-dashboard-phase1-filters`
 - Branch: `phase1-asset-dashboard-filters`
 - Base: `origin/main`
 
