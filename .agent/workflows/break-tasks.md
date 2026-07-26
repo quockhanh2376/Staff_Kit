@@ -1,3 +1,5 @@
+> **LEGACY REFERENCE ONLY.** Not authoritative for Codex. `AGENTS.md`, `docs/CODEX_WORKFLOW.md`, and project-local Superpowers override this file.
+
 ---
 description: Orchestrates breaking down requirements into actionable tasks for implementation.
 ---
@@ -13,8 +15,8 @@ description: Orchestrates breaking down requirements into actionable tasks for i
 
 | MCP Tool                                     | When to Use                                               |
 | :------------------------------------------- | :-------------------------------------------------------- |
-| `mcp_sequential-thinking_sequentialthinking` | **REQUIRED** to break down requirements into atomic tasks |
-| `mcp_context7_query-docs`                    | To check best practices for specific technologies         |
+| Optional structured reasoning, when available | Break down requirements into atomic tasks                  |
+| Official documentation search, when available | Check best practices for specific technologies             |
 
 ---
 
@@ -34,12 +36,12 @@ description: Orchestrates breaking down requirements into actionable tasks for i
 // turbo
 
 1. **Invoke `[business-analysis]` skill** to extract key features and acceptance criteria.
-2. Use `sequential-thinking` to:
+2. Use an available structured-reasoning capability to:
    - Identify technical dependencies.
    - Separate backend, frontend, and QA requirements.
    - Spot ambiguous or missing details.
 3. List any clarifying questions for the user.
-4. **WAIT** for user clarification if needed.
+4. Pause only when a user decision is required.
 
 ---
 
@@ -47,7 +49,7 @@ description: Orchestrates breaking down requirements into actionable tasks for i
 
 // turbo
 
-> 💡 **MCP**: **MUST** use `sequential-thinking` here to ensure tasks are atomic and manageable.
+> 💡 An available structured-reasoning capability may be used to keep tasks atomic and manageable.
 
 1. **Invoke `[lead-architect]` skill** to create a structured task list.
 2. Group tasks by component or phase (e.g., Database, API, Logic, UI, Testing).

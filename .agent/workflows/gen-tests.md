@@ -1,3 +1,5 @@
+> **LEGACY REFERENCE ONLY.** Not authoritative for Codex. `AGENTS.md`, `docs/CODEX_WORKFLOW.md`, and project-local Superpowers override this file.
+
 ---
 description: Generate unit, E2E, security, and performance tests using the qa-tester skill.
 ---
@@ -38,7 +40,7 @@ description: Generate unit, E2E, security, and performance tests using the qa-te
 
 ## Step 3: Test Code Generation
 
-1. **Wait** for user approval of the test cases.
+1. Pause only when a user decision is required.
 2. **Invoke `[qa-tester]` skill** to generate the actual test code.
    - Use the project's existing testing framework (e.g., Jest, Playwright, Vitest).
    - Ensure mocks and stubs are correctly implemented for unit tests.

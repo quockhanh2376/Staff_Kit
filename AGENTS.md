@@ -51,8 +51,22 @@
 - `dispatching-parallel-agents` — for independent tasks
 - Beads workflow: `bd ready` → `bd show <id>` / `bd note <id>`
 
+## Codex operating model
+
+Before any non-trivial implementation, debugging, security, database, architecture, release, or tooling task, read `docs/CODEX_WORKFLOW.md`. Superpowers owns development workflow; ECC Lite supplies on-demand specialist capabilities only; `staffkit-focused-output` owns response formatting only. Staff Kit instructions and quality gates override all tool defaults. Do not install or activate full ECC.
+
 ## Validation
 
 - For frontend-only changes: narrowest relevant check first.
 - For Rust/Tauri changes: `npm run check:tauri` (or `cargo check --manifest-path src-tauri/Cargo.toml`).
 - For anything touching product code: `npm run check:quality` before final handoff.
+
+## Codex tooling boundary
+
+- Project-local Superpowers under `.agents/skills/` is the canonical development workflow.
+- ECC Lite is on-demand only: research, security, architecture, and delivery verification.
+- `staffkit-focused-output` controls presentation only.
+- Headroom is context infrastructure only; tokensave, Serena, learning, memory, and output shaping are not approved.
+- Use `npm run codex:headroom` normally and `npm run codex:direct` for the explicit no-Headroom fail-open path.
+- Read `docs/CODEX_WORKFLOW.md` before non-trivial implementation, debugging, security, architecture, release, or tooling work.
+- Append a Start record to `daily_log.md` before repository-changing work and an End record before handoff.

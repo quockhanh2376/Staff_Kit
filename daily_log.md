@@ -1380,3 +1380,108 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 
 ## Git History Added
 - `7a42311` - `refactor: deprecate employee asset seed ui`
+
+## Start — Codex tooling runtime hardening — 2026-07-26 13:33 +07:00
+
+- Session ID: `a38e47c0-6cb0-42d5-844e-8a63a69a4e1b`
+- Machine: Windows workstation (`D:\Staff_Kit`)
+- Branch: `main`
+- Worktree: `D:\Staff_Kit`
+- Base commit: `0c77d04dcd78b557fd23e00c7f976835b1ed0af0`
+- Objective: repair and harden the complete Codex tooling environment until a fresh audit reaches deterministic `READY`.
+- Known audit findings: global Superpowers is not project-local; legacy `.agent` workflows coexist with newer routers; `.tokensave` state and Headroom auto-registration exist; Headroom config contains stale `E:\Staff_Kit` and tracked-config mutation risk; wrapper auto-installs extra components; project-local runtime and fail-open behavior require verification.
+- In scope: project-local Superpowers, ECC Lite/focused-output inventory, Headroom wrapper/runtime/config isolation, tokensave removal, portable paths, docs, verification script, and daily-log protocol.
+- Out of scope: `src/`, `src-tauri/`, `web/`, database schema, application dependencies, global plugin cache deletion, secrets/auth, and unrelated user changes.
+- Planned validation: static tooling audit, fresh runtime discovery, Headroom MCP/config immutability checks, fail-open check, wrapper syntax, documentation consistency, and Git scope review.
+- Existing uncommitted changes: `.codex/config.toml` and `AGENTS.md` modified; `.agents/skills/staffkit-*`, `docs/CODEX_WORKFLOW.md`, `docs/ecc-lite-manifest.md`, and `.tokensave/` untracked. These are classified as expected tooling changes for this repair and were backed up outside the repository before edits.
+
+## End — Codex tooling runtime hardening — 2026-07-26 13:41 +07:00
+
+- Result: tooling repair completed; static audit is `READY`.
+- Files changed: project-local Superpowers skills and provenance, legacy `.agent/README.md`, `.codex/config.toml`, `.gitignore`, `AGENTS.md`, `docs/CODEX_WORKFLOW.md`, `scripts/run-codex-headroom.ps1`, `scripts/verify-codex-tooling.ps1`, `docs/ecc-lite-manifest.md`, and this log.
+- Exact commands executed: `git status/diff/remote`, backups to `%TEMP%`, cloned `obra/superpowers`, copied the pinned skill set, `npm run codex:headroom -- --version`, static verification, PowerShell fail-open smoke test, `git diff --check`, and tracked-scope checks.
+- Checks passed: required project-local Superpowers inventory, ECC Lite count, focused-output presence, Headroom MCP JSON syntax, no project `.tokensave`, no tracked runtime state, daily log tracking, wrapper syntax, stale-path scan, Headroom launch, config hash immutability, and fail-open direct Codex launch.
+- Checks failed: initial `git diff --check` reported three copied skills with extra blank EOF lines; normalized and reran successfully.
+- Checks not run: product quality gate and application tests, because product code and application dependencies were not changed; full MCP request/response protocol test was not run because it would require launching a persistent server.
+- Remaining risks: global Headroom history may retain prior logs/rtk artifacts, but the Staff Kit runtime does not discover or register them; the global Superpowers plugin cache remains installed but is not imported.
+- Branch status: `chore/codex-tooling-runtime-hardening`.
+- Commit status: committed as `eedc682` (`chore(tooling): harden portable Codex runtime`).
+- Push status: push attempted twice and timed out; remote branch has not been confirmed.
+- Second-machine availability: source-pinned Superpowers and portable wrapper/docs are ready; machine two must install prerequisites, create `.headroom-venv`, install `headroom-ai[all]`, then run `scripts/verify-codex-tooling.ps1`.
+
+## Start — Focused Codex tooling acceptance repair — 2026-07-26 14:00 +07:00
+
+- Session ID: `2fe9148d-04b0-41d5-9893-b728bf4cb8ef`
+- Machine/worktree: Windows, `D:\Staff_Kit`
+- Branch/base: `chore/codex-tooling-runtime-hardening` at `18ad6fcdd4394034f13c98c76a94e2fb9e61a3b2`
+- Objective: resolve the remaining live-runtime acceptance blockers without changing product code.
+- Existing change classification: `.codex/config.toml` contains the three expected, runtime-generated Headroom approval blocks; this is an `EXPECTED_TOOLING_CHANGE` preserved for deliberate normalization. No other working-tree change exists.
+- In scope: deterministic Headroom approvals, `codex_apps` classification, stale tracked paths, legacy `.agent` authority, explicit fail-open, verifier coverage/wording, and documentation alignment.
+- Out of scope: `src/`, `src-tauri/`, `web/`, Superpowers/ECC restructuring, main-branch merge, auth/provider corruption, new MCP installation.
+- Planned validation: Codex strict config parsing, static verifier reporting `STATIC READY`, path/workflow scans, direct-launch smoke test, Headroom live acceptance with config hashes, and explicit Git scope review.
+
+### Checkpoint — 2026-07-26 14:08 +07:00
+
+- Root causes confirmed: missing Headroom `enabled_tools`; runtime auth/config stored inside the worktree; no explicit direct launch; `codex_apps` is host-provided rather than project MCP; legacy workflow mandates referenced unavailable tools/waits; verifier conflated static and live readiness.
+- Static result: `STATIC READY`.
+- Codex strict config parse: passed on `codex-cli 0.146.0-alpha.3.1`.
+- Effective Headroom allow-list: exactly `headroom_stats`, `headroom_compress`, `headroom_retrieve`.
+- Direct fail-open smoke test: `npm run codex:direct -- --version` returned exit code 0 without starting Headroom.
+- Product scope: no changes under `src/`, `src-tauri/`, or `web/`.
+- Next: commit this focused repair, then run a fresh live Headroom acceptance test before any push.
+
+## End — Focused Codex tooling acceptance repair — 2026-07-26 14:29 +07:00
+
+- Result: focused repair validated; live Headroom acceptance is `READY`.
+- Static verifier: `STATIC READY`; strict Codex config parse passed on `codex-cli 0.146.0-alpha.3.1`.
+- Live calls: fresh canonical Headroom sessions invoked `headroom_stats`, `headroom_compress`, and `headroom_retrieve`; all exited 0. Retrieval returned `STAFF_KIT_HEADROOM_ACCEPTANCE_2026_07_26_ALPHA` exactly.
+- Config SHA-256: before `4FF2CF999260278C4711D19357B388E70DE86CAEDC9B005F4E793F1BCD033851`; after stats, compress, and retrieve unchanged at the same value. `.codex/config.toml` has no diff.
+- `codex_apps`: classified as built-in/host-provided; absent from project/user MCP config and `codex mcp list`, present only in host-managed app capability inventory.
+- Active project MCP inventory: `headroom` only, with exactly three approved tools (`headroom_stats`, `headroom_compress`, `headroom_retrieve`).
+- Fail-open: `npm run codex:direct -- --version` returned exit code 0 and emitted the explicit Headroom-unavailable warning.
+- Scope: no changes under `src/`, `src-tauri/`, or `web/`; stale paths and legacy workflow authority conflicts resolved. Runtime state remains ignored/untracked.
+- Commit: `88d8e69` (`fix(tooling): stabilize Codex Headroom integration`), amended after this End entry.
+- Push: pending final remote verification; no merge into `main`.
+- Note: Headroom proxy emitted WebSocket 403 prewarm warnings before falling back to HTTPS; MCP operations still completed successfully.
+
+## Start — Per-worktree Codex runtime isolation — 2026-07-26 17:46 +07:00
+
+- Branch/base: `chore/codex-tooling-runtime-hardening` at `964389163f5444627d219aa773b8a626c8118f61`.
+- Objective: isolate writable Codex runtime state per resolved repository/worktree root while keeping it outside the repository.
+- Root cause: the fixed machine-local `Staff_Kit\codex-runtime` directory maps every clone and worktree on one machine to the same writable `CODEX_HOME`.
+- Scope: Headroom launcher runtime-path derivation, read-only verifier coverage, concise workflow documentation, and this session log.
+- Out of scope: `src/`, `src-tauri/`, `web/`, application dependencies, `scripts/db_query.py` unless inspection finds a concrete defect, and merging into `main`.
+- Planned validation: red/green runtime-path checks, PowerShell syntax, `STATIC READY`, direct-launch smoke test, distinct synthetic-root demonstration, config hash immutability, diff checks, and explicit product-scope review.
+
+## End — Per-worktree Codex runtime isolation — 2026-07-26 17:52 +07:00
+
+- Result: writable Codex runtime state is derived outside the repository as `%LOCALAPPDATA%\Staff_Kit\codex-runtime\<16-character-sha256-id>`, with the resolved absolute worktree root normalized to lowercase before hashing.
+- TDD evidence: the updated verifier first reported `STATIC NOT READY` because the shared production helper was absent; after adding the helper and wiring the launcher to it, the same verifier reported `STATIC READY`.
+- Determinism evidence: neutral sample roots `C:\Staff_Kit` and `c:\staff_kit\` both produced ID `7e3b96ab03c315ad`; `C:\Staff_Kit\.worktrees\feature-a` produced distinct ID `dcd891a52cf75248`.
+- Runtime boundary: the actual derived path was confirmed outside the resolved repository; no private absolute path was printed or recorded.
+- Launcher checks: `npm run codex:direct -- --version` and `npm run codex:headroom -- --version` both exited 0; direct fail-open warning and exit-code propagation remain intact.
+- Config immutability: `.codex/config.toml` SHA-256 remained `4FF2CF999260278C4711D19357B388E70DE86CAEDC9B005F4E793F1BCD033851` before and after launcher checks.
+- Exclusions: `.tokensave` remained absent; Headroom configuration retained `--no-tokensave` and `--no-serena`.
+- Review result: `scripts/db_query.py` retains its expected LOCALAPPDATA database path and required no change.
+- Scope: no files under `src/`, `src-tauri/`, or `web/` changed; `main` was not merged.
+- Commit/push: focused commit and remote SHA verification follow this End record.
+
+## Start — Portable verifier search fallback — 2026-07-26 18:14 +07:00
+
+- Branch/base: `chore/codex-tooling-runtime-hardening` at `115ecb784f5099f494c096d47140b0b9d6c3fae8`.
+- Objective: remove the verifier's undeclared ripgrep dependency while preserving stale-path and legacy-MCP check semantics.
+- Root cause: `scripts/verify-codex-tooling.ps1` invokes `rg` directly, but ripgrep is unavailable on this machine.
+- Scope: verifier search backend selection, equivalent search semantics, this workflow documentation only if needed, and this session log.
+- Out of scope: product code, runtime-path helper/launcher behavior, `scripts/db_query.py`, executable installation, PATH changes, and merging into `main`.
+- Planned validation: no-`rg` static run, known-match and no-match fallback fixtures, runtime/config checks, diff checks, and explicit product-scope review.
+
+## End — Portable verifier search fallback — 2026-07-26 18:31 +07:00
+
+- Result: verifier no longer requires ripgrep; it selects `rg`, then `git grep`, then PowerShell `Select-String` without installing executables or changing PATH.
+- Root cause fixed: direct `rg` invocation at the stale-path and legacy-workflow checks was replaced by structured `Search-RepositoryText` results with `Matches`, `NoMatch`, and `Failure` statuses.
+- No-`rg` evidence: temporarily removed only the ripgrep directory from the current test process PATH; `Get-Command rg` returned no command, the verifier reported `Search backend: git grep`, and exited 0 with `STATIC READY`.
+- Fallback evidence: outside the Git worktree, PowerShell fallback detected a known text fixture (`Matches`, 1 record), returned clean `NoMatch` for an absent pattern, and excluded a binary fixture.
+- Normal backend evidence: with ripgrep available, verifier reported `Search backend: rg` and `STATIC READY`.
+- Runtime/config checks: direct Codex launch exited 0; `.codex/config.toml` SHA-256 remained `4FF2CF999260278C4711D19357B388E70DE86CAEDC9B005F4E793F1BCD033851`; existing runtime-path isolation checks remained passing.
+- Scope: no changes under `src/`, `src-tauri/`, or `web/`; `scripts/db_query.py` and docs were unchanged.
+- Commit/push: focused commit and remote SHA verification follow this End record.

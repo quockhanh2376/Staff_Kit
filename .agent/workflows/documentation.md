@@ -1,3 +1,5 @@
+> **LEGACY REFERENCE ONLY.** Not authoritative for Codex. `AGENTS.md`, `docs/CODEX_WORKFLOW.md`, and project-local Superpowers override this file.
+
 ---
 description: Generate or reverse-engineer project documentation from codebase or requirements.
 ---
@@ -13,8 +15,8 @@ description: Generate or reverse-engineer project documentation from codebase or
 
 | MCP Tool                                     | When to Use                                    |
 | :------------------------------------------- | :--------------------------------------------- |
-| `mcp_sequential-thinking_sequentialthinking` | Analyze complex architecture, design decisions |
-| `mcp_context7_query-docs`                    | Research framework patterns, diagram syntax    |
+| Optional structured reasoning, when available | Analyze complex architecture and design decisions |
+| Official documentation search, when available | Research framework patterns and diagram syntax    |
 
 ---
 
@@ -33,13 +35,13 @@ description: Generate or reverse-engineer project documentation from codebase or
 
 // turbo
 
-> 💡 **MCP**: Use `sequential-thinking` to analyze unfamiliar project structures
+> 💡 Use an available structured-reasoning capability to analyze unfamiliar project structures.
 
 1. **Invoke `[lead-architect]` skill** to analyze codebase structure
 2. Identify: tech stack, entry points, API routes, DB schemas
 3. **Clarify & Confirm**:
    - **CRITICAL**: If the codebase structure is unclear or ambiguous, **ASK** the user for clarification.
-   - Summarize findings and **WAIT** for user to confirm understanding
+   - Summarize findings and pause only when a user decision is required.
 
 ---
 
@@ -122,8 +124,8 @@ description: Generate or reverse-engineer project documentation from codebase or
 
 > 💡 **MCP**:
 >
-> - **MUST** use `sequential-thinking` for architectural decisions
-> - Use `context7` with `/vercel/next.js`, `/supabase/supabase` for tech stack research
+> - An available structured-reasoning capability may be used for architectural decisions.
+> - Use official documentation or an available research capability for tech-stack research.
 
 1. **Analyze Requirements**: Review the PRD/Roadmap. If there are ambiguities, **ASK** the user to clarify.
 2. **Invoke `[lead-architect]` skill** to draft:

@@ -9,7 +9,7 @@ status: desktop-native
 
 ## Current State
 
-StaffKit is a native desktop application at `e:\Staff_Kit`.
+StaffKit is a native desktop application at the repository root.
 
 Primary stack:
 - Tauri v2

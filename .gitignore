@@ -85,6 +85,7 @@ bmad_method_ref/
 # Python
 .venv/
 .headroom-venv/
+.tokensave/
 __pycache__/
 *.pyc
 *.pyo

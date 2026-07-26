@@ -1,3 +1,5 @@
+> **LEGACY REFERENCE ONLY.** Not authoritative for Codex. `AGENTS.md`, `docs/CODEX_WORKFLOW.md`, and project-local Superpowers override this file.
+
 ---
 description: Create comprehensive test case documents and test plans based on project requirements.
 ---
@@ -13,8 +15,8 @@ description: Create comprehensive test case documents and test plans based on pr
 
 | MCP Tool                                     | When to Use                                      |
 | :------------------------------------------- | :----------------------------------------------- |
-| `mcp_sequential-thinking_sequentialthinking` | Analyze complex application logic and edge cases |
-| `mcp_context7_query-docs`                    | Research testing frameworks or best practices    |
+| Optional structured reasoning, when available | Analyze complex application logic and edge cases |
+| Official documentation search, when available | Research testing frameworks or best practices    |
 
 ---
 
@@ -29,7 +31,7 @@ description: Create comprehensive test case documents and test plans based on pr
    - Negative Paths (Error handling)
    - Boundary Cases
    - Security/Performance considerations
-4. **WAIT** for user to confirm the list of scenarios to be documented.
+4. Pause only when a user decision is required.
 
 ---
 
