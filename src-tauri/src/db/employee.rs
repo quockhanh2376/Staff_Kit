@@ -772,18 +772,20 @@ fn query_employees(
         let query_like = format!("%{}%", query.to_lowercase());
         if let Some(fts_query) = build_fts_query(&query) {
             where_clauses.push(
-                "(e.id IN (SELECT rowid FROM employees_fts WHERE employees_fts MATCH ?) OR lower(COALESCE(NULLIF(e.computername, ''), NULLIF(lc.computer_name_1, ''), '')) LIKE ? OR lower(COALESCE(lc.computer_name_2, '')) LIKE ? OR EXISTS (SELECT 1 FROM employee_dynamic_values edv WHERE edv.employee_id = e.id AND lower(COALESCE(edv.value, '')) LIKE ?))"
+                "(e.id IN (SELECT rowid FROM employees_fts WHERE employees_fts MATCH ?) OR lower(COALESCE(e.email, '')) LIKE ? OR lower(COALESCE(NULLIF(e.computername, ''), NULLIF(lc.computer_name_1, ''), '')) LIKE ? OR lower(COALESCE(lc.computer_name_2, '')) LIKE ? OR EXISTS (SELECT 1 FROM employee_dynamic_values edv WHERE edv.employee_id = e.id AND lower(COALESCE(edv.value, '')) LIKE ?))"
                     .to_string(),
             );
             filter_params.push(Value::Text(fts_query));
             filter_params.push(Value::Text(query_like.clone()));
             filter_params.push(Value::Text(query_like.clone()));
+            filter_params.push(Value::Text(query_like.clone()));
             filter_params.push(Value::Text(query_like));
         } else {
             where_clauses.push(
-                "(lower(COALESCE(NULLIF(e.computername, ''), NULLIF(lc.computer_name_1, ''), '')) LIKE ? OR lower(COALESCE(lc.computer_name_2, '')) LIKE ? OR EXISTS (SELECT 1 FROM employee_dynamic_values edv WHERE edv.employee_id = e.id AND lower(COALESCE(edv.value, '')) LIKE ?))"
+                "(lower(COALESCE(e.email, '')) LIKE ? OR lower(COALESCE(NULLIF(e.computername, ''), NULLIF(lc.computer_name_1, ''), '')) LIKE ? OR lower(COALESCE(lc.computer_name_2, '')) LIKE ? OR EXISTS (SELECT 1 FROM employee_dynamic_values edv WHERE edv.employee_id = e.id AND lower(COALESCE(edv.value, '')) LIKE ?))"
                     .to_string(),
             );
+            filter_params.push(Value::Text(query_like.clone()));
             filter_params.push(Value::Text(query_like.clone()));
             filter_params.push(Value::Text(query_like.clone()));
             filter_params.push(Value::Text(query_like));
@@ -1534,6 +1536,36 @@ mod tests {
             },
         )
         .expect("search employees by derived computer name");
+
+        assert_eq!(response.total, 1);
+        assert_eq!(response.items[0].employee_id, "ASWVN1302");
+    }
+
+    #[test]
+    fn query_employees_can_search_by_working_email_with_at_sign() {
+        let conn = open_test_connection();
+        let employee_row_id = seed_employee(&conn, "ASWVN1302", "Luu The Hung");
+        conn.execute(
+            "UPDATE employees SET email = ? WHERE id = ?",
+            params!["Person@Example.COM", employee_row_id],
+        )
+        .expect("set working email");
+
+        let response = query_employees(
+            &conn,
+            EmployeeQuery {
+                query: Some("Person@Example.COM".to_string()),
+                team_name: None,
+                staff_group: None,
+                sort_key: None,
+                sort_direction: None,
+                start_date_from: None,
+                start_date_to: None,
+                limit: Some(20),
+                offset: Some(0),
+            },
+        )
+        .expect("search employees by working email");
 
         assert_eq!(response.total, 1);
         assert_eq!(response.items[0].employee_id, "ASWVN1302");

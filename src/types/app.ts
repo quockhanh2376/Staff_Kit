@@ -23,6 +23,7 @@ export type UiColumnDefinition = {
     key: string
     label: string
     source: UiColumnSource
+    dataType?: "email"
 }
 
 /** User-specific column order and visibility preferences (persisted to localStorage). */

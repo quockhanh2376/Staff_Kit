@@ -1533,3 +1533,29 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Remaining risks: no known blocker for the watcher fix.
 - Commit status: pending focused commit.
 - Push status: pending governance check and remote verification.
+
+## Start — Employee List click-to-copy email — 2026-07-27 14:47 +07:00
+
+- Session: Codex Direct
+- Worktree: `D:\Staff_Kit\.worktrees\employee-email-click-copy`
+- Branch: `feature/employee-email-click-copy`
+- Base: `d79eea91255ed8f5c0dce8660cb5b433a8a8e6f6`
+- Objective: add metadata-driven Employee List email-cell clipboard interaction while preserving inline editing mode.
+- Constraints: no commit, push, merge, or direct edits to `main`; stop after automated tests and bounded smoke validation.
+
+## End - Employee List click-to-copy email foundation repair - 2026-07-27 15:20 +07:00
+
+- Repaired semantic metadata for core email and canonical dynamic azure_account.
+- Preserved optional dataType through the frontend column mapping.
+- Added Rust serialization tests, Vitest/jsdom React DOM tests, and frontend mapping coverage.
+- Checks passed: focused Rust tests (3/3), React unit suite (5/5), pure helper regression, and TypeScript typecheck.
+- Deferred by checkpoint instruction: EmployeeView integration, final styling, full quality gate, manual smoke acceptance, commit, and push.
+- Generated Tauri schema formatting changes from test execution were restored; no unrelated schema changes remain.
+
+## End — Employee List click-to-copy email — 2026-07-27 15:35 +07:00
+
+- Result: finalized the accepted Employee Email Click-to-Copy feature on `feature/employee-email-click-copy`.
+- Manual GUI acceptance by anh Zon confirmed hover, orange copied state, exact/restarted 10-second visibility, `Copied` tooltip, correct clipboard contents, equivalent pasted-email search, Working Email and Azure AD Account support, Enter/Space activation, edit-mode preservation, stable layout, and no observed runtime errors.
+- Fresh automated validation: Vitest, TypeScript typecheck, ESLint, production build, `npm run check:quality`, `npm run check:tauri`, and `git diff --check`.
+- Known non-blocking items: accepted OpenSSL LNK4099 warning and two unrelated legacy static scripts expecting older Settings/borrow UI text.
+- Commit/push: pending focused commit and push of this feature branch only; no merge into `main`.

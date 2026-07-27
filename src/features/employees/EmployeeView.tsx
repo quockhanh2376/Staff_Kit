@@ -20,6 +20,7 @@ import { STAFF_GROUP_BUTTONS, DATE_COLUMN_KEYS } from "../../lib/constants"
 import { formatDate } from "../../lib/utils"
 import { formatEmployeeIdForDisplay } from "./employeeIdDisplay"
 import { collectDuplicateComputerEmployeeIds } from "./employeeTableRules"
+import { EmployeeCellContent } from "./EmployeeCellContent"
 
 // ── Diacritic-insensitive highlight helper ─────────────────────────────────────
 function stripDiacritics(str: string): string {
@@ -428,6 +429,23 @@ export function EmployeeView({
                                                                                     edit.setActiveTableEditCell(null)
                                                                                 }
                                                                             }}
+                                                                        />
+                                                                    )
+                                                                }
+
+                                                                if (!isEditable && column.dataType === "email") {
+                                                                    const emailDisplayValue =
+                                                                        typeof rawCellValue === "string" && hasSearchMatch(rawCellValue, emp.searchTerm)
+                                                                            ? <HighlightText text={rawCellValue} query={emp.searchTerm} />
+                                                                            : rawCellValue
+                                                                    return (
+                                                                        <EmployeeCellContent
+                                                                            column={column}
+                                                                            rawValue={rawCellValue}
+                                                                            displayValue={emailDisplayValue}
+                                                                            isEditable={false}
+                                                                            isActiveCell={false}
+                                                                            editor={null}
                                                                         />
                                                                     )
                                                                 }

@@ -4,7 +4,7 @@ use rusqlite::{params, Connection, Transaction};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
-use super::schema::CORE_COLUMN_DEFINITIONS;
+use super::schema::{employee_column_data_type, CORE_COLUMN_DEFINITIONS};
 use super::{
     dynamic_key_to_label, humanize_sqlite_error, is_reserved_column_key,
     normalize_dynamic_field_key, open_runtime_connection, require_text,
@@ -18,6 +18,8 @@ pub struct EmployeeColumnDefinition {
     pub key: String,
     pub label: String,
     pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -37,6 +39,7 @@ pub fn list_employee_columns(app: &AppHandle) -> Result<Vec<EmployeeColumnDefini
             key: (*key).to_string(),
             label: (*label).to_string(),
             source: "core".to_string(),
+            data_type: employee_column_data_type(key).map(str::to_string),
         })
         .collect::<Vec<_>>();
 
@@ -48,8 +51,10 @@ pub fn list_employee_columns(app: &AppHandle) -> Result<Vec<EmployeeColumnDefini
 
     let rows = stmt
         .query_map([], |row| {
+            let key = row.get::<_, String>(0)?;
             Ok(EmployeeColumnDefinition {
-                key: row.get::<_, String>(0)?,
+                data_type: employee_column_data_type(key.as_str()).map(str::to_string),
+                key,
                 label: row.get::<_, String>(1)?,
                 source: "dynamic".to_string(),
             })
@@ -101,10 +106,12 @@ pub fn upsert_employee_column(
     )
     .map_err(humanize_sqlite_error)?;
 
+    let data_type = employee_column_data_type(key.as_str()).map(str::to_string);
     Ok(EmployeeColumnDefinition {
         key,
         label,
         source: "dynamic".to_string(),
+        data_type,
     })
 }
 
@@ -217,6 +224,48 @@ pub(crate) fn upsert_dynamic_fields_tx(
 
 fn is_computer_name_2_key(field_key: &str) -> bool {
     matches!(field_key, "computer_2" | "computer_name_2")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn semantic_email_metadata_marks_core_and_canonical_dynamic_columns() {
+        assert_eq!(employee_column_data_type("email"), Some("email"));
+        assert_eq!(
+            employee_column_data_type("azure_account"),
+            Some("email")
+        );
+        assert_eq!(employee_column_data_type("department"), None);
+    }
+
+    #[test]
+    fn employee_column_serializes_optional_data_type_as_camel_case() {
+        let definition = EmployeeColumnDefinition {
+            key: "azure_account".to_string(),
+            label: "Azure AD Account".to_string(),
+            source: "dynamic".to_string(),
+            data_type: Some("email".to_string()),
+        };
+
+        let value = serde_json::to_value(definition).expect("serialize employee column");
+        assert_eq!(value["dataType"], "email");
+        assert!(value.get("data_type").is_none());
+    }
+
+    #[test]
+    fn employee_column_omits_unknown_optional_data_type() {
+        let definition = EmployeeColumnDefinition {
+            key: "department".to_string(),
+            label: "Department".to_string(),
+            source: "dynamic".to_string(),
+            data_type: employee_column_data_type("department").map(str::to_string),
+        };
+
+        let value = serde_json::to_value(definition).expect("serialize employee column");
+        assert!(value.get("dataType").is_none());
+    }
 }
 
 // ── Private helpers ───────────────────────────────────────────────────────────
