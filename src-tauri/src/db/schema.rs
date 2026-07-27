@@ -62,6 +62,13 @@ pub(crate) const COMPUTER_NAME_2_FIELD_KEY: &str = "computer_2";
 pub(crate) const COMPUTER_NAME_2_FIELD_LABEL: &str = "Computer (2)";
 pub(crate) const AZURE_AD_ACCOUNT_FIELD_KEY: &str = "azure_account";
 
+pub(crate) fn employee_column_data_type(key: &str) -> Option<&'static str> {
+    match key {
+        "email" | AZURE_AD_ACCOUNT_FIELD_KEY => Some("email"),
+        _ => None,
+    }
+}
+
 // ── FTS columns ───────────────────────────────────────────────────────────────
 pub(super) const FTS_COLUMNS: &[&str] = &[
     "employee_id",

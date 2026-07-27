@@ -9,6 +9,7 @@ import type {
 } from "../../types/app"
 import { staffApi } from "../../services/staff-api"
 import { getUserErrorMessage } from "../../lib/errorHandling"
+import { toUiColumnDefinition } from "./columnDefinitions"
 import {
     readColumnPreferences,
     readColumnLabelOverrides,
@@ -206,11 +207,9 @@ export function useColumnState({
     // ── Derived ──────────────────────────────────────────────────────────────────
 
     const uiColumns = useMemo<UiColumnDefinition[]>(() => {
-        const dbColumns = columnDefinitions.map((column) => ({
-            key: column.key,
-            label: columnLabelOverrides[column.key]?.trim() || column.label,
-            source: column.source,
-        }))
+        const dbColumns = columnDefinitions.map((column) =>
+            toUiColumnDefinition(column, columnLabelOverrides[column.key]),
+        )
         return [DEFAULT_SYSTEM_COLUMNS[0], ...dbColumns]
     }, [columnDefinitions, columnLabelOverrides])
 

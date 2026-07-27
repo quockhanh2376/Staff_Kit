@@ -570,6 +570,7 @@ export type EmployeeColumnDefinition = {
   key: string
   label: string
   source: "core" | "dynamic"
+  dataType?: "email"
 }
 
 export type EmployeeColumnUpsertInput = {
