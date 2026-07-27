@@ -1559,3 +1559,18 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Fresh automated validation: Vitest, TypeScript typecheck, ESLint, production build, `npm run check:quality`, `npm run check:tauri`, and `git diff --check`.
 - Known non-blocking items: accepted OpenSSL LNK4099 warning and two unrelated legacy static scripts expecting older Settings/borrow UI text.
 - Commit/push: pending focused commit and push of this feature branch only; no merge into `main`.
+
+## Start - Prepare Staff Kit v2.1.0 release - 2026-07-27
+
+- Branch: `release/v2.1.0` from synchronized `main` at `22efe891a58fe068a57156da0e3dbe241669ce17`.
+- Objective: prepare the v2.1.0 release branch and pull request without creating the tag or GitHub Release before merge.
+- Scope: application semantic version metadata only; no dependency upgrades, database migration, product behavior changes, or machine-local tooling changes.
+- Planned validation: package/Tauri version consistency, frontend checks, Tauri check/tests, diff checks, and explicit release-scope review.
+
+## End - Prepare Staff Kit v2.1.0 release - 2026-07-27
+
+- Result: prepared application version metadata for `2.1.0` on `release/v2.1.0`.
+- Scope: updated `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, and `src-tauri/tauri.conf.json`; no dependency versions or product behavior changed.
+- Validation: Vitest 19/19 passed, `npm run check:quality` passed, `npm run test:tauri` passed with 92 tests, and `git diff --check` passed.
+- Known warning: accepted OpenSSL `LNK4099` debug-symbol warning remains non-blocking.
+- Tag/release: intentionally deferred until the release PR is merged into `main`.
