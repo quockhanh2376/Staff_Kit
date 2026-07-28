@@ -1574,3 +1574,21 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Validation: Vitest 19/19 passed, `npm run check:quality` passed, `npm run test:tauri` passed with 92 tests, and `git diff --check` passed.
 - Known warning: accepted OpenSSL `LNK4099` debug-symbol warning remains non-blocking.
 - Tag/release: intentionally deferred until the release PR is merged into `main`.
+
+## Start - Publish Staff Kit v2.1.0 Windows installers - 2026-07-27
+
+- Branch: `main` at the immutable `v2.1.0` tag.
+- Source verification: `HEAD`, `origin/main`, and `v2.1.0` all resolved to `3e44ac9795182259168a1597b3f9d079bbbff226`.
+- Objective: build official Windows production bundles from the tagged release and attach them to the existing published GitHub Release.
+- Scope: NSIS and MSI installer assets only; no tag movement, release recreation, product-code change, updater signing, or debug-binary upload.
+
+## End - Publish Staff Kit v2.1.0 Windows installers - 2026-07-27
+
+- Result: production Tauri build succeeded from `v2.1.0`; NSIS and MSI installers were produced and uploaded to the existing GitHub Release.
+- Assets:
+  - `Staff.Kit_2.1.0_x64-setup.exe` - 5,288,812 bytes - SHA-256 `9e8bbb904b6b146d60c43ca4a2889fb016ee5D898AEF2FA50A6278377B523897`.
+  - `Staff.Kit_2.1.0_x64_en-US.msi` - 7,352,320 bytes - SHA-256 `b0793a1cb0e2fe97567b4e4699df1b6a3ec369a96e39820b96921fd598148a3b`.
+- GitHub Release: upload succeeded; `v2.1.0` remained published and non-prerelease with both installer assets verified as uploaded. No updater artifacts or signatures were configured or uploaded.
+- Validation: `npm run tauri:build` exited 0; release assets were verified with GitHub metadata and SHA-256 hashes; `main` remained clean and synchronized with `origin/main`.
+- Known non-blocking warnings: accepted OpenSSL `ossl_static.pdb` LNK4099 linker warning; Tauri build-time LF/CRLF rewrite of `src-tauri/Cargo.toml` was restored without a tracked source change.
+- Commit/push: no source commit or push was made; tag `v2.1.0` was not modified.
