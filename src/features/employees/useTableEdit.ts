@@ -296,7 +296,21 @@ export function useTableEdit({
         }
     }
 
-    const clearMoveSelection = () => setSelectedMoveEmployeeIds([])
+    const selectCurrentPageEmployees = useCallback(() => {
+        setSelectedMoveEmployeeIds((prev) => [...new Set([...prev, ...currentPageEmployeeIds])])
+    }, [currentPageEmployeeIds])
+
+    const selectEmployeeIds = useCallback((ids: number[]) => {
+        setSelectedMoveEmployeeIds((prev) => [...new Set([...prev, ...ids])])
+    }, [])
+
+    const unselectCurrentPageEmployees = useCallback(() => {
+        setSelectedMoveEmployeeIds((prev) =>
+            prev.filter((id) => !currentPageEmployeeIds.includes(id)),
+        )
+    }, [currentPageEmployeeIds])
+
+    const clearMoveSelection = useCallback(() => setSelectedMoveEmployeeIds([]), [])
 
     const handleDeleteSelectedEmployee = async () => {
         if (!selectedEmployeeForDelete || !canDeleteSelectedEmployee) return
@@ -367,6 +381,9 @@ export function useTableEdit({
         handleDeleteSelectedEmployee,
         toggleMoveEmployeeSelection,
         toggleSelectCurrentPageEmployees,
+        selectCurrentPageEmployees,
+        selectEmployeeIds,
+        unselectCurrentPageEmployees,
         clearMoveSelection,
         resetTableEditStateOnLogout,
         // utilities re-exported for use in views

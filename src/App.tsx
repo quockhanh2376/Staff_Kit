@@ -427,6 +427,8 @@ function App() {
               columnState={col}
               canEditEmployeeTable={auth.canEditEmployeeTable}
               canEditEmployeeComputerName={auth.canEditEmployeeComputerName}
+              isAdminAccount={auth.isAdminAccount}
+              setGlobalError={setGlobalError}
               selectedGroupLabel={selectedGroupLabel}
               selectedGroupTotal={selectedGroupTotal}
             />

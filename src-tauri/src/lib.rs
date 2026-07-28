@@ -9,6 +9,12 @@ fn ping() -> &'static str {
 }
 
 #[tauri::command]
+fn write_export_file(path: String, contents: Vec<u8>) -> Result<(), String> {
+    std::fs::write(&path, contents)
+        .map_err(|error| format!("failed to write export file '{}': {error}", path))
+}
+
+#[tauri::command]
 fn init_database(app: tauri::AppHandle) -> Result<db::DatabaseStatus, String> {
     db::init_database(&app)
 }
@@ -555,6 +561,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             ping,
+            write_export_file,
             init_database,
             get_database_status,
             get_backup_settings,

@@ -90,6 +90,8 @@ const call = async <T>(command: string, args?: Record<string, unknown>): Promise
  * Each method maps 1:1 to a `#[tauri::command]` in the Rust backend.
  */
 export const staffApi = {
+  writeExportFile: (path: string, contents: number[]) =>
+    call<void>("write_export_file", { path, contents }),
   ping: () => call<string>("ping"),
 
   initDatabase: () => call<DatabaseStatus>("init_database"),
