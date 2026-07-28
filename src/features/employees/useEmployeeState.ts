@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { staffApi } from "../../services/staff-api"
 import type { EmployeeRecord, TeamRecord } from "../../types/staff"
 import type { StaffGroupKey, EmployeeSortState } from "../../types/app"
@@ -192,6 +192,30 @@ export function useEmployeeState({
         return Math.max(1, Math.ceil(totalEmployees / rowsPerPage))
     }, [rowsPerPage, totalEmployees])
 
+    const fetchAllFilteredEmployees = useCallback(async () => {
+        const items: EmployeeRecord[] = []
+        const limit = 5000
+        let offset = 0
+        let total = totalEmployees
+        do {
+            const response = await staffApi.searchEmployees({
+                query: searchTerm.trim() ? searchTerm.trim() : null,
+                staffGroup: staffGroupFilter,
+                teamName: teamFilter === ALL_TEAMS_OPTION ? null : teamFilter,
+                startDateFrom: startDateFilter || null,
+                sortKey: employeeSort?.key ?? null,
+                sortDirection: employeeSort?.direction ?? null,
+                limit,
+                offset,
+            })
+            items.push(...response.items)
+            total = response.total
+            offset += response.items.length
+            if (response.items.length === 0) break
+        } while (offset < total)
+        return items
+    }, [employeeSort, searchTerm, staffGroupFilter, startDateFilter, teamFilter, totalEmployees])
+
     useEffect(() => {
         if (currentPage > totalPages) {
             setCurrentPage(totalPages)
@@ -303,6 +327,7 @@ export function useEmployeeState({
         currentPage,
         setCurrentPage,
         totalPages,
+        fetchAllFilteredEmployees,
         isLoadingEmployees,
         isLoadingTeams,
         isUpdatingEmployeeListFromMssql,

@@ -10,7 +10,7 @@ import {
     Users,
     X,
 } from "lucide-react"
-import { useState, useCallback } from "react"
+import { useEffect, useState, useCallback, useRef } from "react"
 import { staffApi } from "../../services/staff-api"
 import type { EmployeeState } from "./useEmployeeState"
 import type { TableEditState } from "./useTableEdit"
@@ -21,6 +21,8 @@ import { formatDate } from "../../lib/utils"
 import { formatEmployeeIdForDisplay } from "./employeeIdDisplay"
 import { collectDuplicateComputerEmployeeIds } from "./employeeTableRules"
 import { EmployeeCellContent } from "./EmployeeCellContent"
+import { downloadCsv, downloadXlsx } from "./employeeListExport"
+import { getUserErrorMessage } from "../../lib/errorHandling"
 
 // ── Diacritic-insensitive highlight helper ─────────────────────────────────────
 function stripDiacritics(str: string): string {
@@ -68,6 +70,8 @@ type EmployeeViewProps = {
     columnState: ColumnState
     canEditEmployeeTable: boolean
     canEditEmployeeComputerName: boolean
+    isAdminAccount: boolean
+    setGlobalError: (message: string | null) => void
     selectedGroupLabel: string
     selectedGroupTotal: number
 }
@@ -78,6 +82,8 @@ export function EmployeeView({
     columnState,
     canEditEmployeeTable,
     canEditEmployeeComputerName,
+    isAdminAccount,
+    setGlobalError,
     selectedGroupLabel,
     selectedGroupTotal,
 }: EmployeeViewProps) {
@@ -85,10 +91,110 @@ export function EmployeeView({
     const edit = tableEdit
     const col = columnState
     const firstVisibleColumnKey = col.visibleColumns[0]?.key ?? ""
+    const clearMoveSelection = edit.clearMoveSelection
 
     // ── Duplicate computer check ─────────────────────────────────────────────────
     const [duplicateEmpIds, setDuplicateEmpIds] = useState<Set<number>>(new Set())
     const [isCheckingDuplicates, setIsCheckingDuplicates] = useState(false)
+    const [isExporting, setIsExporting] = useState(false)
+    const [isUnselectMenuOpen, setIsUnselectMenuOpen] = useState(false)
+    const [isExportMenuOpen, setIsExportMenuOpen] = useState(false)
+    const unselectMenuRef = useRef<HTMLDetailsElement | null>(null)
+    const exportMenuRef = useRef<HTMLDetailsElement | null>(null)
+    const unselectTimerRef = useRef<number | null>(null)
+    const exportTimerRef = useRef<number | null>(null)
+
+    const clearMenuTimer = useCallback((timerRef: React.MutableRefObject<number | null>) => {
+        if (timerRef.current !== null) {
+            window.clearTimeout(timerRef.current)
+            timerRef.current = null
+        }
+    }, [])
+
+    const closeUnselectMenu = useCallback(() => {
+        clearMenuTimer(unselectTimerRef)
+        setIsUnselectMenuOpen(false)
+    }, [clearMenuTimer])
+
+    const closeExportMenu = useCallback(() => {
+        clearMenuTimer(exportTimerRef)
+        setIsExportMenuOpen(false)
+    }, [clearMenuTimer])
+
+    const resetUnselectTimer = useCallback(() => {
+        clearMenuTimer(unselectTimerRef)
+        unselectTimerRef.current = window.setTimeout(closeUnselectMenu, 3000)
+    }, [clearMenuTimer, closeUnselectMenu])
+
+    const resetExportTimer = useCallback(() => {
+        clearMenuTimer(exportTimerRef)
+        exportTimerRef.current = window.setTimeout(closeExportMenu, 3000)
+    }, [clearMenuTimer, closeExportMenu])
+
+    const openUnselectMenu = useCallback(() => {
+        closeExportMenu()
+        setIsUnselectMenuOpen(true)
+        resetUnselectTimer()
+    }, [closeExportMenu, resetUnselectTimer])
+
+    const openExportMenu = useCallback(() => {
+        closeUnselectMenu()
+        setIsExportMenuOpen(true)
+        resetExportTimer()
+    }, [closeUnselectMenu, resetExportTimer])
+
+    useEffect(() => {
+        const closeOnOutsidePointer = (event: PointerEvent) => {
+            const target = event.target as Node | null
+            if (target && !unselectMenuRef.current?.contains(target) && !exportMenuRef.current?.contains(target)) {
+                closeUnselectMenu()
+                closeExportMenu()
+            }
+        }
+        document.addEventListener("pointerdown", closeOnOutsidePointer)
+        return () => {
+            document.removeEventListener("pointerdown", closeOnOutsidePointer)
+            clearMenuTimer(unselectTimerRef)
+            clearMenuTimer(exportTimerRef)
+        }
+    }, [clearMenuTimer, closeExportMenu, closeUnselectMenu])
+
+    useEffect(() => {
+        clearMoveSelection()
+    }, [clearMoveSelection, emp.searchTerm, emp.teamFilter, emp.startDateFilter])
+
+    const handleSelectAllResults = useCallback(async () => {
+        try {
+            const employees = await emp.fetchAllFilteredEmployees()
+            edit.selectEmployeeIds(employees.map((employee) => employee.id))
+        } catch {
+            // The existing global employee-loading error path remains authoritative.
+        }
+    }, [edit, emp])
+
+    const handleExport = useCallback(async (format: "csv" | "xlsx") => {
+        if (edit.selectedMoveEmployeeIds.length === 0 || isExporting) return
+        setIsExporting(true)
+        try {
+            const allFilteredEmployees = await emp.fetchAllFilteredEmployees()
+            const selectedIds = new Set(edit.selectedMoveEmployeeIds)
+            const selectedEmployees = allFilteredEmployees.filter((employee) => selectedIds.has(employee.id))
+            const columns = col.visibleColumns.map(({ key, label }) => ({ key, label }))
+            const count = selectedEmployees.length
+            const date = new Date().toISOString().slice(0, 10)
+            const filename = `Employee_List_Selected_${count}_${date}`
+            const options = { employees: selectedEmployees, columns, drafts: edit.tableEditDrafts }
+            if (format === "csv") {
+                await downloadCsv(options, `${filename}.csv`)
+            } else {
+                await downloadXlsx(options, `${filename}.xlsx`)
+            }
+        } catch (error) {
+            setGlobalError(getUserErrorMessage(error))
+        } finally {
+            setIsExporting(false)
+        }
+    }, [col.visibleColumns, edit, emp, isExporting, setGlobalError])
 
     const handleCheckDuplicates = useCallback(async () => {
         setIsCheckingDuplicates(true)
@@ -624,31 +730,65 @@ export function EmployeeView({
                                     )}
                                     <button
                                         className="rounded-[8px] border border-[var(--border)] px-3 py-1.5 text-sm font-medium text-[var(--text-secondary)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] disabled:opacity-50"
-                                        onClick={edit.toggleSelectCurrentPageEmployees}
+                                        onClick={edit.selectCurrentPageEmployees}
                                         type="button"
-                                        disabled={
-                                            !canEditEmployeeTable ||
-                                            edit.isMovingEmployees ||
-                                            edit.isSavingTableEdits ||
-                                            edit.currentPageEmployeeIds.length === 0
-                                        }
+                                        disabled={edit.isMovingEmployees || edit.isSavingTableEdits || edit.currentPageEmployeeIds.length === 0}
                                         title="Select or unselect all rows on this page."
                                     >
-                                        {edit.isCurrentPageFullySelected ? "Unselect Page" : "Select Page"}
+                                        Select Page
                                     </button>
                                     <button
                                         className="rounded-[8px] border border-[var(--border)] px-3 py-1.5 text-sm font-medium text-[var(--text-secondary)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] disabled:opacity-50"
-                                        onClick={edit.clearMoveSelection}
+                                        onClick={() => void handleSelectAllResults()}
                                         type="button"
-                                        disabled={
-                                            !canEditEmployeeTable ||
-                                            edit.isMovingEmployees ||
-                                            edit.isSavingTableEdits ||
-                                            edit.selectedMoveEmployeeIds.length === 0
-                                        }
+                                        disabled={edit.isMovingEmployees || edit.isSavingTableEdits || emp.totalEmployees === 0}
                                     >
-                                        Clear Selected
+                                        Select All ({emp.totalEmployees})
                                     </button>
+                                    <details
+                                        className="relative"
+                                        ref={unselectMenuRef}
+                                        open={isUnselectMenuOpen}
+                                        onToggle={(event) => event.currentTarget.open ? openUnselectMenu() : closeUnselectMenu()}
+                                        onPointerMove={isUnselectMenuOpen ? resetUnselectTimer : undefined}
+                                        onFocusCapture={isUnselectMenuOpen ? resetUnselectTimer : undefined}
+                                        onKeyDownCapture={isUnselectMenuOpen ? resetUnselectTimer : undefined}
+                                    >
+                                        <summary className="cursor-pointer list-none rounded-[8px] border border-[var(--border)] px-3 py-1.5 text-sm font-medium text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]">
+                                            Unselect {isUnselectMenuOpen ? "▲" : "▼"}
+                                        </summary>
+                                        <div className="absolute bottom-full right-0 z-20 mb-1 max-h-[min(60vh,240px)] min-w-max overflow-auto rounded-[8px] border border-[var(--border)] bg-[var(--surface)] p-1 shadow-lg" onPointerMove={resetUnselectTimer} onFocusCapture={resetUnselectTimer} onKeyDownCapture={resetUnselectTimer}>
+                                            <button className="block w-full rounded px-3 py-1.5 text-left text-sm hover:bg-[var(--surface-hover)]" onClick={() => { edit.unselectCurrentPageEmployees(); closeUnselectMenu() }} type="button">
+                                                Unselect Page
+                                            </button>
+                                            <button className="block w-full rounded px-3 py-1.5 text-left text-sm hover:bg-[var(--surface-hover)] disabled:opacity-50" onClick={() => { edit.clearMoveSelection(); closeUnselectMenu() }} type="button" disabled={edit.selectedMoveEmployeeIds.length === 0}>
+                                                Clear All ({edit.selectedMoveEmployeeIds.length})
+                                            </button>
+                                        </div>
+                                    </details>
+                                    {isAdminAccount && (
+                                        <details
+                                            className="relative"
+                                            ref={exportMenuRef}
+                                            open={isExportMenuOpen}
+                                            onToggle={(event) => event.currentTarget.open ? openExportMenu() : closeExportMenu()}
+                                            onPointerMove={isExportMenuOpen ? resetExportTimer : undefined}
+                                            onFocusCapture={isExportMenuOpen ? resetExportTimer : undefined}
+                                            onKeyDownCapture={isExportMenuOpen ? resetExportTimer : undefined}
+                                        >
+                                            <summary className="cursor-pointer list-none rounded-[8px] border border-[var(--primary)]/50 px-3 py-1.5 text-sm font-medium text-[var(--primary)] hover:bg-[var(--primary)]/10">
+                                                Export ({edit.selectedMoveEmployeeIds.length}) {isExportMenuOpen ? "▲" : "▼"}
+                                            </summary>
+                                            <div className="absolute bottom-full right-0 z-20 mb-1 max-h-[min(60vh,240px)] min-w-max overflow-auto rounded-[8px] border border-[var(--border)] bg-[var(--surface)] p-1 shadow-lg" onPointerMove={resetExportTimer} onFocusCapture={resetExportTimer} onKeyDownCapture={resetExportTimer}>
+                                                <button className="block w-full rounded px-3 py-1.5 text-left text-sm hover:bg-[var(--surface-hover)] disabled:opacity-50" onClick={() => { closeExportMenu(); void handleExport("csv") }} type="button" disabled={edit.selectedMoveEmployeeIds.length === 0 || isExporting}>
+                                                    Export as CSV
+                                                </button>
+                                                <button className="block w-full rounded px-3 py-1.5 text-left text-sm hover:bg-[var(--surface-hover)] disabled:opacity-50" onClick={() => { closeExportMenu(); void handleExport("xlsx") }} type="button" disabled={edit.selectedMoveEmployeeIds.length === 0 || isExporting}>
+                                                    Export as Excel (.xlsx)
+                                                </button>
+                                            </div>
+                                        </details>
+                                    )}
                                     <span className="text-xs text-[var(--text-secondary)]">
                                         Edited:{" "}
                                         <span className="font-semibold text-[var(--text-primary)]">{edit.editedRowCount}</span>

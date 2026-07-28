@@ -1592,3 +1592,44 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Validation: `npm run tauri:build` exited 0; release assets were verified with GitHub metadata and SHA-256 hashes; `main` remained clean and synchronized with `origin/main`.
 - Known non-blocking warnings: accepted OpenSSL `ossl_static.pdb` LNK4099 linker warning; Tauri build-time LF/CRLF rewrite of `src-tauri/Cargo.toml` was restored without a tracked source change.
 - Commit/push: no source commit or push was made; tag `v2.1.0` was not modified.
+
+## Start - Implement EE List export in Edit mode - 2026-07-28
+
+- Branch: `feature/ee-list-export` from clean, synchronized `main`.
+- Objective: add admin-only CSV and real XLSX export for selected Employee List rows while preserving existing Edit-mode selection, pagination, visible-column ordering, and unsaved drafts.
+- Scope: selection controls, filtered-result retrieval, export projection/downloads, focused tests, validation, and append-only log records; no commit, push, merge, or PR.
+- XLSX dependency review: compared `write-excel-file`, `xlsx`, and `exceljs`; selected `write-excel-file` for browser Blob support, MIT license, approximately 1.8 MB unpacked size, and its minimal `fflate` dependency footprint.
+
+## End - Implement EE List export in Edit mode - 2026-07-28
+
+- Result: added admin-only `Export Selected (n)` CSV/XLSX controls, complete filtered-result selection, current-page unselection, clear-all selection, and selection persistence across pagination.
+- Selection behavior: search/team/date filter changes clear selected IDs; pagination, sorting, grouping, and rows-per-page changes preserve them. `selectedMoveEmployeeIds` remains the only selection source of truth.
+- Export behavior: retrieves the complete filtered result set in API-sized pages, exports only selected IDs and visible columns in persisted order, excludes hidden columns, overlays all in-memory drafts by employee ID including off-page drafts, emits empty cells instead of `-`, and does not save/reset/clear selection or show a success toast.
+- Files: added `src/features/employees/employeeListExport.ts` and focused tests; updated `EmployeeView.tsx`, `useEmployeeState.ts`, `useTableEdit.ts`, `App.tsx`, `package.json`, and `package-lock.json`.
+- XLSX choice: added `write-excel-file@4.1.1` exact, MIT licensed, browser-compatible, approximately 1.8 MB unpacked with one `fflate` dependency; `xlsx` was approximately 7.5 MB and `exceljs` approximately 21.8 MB with larger dependency trees. No new production audit finding was introduced; the existing audit report remains 11 vulnerabilities (2 low, 8 high, 1 critical).
+- Validation: focused export tests 3/3 passed; full Vitest suite 22/22 passed across 5 files; `npm run typecheck`, focused ESLint, `npm run build`, `npm run check:quality`, and `git diff --check` passed.
+- Known non-blocking warnings: Vite reported a bundle chunk over 500 kB; Git reported repository LF/CRLF normalization notices. No product behavior outside EE List export was intentionally changed.
+- Commit/push: no commit or push made; branch remains `feature/ee-list-export`.
+
+## End - Repair EE List Tauri XLSX export - 2026-07-28
+
+- Root cause: the original export stopped at browser-only `Blob`/`URL.createObjectURL`/anchor download behavior, which is not a reliable file-save path in the Tauri WebView; XLSX errors were also not surfaced by the async handler.
+- Fix: use `write-excel-file/universal` to generate the real workbook, open the existing Tauri save dialog, pass the selected path and workbook bytes through `write_export_file`, and write them with a narrowly scoped Rust command. CSV uses the same native save path.
+- Lifecycle: the menu closes immediately before export begins; the awaited export promise continues independently. Failures now flow to the existing global error feedback through `getUserErrorMessage`; selection and drafts are preserved.
+- Validation: focused export tests 9/9 passed, full Vitest 28/28 passed, typecheck, ESLint, build, `check:quality`, and `git diff --check` passed. The XLSX payload test verified ZIP signature bytes `50 4B 03 04`; no CSV content is renamed as XLSX.
+- Tauri smoke: `npm run tauri:dev` reached and ran the desktop app after clearing a stale project Vite process on port 5173; only accepted OpenSSL LNK4099 warnings appeared during startup.
+- Manual limitation: this headless Codex session could not perform the authenticated 9-row GUI interaction, select the save-dialog path, or open Excel, so final filename/size and Excel-open confirmation remain pending user GUI validation.
+
+## End - Finalize EE List export controls - 2026-07-28
+
+- Final UI: labels are `Select All (n)`, `Unselect Page`, `Clear All (n)`, and `Export (n)`.
+- Dropdown behavior: Unselect and Export open upward, remain right-aligned, close on outside click or action, close each other when opened, reset their 3-second auto-close timers on pointer/focus/keyboard interaction, and clear timers on close/unmount.
+- Export and selection behavior remains unchanged: CSV/XLSX output, filtered cross-page selection, visible-column ordering, hidden-column exclusion, unsaved draft overlays, and admin-only export access are preserved.
+- Validation: focused export/timer tests, full Vitest, typecheck, ESLint, build, quality checks, npm audit, and diff checks recorded for this final implementation pass.
+
+## End - Manual EE List export acceptance - 2026-07-28
+
+- Manual GUI validation passed in the Tauri app for both CSV and XLSX export with the native save path after selecting exactly 9 employees.
+- Confirmed the real XLSX workbook is created and usable, while CSV export remains functional; selection, visible-column ordering, hidden-column exclusion, Vietnamese text, empty cells, and unsaved draft overlays were preserved.
+- Final implementation includes the Tauri-native export fix, immediate menu close without cancelling the async export, and existing error feedback on failure.
+- Repository changes remain uncommitted at this checkpoint; no tag or release was modified.
