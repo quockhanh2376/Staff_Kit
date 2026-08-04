@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog"
 import { staffApi } from "../../services/staff-api"
+import { clearSession } from "../../services/session"
 import type { AssetRecord, AssetSeedItemInput, BackupSettings, BorrowLanSettings, SnapshotInfo } from "../../types/staff"
 import { getUserErrorMessage } from "../../lib/errorHandling"
 import {
@@ -12,9 +13,18 @@ import {
 type UseSettingsStateOptions = {
     dbReady: boolean
     isAuthenticated: boolean
+    isAdminAccount: boolean
     reloadToken: number
     setGlobalError: (msg: string | null) => void
     triggerReload: () => void
+    /**
+     * Invoked after a session-ending success (reset_all_data, restore, or
+     * database move) to reset app-level state and return to the login screen.
+     * The backend invalidates ALL sessions after these super_admin operations,
+     * so the in-memory token is cleared proactively rather than waiting for the
+     * next IPC call to fail with AUTH_SESSION_EXPIRED.
+     */
+    onLogout: () => void
 }
 
 export type SettingsState = ReturnType<typeof useSettingsState>
@@ -22,9 +32,11 @@ export type SettingsState = ReturnType<typeof useSettingsState>
 export function useSettingsState({
     dbReady,
     isAuthenticated,
+    isAdminAccount,
     reloadToken,
     setGlobalError,
     triggerReload,
+    onLogout,
 }: UseSettingsStateOptions) {
     const [backupSettings, setBackupSettings] = useState<BackupSettings | null>(null)
     const [backupDirectoryInput, setBackupDirectoryInput] = useState("")
@@ -131,9 +143,10 @@ export function useSettingsState({
         [],
     )
 
-    // Load backup settings + current DB custom path
+    // Load backup settings + current DB custom path (admin-only commands).
+    // Standard users must never trigger these admin-guarded calls.
     useEffect(() => {
-        if (!dbReady || !isAuthenticated) return
+        if (!dbReady || !isAuthenticated || !isAdminAccount) return
 
         let disposed = false
 
@@ -167,11 +180,11 @@ export function useSettingsState({
         })()
 
         return () => { disposed = true }
-    }, [dbReady, detectBorrowLanHost, isAuthenticated, reloadToken, setGlobalError])
+    }, [dbReady, detectBorrowLanHost, isAuthenticated, isAdminAccount, reloadToken, setGlobalError])
 
-    // Load history snapshots
+    // Load history snapshots (admin-only command)
     const loadSnapshots = useCallback(async () => {
-        if (!dbReady) return
+        if (!dbReady || !isAdminAccount) return
         try {
             setLoadingSnapshots(true)
             const list = await staffApi.listHistorySnapshots()
@@ -184,9 +197,9 @@ export function useSettingsState({
     }, [dbReady, setGlobalError])
 
     useEffect(() => {
-        if (!dbReady || !isAuthenticated) return
+        if (!dbReady || !isAuthenticated || !isAdminAccount) return
         void loadSnapshots()
-    }, [dbReady, isAuthenticated, reloadToken, loadSnapshots])
+    }, [dbReady, isAuthenticated, isAdminAccount, reloadToken, loadSnapshots])
 
     const handleSaveBackupSettings = async () => {
         const nextPath = backupDirectoryInput.trim()
@@ -245,9 +258,13 @@ export function useSettingsState({
             setRestoringSnapshot(filename)
             setSnapshotMessage("")
             await staffApi.restoreHistorySnapshot(filename)
+            // SEC-001 Phase D3: restore invalidates ALL backend sessions. Clear the
+            // in-memory token and return to login instead of waiting for the next
+            // IPC call to fail with AUTH_SESSION_EXPIRED.
+            clearSession()
             setSnapshotMessage("✅ Restore complete. Reloading data...")
-            await loadSnapshots()
-            triggerReload()
+            setGlobalError("Database was reset/restored. Please sign in again.")
+            onLogout()
         } catch (error) {
             setGlobalError(getUserErrorMessage(error))
         } finally {
@@ -273,6 +290,10 @@ export function useSettingsState({
             setDbPathMessage("")
             setDbMovePending(false)
             const result = await staffApi.moveDatabaseTo(folder)
+            // SEC-001 Phase D3: moving the database invalidates ALL backend
+            // sessions. Clear the in-memory token and return to login rather than
+            // waiting for the next IPC call to fail.
+            clearSession()
             if (result.startsWith("LINKED:")) {
                 const path = result.slice("LINKED:".length)
                 setDbPathMessage(
@@ -286,6 +307,8 @@ export function useSettingsState({
                     `Restart app on all machines to switch to the new location.`
                 )
             }
+            setGlobalError("Database was reset/restored. Please sign in again.")
+            onLogout()
         } catch (error) {
             setDbPathMessage(`❌ ${getUserErrorMessage(error)}`)
             setDbMovePending(false)
@@ -316,9 +339,13 @@ export function useSettingsState({
 
             setSnapshotMessage("")
             await staffApi.restoreDatabaseFromFile(filePath)
+            // SEC-001 Phase D3: restore invalidates ALL backend sessions. Clear
+            // the in-memory token and return to login instead of waiting for the
+            // next IPC call to fail.
+            clearSession()
             setSnapshotMessage("✅ Restore complete. Reloading data...")
-            await loadSnapshots()
-            triggerReload()
+            setGlobalError("Database was reset/restored. Please sign in again.")
+            onLogout()
         } catch (error) {
             setGlobalError(getUserErrorMessage(error))
         }
@@ -337,7 +364,12 @@ export function useSettingsState({
         try {
             setResettingData(true)
             await staffApi.resetAllData()
-            triggerReload()
+            // SEC-001 Phase D3: reset_all_data invalidates ALL backend sessions.
+            // Clear the in-memory token and return to login instead of waiting
+            // for the next IPC call to fail with AUTH_SESSION_EXPIRED.
+            clearSession()
+            setGlobalError("Database was reset/restored. Please sign in again.")
+            onLogout()
         } catch (error) {
             setGlobalError(getUserErrorMessage(error))
         } finally {

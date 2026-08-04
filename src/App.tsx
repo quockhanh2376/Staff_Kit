@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { ClipboardList, LoaderCircle, LogOut, Moon, Settings, Sun, Users } from "lucide-react"
 import { staffApi } from "./services/staff-api"
+import { onUnauthorized } from "./services/session"
 import type { DatabaseStatus } from "./types/staff"
 import type { AppView, Theme } from "./types/app"
 import { getGroupCount, normalizeUserScope, buildScopedStorageKey } from "./lib/utils"
@@ -25,6 +26,7 @@ import { useAssetDashboardState } from "./features/assets/useAssetDashboardState
 import { useSettingsState } from "./features/settings/useSettingsState"
 
 // Feature views
+import { ForcedPasswordReset } from "./features/auth/ForcedPasswordReset"
 import { LoginPage } from "./features/auth/LoginPage"
 import { EmployeeView } from "./features/employees/EmployeeView"
 import { ColumnsDrawer } from "./features/columns/ColumnsDrawer"
@@ -70,18 +72,32 @@ function App() {
   }, [setTheme])
 
   // ── Auth ─────────────────────────────────────────────────────────────────────
+  // NOTE: resetAppStateOnLogout is assigned below, after emp/col/edit are created.
+  // It is only ever invoked at runtime from event handlers (never during render),
+  // so capturing it by closure before its definition is safe.
   const auth = useAuthState({
     dbReady,
     reloadToken,
     onLoginSuccess: triggerReload,
     onLogout: () => {
-      emp.resetEmployeeStateOnLogout()
-      col.resetColumnStateOnLogout()
-      edit.resetTableEditStateOnLogout()
+      resetAppStateOnLogout()
     },
   })
 
   const { isAuthenticated, activeAccount, activeAccountName, canAccessSettings } = auth
+
+  // ── Centralized session-end handling (SEC-001 Phase B) ───────────────────────
+  // When the backend rejects the session (AUTH_REQUIRED / AUTH_SESSION_EXPIRED),
+  // the session service notifies subscribers; we log out and return to login.
+  // AUTH_FORBIDDEN is NOT session-ending and is surfaced as a normal error.
+  useEffect(() => {
+    const unsubscribe = onUnauthorized(() => {
+      if (auth.isAuthenticated) {
+        void auth.handleLogout()
+      }
+    })
+    return unsubscribe
+  }, [auth])
 
   // ── Scoped storage keys (per user profile) ───────────────────────────────────
   const activeUserScope = useMemo(
@@ -135,6 +151,16 @@ function App() {
     setGlobalError,
   })
 
+  // Shared app-state reset invoked on any logout path (manual logout, centralized
+  // session-expiry handler, or a session-ending super_admin operation like
+  // reset/restore that the backend uses to invalidate ALL sessions). Referenced by
+  // the auth and settings hooks via the onLogout option.
+  const resetAppStateOnLogout = () => {
+    emp.resetEmployeeStateOnLogout()
+    col.resetColumnStateOnLogout()
+    edit.resetTableEditStateOnLogout()
+  }
+
   // ── Import state ─────────────────────────────────────────────────────────────
   const imp = useImportState({
     staffGroupFilter: emp.staffGroupFilter,
@@ -155,9 +181,11 @@ function App() {
   const settings = useSettingsState({
     dbReady,
     isAuthenticated,
+    isAdminAccount: auth.isAdminAccount,
     reloadToken,
     setGlobalError,
     triggerReload,
+    onLogout: resetAppStateOnLogout,
   })
 
   const borrow = useBorrowState({
@@ -239,6 +267,21 @@ function App() {
         isBootstrapping={isBootstrapping}
         globalError={globalError}
         setGlobalError={setGlobalError}
+      />
+    )
+  }
+
+  // ── Forced password reset gate ──────────────────────────────────────────────
+  // Blocks ALL normal app content until the user completes a mandatory password
+  // change. No navigation, no employee list, no settings — only this screen.
+  if (auth.forcePasswordReset) {
+    return (
+      <ForcedPasswordReset
+        displayName={activeAccountName}
+        onSubmit={auth.handleChangePassword}
+        onLogout={() => void auth.handleLogout()}
+        setGlobalError={setGlobalError}
+        globalError={globalError}
       />
     )
   }

@@ -8,10 +8,9 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
 use super::schema::{
-    AUTO_BACKUP_ENABLED_SETTING_KEY, AUTO_BACKUP_INTERVAL_DAYS, AUTO_BACKUP_LAST_DATE_SETTING_KEY,
-    AUTO_BACKUP_RETENTION_DAYS, AUTO_BACKUP_RETENTION_FILES, BACKUP_DIRECTORY_SETTING_KEY,
-    BACKUP_FILE_PREFIX, DB_FILE_NAME, DB_SETTINGS_FILE_NAME, HISTORY_FILE_PREFIX,
-    HISTORY_FOLDER_NAME, HISTORY_RETENTION_COUNT,
+    AUTO_BACKUP_ENABLED_SETTING_KEY, AUTO_BACKUP_INTERVAL_DAYS, AUTO_BACKUP_RETENTION_DAYS,
+    AUTO_BACKUP_RETENTION_FILES, BACKUP_DIRECTORY_SETTING_KEY, BACKUP_FILE_PREFIX, DB_FILE_NAME,
+    DB_SETTINGS_FILE_NAME, HISTORY_FILE_PREFIX, HISTORY_FOLDER_NAME, HISTORY_RETENTION_COUNT,
 };
 use super::{get_setting_value, open_runtime_connection, require_text, set_setting_value};
 
@@ -104,53 +103,6 @@ pub fn backup_database_now(app: &AppHandle) -> Result<BackupRunResult, String> {
     let conn = open_runtime_connection(app)?;
     let settings = read_backup_settings(&conn, app)?;
     run_backup(app, settings.backup_directory_path.as_str(), false)
-}
-
-pub fn run_auto_backup_if_due(app: &AppHandle) -> Result<BackupRunResult, String> {
-    let conn = open_runtime_connection(app)?;
-    let settings = read_backup_settings(&conn, app)?;
-    if !settings.auto_backup_enabled {
-        return Ok(BackupRunResult {
-            backup_file_path: String::new(),
-            retained_files: AUTO_BACKUP_RETENTION_FILES as i64,
-            performed: false,
-        });
-    }
-
-    let today = Local::now();
-    let today_str = today.format("%Y-%m-%d").to_string();
-    let last_auto_backup = get_setting_value(&conn, AUTO_BACKUP_LAST_DATE_SETTING_KEY)?
-        .map(|value| value.trim().to_string())
-        .unwrap_or_default();
-
-    // Check: at least AUTO_BACKUP_INTERVAL_DAYS since last backup
-    let is_due = if last_auto_backup.is_empty() {
-        true
-    } else {
-        match chrono::NaiveDate::parse_from_str(&last_auto_backup, "%Y-%m-%d") {
-            Ok(last_date) => {
-                let diff = today.date_naive().signed_duration_since(last_date);
-                diff.num_days() >= AUTO_BACKUP_INTERVAL_DAYS
-            }
-            Err(_) => true,
-        }
-    };
-
-    if !is_due {
-        return Ok(BackupRunResult {
-            backup_file_path: String::new(),
-            retained_files: AUTO_BACKUP_RETENTION_FILES as i64,
-            performed: false,
-        });
-    }
-
-    let result = run_backup(app, settings.backup_directory_path.as_str(), true)?;
-    set_setting_value(
-        &conn,
-        AUTO_BACKUP_LAST_DATE_SETTING_KEY,
-        Some(today_str.as_str()),
-    )?;
-    Ok(result)
 }
 
 // ── Configurable DB path ──────────────────────────────────────────────────────

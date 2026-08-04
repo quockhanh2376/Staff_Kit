@@ -295,12 +295,28 @@ export function SettingsView({
                                                             void auth.handleDeleteAccount(account, setGlobalError, triggerReload)
                                                         }
                                                         type="button"
-                                                        disabled={auth.isMutatingAccounts || auth.isLoadingAccounts}
+                                                        disabled={
+                                                            auth.isMutatingAccounts ||
+                                                            auth.isLoadingAccounts ||
+                                                            account.id === auth.activeAccountId
+                                                        }
                                                         aria-label={`Delete ${account.displayName}`}
-                                                        title={`Delete ${account.displayName}`}
+                                                        title={
+                                                            account.id === auth.activeAccountId
+                                                                ? "You cannot delete the account you are currently signed in with."
+                                                                : `Delete ${account.displayName}`
+                                                        }
                                                     >
                                                         <Trash2 size={15} />
                                                     </button>
+                                                    {account.id === auth.activeAccountId && (
+                                                        <span
+                                                            className={`text-[10px] ${settingsMutedTextClass}`}
+                                                            title="Sign in with a different super-admin account to delete this one."
+                                                        >
+                                                            signed in
+                                                        </span>
+                                                    )}
                                                 </div>
                                             </div>
                                             <div className={`mt-1 text-[11px] ${settingsMutedTextClass}`}>

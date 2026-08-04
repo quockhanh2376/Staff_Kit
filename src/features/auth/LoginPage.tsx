@@ -117,7 +117,13 @@ export function LoginPage({
                         </p>
                     </div>
 
-                    {globalError && (
+                    {auth.loginError && (
+                        <div className="mt-4 rounded-[10px] border border-red-500/50 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+                            {auth.loginError}
+                        </div>
+                    )}
+
+                    {globalError && !auth.loginError && (
                         <div className="mt-4 rounded-[10px] border border-red-500/50 bg-red-500/10 px-3 py-2 text-sm text-red-300">
                             {globalError}
                         </div>
@@ -130,11 +136,25 @@ export function LoginPage({
                         </div>
                     )}
 
-                    {!isBootstrapping && !auth.isLoadingAccounts && auth.accounts.length === 0 && (
-                        <div className={inlineBannerClass}>
-                            No local account found. Please restart app after migration, or use Temporary Reset in Settings if data is inconsistent.
+                    {/* Backend account-discovery failure: show the real error
+                        instead of a misleading "No local account found" empty
+                        state. Do not render the empty-state block while a load
+                        is pending or has errored. */}
+                    {!isBootstrapping && !auth.isLoadingAccounts && auth.accountsLoadError && (
+                        <div className="mt-4 rounded-[10px] border border-red-500/50 bg-red-500/10 px-4 py-2 text-sm text-red-300">
+                            Could not load accounts. {auth.accountsLoadError}
                         </div>
                     )}
+
+                    {!isBootstrapping &&
+                        !auth.isLoadingAccounts &&
+                        !auth.accountsLoadError &&
+                        auth.accounts.length === 0 && (
+                            <div className={inlineBannerClass}>
+                                No local account found. Please restart app after migration, or use
+                                Temporary Reset in Settings if data is inconsistent.
+                            </div>
+                        )}
 
                     {auth.accounts.length > 0 && (
                         <>
@@ -142,7 +162,7 @@ export function LoginPage({
                                 <form
                                     className="space-y-5"
                                     onSubmit={(event: FormEvent<HTMLFormElement>) =>
-                                        void auth.handleLoginSubmit(event, setGlobalError)
+                                        void auth.handleLoginSubmit(event)
                                     }
                                 >
                                     <div className="space-y-1.5">

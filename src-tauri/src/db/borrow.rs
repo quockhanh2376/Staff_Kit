@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::AppHandle;
 
-use super::auth;
 use super::schema::{
     BORROW_LAN_ENABLED_SETTING_KEY, BORROW_LAN_HOST_SETTING_KEY, BORROW_LAN_PORT_SETTING_KEY,
 };
@@ -87,8 +86,10 @@ pub fn get_borrow_lan_settings(app: &AppHandle) -> Result<BorrowLanSettings, Str
     read_borrow_lan_settings(&conn)
 }
 
-pub fn update_borrow_lan_settings(
+/// The audit actor comes from the verified SessionContext.
+pub fn update_borrow_lan_settings_with_actor(
     app: &AppHandle,
+    ctx: crate::auth_session::SessionContext,
     payload: BorrowLanSettingsUpdateInput,
 ) -> Result<BorrowLanSettings, String> {
     let conn = open_runtime_connection(app)?;
@@ -118,18 +119,12 @@ pub fn update_borrow_lan_settings(
     })
     .to_string();
 
-    let actor_ref = auth::get_active_local_account_id(&conn)?
-        .map(|id| id.to_string())
-        .unwrap_or_default();
+    let actor_ref = ctx.account_id.to_string();
     audit::insert_audit_log_conn(
         &conn,
         "borrow_lan.update_settings",
         "local_account",
-        if actor_ref.is_empty() {
-            None
-        } else {
-            Some(actor_ref.as_str())
-        },
+        Some(actor_ref.as_str()),
         "borrow_lan",
         "config",
         Some(payload_json.as_str()),
@@ -161,27 +156,25 @@ pub fn get_borrow_request_detail(
     load_borrow_request_detail_conn(&conn, request_id)
 }
 
-pub fn approve_borrow_request(
+/// The reviewer identity comes from the verified SessionContext (passed by the
+/// lib.rs command wrapper), not from the active-account DB row.
+pub fn approve_borrow_request_with_actor(
     app: &AppHandle,
+    ctx: crate::auth_session::SessionContext,
     request_id: i64,
 ) -> Result<BorrowRequestRecord, String> {
     let mut conn = open_runtime_connection(app)?;
-    let reviewer_account_id = require_active_admin_account_id(&conn)?;
-    approve_borrow_request_conn(&mut conn, request_id, reviewer_account_id)
+    approve_borrow_request_conn(&mut conn, request_id, ctx.account_id)
 }
 
-pub fn reject_borrow_request(
+/// Phase C variant: reviewer identity from SessionContext.
+pub fn reject_borrow_request_with_actor(
     app: &AppHandle,
+    ctx: crate::auth_session::SessionContext,
     payload: BorrowRequestRejectInput,
 ) -> Result<BorrowRequestRecord, String> {
     let mut conn = open_runtime_connection(app)?;
-    let reviewer_account_id = require_active_admin_account_id(&conn)?;
-    reject_borrow_request_conn(
-        &mut conn,
-        payload.request_id,
-        reviewer_account_id,
-        payload.note,
-    )
+    reject_borrow_request_conn(&mut conn, payload.request_id, ctx.account_id, payload.note)
 }
 
 pub(crate) fn submit_borrow_request_conn(
@@ -600,27 +593,6 @@ fn format_borrow_lan_url_host(host: &str) -> String {
         Ok(IpAddr::V6(_)) => format!("[{trimmed}]"),
         _ => trimmed.to_string(),
     }
-}
-
-fn require_active_admin_account_id(conn: &Connection) -> Result<i64, String> {
-    let account_id = auth::get_active_local_account_id(conn)?
-        .ok_or_else(|| "an active local account is required".to_string())?;
-
-    let role: String = conn
-        .query_row(
-            "SELECT role FROM app_local_accounts WHERE id = ?",
-            params![account_id],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(|err| format!("failed to load active local account role: {err}"))?
-        .ok_or_else(|| format!("local account with id {account_id} was not found"))?;
-
-    if !role.eq_ignore_ascii_case("admin") && !role.eq_ignore_ascii_case("super_admin") {
-        return Err("active local account must be admin to review borrow requests".to_string());
-    }
-
-    Ok(account_id)
 }
 
 fn load_employee_row_id_by_business_id_tx(

@@ -520,11 +520,25 @@ export type LocalAccountLoginInput = {
   password: string
 }
 
+/** Successful login result. Carries the opaque session token + UX-only expiry
+ *  plus the safe account metadata the UI needs. Never contains password hashes
+ *  or recovery codes. */
+export type LocalAccountLoginResult = {
+  sessionToken: string
+  expiresAt: string
+  account: LocalAccountRecord
+}
+
+/** Minimal public account hint for the login screen (username + display name). */
+export type LoginAccountHint = {
+  username: string
+  displayName: string
+}
+
 export type LocalPasswordChangeInput = {
   accountId: number
   currentPassword: string
   newPassword: string
-  newRecoveryCode?: string | null
 }
 
 export type LocalPasswordResetInput = {

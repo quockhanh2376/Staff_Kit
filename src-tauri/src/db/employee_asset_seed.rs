@@ -160,16 +160,26 @@ impl BuiltPreview {
     }
 }
 
-pub fn preview_employee_asset_seed(
+/// The actor identity comes from the verified SessionContext.
+pub fn preview_employee_asset_seed_with_actor(
     app: &AppHandle,
+    ctx: crate::auth_session::SessionContext,
     payload: EmployeeAssetSeedInput,
 ) -> Result<EmployeeAssetSeedPreview, String> {
     let mut conn = open_runtime_connection(app)?;
-    preview_employee_asset_seed_conn(&mut conn, &payload)
+    let built_preview = build_preview(&mut conn, &payload)?;
+    let snapshot_id =
+        persist_preview_snapshot(&mut conn, &payload, ctx.account_id, &built_preview)?;
+    Ok(build_preview_response(snapshot_id, &built_preview))
 }
 
-pub fn import_employee_asset_seed(
+/// Phase C variant: actor identity from SessionContext. The snapshot ownership
+/// check inside `_conn` uses `require_import_actor_id` (defense-in-depth
+/// re-read of the active account row); after Phase C login sets that row
+/// correctly, the ownership check aligns with the session actor.
+pub fn import_employee_asset_seed_with_actor(
     app: &AppHandle,
+    _ctx: crate::auth_session::SessionContext,
     payload: EmployeeAssetSeedInput,
 ) -> Result<EmployeeAssetSeedReport, String> {
     let mut conn = open_runtime_connection(app)?;

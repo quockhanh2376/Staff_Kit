@@ -1,4 +1,15 @@
 ﻿import { invoke } from "@tauri-apps/api/core"
+import {
+  AUTH_REQUIRED,
+  AUTH_SESSION_EXPIRED,
+  detectAuthErrorCode,
+} from "../features/auth/authErrors"
+import {
+  clearSession,
+  getSessionToken,
+  notifyUnauthorized,
+  setSession,
+} from "./session"
 import type {
   DatabaseStatus,
   BackupRunResult,
@@ -40,6 +51,8 @@ import type {
   EmployeeRecord,
   MoveEmployeesGroupInput,
   LocalAccountLoginInput,
+  LocalAccountLoginResult,
+  LoginAccountHint,
   LocalAccountCreateInput,
   LocalAccountRecord,
   LocalForgotPasswordInput,
@@ -77,12 +90,55 @@ const ensureTauriRuntime = () => {
 }
 
 /**
- * Type-safe wrapper around Tauri's `invoke`.
- * Ensures runtime check and consistent argument passing for all Tauri commands.
+ * Centralized handling of stable backend auth error codes (SEC-001 Phase B).
+ * - AUTH_REQUIRED / AUTH_SESSION_EXPIRED: clear the in-memory session and notify
+ *   subscribers so the app returns to login. Re-throw so callers can also react.
+ * - AUTH_FORBIDDEN: the session is still valid; surface a user-facing error but
+ *   do not log the user out.
+ *
+ * Raw backend error details are never logged; only the stable code is matched.
+ */
+const handleBackendError = (error: unknown): never => {
+  const code = detectAuthErrorCode(error)
+  if (code === AUTH_REQUIRED || code === AUTH_SESSION_EXPIRED) {
+    notifyUnauthorized(code)
+  }
+  // Re-throw so feature callers / setGlobalError can react. The user-facing
+  // message for AUTH_FORBIDDEN is handled by the existing error-handling layer.
+  throw error
+}
+
+/**
+ * Guarded Tauri invocation: injects the current session token for commands
+ * that require authorization. Never sends an empty/absent token — if no session
+ * exists, the call is rejected client-side as AUTH_REQUIRED before reaching IPC,
+ * and the centralized handler notifies subscribers.
  */
 const call = async <T>(command: string, args?: Record<string, unknown>): Promise<T> => {
   ensureTauriRuntime()
-  return invoke<T>(command, args)
+  const sessionToken = getSessionToken()
+  // No session in memory: behave exactly as the backend would for a missing
+  // token, without making an IPC round-trip. handleBackendError returns `never`.
+  if (!sessionToken) return handleBackendError(new Error(AUTH_REQUIRED))
+  const merged = { ...(args ?? {}), sessionToken }
+  try {
+    return await invoke<T>(command, merged)
+  } catch (error) {
+    return handleBackendError(error)
+  }
+}
+
+/**
+ * Public/session-exempt Tauri invocation for commands callable before login
+ * (login, public reads, diagnostics). Never injects a session token.
+ */
+const callPublic = async <T>(command: string, args?: Record<string, unknown>): Promise<T> => {
+  ensureTauriRuntime()
+  try {
+    return await invoke<T>(command, args)
+  } catch (error) {
+    return handleBackendError(error)
+  }
 }
 
 /**
@@ -90,13 +146,16 @@ const call = async <T>(command: string, args?: Record<string, unknown>): Promise
  * Each method maps 1:1 to a `#[tauri::command]` in the Rust backend.
  */
 export const staffApi = {
+  // ── Public / session-exempt (pre-login + diagnostics) ──────────────────────
+  ping: () => callPublic<string>("ping"),
+
+  initDatabase: () => callPublic<DatabaseStatus>("init_database"),
+
+  getDatabaseStatus: () => callPublic<DatabaseStatus>("get_database_status"),
+
+  // ── Guarded commands (require a session token) ─────────────────────────────
   writeExportFile: (path: string, contents: number[]) =>
     call<void>("write_export_file", { path, contents }),
-  ping: () => call<string>("ping"),
-
-  initDatabase: () => call<DatabaseStatus>("init_database"),
-
-  getDatabaseStatus: () => call<DatabaseStatus>("get_database_status"),
 
   getBackupSettings: () => call<BackupSettings>("get_backup_settings"),
 
@@ -110,7 +169,7 @@ export const staffApi = {
 
   backupDatabaseNow: () => call<BackupRunResult>("backup_database_now"),
 
-  runAutoBackupIfDue: () => call<BackupRunResult>("run_auto_backup_if_due"),
+  // Phase C: run_auto_backup_if_due removed from IPC (internal lifecycle only).
 
   listHistorySnapshots: () => call<SnapshotInfo[]>("list_history_snapshots"),
 
@@ -350,6 +409,8 @@ export const staffApi = {
 
   listEmployeeGroupCounts: () => call<EmployeeGroupCounts>("list_employee_group_counts"),
 
+  // Phase C: list_local_accounts is now super_admin-guarded. The login screen
+  // uses the public listLoginAccountHints instead.
   listLocalAccounts: () => call<LocalAccountRecord[]>("list_local_accounts"),
 
   createLocalAccount: (payload: LocalAccountCreateInput) =>
@@ -373,21 +434,37 @@ export const staffApi = {
       },
     }),
 
-  loginLocalAccount: (payload: LocalAccountLoginInput) =>
-    call<LocalAccountRecord>("login_local_account", {
+  loginLocalAccount: async (payload: LocalAccountLoginInput) => {
+    // Login is session-exempt (it mints the session). Use callPublic.
+    const result = await callPublic<LocalAccountLoginResult>("login_local_account", {
       payload: {
         username: payload.username,
         password: payload.password,
       },
-    }),
+    })
+    // Persist the session in runtime memory only.
+    setSession({ sessionToken: result.sessionToken, expiresAt: result.expiresAt })
+    return result
+  },
+
+  logoutLocalAccount: async () => {
+    // Logout uses the current token (if any) and is idempotent.
+    const sessionToken = getSessionToken()
+    if (sessionToken) {
+      await callPublic<void>("logout_local_account", { sessionToken })
+    }
+    clearSession()
+  },
+
+  listLoginAccountHints: () =>
+    callPublic<LoginAccountHint[]>("list_login_account_hints"),
 
   changeLocalAccountPassword: (payload: LocalPasswordChangeInput) =>
     call<boolean>("change_local_account_password", {
       payload: {
-        accountId: payload.accountId,
+        id: payload.accountId,
         currentPassword: payload.currentPassword,
         newPassword: payload.newPassword,
-        newRecoveryCode: payload.newRecoveryCode ?? null,
       },
     }),
 
@@ -400,7 +477,7 @@ export const staffApi = {
     }),
 
   forgotLocalAccountPassword: (payload: LocalForgotPasswordInput) =>
-    call<boolean>("forgot_local_account_password", {
+    callPublic<boolean>("forgot_local_account_password", {
       payload: {
         username: payload.username,
         recoveryCode: payload.recoveryCode,
@@ -413,10 +490,8 @@ export const staffApi = {
       id,
     }),
 
-  setActiveLocalAccount: (id: number) =>
-    call<boolean>("set_active_local_account", {
-      id,
-    }),
+  // Phase C: set_active_local_account has been removed from IPC. Account
+  // switching is now explicit re-login via loginLocalAccount.
 
   listEmployeeColumns: () => call<EmployeeColumnDefinition[]>("list_employee_columns"),
 
