@@ -1633,3 +1633,21 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Confirmed the real XLSX workbook is created and usable, while CSV export remains functional; selection, visible-column ordering, hidden-column exclusion, Vietnamese text, empty cells, and unsaved draft overlays were preserved.
 - Final implementation includes the Tauri-native export fix, immediate menu close without cancelling the async export, and existing error feedback on failure.
 - Repository changes remain uncommitted at this checkpoint; no tag or release was modified.
+
+## End/Release Checkpoint - SEC-001 Authentication - 2026-08-04
+
+- SEC-001 backend Tauri command authorization completed and merged to `main` as squash commit `fff32be3200fcf6c7f368a744cd3cd93ea45fee8`.
+- 75 registered Tauri commands reconciled: 9 public, 22 authenticated, 36 admin, 8 super_admin.
+- Backend-owned memory-only session tokens (128-bit OsRng, idle 8h / absolute 12h, poison-recovery).
+- Actor identity derived exclusively from verified `SessionContext`; no frontend-supplied role/account trusted.
+- Session invalidation lifecycle: hooks on password change/reset, account deletion, role change, `reset_all_data`, database restore/move, and app shutdown — all fire after mutation success.
+- Forced password reset: `forcePasswordReset` blocks normal app access until password is changed.
+- Self-delete protection: `AUTH_CANNOT_DELETE_SELF` + last-super-admin rule + disabled Delete button.
+- Role-aware startup: standard users never invoke admin/super_admin commands during initialization.
+- Inline safe login errors: "Username or password is incorrect." in the Login card (not a global banner).
+- `set_active_local_account` and `run_auto_backup_if_due` removed from IPC.
+- Manual GUI validation passed: login, logout, restart, account switching, forced reset, standard/admin/super_admin behavior, self-delete blocked, Employee list loads, no global error for standard users.
+- Automated totals: frontend 130/130, Rust 154/154, total 284 tests.
+- Known non-blocking warnings: 1 ESLint (`useSettingsState` deps), 9 Cargo (test infrastructure + defense-in-depth).
+- Merge was performed as one local squash commit and pushed directly because GitHub CLI (`gh`) was not authenticated.
+- No SEC-002 (LAN authentication) work started.
