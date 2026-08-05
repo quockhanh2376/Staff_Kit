@@ -8,9 +8,7 @@ type BorrowLanQrCardProps = {
 }
 
 export function BorrowLanQrCard({ settings, isAdmin }: BorrowLanQrCardProps) {
-  const borrowUrl = settings.borrowLanUrlPreview.startsWith("http://")
-    ? settings.borrowLanUrlPreview
-    : ""
+  const borrowUrl = settings.borrowLanQrUrl
 
   return (
     <div className="mt-4 max-w-6xl rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-4">
@@ -91,6 +89,28 @@ export function BorrowLanQrCard({ settings, isAdmin }: BorrowLanQrCardProps) {
             >
               {settings.isSavingBorrowLanSettings ? "Saving..." : "Save Borrow LAN Settings"}
             </button>
+            <button
+              className="rounded-[8px] border border-[var(--primary)]/45 px-3 py-1.5 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--primary)]/10 disabled:opacity-50"
+              onClick={() => void settings.handleIssueBorrowLanToken()}
+              type="button"
+              disabled={!isAdmin || settings.isManagingLanToken || settings.isSavingBorrowLanSettings}
+            >
+              {settings.isManagingLanToken
+                ? "Working..."
+                : settings.lanTokenReady
+                  ? "Regenerate QR Token"
+                  : "Generate QR Token"}
+            </button>
+            {settings.lanTokenReady && (
+              <button
+                className="rounded-[8px] border border-rose-400/40 px-3 py-1.5 text-xs font-semibold text-rose-200 transition hover:bg-rose-400/10 disabled:opacity-50"
+                onClick={() => void settings.handleRevokeBorrowLanToken()}
+                type="button"
+                disabled={!isAdmin || settings.isManagingLanToken}
+              >
+                Revoke QR Token
+              </button>
+            )}
           </div>
           {settings.borrowLanMessage && (
             <div className="mt-2 rounded-[8px] border border-[var(--primary)]/35 bg-[var(--primary)]/8 px-3 py-2 text-xs text-[var(--text-primary)]">
@@ -126,7 +146,7 @@ export function BorrowLanQrCard({ settings, isAdmin }: BorrowLanQrCardProps) {
                     </div>
                   ) : (
                     <div className="px-3 py-12 text-center text-xs text-slate-500">
-                      Borrow URL is empty.
+                      Generate a QR token to activate the LAN flow.
                     </div>
                   )}
                 </div>

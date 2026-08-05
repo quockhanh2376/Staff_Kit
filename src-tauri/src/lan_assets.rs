@@ -277,6 +277,24 @@ pub(crate) fn borrow_page_html() -> &'static str {
       const btnReturn   = document.getElementById("btn-return");
       const searchBtn   = document.getElementById("search-btn");
 
+      // The QR token is carried in the fragment so it is never sent to the
+      // LAN server in the page request, access logs, or referrer headers.
+      const fragmentParams = new URLSearchParams(location.hash.slice(1));
+      const lanToken = fragmentParams.get("t") || "";
+      if (location.hash) {
+        history.replaceState(null, "", location.pathname + location.search);
+      }
+      const clientSessionId = crypto.randomUUID();
+
+      const authorizedFetch = (input, init = {}) => {
+        if (!lanToken) {
+          throw new Error("LAN access token is missing. Scan the current QR code again.");
+        }
+        const headers = new Headers(init.headers || {});
+        headers.set("Authorization", `Bearer ${lanToken}`);
+        return fetch(input, { ...init, headers });
+      };
+
       // Mode switch
       const MODES = {
         borrow: {
@@ -384,7 +402,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
       const doSearch = async () => {
         try {
           const q = encodeURIComponent(searchInput.value.trim());
-          const res = await fetch(`${MODES[mode].endpoint}?q=${q}`);
+          const res = await authorizedFetch(`${MODES[mode].endpoint}?q=${q}`);
           renderResults(await res.json());
         } catch (err) {
           setMessage(err instanceof Error ? err.message : "Asset search failed.");
@@ -401,7 +419,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
           const submittedFullName   = document.getElementById("full-name").value.trim();
           const assetCodes          = Array.from(selectedAssets.keys());
 
-          const res = await fetch("/api/borrow-requests", {
+          const res = await authorizedFetch("/api/borrow-requests", {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({
@@ -409,6 +427,8 @@ pub(crate) fn borrow_page_html() -> &'static str {
               submittedFullName,
               assetCodes,
               requestType: mode,
+              requestId: crypto.randomUUID(),
+              clientSessionId,
             }),
           });
 
@@ -418,7 +438,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
           selectedAssets.clear();
           renderSelected();
           const verb = mode === "return" ? "Return" : "Borrow";
-          setMessage(`${verb} request ${payload.requestKey} submitted. IT will review it shortly.`, true);
+          setMessage(`${verb} request ${payload.requestReference} submitted. ${payload.message}`, true);
         } catch (err) {
           setMessage(err instanceof Error ? err.message : "Submit failed.");
         }
@@ -469,5 +489,27 @@ mod tests {
             !html.contains("â"),
             "expected borrow page HTML comments and labels to avoid mojibake sequences"
         );
+    }
+
+    #[test]
+    fn borrow_page_uses_fragment_token_and_authorized_fetches() {
+        let html = borrow_page_html();
+
+        assert!(html.contains("location.hash"));
+        assert!(html.contains("history.replaceState"));
+        assert!(html.contains("fragmentParams.get(\"t\")"));
+        assert!(html.contains("Authorization"));
+        assert!(html.contains("Bearer ${lanToken}"));
+        assert!(!html.contains("?t="));
+        assert!(!html.contains("fetch(`${MODES[mode].endpoint}?q=${q}`)"));
+    }
+
+    #[test]
+    fn borrow_page_generates_session_and_submission_request_ids() {
+        let html = borrow_page_html();
+
+        assert!(html.contains("const clientSessionId = crypto.randomUUID()"));
+        assert!(html.contains("requestId: crypto.randomUUID()"));
+        assert!(html.contains("clientSessionId"));
     }
 }

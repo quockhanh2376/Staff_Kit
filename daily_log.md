@@ -1651,3 +1651,21 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Known non-blocking warnings: 1 ESLint (`useSettingsState` deps), 9 Cargo (test infrastructure + defense-in-depth).
 - Merge was performed as one local squash commit and pushed directly because GitHub CLI (`gh`) was not authenticated.
 - No SEC-002 (LAN authentication) work started.
+
+## Start — SEC-002 Phase B repair — 2026-08-05
+
+- Branch: `security/lan-borrow-authentication`; Phase A is already committed and pushed.
+- Objective: repair Phase B LAN token lifecycle, fragment-based QR/browser authentication, pre-body bearer authentication, request identity fields, minimal submit responses, and regression coverage.
+- Scope: `src-tauri/src/lan_auth.rs`, `src-tauri/src/lan_server.rs`, `src-tauri/src/lan_assets.rs`, `src-tauri/src/lib.rs`, focused tests, and this session log only.
+- Out of scope: schema migration, Phase C business rules, `main`, `origin/main`, commit, push, merge, rebase, and amend.
+- Planned validation: focused Rust/browser-contract tests followed by the complete requested frontend, Tauri, formatting, and diff gates.
+
+## End — SEC-002 Phase B repair — 2026-08-05
+
+- Result: repaired the end-to-end LAN flow without schema changes or Phase C business rules.
+- Root causes fixed: no issued token at startup/admin boundary, query-token page auth, unauthenticated browser fetches, missing request identity fields, body extraction before auth, full DB record returned to LAN clients, and raw backend submit errors.
+- Token lifecycle: admin-only issue/regenerate, revoke, and readiness IPC commands; token remains memory-only, is revoked on app close, and is never logged or returned in HTTP responses.
+- Browser flow: QR uses `#t=`, page removes the fragment from visible history, API calls use Bearer auth, client session identity is stable in page memory, and each submission gets a fresh request ID.
+- Validation: frontend unit tests 130/130; Rust tests 200/200; typecheck, lint, build, `check:quality`, `check:tauri`, edition-aware `rustfmt --check`, and `git diff --check` passed.
+- Known warnings: one pre-existing React hook dependency warning, existing Vite chunk/dynamic-import warnings, and existing Rust dead-code warnings.
+- Scope: no Phase C schema or business-rule files changed; no commit, push, merge, rebase, amend, or main/origin-main modification.

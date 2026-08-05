@@ -47,6 +47,10 @@ export type BorrowLanSettingsUpdateInput = {
   port: number
 }
 
+export type BorrowLanTokenStatus = {
+  ready: boolean
+}
+
 /** Input payload for creating or upserting a single asset. */
 export type AssetSeedItemInput = {
   assetCode: string

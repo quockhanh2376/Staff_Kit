@@ -67,6 +67,9 @@ export function useSettingsState({
     const [isDetectingBorrowLanHost, setDetectingBorrowLanHost] = useState(false)
     const [isSavingBorrowLanSettings, setSavingBorrowLanSettings] = useState(false)
     const [lanServerAlive, setLanServerAlive] = useState<boolean | null>(null)
+    const [lanToken, setLanToken] = useState<string | null>(null)
+    const [lanTokenReady, setLanTokenReady] = useState(false)
+    const [isManagingLanToken, setManagingLanToken] = useState(false)
     const borrowLanHostTouchedRef = useRef(false)
 
     // Asset seed utility
@@ -152,10 +155,11 @@ export function useSettingsState({
 
         void (async () => {
             try {
-                const [backupSettings, customPathValue, lanSettings] = await Promise.all([
+                const [backupSettings, customPathValue, lanSettings, tokenStatus] = await Promise.all([
                     staffApi.getBackupSettings(),
                     staffApi.getDbCustomPath(),
                     staffApi.getBorrowLanSettings(),
+                    staffApi.getBorrowLanTokenStatus(),
                 ])
                 if (!disposed) {
                     setBackupSettings(backupSettings)
@@ -166,6 +170,7 @@ export function useSettingsState({
                     setBorrowLanPortInput(String(lanSettings.port))
                     setBorrowLanDetectionNote("")
                     borrowLanHostTouchedRef.current = false
+                    setLanTokenReady(tokenStatus?.ready ?? false)
                     setDbCustomPathInput(customPathValue ?? "")
                 }
 
@@ -405,6 +410,35 @@ export function useSettingsState({
         }
     }
 
+    const handleIssueBorrowLanToken = async () => {
+        try {
+            setManagingLanToken(true)
+            setBorrowLanMessage("")
+            const token = await staffApi.issueBorrowLanToken()
+            setLanToken(token)
+            setLanTokenReady(true)
+            setBorrowLanMessage("LAN QR token generated. Regenerating it invalidates the previous QR.")
+        } catch (error) {
+            setBorrowLanMessage(getUserErrorMessage(error))
+        } finally {
+            setManagingLanToken(false)
+        }
+    }
+
+    const handleRevokeBorrowLanToken = async () => {
+        try {
+            setManagingLanToken(true)
+            await staffApi.revokeBorrowLanToken()
+            setLanToken(null)
+            setLanTokenReady(false)
+            setBorrowLanMessage("LAN QR token revoked. Existing QR codes no longer work.")
+        } catch (error) {
+            setBorrowLanMessage(getUserErrorMessage(error))
+        } finally {
+            setManagingLanToken(false)
+        }
+    }
+
     const handleBorrowLanHostInputChange = useCallback((nextValue: string) => {
         borrowLanHostTouchedRef.current = true
         setBorrowLanHostInput(nextValue)
@@ -423,6 +457,11 @@ export function useSettingsState({
         () => buildBorrowLanUrlPreview(borrowLanHostInput, borrowLanPortInput),
         [borrowLanHostInput, borrowLanPortInput],
     )
+
+    const borrowLanQrUrl = useMemo(() => {
+        if (!lanToken || !borrowLanUrlPreview.startsWith("http://")) return ""
+        return `${borrowLanUrlPreview}#t=${lanToken}`
+    }, [borrowLanUrlPreview, lanToken])
 
     useEffect(() => {
         const port = borrowLanSettings?.port
@@ -507,6 +546,7 @@ export function useSettingsState({
         borrowLanPortInput,
         setBorrowLanPortInput,
         borrowLanUrlPreview,
+        borrowLanQrUrl,
         borrowLanMessage,
         borrowLanDetectionNote,
         isDetectingBorrowLanHost,
@@ -514,6 +554,10 @@ export function useSettingsState({
         handleRefreshBorrowLanHost,
         handleSaveBorrowLanSettings,
         lanServerAlive,
+        lanTokenReady,
+        isManagingLanToken,
+        handleIssueBorrowLanToken,
+        handleRevokeBorrowLanToken,
         // Asset seed
         assetSeedText,
         setAssetSeedText,

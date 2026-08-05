@@ -57,13 +57,13 @@ pub struct LanTokenStore {
 #[derive(Debug)]
 pub struct LanTokenContext;
 
-/// Rate-limit key: endpoint group identifier.
+/// Rate-limit key: composite of peer IP and endpoint group.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct RateKey {
-    pub endpoint: &'static str,
+    pub key: String,
 }
 
-/// Sliding-window counter for one endpoint group.
+/// Sliding-window counter for one rate-limit key.
 struct RateWindow {
     entries: Vec<Instant>,
 }
@@ -140,6 +140,14 @@ impl LanTokenStore {
         if let Ok(mut guard) = self.active_token.lock() {
             *guard = None;
         }
+    }
+
+    /// Return whether an active token is currently issued.
+    pub fn is_ready(&self) -> bool {
+        self.active_token
+            .lock()
+            .map(|guard| guard.is_some())
+            .unwrap_or(false)
     }
 
     /// Verify a token string against the active token.
@@ -222,25 +230,23 @@ impl LanTokenStore {
         }
     }
 
-    /// Check rate limit for an endpoint group.
+    /// Check rate limit for a composite key (peer IP + endpoint group).
     ///
     /// Returns `Ok(())` if under the limit, `RateLimited` if exceeded.
-    /// Uses a compact keyed sliding-window: one `RateWindow` per endpoint
-    /// group, holding `Instant` stamps pruned to the 60-second window.
-    pub fn check_rate_limit(
-        &self,
-        endpoint: &'static str,
-        max_per_window: u32,
-    ) -> Result<(), LanAuthError> {
+    /// Uses a compact keyed sliding-window: one `RateWindow` per key,
+    /// holding `Instant` stamps pruned to the 60-second window.
+    pub fn check_rate_limit(&self, key: &str, max_per_window: u32) -> Result<(), LanAuthError> {
         let now = Instant::now();
-        let key = RateKey { endpoint };
+        let rk = RateKey {
+            key: key.to_string(),
+        };
         let mut counters = self
             .rate_counters
             .lock()
             .map_err(|_| LanAuthError::Invalid)?;
 
         // Get or create the window for this endpoint.
-        let window = counters.entry(key.clone()).or_insert_with(|| RateWindow {
+        let window = counters.entry(rk).or_insert_with(|| RateWindow {
             entries: Vec::new(),
         });
 
@@ -560,6 +566,17 @@ mod tests {
     }
 
     #[test]
+    fn readiness_tracks_issue_and_revoke_without_exposing_token() {
+        let store = LanTokenStore::new();
+        assert!(!store.is_ready());
+        let token = store.issue();
+        assert!(store.is_ready());
+        assert!(store.verify(&token).is_ok());
+        store.revoke();
+        assert!(!store.is_ready());
+    }
+
+    #[test]
     fn verify_on_empty_store_returns_invalid() {
         let store = LanTokenStore::new();
         let fake = encode_url_safe_no_pad(&[0u8; TOKEN_BYTES]);
@@ -632,7 +649,7 @@ mod tests {
     fn rate_limiter_allows_under_limit() {
         let store = LanTokenStore::new();
         for _ in 0..5 {
-            assert!(store.check_rate_limit("test-endpoint", 5).is_ok());
+            assert!(store.check_rate_limit("127.0.0.1:test-endpoint", 5).is_ok());
         }
     }
 
@@ -640,10 +657,14 @@ mod tests {
     fn rate_limiter_rejects_over_limit() {
         let store = LanTokenStore::new();
         for _ in 0..3 {
-            store.check_rate_limit("test-endpoint", 3).unwrap();
+            store
+                .check_rate_limit("127.0.0.1:test-endpoint", 3)
+                .unwrap();
         }
         assert_eq!(
-            store.check_rate_limit("test-endpoint", 3).unwrap_err(),
+            store
+                .check_rate_limit("127.0.0.1:test-endpoint", 3)
+                .unwrap_err(),
             LanAuthError::RateLimited
         );
     }
@@ -652,10 +673,10 @@ mod tests {
     fn rate_limiter_independent_per_endpoint() {
         let store = LanTokenStore::new();
         for _ in 0..3 {
-            store.check_rate_limit("search", 3).unwrap();
+            store.check_rate_limit("127.0.0.1:search", 3).unwrap();
         }
         // Different endpoint should still be allowed.
-        assert!(store.check_rate_limit("submit", 3).is_ok());
+        assert!(store.check_rate_limit("127.0.0.1:submit", 3).is_ok());
     }
 
     // ── Concurrent replay atomicity ──────────────────────────────────────────
