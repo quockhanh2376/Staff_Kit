@@ -1,6 +1,7 @@
 mod auth_session;
 mod db;
 mod lan_assets;
+mod lan_auth;
 mod lan_server;
 use tauri::Manager;
 
