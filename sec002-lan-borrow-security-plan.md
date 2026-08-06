@@ -110,13 +110,17 @@ Instead, use a dedicated **`asset_pending_claims`** reservation table:
 ```sql
 CREATE TABLE IF NOT EXISTS asset_pending_claims (
   asset_id INTEGER PRIMARY KEY REFERENCES assets(id) ON UPDATE CASCADE ON DELETE RESTRICT,
-  borrow_request_id INTEGER NOT NULL UNIQUE REFERENCES borrow_requests(id) ON DELETE CASCADE,
+  borrow_request_id INTEGER NOT NULL REFERENCES borrow_requests(id) ON DELETE CASCADE,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE INDEX IF NOT EXISTS idx_asset_pending_claims_request_id
+  ON asset_pending_claims(borrow_request_id);
 ```
 
 **Behavior:**
 - A Pending Borrow atomically inserts claims for **every** asset in the request inside a `BEGIN IMMEDIATE` transaction.
+- `borrow_request_id` is intentionally non-unique because one request may contain multiple assets; its normal index supports cleanup and lookups.
 - `asset_id PRIMARY KEY` ensures only one pending claim per asset — a duplicate insert fails with a constraint violation.
 - If **any** asset claim insert fails, the **entire** multi-asset request rolls back (transactional atomicity).
 - Claims are **released** on reject/cancel (delete rows).

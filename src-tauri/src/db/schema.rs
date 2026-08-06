@@ -368,14 +368,18 @@ CREATE TABLE IF NOT EXISTS employee_asset_seed_snapshot_rows (
 CREATE TABLE IF NOT EXISTS borrow_requests (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   request_key TEXT NOT NULL UNIQUE,
-  employee_id_fk INTEGER NOT NULL REFERENCES employees(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+  employee_id_fk INTEGER REFERENCES employees(id) ON UPDATE CASCADE ON DELETE RESTRICT,
   submitted_employee_id TEXT NOT NULL,
   submitted_full_name TEXT NOT NULL,
+  manual_entry INTEGER NOT NULL DEFAULT 0,
+  manual_employee_id TEXT,
+  manual_employee_name TEXT,
   status TEXT NOT NULL DEFAULT 'pending',
   request_type TEXT NOT NULL DEFAULT 'borrow',
   submit_source_ip TEXT,
   decision_note TEXT,
   decided_by_account_id INTEGER REFERENCES app_local_accounts(id) ON UPDATE CASCADE ON DELETE SET NULL,
+  returned_by_employee_id_fk INTEGER REFERENCES employees(id) ON UPDATE CASCADE ON DELETE RESTRICT,
   submitted_at TEXT NOT NULL DEFAULT (datetime('now')),
   decided_at TEXT
 );
@@ -395,8 +399,15 @@ CREATE TABLE IF NOT EXISTS asset_loans (
   employee_id_fk INTEGER NOT NULL REFERENCES employees(id) ON UPDATE CASCADE ON DELETE RESTRICT,
   borrow_request_id INTEGER NOT NULL REFERENCES borrow_requests(id) ON UPDATE CASCADE ON DELETE RESTRICT,
   approved_by_account_id INTEGER REFERENCES app_local_accounts(id) ON UPDATE CASCADE ON DELETE SET NULL,
+  returned_by_employee_id_fk INTEGER REFERENCES employees(id) ON UPDATE CASCADE ON DELETE RESTRICT,
   borrowed_at TEXT NOT NULL DEFAULT (datetime('now')),
   returned_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS asset_pending_claims (
+  asset_id INTEGER PRIMARY KEY REFERENCES assets(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+  borrow_request_id INTEGER NOT NULL REFERENCES borrow_requests(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS audit_logs (
@@ -438,6 +449,8 @@ CREATE INDEX IF NOT EXISTS idx_borrow_requests_status_submitted_at
   ON borrow_requests(status, submitted_at);
 CREATE INDEX IF NOT EXISTS idx_borrow_request_items_request_id
   ON borrow_request_items(borrow_request_id);
+CREATE INDEX IF NOT EXISTS idx_asset_pending_claims_request_id
+  ON asset_pending_claims(borrow_request_id);
 CREATE INDEX IF NOT EXISTS idx_asset_loans_employee_active
   ON asset_loans(employee_id_fk, returned_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_loans_asset_active_unique

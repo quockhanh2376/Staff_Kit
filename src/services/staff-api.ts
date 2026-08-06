@@ -383,6 +383,9 @@ export const staffApi = {
       },
     }),
 
+  cancelBorrowRequest: (requestId: number) =>
+    call<BorrowRequestRecord>("cancel_borrow_request", { requestId }),
+
   listEmployees: (filters: EmployeeQueryInput) =>
     call<EmployeeListResponse>("list_employees", {
       filters,

@@ -245,7 +245,12 @@ pub(crate) fn query_all_employees_for_filters(
 
 pub fn list_employee_group_counts(app: &AppHandle) -> Result<EmployeeGroupCounts, String> {
     let conn = open_runtime_connection(app)?;
+    list_employee_group_counts_conn(&conn)
+}
 
+pub(crate) fn list_employee_group_counts_conn(
+    conn: &Connection,
+) -> Result<EmployeeGroupCounts, String> {
     let count_group = |group: &str| -> Result<i64, String> {
         conn.query_row(
             r#"
@@ -1601,6 +1606,7 @@ mod tests {
             "query path should still include laptop aggregation when lc is referenced",
         );
     }
+
     #[test]
     fn query_employees_excludes_monitor_loans_from_computer_name() {
         let conn = open_test_connection();

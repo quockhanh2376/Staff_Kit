@@ -71,7 +71,7 @@ struct RateWindow {
 /// Error returned by LAN auth operations.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LanAuthError {
-    /// No token in the Authorization header or `?t=`/`#t=` parameter.
+    /// No token in the Authorization header.
     Missing,
     /// Token string is malformed (wrong length, invalid base64url).
     Malformed,

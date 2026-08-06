@@ -1,5 +1,9 @@
 # Daily Log - 2026-04-20
 
+## 2026-08-06 — SEC-002 Phase C blocker fixes (Start)
+
+- Implement cancellation actor attribution, atomic Phase C migration rollback, and corrected pending-claim uniqueness documentation.
+
 ## Objective
 Polish the `Asset Dashboard` serialized UI so the table header, ID presentation, holder layout, and category overview cards align more closely with the approved compact mock.
 
@@ -1669,3 +1673,35 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Validation: frontend unit tests 130/130; Rust tests 200/200; typecheck, lint, build, `check:quality`, `check:tauri`, edition-aware `rustfmt --check`, and `git diff --check` passed.
 - Known warnings: one pre-existing React hook dependency warning, existing Vite chunk/dynamic-import warnings, and existing Rust dead-code warnings.
 - Scope: no Phase C schema or business-rule files changed; no commit, push, merge, rebase, amend, or main/origin-main modification.
+
+## Start — SEC-002 Phase C — 2026-08-05
+
+- Branch: `security/lan-borrow-authentication`; starting from Phase B checkpoint `74aef2fb199b4d285705f73b4caabaafd7596141`.
+- Objective: implement only Phase C schema migration, manual borrowers, authoritative employee/asset validation, atomic pending claims, and focused regression tests.
+- Out of scope: Phase D, commit, push, merge, rebase, amend, and any modification to `main` or `origin/main`.
+
+## End — SEC-002 Phase C — 2026-08-05
+
+- Result: implemented non-destructive Phase C schema extensions, authoritative employee rules, lifecycle/loan validation, pending asset claims, immediate transactions, return attribution, and replay-after-business-validation ordering.
+- Validation: frontend unit tests 130/130; Rust/Tauri tests 211/211; typecheck, lint, build, `check:quality`, `check:tauri`, rustfmt checks, and `git diff --check` passed.
+- Warnings: existing React hook dependency warning, existing Vite dynamic-import/chunk-size warnings, and existing Rust dead-code warnings.
+- Scope: no Phase D work, no commit/push, no merge/rebase/amend, no `main`/`origin/main` changes; incidental `db/column.rs` formatting was reverted.
+
+## Start — SEC-002 Phase C correction — 2026-08-06
+
+- Objective: remove the sentinel design, migrate populated borrow requests to a nullable employee foreign key, add cancellation and regression coverage, and preserve Phase B controls.
+- Out of scope: Phase D, commit, push, merge, rebase, amend, and any modification to `main` or `origin/main`.
+
+## End — SEC-002 Phase C correction — 2026-08-06
+
+- Result: removed the sentinel design, added transactional nullable-FK migration coverage against populated legacy data, implemented atomic pending-request cancellation, and added rollback, concurrency, idempotency, and manual-return tests.
+- Validation: frontend unit tests 130/130; Rust/Tauri tests 215/215; typecheck, lint, build, `check:quality`, `check:tauri`, changed-file rustfmt, and `git diff --check` passed.
+- Warnings: existing React hook dependency warning, existing Vite dynamic-import/chunk-size warnings, and existing Rust dead-code warnings.
+- Scope: no Phase D work, no commit/push, no merge/rebase/amend, and no `main`/`origin/main` changes.
+
+## End — SEC-002 Phase C blocker fixes — 2026-08-06
+
+- Result: cancellation now records the authenticated admin actor; Phase C migration is atomic with pragma restoration and rollback coverage; pending-claim uniqueness documentation matches multi-asset behavior.
+- Validation: focused Phase C tests 14/14; full Rust/Tauri tests 216/216; frontend unit tests 130/130; typecheck, lint, build, quality, Tauri check, targeted rustfmt, and `git diff --check` passed.
+- Warnings: pre-existing React hook dependency, Vite dynamic-import/chunk-size, and Rust dead-code warnings.
+- Scope: no Phase D, commit, push, dependency/generated/database/secret changes, or `main`/`origin/main` changes.

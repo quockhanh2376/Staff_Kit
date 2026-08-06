@@ -372,7 +372,6 @@ export type BorrowRequestSubmitInput = {
   submittedEmployeeId: string
   submittedFullName: string
   assetCodes: string[]
-  submitSourceIp?: string | null
 }
 
 /** A pending or processed borrow/return request (Core Rule: Request Pending → Approve). */

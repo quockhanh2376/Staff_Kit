@@ -71,19 +71,19 @@ struct AssetSearchQuery {
 }
 
 /// LAN submit input — carries requestId/clientSessionId for replay protection
-/// alongside the borrow request fields. `submit_source_ip` is NOT accepted from
-/// the client; the server derives it from the peer socket.
+/// alongside the borrow request fields. Source IP is never accepted from the
+/// client and is derived only from the peer socket for rate limiting.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct LanSubmitInput {
     submitted_employee_id: String,
     submitted_full_name: String,
     asset_codes: Vec<String>,
-    request_type: Option<String>,
+    request_type: String,
     /// Required: unique per-submission ID for replay protection.
     request_id: String,
-    /// Optional: per-browser-session ID for audit traceability.
-    client_session_id: Option<String>,
+    /// Required: per-browser-session ID for audit traceability.
+    client_session_id: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -376,34 +376,42 @@ async fn submit_borrow_request(
     if request_id.len() > 100 {
         return Err(bad_request_error("requestId is too long (max 100)"));
     }
-    // clientSessionId is optional but if present must be bounded.
-    if let Some(ref sid) = payload.client_session_id {
-        if sid.len() > 100 {
-            return Err(bad_request_error("clientSessionId is too long (max 100)"));
-        }
+    if payload.client_session_id.trim().is_empty() {
+        return Err(bad_request_error("clientSessionId is required"));
+    }
+    if payload.client_session_id.len() > 100 {
+        return Err(bad_request_error("clientSessionId is too long (max 100)"));
+    }
+    if payload.request_type != "borrow" && payload.request_type != "return" {
+        return Err(bad_request_error("requestType must be borrow or return"));
     }
 
-    // Replay check — AFTER input validation, BEFORE DB mutation.
-    //    A validation failure above does NOT consume the requestId.
+    // Build the backend DTO. The DB layer derives employee identity and does
+    // not accept a client-supplied source IP.
+    let backend_payload = db::BorrowRequestSubmitInput {
+        submitted_employee_id: payload.submitted_employee_id,
+        submitted_full_name: payload.submitted_full_name,
+        asset_codes: payload.asset_codes,
+        request_type: Some(payload.request_type),
+    };
+
+    // Perform authoritative employee and asset validation before consuming the
+    // replay ID. The final submission revalidates under BEGIN IMMEDIATE.
+    let mut conn = (state.db_factory)().map_err(|_| internal_error())?;
+    db::borrow::validate_borrow_request_conn(&mut conn, backend_payload.clone()).map_err(|_| {
+        bad_request_error(
+            "The request could not be submitted. Please check the employee and asset details.",
+        )
+    })?;
+
+    // Replay check — after syntax and business validation, before DB mutation.
+    // A validation failure does not consume the requestId.
     state
         .token_store
         .check_and_record_request(request_id)
         .map_err(|e| auth_error(&e))?;
 
-    // Derive authoritative peer IP (ignore client-supplied submitSourceIp).
-    let peer_ip = peer_addr.ip().to_string();
-
-    // Build the backend DTO with authoritative peer IP.
-    let backend_payload = db::BorrowRequestSubmitInput {
-        submitted_employee_id: payload.submitted_employee_id,
-        submitted_full_name: payload.submitted_full_name,
-        asset_codes: payload.asset_codes,
-        submit_source_ip: Some(peer_ip),
-        request_type: payload.request_type,
-    };
-
     // Execute DB mutation. Never return raw backend error text to the LAN.
-    let mut conn = (state.db_factory)().map_err(|_| internal_error())?;
     match db::borrow::submit_borrow_request_conn(&mut conn, backend_payload) {
         Ok(record) => Ok(Json(LanSubmitResponse {
             request_reference: record.request_key,
@@ -795,6 +803,7 @@ mod tests {
                         "submittedEmployeeId": "EE1001",
                         "submittedFullName": "Nguyen Van A",
                         "assetCodes": ["ASSET-001"],
+                        "requestType": "borrow",
                         "requestId": "request-valid-1",
                         "clientSessionId": "client-session-1"
                     })
@@ -818,7 +827,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn submit_invalid_employee_returns_400() {
+    async fn submit_unknown_employee_uses_manual_entry() {
         let (router, _h, token) = build_router_for_tests_with_token().await;
         let response = send(
             router,
@@ -832,6 +841,8 @@ mod tests {
                         "submittedEmployeeId": "UNKNOWN",
                         "submittedFullName": "Ghost",
                         "assetCodes": ["ASSET-001"],
+                        "requestType": "borrow",
+                        "clientSessionId": "client-session-invalid-employee",
                         "requestId": "request-invalid-employee"
                     })
                     .to_string(),
@@ -839,7 +850,62 @@ mod tests {
                 .unwrap(),
         )
         .await;
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), LAN_BODY_LIMIT)
+            .await
+            .unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload["status"], "pending");
+    }
+
+    #[tokio::test]
+    async fn replay_id_is_not_consumed_by_business_validation_failure() {
+        let (router, _h, token) = build_router_for_tests_with_token().await;
+        let invalid = send(
+            router.clone(),
+            Request::builder()
+                .method("POST")
+                .uri("/api/borrow-requests")
+                .header("content-type", "application/json")
+                .header("authorization", bearer(&token))
+                .body(Body::from(
+                    json!({
+                        "submittedEmployeeId": "EE1001",
+                        "submittedFullName": "Ignored",
+                        "assetCodes": ["DOES-NOT-EXIST"],
+                        "requestType": "borrow",
+                        "clientSessionId": "client-session-retry",
+                        "requestId": "request-retry-after-validation"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+
+        let valid = send(
+            router,
+            Request::builder()
+                .method("POST")
+                .uri("/api/borrow-requests")
+                .header("content-type", "application/json")
+                .header("authorization", bearer(&token))
+                .body(Body::from(
+                    json!({
+                        "submittedEmployeeId": "EE1001",
+                        "submittedFullName": "Ignored",
+                        "assetCodes": ["ASSET-001"],
+                        "requestType": "borrow",
+                        "clientSessionId": "client-session-retry",
+                        "requestId": "request-retry-after-validation"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(valid.status(), StatusCode::OK);
     }
 
     #[tokio::test]
@@ -857,6 +923,8 @@ mod tests {
                         "submittedEmployeeId": "",
                         "submittedFullName": "Ghost",
                         "assetCodes": ["ASSET-001"],
+                        "requestType": "borrow",
+                        "clientSessionId": "client-session-empty-employee",
                         "requestId": "request-empty-employee"
                     })
                     .to_string(),
@@ -957,6 +1025,8 @@ mod tests {
                                 "submittedEmployeeId": "BAD",
                                 "submittedFullName": "Test",
                                 "assetCodes": ["NONEXIST"],
+                                "requestType": "borrow",
+                                "clientSessionId": "client-session-rate-search",
                                 "requestId": format!("rate-limit-{attempt}")
                             })
                             .to_string(),
@@ -980,6 +1050,8 @@ mod tests {
                             "submittedEmployeeId": "EE1001",
                             "submittedFullName": "Test",
                             "assetCodes": ["ASSET-001"],
+                            "requestType": "borrow",
+                            "clientSessionId": "client-session-rate-submit",
                             "requestId": "rate-limit-final"
                         })
                         .to_string(),

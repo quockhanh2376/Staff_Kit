@@ -907,6 +907,17 @@ fn reject_borrow_request(
     db::reject_borrow_request_with_actor(&app, ctx, payload)
 }
 
+#[tauri::command]
+fn cancel_borrow_request(
+    app: tauri::AppHandle,
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    session_token: String,
+    request_id: i64,
+) -> Result<db::BorrowRequestRecord, String> {
+    let ctx = auth_session::require_admin(&session_store, &session_token)?;
+    db::cancel_borrow_request_with_actor(&app, ctx, request_id)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let lan_token_store = std::sync::Arc::new(lan_auth::LanTokenStore::new());
@@ -982,6 +993,7 @@ pub fn run() {
             get_borrow_request_detail,
             approve_borrow_request,
             reject_borrow_request,
+            cancel_borrow_request,
             list_employees,
             search_employees,
             preview_employee_asset_seed,
@@ -1094,6 +1106,7 @@ mod tests {
         "get_borrow_request_detail",
         "approve_borrow_request",
         "reject_borrow_request",
+        "cancel_borrow_request",
         "preview_employee_asset_seed",
         "import_employee_asset_seed",
         "upsert_employee_column",

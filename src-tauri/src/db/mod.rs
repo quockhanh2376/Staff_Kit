@@ -301,6 +301,7 @@ pub(crate) fn apply_migrations(conn: &Connection) -> Result<(), String> {
     ensure_local_account_columns(conn)?;
     ensure_asset_model_tables(conn)?;
     ensure_borrow_request_columns(conn)?;
+    ensure_phase_c_borrow_schema(conn)?;
     auth::ensure_local_accounts_seed(conn)?;
     normalize_staff_group_values(conn)?;
     normalize_legacy_dynamic_field_aliases(conn)?;
@@ -852,6 +853,173 @@ fn ensure_borrow_request_columns(conn: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+fn ensure_phase_c_borrow_schema(conn: &Connection) -> Result<(), String> {
+    ensure_phase_c_borrow_schema_inner(conn, false)
+}
+
+fn ensure_phase_c_borrow_schema_inner(
+    conn: &Connection,
+    fail_after_additions: bool,
+) -> Result<(), String> {
+    let foreign_keys: i64 = conn
+        .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
+        .map_err(|err| format!("failed to read sqlite foreign_keys pragma: {err}"))?;
+    let legacy_alter_table: i64 = conn
+        .query_row("PRAGMA legacy_alter_table", [], |row| row.get(0))
+        .map_err(|err| format!("failed to read sqlite legacy_alter_table pragma: {err}"))?;
+    let restore = || -> Result<(), String> {
+        conn.execute_batch(&format!(
+            "PRAGMA legacy_alter_table = {legacy_alter_table}; PRAGMA foreign_keys = {foreign_keys};"
+        ))
+        .map_err(|err| format!("failed to restore sqlite migration pragmas: {err}"))
+    };
+
+    if let Err(err) = conn.execute_batch(
+        "PRAGMA foreign_keys = OFF; PRAGMA legacy_alter_table = ON; BEGIN IMMEDIATE;",
+    ) {
+        let restore_result = restore();
+        return match restore_result {
+            Ok(()) => Err(format!("failed to start atomic Phase C migration: {err}")),
+            Err(restore_err) => Err(format!(
+                "failed to start atomic Phase C migration: {err}; {restore_err}"
+            )),
+        };
+    }
+
+    let result = (|| -> Result<(), String> {
+        let existing = conn
+            .prepare("PRAGMA table_info(borrow_requests)")
+            .map_err(|err| format!("failed to inspect Phase C borrow columns: {err}"))?
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(1)?, row.get::<_, i64>(3)? != 0))
+            })
+            .map_err(|err| format!("failed to read Phase C borrow columns: {err}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|err| format!("failed to collect Phase C borrow columns: {err}"))?;
+        let additions = [
+            ("manual_entry", "ALTER TABLE borrow_requests ADD COLUMN manual_entry INTEGER NOT NULL DEFAULT 0"),
+            ("manual_employee_id", "ALTER TABLE borrow_requests ADD COLUMN manual_employee_id TEXT"),
+            ("manual_employee_name", "ALTER TABLE borrow_requests ADD COLUMN manual_employee_name TEXT"),
+            ("returned_by_employee_id_fk", "ALTER TABLE borrow_requests ADD COLUMN returned_by_employee_id_fk INTEGER REFERENCES employees(id) ON UPDATE CASCADE ON DELETE RESTRICT"),
+        ];
+        for (column, sql) in additions {
+            if !existing.iter().any(|(name, _)| name == column) {
+                conn.execute(sql, [])
+                    .map_err(|err| format!("failed to add borrow_requests.{column}: {err}"))?;
+            }
+        }
+        let loan_columns = conn
+            .prepare("PRAGMA table_info(asset_loans)")
+            .map_err(|err| format!("failed to inspect Phase C loan columns: {err}"))?
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|err| format!("failed to read Phase C loan columns: {err}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|err| format!("failed to collect Phase C loan columns: {err}"))?;
+        if !loan_columns
+            .iter()
+            .any(|name| name == "returned_by_employee_id_fk")
+        {
+            conn.execute(
+                "ALTER TABLE asset_loans ADD COLUMN returned_by_employee_id_fk INTEGER REFERENCES employees(id) ON UPDATE CASCADE ON DELETE RESTRICT",
+                [],
+            )
+            .map_err(|err| format!("failed to add asset_loans.returned_by_employee_id_fk: {err}"))?;
+        }
+        if fail_after_additions {
+            return Err("injected Phase C migration failure".to_string());
+        }
+
+        if existing
+            .iter()
+            .any(|(name, not_null)| name == "employee_id_fk" && *not_null)
+        {
+            let indexes = conn
+                .prepare("SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'borrow_requests' AND sql IS NOT NULL ORDER BY name")
+                .map_err(|err| format!("failed to inspect borrow request indexes: {err}"))?
+                .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+                .map_err(|err| format!("failed to read borrow request indexes: {err}"))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|err| format!("failed to collect borrow request indexes: {err}"))?;
+            for (name, _) in &indexes {
+                conn.execute_batch(&format!("DROP INDEX {}", quote_sql_identifier(name)))
+                    .map_err(|err| {
+                        format!("failed to preserve borrow request index {name}: {err}")
+                    })?;
+            }
+            conn.execute_batch(
+                r#"
+                ALTER TABLE borrow_requests RENAME TO borrow_requests_phase_c_legacy;
+                CREATE TABLE borrow_requests_phase_c_new (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  request_key TEXT NOT NULL UNIQUE,
+                  employee_id_fk INTEGER REFERENCES employees(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+                  submitted_employee_id TEXT NOT NULL,
+                  submitted_full_name TEXT NOT NULL,
+                  manual_entry INTEGER NOT NULL DEFAULT 0,
+                  manual_employee_id TEXT,
+                  manual_employee_name TEXT,
+                  status TEXT NOT NULL DEFAULT 'pending',
+                  request_type TEXT NOT NULL DEFAULT 'borrow',
+                  submit_source_ip TEXT,
+                  decision_note TEXT,
+                  decided_by_account_id INTEGER REFERENCES app_local_accounts(id) ON UPDATE CASCADE ON DELETE SET NULL,
+                  returned_by_employee_id_fk INTEGER REFERENCES employees(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+                  submitted_at TEXT NOT NULL DEFAULT (datetime('now')),
+                  decided_at TEXT
+                );
+                INSERT INTO borrow_requests_phase_c_new(
+                  id, request_key, employee_id_fk, submitted_employee_id, submitted_full_name,
+                  manual_entry, manual_employee_id, manual_employee_name, status, request_type,
+                  submit_source_ip, decision_note, decided_by_account_id, returned_by_employee_id_fk,
+                  submitted_at, decided_at
+                )
+                SELECT id, request_key, employee_id_fk, submitted_employee_id, submitted_full_name,
+                  manual_entry, manual_employee_id, manual_employee_name, status, request_type,
+                  submit_source_ip, decision_note, decided_by_account_id, returned_by_employee_id_fk,
+                  submitted_at, decided_at
+                FROM borrow_requests_phase_c_legacy;
+                DROP TABLE borrow_requests_phase_c_legacy;
+                ALTER TABLE borrow_requests_phase_c_new RENAME TO borrow_requests;
+                "#,
+            )
+            .map_err(|err| format!("failed to rebuild borrow_requests: {err}"))?;
+            for (_, sql) in indexes {
+                conn.execute_batch(&sql)
+                    .map_err(|err| format!("failed to restore borrow request index: {err}"))?;
+            }
+        }
+        conn.execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS asset_pending_claims (
+              asset_id INTEGER PRIMARY KEY REFERENCES assets(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+              borrow_request_id INTEGER NOT NULL REFERENCES borrow_requests(id) ON DELETE CASCADE,
+              created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_asset_pending_claims_request_id
+              ON asset_pending_claims(borrow_request_id);
+            "#,
+        )
+        .map_err(|err| format!("failed to ensure pending asset claims: {err}"))?;
+        conn.execute_batch("COMMIT;")
+            .map_err(|err| format!("failed to commit atomic Phase C migration: {err}"))
+    })();
+
+    if result.is_err() {
+        let _ = conn.execute_batch("ROLLBACK;");
+    }
+    let restore_result = restore();
+    match (result, restore_result) {
+        (Err(err), Err(restore_err)) => Err(format!("{err}; {restore_err}")),
+        (Err(err), Ok(())) => Err(err),
+        (Ok(()), Err(err)) => Err(err),
+        (Ok(()), Ok(())) => Ok(()),
+    }
+}
+
+fn quote_sql_identifier(value: &str) -> String {
+    format!("\"{}\"", value.replace('"', "\"\""))
+}
+
 fn normalize_staff_group_values(conn: &Connection) -> Result<(), String> {
     conn.execute(
         "UPDATE employees SET staff_group = ? WHERE staff_group = ?",
@@ -1365,6 +1533,7 @@ mod tests {
             "borrow_requests",
             "borrow_request_items",
             "asset_loans",
+            "asset_pending_claims",
             "audit_logs",
         ] {
             assert!(
@@ -1372,6 +1541,295 @@ mod tests {
                 "expected table '{table_name}' to exist after migrations",
             );
         }
+
+        for column in [
+            "manual_entry",
+            "manual_employee_id",
+            "manual_employee_name",
+            "returned_by_employee_id_fk",
+        ] {
+            assert!(
+                column_exists(&conn, "borrow_requests", column),
+                "expected borrow_requests.{column} after migrations"
+            );
+        }
+        assert!(column_exists(
+            &conn,
+            "asset_loans",
+            "returned_by_employee_id_fk"
+        ));
+    }
+
+    #[test]
+    fn phase_c_migrates_populated_legacy_borrow_requests_to_nullable_employee_fk() {
+        let conn = Connection::open_in_memory().expect("open legacy database");
+        configure_connection(&conn).expect("configure sqlite pragmas");
+        conn.execute_batch(BASE_SCHEMA_SQL)
+            .expect("create legacy base schema");
+        conn.execute_batch(
+            r#"
+            DROP TABLE asset_pending_claims;
+            DROP TABLE asset_loans;
+            DROP TABLE borrow_request_items;
+            DROP TABLE borrow_requests;
+            CREATE TABLE borrow_requests (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              request_key TEXT NOT NULL UNIQUE,
+              employee_id_fk INTEGER NOT NULL REFERENCES employees(id) ON DELETE RESTRICT,
+              submitted_employee_id TEXT NOT NULL,
+              submitted_full_name TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'pending',
+              request_type TEXT NOT NULL DEFAULT 'borrow',
+              submit_source_ip TEXT,
+              decision_note TEXT,
+              decided_by_account_id INTEGER,
+              submitted_at TEXT NOT NULL DEFAULT (datetime('now')),
+              decided_at TEXT
+            );
+            INSERT INTO employees(employee_id, full_name) VALUES ('EE-LEGACY', 'Legacy Employee');
+            INSERT INTO borrow_requests(request_key, employee_id_fk, submitted_employee_id, submitted_full_name, status, decision_note)
+              VALUES ('LEGACY-REQUEST', 1, 'EE-LEGACY', 'Legacy Employee', 'pending', 'keep this note');
+            INSERT INTO assets(asset_code, asset_type, display_name, status) VALUES ('LEGACY-ASSET', 'Laptop', 'Legacy Asset', 'assigned');
+            CREATE TABLE borrow_request_items (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              borrow_request_id INTEGER NOT NULL REFERENCES borrow_requests(id) ON DELETE CASCADE,
+              asset_id INTEGER NOT NULL REFERENCES assets(id) ON DELETE RESTRICT,
+              asset_code_snapshot TEXT NOT NULL,
+              created_at TEXT NOT NULL DEFAULT (datetime('now')),
+              UNIQUE(borrow_request_id, asset_id)
+            );
+            INSERT INTO borrow_request_items(borrow_request_id, asset_id, asset_code_snapshot) VALUES (1, 1, 'LEGACY-ASSET');
+            CREATE TABLE asset_loans (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              asset_id INTEGER NOT NULL REFERENCES assets(id) ON DELETE RESTRICT,
+              employee_id_fk INTEGER NOT NULL REFERENCES employees(id) ON DELETE RESTRICT,
+              borrow_request_id INTEGER NOT NULL REFERENCES borrow_requests(id) ON DELETE RESTRICT,
+              approved_by_account_id INTEGER REFERENCES app_local_accounts(id) ON DELETE SET NULL,
+              borrowed_at TEXT NOT NULL DEFAULT (datetime('now')),
+              returned_at TEXT
+            );
+            CREATE INDEX idx_borrow_requests_status_submitted_at
+              ON borrow_requests(status, submitted_at);
+            "#,
+        )
+        .expect("seed populated legacy database");
+
+        conn.execute_batch("PRAGMA foreign_keys = OFF; PRAGMA legacy_alter_table = ON;")
+            .expect("set non-default migration pragmas");
+        assert_eq!(
+            conn.query_row("PRAGMA foreign_keys", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            conn.query_row("PRAGMA legacy_alter_table", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        ensure_phase_c_borrow_schema_inner(&conn, false)
+            .expect("migrate populated legacy database");
+        assert_eq!(
+            conn.query_row("PRAGMA foreign_keys", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            conn.query_row("PRAGMA legacy_alter_table", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        ensure_phase_c_borrow_schema_inner(&conn, false)
+            .expect("reapply populated legacy migration idempotently");
+        assert_eq!(
+            conn.query_row("PRAGMA foreign_keys", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            conn.query_row("PRAGMA legacy_alter_table", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+
+        let row: (i64, String, String, String, i64) = conn
+            .query_row(
+                "SELECT employee_id_fk, request_key, submitted_employee_id, decision_note, manual_entry FROM borrow_requests WHERE request_key = 'LEGACY-REQUEST'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            )
+            .expect("load migrated legacy request");
+        assert_eq!(
+            row,
+            (
+                1,
+                "LEGACY-REQUEST".to_string(),
+                "EE-LEGACY".to_string(),
+                "keep this note".to_string(),
+                0
+            )
+        );
+        let employee_fk_not_null: i64 = conn
+            .query_row("SELECT \"notnull\" FROM pragma_table_info('borrow_requests') WHERE name = 'employee_id_fk'", [], |row| row.get(0))
+            .expect("inspect migrated employee FK");
+        assert_eq!(employee_fk_not_null, 0);
+        let foreign_key_errors: i64 = conn
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })
+            .expect("check migrated foreign keys");
+        assert_eq!(foreign_key_errors, 0);
+        let item_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM borrow_request_items WHERE borrow_request_id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count preserved request items");
+        assert_eq!(item_count, 1);
+        assert!(conn
+            .query_row("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_borrow_requests_status_submitted_at'", [], |_| Ok(()))
+            .is_ok());
+        assert!(conn
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_asset_pending_claims_request_id'",
+                [],
+                |_| Ok(())
+            )
+            .is_ok());
+        let manual_entry_default: Option<String> = conn
+            .query_row(
+                "SELECT dflt_value FROM pragma_table_info('borrow_requests') WHERE name = 'manual_entry'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("inspect manual entry default");
+        assert_eq!(manual_entry_default.as_deref(), Some("0"));
+        let request_item_fk_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_foreign_key_list('borrow_request_items') WHERE \"table\" = 'borrow_requests'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("inspect request item foreign key");
+        assert_eq!(request_item_fk_count, 1);
+    }
+
+    #[test]
+    fn phase_c_migration_failure_rolls_back_all_phase_c_schema_changes() {
+        let conn = Connection::open_in_memory().expect("open sqlite database");
+        configure_connection(&conn).expect("configure sqlite pragmas");
+        conn.execute_batch(
+            r#"
+            CREATE TABLE employees (id INTEGER PRIMARY KEY, employee_id TEXT NOT NULL, full_name TEXT NOT NULL);
+            CREATE TABLE app_local_accounts (id INTEGER PRIMARY KEY);
+            CREATE TABLE assets (id INTEGER PRIMARY KEY, asset_code TEXT NOT NULL, status TEXT NOT NULL);
+            CREATE TABLE borrow_requests (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              request_key TEXT NOT NULL UNIQUE,
+              employee_id_fk INTEGER NOT NULL REFERENCES employees(id),
+              submitted_employee_id TEXT NOT NULL,
+              submitted_full_name TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'pending',
+              request_type TEXT NOT NULL DEFAULT 'borrow',
+              submit_source_ip TEXT,
+              decision_note TEXT,
+              decided_by_account_id INTEGER,
+              submitted_at TEXT NOT NULL DEFAULT (datetime('now')),
+              decided_at TEXT
+            );
+            CREATE TABLE borrow_request_items (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              borrow_request_id INTEGER NOT NULL REFERENCES borrow_requests(id) ON DELETE CASCADE,
+              asset_id INTEGER NOT NULL REFERENCES assets(id),
+              asset_code_snapshot TEXT NOT NULL
+            );
+            CREATE TABLE asset_loans (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              asset_id INTEGER NOT NULL REFERENCES assets(id),
+              employee_id_fk INTEGER NOT NULL REFERENCES employees(id),
+              borrow_request_id INTEGER NOT NULL REFERENCES borrow_requests(id)
+            );
+            INSERT INTO employees(id, employee_id, full_name) VALUES (1, 'EE-FAIL', 'Failure User');
+            INSERT INTO assets(id, asset_code, status) VALUES (1, 'FAIL-ASSET', 'in_stock');
+            INSERT INTO borrow_requests(request_key, employee_id_fk, submitted_employee_id, submitted_full_name)
+              VALUES ('FAIL-REQUEST', 1, 'EE-FAIL', 'Failure User');
+            INSERT INTO borrow_request_items(borrow_request_id, asset_id, asset_code_snapshot)
+              VALUES (1, 1, 'FAIL-ASSET');
+            CREATE INDEX idx_legacy_borrow_requests_status
+              ON borrow_requests(status);
+            "#,
+        )
+        .expect("seed legacy schema");
+
+        conn.execute_batch("PRAGMA foreign_keys = OFF; PRAGMA legacy_alter_table = ON;")
+            .expect("set non-default migration pragmas");
+        assert!(ensure_phase_c_borrow_schema_inner(&conn, true).is_err());
+        assert_eq!(
+            conn.query_row("PRAGMA foreign_keys", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            conn.query_row("PRAGMA legacy_alter_table", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert!(!column_exists(&conn, "borrow_requests", "manual_entry"));
+        assert!(!column_exists(
+            &conn,
+            "borrow_requests",
+            "manual_employee_id"
+        ));
+        assert!(!column_exists(
+            &conn,
+            "borrow_requests",
+            "manual_employee_name"
+        ));
+        assert!(!column_exists(
+            &conn,
+            "asset_loans",
+            "returned_by_employee_id_fk"
+        ));
+        assert!(!table_exists(&conn, "asset_pending_claims"));
+        assert!(!table_exists(&conn, "borrow_requests_phase_c_legacy"));
+        assert!(!table_exists(&conn, "borrow_requests_phase_c_new"));
+        assert!(conn
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_legacy_borrow_requests_status'",
+                [],
+                |_| Ok(())
+            )
+            .is_ok());
+        let legacy_request_sql: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'borrow_requests'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("inspect rolled back request schema");
+        assert!(legacy_request_sql.contains("employee_id_fk INTEGER NOT NULL"));
+        let request_item_fk_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_foreign_key_list('borrow_request_items') WHERE \"table\" = 'borrow_requests'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("inspect rolled back request item foreign key");
+        assert_eq!(request_item_fk_count, 1);
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM borrow_requests", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM borrow_request_items", [], |row| row
+                .get::<_, i64>(
+                0
+            ))
+            .unwrap(),
+            1
+        );
     }
 
     #[test]
