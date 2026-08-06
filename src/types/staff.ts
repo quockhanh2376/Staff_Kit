@@ -37,18 +37,27 @@ export type BackupSettingsUpdateInput = {
 
 /** LAN server configuration for the Borrow/Return QR flow. */
 export type BorrowLanSettings = {
+  enabled: boolean
   host: string
   port: number
   borrowUrl: string
 }
 
 export type BorrowLanSettingsUpdateInput = {
+  enabled?: boolean
   host: string
   port: number
 }
 
 export type BorrowLanTokenStatus = {
   ready: boolean
+}
+
+export type BorrowLanServerStatus = {
+  running: boolean
+  tokenReady: boolean
+  bindHost: string
+  port: number
 }
 
 /** Input payload for creating or upserting a single asset. */

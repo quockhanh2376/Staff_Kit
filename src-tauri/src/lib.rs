@@ -563,14 +563,19 @@ fn get_borrow_lan_settings(
 }
 
 #[tauri::command]
-fn update_borrow_lan_settings(
+async fn update_borrow_lan_settings(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
+    lan_server: tauri::State<'_, std::sync::Arc<lan_server::LanServerManager>>,
     session_token: String,
     payload: db::BorrowLanSettingsUpdateInput,
 ) -> Result<db::BorrowLanSettings, String> {
     let ctx = auth_session::require_admin(&session_store, &session_token)?;
-    db::update_borrow_lan_settings_with_actor(&app, ctx, payload)
+    let updated = db::update_borrow_lan_settings_with_actor(&app, ctx, payload)?;
+    if !updated.enabled {
+        lan_server.stop().await?;
+    }
+    Ok(updated)
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -583,11 +588,13 @@ struct BorrowLanTokenStatus {
 fn get_borrow_lan_token_status(
     session_store: tauri::State<'_, auth_session::SessionStore>,
     lan_token_store: tauri::State<'_, std::sync::Arc<lan_auth::LanTokenStore>>,
+    lan_server: tauri::State<'_, std::sync::Arc<lan_server::LanServerManager>>,
     session_token: String,
 ) -> Result<BorrowLanTokenStatus, String> {
     let _ctx = auth_session::require_admin(&session_store, &session_token)?;
+    let server_status = lan_server.status()?;
     Ok(BorrowLanTokenStatus {
-        ready: lan_token_store.is_ready(),
+        ready: server_status.running && lan_token_store.is_ready(),
     })
 }
 
@@ -595,9 +602,11 @@ fn get_borrow_lan_token_status(
 fn issue_borrow_lan_token(
     session_store: tauri::State<'_, auth_session::SessionStore>,
     lan_token_store: tauri::State<'_, std::sync::Arc<lan_auth::LanTokenStore>>,
+    lan_server: tauri::State<'_, std::sync::Arc<lan_server::LanServerManager>>,
     session_token: String,
 ) -> Result<String, String> {
     let _ctx = auth_session::require_admin(&session_store, &session_token)?;
+    lan_server.require_running()?;
     Ok(lan_token_store.issue())
 }
 
@@ -610,6 +619,38 @@ fn revoke_borrow_lan_token(
     let _ctx = auth_session::require_admin(&session_store, &session_token)?;
     lan_token_store.revoke();
     Ok(())
+}
+
+#[tauri::command]
+fn start_borrow_lan_server(
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    lan_server: tauri::State<'_, std::sync::Arc<lan_server::LanServerManager>>,
+    session_token: String,
+) -> Result<lan_server::LanServerStatus, String> {
+    let _ctx = auth_session::require_admin(&session_store, &session_token)?;
+    lan_server.start()?;
+    lan_server.status()
+}
+
+#[tauri::command]
+async fn stop_borrow_lan_server(
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    lan_server: tauri::State<'_, std::sync::Arc<lan_server::LanServerManager>>,
+    session_token: String,
+) -> Result<lan_server::LanServerStatus, String> {
+    let _ctx = auth_session::require_admin(&session_store, &session_token)?;
+    lan_server.stop().await?;
+    lan_server.status()
+}
+
+#[tauri::command]
+fn get_borrow_lan_status(
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    lan_server: tauri::State<'_, std::sync::Arc<lan_server::LanServerManager>>,
+    session_token: String,
+) -> Result<lan_server::LanServerStatus, String> {
+    let _ctx = auth_session::require_admin(&session_store, &session_token)?;
+    lan_server.status()
 }
 
 #[tauri::command]
@@ -928,8 +969,12 @@ pub fn run() {
         .setup({
             let lan_token_store = lan_token_store.clone();
             move |app| {
-                if let Err(error) = lan_server::start(app.handle().clone(), lan_token_store.clone())
-                {
+                let lan_server = std::sync::Arc::new(lan_server::LanServerManager::new(
+                    app.handle().clone(),
+                    lan_token_store.clone(),
+                ));
+                app.manage(lan_server.clone());
+                if let Err(error) = lan_server.start_if_enabled() {
                     eprintln!("failed to start Staff Kit LAN borrow server: {error}");
                 }
                 // Show the main window after WebView2 has finished initializing.
@@ -968,6 +1013,9 @@ pub fn run() {
             get_borrow_lan_token_status,
             issue_borrow_lan_token,
             revoke_borrow_lan_token,
+            start_borrow_lan_server,
+            stop_borrow_lan_server,
+            get_borrow_lan_status,
             inspect_asset_import_file,
             preview_asset_import_file,
             import_asset_import_file,
@@ -1037,6 +1085,11 @@ pub fn run() {
                 if let Some(store) = app.try_state::<std::sync::Arc<lan_auth::LanTokenStore>>() {
                     store.revoke();
                 }
+                if let Some(server) =
+                    app.try_state::<std::sync::Arc<lan_server::LanServerManager>>()
+                {
+                    let _ = tauri::async_runtime::block_on(server.stop());
+                }
             }
         })
         .run(tauri::generate_context!())
@@ -1090,6 +1143,9 @@ mod tests {
         "get_borrow_lan_token_status",
         "issue_borrow_lan_token",
         "revoke_borrow_lan_token",
+        "start_borrow_lan_server",
+        "stop_borrow_lan_server",
+        "get_borrow_lan_status",
         "inspect_asset_import_file",
         "preview_asset_import_file",
         "import_asset_import_file",
@@ -1262,6 +1318,32 @@ mod tests {
             auth_session::require_admin(&store, "").unwrap_err().code(),
             auth_session::AUTH_REQUIRED
         );
+    }
+
+    #[test]
+    fn lan_lifecycle_commands_are_admin_only() {
+        let store = auth_session::SessionStore::new();
+        let user_token = store.issue_session(7, "user", auth_session::Role::User);
+        for command in [
+            "start_borrow_lan_server",
+            "stop_borrow_lan_server",
+            "get_borrow_lan_status",
+            "get_borrow_lan_token_status",
+            "issue_borrow_lan_token",
+            "revoke_borrow_lan_token",
+        ] {
+            assert!(
+                ADMIN_COMMANDS.contains(&command),
+                "LAN lifecycle command must be admin-classified: {command}"
+            );
+            assert_eq!(
+                auth_session::require_admin(&store, &user_token)
+                    .unwrap_err()
+                    .code(),
+                auth_session::AUTH_FORBIDDEN,
+                "standard users must be rejected before {command} executes"
+            );
+        }
     }
 
     // ── Phase D: session invalidation matrix ──────────────────────────────────

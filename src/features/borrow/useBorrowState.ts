@@ -35,6 +35,7 @@ export function useBorrowState({
   const [isLoadingDetail, setLoadingDetail] = useState(false)
   const [isApproving, setApproving] = useState(false)
   const [isRejecting, setRejecting] = useState(false)
+  const [isCancelling, setCancelling] = useState(false)
 
   const loadRequestDetail = useCallback(
     async (requestId: number | null) => {
@@ -156,6 +157,23 @@ export function useBorrowState({
     }
   }
 
+  const handleCancelRequest = async () => {
+    if (!selectedRequest || selectedRequest.status !== "pending") return
+
+    try {
+      setCancelling(true)
+      setQueueMessage("")
+      const cancelled = await staffApi.cancelBorrowRequest(selectedRequest.id)
+      setQueueMessage(`Request ${cancelled.requestKey} cancelled.`)
+      await refreshQueue(selectedRequest.id)
+      triggerReload()
+    } catch (error) {
+      setQueueMessage(getUserErrorMessage(error))
+    } finally {
+      setCancelling(false)
+    }
+  }
+
   return {
     pendingRequests,
     selectedRequestId,
@@ -167,9 +185,11 @@ export function useBorrowState({
     isLoadingDetail,
     isApproving,
     isRejecting,
+    isCancelling,
     handleSelectRequest,
     handleApproveRequest,
     handleRejectRequest,
+    handleCancelRequest,
     refreshQueue,
   }
 }

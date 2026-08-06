@@ -18,6 +18,7 @@ import type {
   BorrowLanSettings,
   BorrowLanSettingsUpdateInput,
   BorrowLanTokenStatus,
+  BorrowLanServerStatus,
   AssetCategoryDetailRecord,
   AssetCategoryUpsertInput,
   AssetCategoryRecord,
@@ -197,6 +198,7 @@ export const staffApi = {
   updateBorrowLanSettings: (payload: BorrowLanSettingsUpdateInput) =>
     call<BorrowLanSettings>("update_borrow_lan_settings", {
       payload: {
+        enabled: payload.enabled ?? null,
         host: payload.host,
         port: payload.port,
       },
@@ -210,6 +212,15 @@ export const staffApi = {
 
   revokeBorrowLanToken: () =>
     call<void>("revoke_borrow_lan_token"),
+
+  startBorrowLanServer: () =>
+    call<BorrowLanServerStatus>("start_borrow_lan_server"),
+
+  stopBorrowLanServer: () =>
+    call<BorrowLanServerStatus>("stop_borrow_lan_server"),
+
+  getBorrowLanStatus: () =>
+    call<BorrowLanServerStatus>("get_borrow_lan_status"),
 
   inspectAssetImportFile: (payload: AssetImportInspectInput) =>
     call<AssetImportFileInspection>("inspect_asset_import_file", {

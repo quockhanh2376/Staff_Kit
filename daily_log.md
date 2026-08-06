@@ -1705,3 +1705,12 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Validation: focused Phase C tests 14/14; full Rust/Tauri tests 216/216; frontend unit tests 130/130; typecheck, lint, build, quality, Tauri check, targeted rustfmt, and `git diff --check` passed.
 - Warnings: pre-existing React hook dependency, Vite dynamic-import/chunk-size, and Rust dead-code warnings.
 - Scope: no Phase D, commit, push, dependency/generated/database/secret changes, or `main`/`origin/main` changes.
+## 2026-08-06 SEC-002 Phase D1 Start
+
+- Implement only the audited D1 blockers: safe LAN browser DOM rendering, managed LAN server lifecycle, and admin pending-request cancellation UI.
+- Preserve Phase A/B/C security and business rules; do not start D2 or commit/push.
+
+## 2026-08-06 SEC-002 Phase D1 End
+
+- Completed safe LAN browser rendering, managed LAN Start/Stop/status lifecycle, and pending-request cancellation UI.
+- Validation passed: 15 frontend test files/133 tests and 227 Rust tests; no commit or push performed.

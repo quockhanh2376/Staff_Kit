@@ -339,7 +339,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
         // Clear state when switching mode
         selectedAssets.clear();
         renderSelected();
-        resultsEl.innerHTML = "";
+        resultsEl.replaceChildren();
         setMessage("");
       }
 
@@ -348,54 +348,73 @@ pub(crate) fn borrow_page_html() -> &'static str {
 
       // Render helpers
       const renderSelected = () => {
-        if (selectedAssets.size === 0) { selectedEl.innerHTML = ""; return; }
-        const chips = Array.from(selectedAssets.values())
-          .map((asset) => `
-            <span class="selected-chip">
-              ${asset.assetCode}
-              <button type="button" data-remove="${asset.assetCode}">&times;</button>
-            </span>
-          `)
-          .join("");
-        selectedEl.innerHTML = `<div class="helper">Selected Assets</div><div>${chips}</div>`;
-        selectedEl.querySelectorAll("[data-remove]").forEach((btn) => {
-          btn.addEventListener("click", () => {
-            selectedAssets.delete(btn.getAttribute("data-remove"));
+        selectedEl.replaceChildren();
+        if (selectedAssets.size === 0) return;
+        const heading = document.createElement("div");
+        heading.className = "helper";
+        heading.textContent = "Selected Assets";
+        const chips = document.createElement("div");
+        for (const asset of selectedAssets.values()) {
+          const chip = document.createElement("span");
+          chip.className = "selected-chip";
+          chip.textContent = asset.assetCode;
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.dataset.remove = asset.assetCode;
+          remove.textContent = "×";
+          remove.addEventListener("click", () => {
+            selectedAssets.delete(asset.assetCode);
             renderSelected();
           });
-        });
+          chip.append(remove);
+          chips.append(chip);
+        }
+        selectedEl.append(heading, chips);
       };
 
       const setMessage = (text, isSuccess = false) => {
-        if (!text) { messageEl.innerHTML = ""; return; }
-        messageEl.innerHTML = `<div class="message ${isSuccess ? "success" : ""}">${text}</div>`;
+        messageEl.replaceChildren();
+        if (!text) return;
+        const message = document.createElement("div");
+        message.className = isSuccess ? "message success" : "message";
+        message.textContent = text;
+        messageEl.append(message);
       };
 
       const renderResults = (items) => {
+        resultsEl.replaceChildren();
         if (!Array.isArray(items) || items.length === 0) {
-          resultsEl.innerHTML = `<div class="helper">No assets matched your search.</div>`;
+          const empty = document.createElement("div");
+          empty.className = "helper";
+          empty.textContent = "No assets matched your search.";
+          resultsEl.append(empty);
           return;
         }
         const isReturn = mode === "return";
-        resultsEl.innerHTML = items
-          .map((asset) => `
-            <div class="asset-item">
-              <div><strong>${asset.assetCode}</strong></div>
-              <div>${asset.assetType} - ${asset.displayName}</div>
-              <div class="helper">${asset.model ?? ""} ${asset.serialNumber ?? ""}</div>
-              <button type="button" class="${isReturn ? "return-mode" : ""}" data-add="${asset.assetCode}">${MODES[mode].addLabel}</button>
-            </div>
-          `)
-          .join("");
-        resultsEl.querySelectorAll("[data-add]").forEach((btn) => {
-          btn.addEventListener("click", () => {
-            const assetCode = btn.getAttribute("data-add");
-            const asset = items.find((item) => item.assetCode === assetCode);
-            if (!asset) return;
+        for (const asset of items) {
+          const item = document.createElement("div");
+          item.className = "asset-item";
+          const code = document.createElement("div");
+          const strong = document.createElement("strong");
+          strong.textContent = asset.assetCode;
+          code.append(strong);
+          const description = document.createElement("div");
+          description.textContent = `${asset.assetType} - ${asset.displayName}`;
+          const metadata = document.createElement("div");
+          metadata.className = "helper";
+          metadata.textContent = `${asset.model ?? ""} ${asset.serialNumber ?? ""}`;
+          const add = document.createElement("button");
+          add.type = "button";
+          add.className = isReturn ? "return-mode" : "";
+          add.dataset.add = asset.assetCode;
+          add.textContent = MODES[mode].addLabel;
+          add.addEventListener("click", () => {
             selectedAssets.set(asset.assetCode, asset);
             renderSelected();
           });
-        });
+          item.append(code, description, metadata, add);
+          resultsEl.append(item);
+        }
       };
 
       // -- Asset search --------------------------------------------------------
@@ -451,6 +470,8 @@ pub(crate) fn borrow_page_html() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::borrow_page_html;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
 
     #[test]
     fn borrow_page_uses_green_submit_button_theme() {
@@ -511,5 +532,88 @@ mod tests {
         assert!(html.contains("const clientSessionId = crypto.randomUUID()"));
         assert!(html.contains("requestId: crypto.randomUUID()"));
         assert!(html.contains("clientSessionId"));
+    }
+
+    #[test]
+    fn borrow_page_renders_api_values_with_text_nodes_not_html() {
+        let html = borrow_page_html();
+
+        assert!(!html.contains("innerHTML"));
+        assert!(html.contains("replaceChildren"));
+
+        let script = r###"
+import { JSDOM } from "jsdom";
+import fs from "node:fs";
+
+const page = fs.readFileSync(0, "utf8");
+const payloads = {
+  assetCode: '<img src=x onerror="window.__xss=1">',
+  assetType: '<script>window.__xss=1</script>',
+  displayName: '</div><svg onload="window.__xss=1">',
+  model: '<script>window.__xss=1</script>',
+  serialNumber: '<img src=x onerror="window.__xss=1">',
+  error: '<script>window.__xss=1</script>',
+};
+const asset = { ...payloads, model: payloads.model, serialNumber: payloads.serialNumber };
+const wait = () => new Promise((resolve) => setTimeout(resolve, 20));
+const dom = new JSDOM(page, {
+  url: "http://127.0.0.1/borrow#t=test-token",
+  runScripts: "dangerously",
+  beforeParse(window) {
+    window.__xss = 0;
+    if (!window.crypto.randomUUID) {
+      Object.defineProperty(window.crypto, "randomUUID", { value: () => "test-session" });
+    }
+    window.fetch = async (_input, init = {}) => init.method === "POST"
+      ? { ok: false, json: async () => ({ error: payloads.error }) }
+      : { ok: true, json: async () => [asset] };
+  },
+});
+const document = dom.window.document;
+document.getElementById("search-btn").click();
+await wait();
+const result = document.querySelector(".asset-item");
+if (!result || [payloads.assetCode, payloads.assetType, payloads.displayName, payloads.model, payloads.serialNumber]
+  .some((value) => !result.textContent.includes(value))) {
+  throw new Error("asset values were not rendered as text");
+}
+if (result.querySelector("img,script,svg")) throw new Error("asset value became markup");
+result.querySelector("[data-add]").click();
+const selected = document.querySelector("#selected-assets");
+if (!selected.textContent.includes(payloads.assetCode) || selected.querySelector("img,script,svg")) {
+  throw new Error("selected asset became markup");
+}
+document.getElementById("staff-id").value = "EE1001";
+document.getElementById("full-name").value = "Test Employee";
+document.getElementById("submit-button").click();
+await wait();
+const message = document.getElementById("message");
+if (!message.textContent.includes(payloads.error) || message.querySelector("img,script,svg")) {
+  throw new Error("backend error became markup");
+}
+if (dom.window.__xss !== 0) throw new Error("XSS payload executed");
+console.log("safe");
+"###;
+
+        let mut child = Command::new("node")
+            .args(["--input-type=module", "-e", script])
+            .current_dir(std::env::current_dir().expect("workspace directory"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("node and jsdom are required for browser rendering coverage");
+        child
+            .stdin
+            .take()
+            .expect("node stdin")
+            .write_all(html.as_bytes())
+            .expect("write page HTML to browser fixture");
+        let output = child.wait_with_output().expect("browser fixture result");
+        assert!(
+            output.status.success(),
+            "browser fixture failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }

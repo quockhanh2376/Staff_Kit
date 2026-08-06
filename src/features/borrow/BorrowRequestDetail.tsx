@@ -110,7 +110,7 @@ export function BorrowRequestDetail({ borrow }: BorrowRequestDetailProps) {
               value={borrow.reviewNote}
               onChange={(event) => borrow.setReviewNote(event.target.value)}
               placeholder={buildBorrowReviewRejectPlaceholder(selectedRequestType)}
-              disabled={borrow.isApproving || borrow.isRejecting}
+              disabled={borrow.isApproving || borrow.isRejecting || borrow.isCancelling}
             />
 
             <div className="mt-4 flex flex-wrap gap-2">
@@ -118,7 +118,7 @@ export function BorrowRequestDetail({ borrow }: BorrowRequestDetailProps) {
                 className="inline-flex items-center gap-2 rounded-[8px] bg-[var(--primary)] px-3 py-2 text-sm font-semibold text-[#00131c] disabled:opacity-50"
                 onClick={() => void borrow.handleApproveRequest()}
                 type="button"
-                disabled={borrow.isApproving || borrow.isRejecting}
+                disabled={borrow.isApproving || borrow.isRejecting || borrow.isCancelling}
               >
                 {borrow.isApproving ? (
                   <LoaderCircle className="animate-spin" size={15} />
@@ -127,11 +127,22 @@ export function BorrowRequestDetail({ borrow }: BorrowRequestDetailProps) {
                 )}
                 {getBorrowReviewApproveActionLabel(selectedRequestType, borrow.isApproving)}
               </button>
+              {borrow.selectedRequest.status === "pending" && (
+                <button
+                  className="inline-flex items-center gap-2 rounded-[8px] border border-amber-400/50 bg-amber-500/10 px-3 py-2 text-sm font-semibold text-amber-200 disabled:opacity-50"
+                  onClick={() => void borrow.handleCancelRequest()}
+                  type="button"
+                  disabled={borrow.isApproving || borrow.isRejecting || borrow.isCancelling}
+                >
+                  {borrow.isCancelling ? <LoaderCircle className="animate-spin" size={15} /> : <XCircle size={15} />}
+                  {borrow.isCancelling ? "Cancelling..." : "Cancel Request"}
+                </button>
+              )}
               <button
                 className="inline-flex items-center gap-2 rounded-[8px] border border-red-400/50 bg-red-500/10 px-3 py-2 text-sm font-semibold text-red-200 disabled:opacity-50"
                 onClick={() => void borrow.handleRejectRequest()}
                 type="button"
-                disabled={borrow.isApproving || borrow.isRejecting}
+                disabled={borrow.isApproving || borrow.isRejecting || borrow.isCancelling}
               >
                 {borrow.isRejecting ? (
                   <LoaderCircle className="animate-spin" size={15} />
