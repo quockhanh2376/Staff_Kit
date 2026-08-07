@@ -1714,3 +1714,15 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 
 - Completed safe LAN browser rendering, managed LAN Start/Stop/status lifecycle, and pending-request cancellation UI.
 - Validation passed: 15 frontend test files/133 tests and 227 Rust tests; no commit or push performed.
+
+## 2026-08-06 SEC-002 Phase D2 Start
+
+- Implement only the shared mobile Borrow/Return workflow hardening and pending queue coverage on top of committed D1.
+- Preserve D1 lifecycle, Phase B authentication, and Phase C business rules; do not modify schema or start later Phase D work.
+
+## 2026-08-06 SEC-002 Phase D2 End
+
+- Hardened the shared LAN page with explicit search/submit loading guards, safe API error handling, and executable Borrow/Return flow coverage.
+- Added admin queue coverage for pending Borrow/Return display, pending-only cancellation, loading state, and duplicate action prevention.
+- Validation passed: 17 frontend test files/143 tests and 230 Rust tests; typecheck, lint, build, quality, Tauri check, rustfmt, and `git diff --check` passed.
+- No commit or push performed; Phase D3 and later work were not started.

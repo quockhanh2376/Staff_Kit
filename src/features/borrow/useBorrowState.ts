@@ -36,6 +36,7 @@ export function useBorrowState({
   const [isApproving, setApproving] = useState(false)
   const [isRejecting, setRejecting] = useState(false)
   const [isCancelling, setCancelling] = useState(false)
+  const reviewActionInFlightRef = useRef(false)
 
   const loadRequestDetail = useCallback(
     async (requestId: number | null) => {
@@ -109,9 +110,10 @@ export function useBorrowState({
   }
 
   const handleApproveRequest = async () => {
-    if (!selectedRequest) return
+    if (!selectedRequest || reviewActionInFlightRef.current) return
 
     try {
+      reviewActionInFlightRef.current = true
       setApproving(true)
       setQueueMessage("")
       const approved = await staffApi.approveBorrowRequest(selectedRequest.id)
@@ -124,12 +126,13 @@ export function useBorrowState({
     } catch (error) {
       setGlobalError(getUserErrorMessage(error))
     } finally {
+      reviewActionInFlightRef.current = false
       setApproving(false)
     }
   }
 
   const handleRejectRequest = async () => {
-    if (!selectedRequest) return
+    if (!selectedRequest || reviewActionInFlightRef.current) return
 
     const note = reviewNote.trim()
     if (!note) {
@@ -138,6 +141,7 @@ export function useBorrowState({
     }
 
     try {
+      reviewActionInFlightRef.current = true
       setRejecting(true)
       setQueueMessage("")
       const rejected = await staffApi.rejectBorrowRequest({
@@ -153,14 +157,16 @@ export function useBorrowState({
     } catch (error) {
       setGlobalError(getUserErrorMessage(error))
     } finally {
+      reviewActionInFlightRef.current = false
       setRejecting(false)
     }
   }
 
   const handleCancelRequest = async () => {
-    if (!selectedRequest || selectedRequest.status !== "pending") return
+    if (!selectedRequest || selectedRequest.status !== "pending" || reviewActionInFlightRef.current) return
 
     try {
+      reviewActionInFlightRef.current = true
       setCancelling(true)
       setQueueMessage("")
       const cancelled = await staffApi.cancelBorrowRequest(selectedRequest.id)
@@ -170,6 +176,7 @@ export function useBorrowState({
     } catch (error) {
       setQueueMessage(getUserErrorMessage(error))
     } finally {
+      reviewActionInFlightRef.current = false
       setCancelling(false)
     }
   }

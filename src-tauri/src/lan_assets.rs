@@ -285,6 +285,8 @@ pub(crate) fn borrow_page_html() -> &'static str {
         history.replaceState(null, "", location.pathname + location.search);
       }
       const clientSessionId = crypto.randomUUID();
+      let isSearching = false;
+      let isSubmitting = false;
 
       const authorizedFetch = (input, init = {}) => {
         if (!lanToken) {
@@ -349,6 +351,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
       // Render helpers
       const renderSelected = () => {
         selectedEl.replaceChildren();
+        submitBtn.disabled = isSubmitting || selectedAssets.size === 0;
         if (selectedAssets.size === 0) return;
         const heading = document.createElement("div");
         heading.className = "helper";
@@ -371,6 +374,8 @@ pub(crate) fn borrow_page_html() -> &'static str {
         }
         selectedEl.append(heading, chips);
       };
+
+      submitBtn.disabled = true;
 
       const setMessage = (text, isSuccess = false) => {
         messageEl.replaceChildren();
@@ -419,12 +424,23 @@ pub(crate) fn borrow_page_html() -> &'static str {
 
       // -- Asset search --------------------------------------------------------
       const doSearch = async () => {
+        if (isSearching) return;
+        isSearching = true;
+        searchBtn.disabled = true;
         try {
           const q = encodeURIComponent(searchInput.value.trim());
           const res = await authorizedFetch(`${MODES[mode].endpoint}?q=${q}`);
-          renderResults(await res.json());
+          const responsePayload = await res.json().catch(() => null);
+          if (!res.ok) {
+            setMessage(responsePayload?.error || "Asset search failed.");
+            return;
+          }
+          renderResults(responsePayload);
         } catch (err) {
           setMessage(err instanceof Error ? err.message : "Asset search failed.");
+        } finally {
+          isSearching = false;
+          searchBtn.disabled = false;
         }
       };
 
@@ -433,6 +449,9 @@ pub(crate) fn borrow_page_html() -> &'static str {
 
       // Submit
       submitBtn.addEventListener("click", async () => {
+        if (isSubmitting || selectedAssets.size === 0) return;
+        isSubmitting = true;
+        submitBtn.disabled = true;
         try {
           const submittedEmployeeId = document.getElementById("staff-id").value.trim();
           const submittedFullName   = document.getElementById("full-name").value.trim();
@@ -451,15 +470,21 @@ pub(crate) fn borrow_page_html() -> &'static str {
             }),
           });
 
-          const payload = await res.json();
-          if (!res.ok) { setMessage(payload.error || "Submit failed."); return; }
+          const responsePayload = await res.json().catch(() => null);
+          if (!res.ok) {
+            setMessage(responsePayload?.error || "Submit failed.");
+            return;
+          }
 
           selectedAssets.clear();
           renderSelected();
           const verb = mode === "return" ? "Return" : "Borrow";
-          setMessage(`${verb} request ${payload.requestReference} submitted. ${payload.message}`, true);
+          setMessage(`${verb} request ${responsePayload.requestReference} submitted. ${responsePayload.message}`, true);
         } catch (err) {
           setMessage(err instanceof Error ? err.message : "Submit failed.");
+        } finally {
+          isSubmitting = false;
+          submitBtn.disabled = isSubmitting || selectedAssets.size === 0;
         }
       });
     </script>
@@ -532,6 +557,165 @@ mod tests {
         assert!(html.contains("const clientSessionId = crypto.randomUUID()"));
         assert!(html.contains("requestId: crypto.randomUUID()"));
         assert!(html.contains("clientSessionId"));
+    }
+
+    #[test]
+    fn borrow_page_prevents_duplicate_submissions_and_surfaces_api_errors() {
+        let html = borrow_page_html();
+
+        assert!(html.contains("let isSubmitting = false"));
+        assert!(html.contains("submitBtn.disabled = true"));
+        assert!(html.contains("if (!res.ok)"));
+        assert!(html.contains("responsePayload?.error"));
+    }
+
+    #[test]
+    fn borrow_page_executes_shared_borrow_and_return_flow_with_bearer_auth() {
+        let html = borrow_page_html();
+        let script = r###"
+import { JSDOM } from "jsdom";
+import fs from "node:fs";
+
+const page = fs.readFileSync(0, "utf8");
+const calls = [];
+const asset = { assetCode: "ASSET-001", assetType: "Laptop", displayName: "Demo Laptop", model: "Model X", serialNumber: "SERIAL-001" };
+let uuid = 0;
+const wait = () => new Promise((resolve) => setTimeout(resolve, 20));
+const dom = new JSDOM(page, {
+  url: "http://127.0.0.1/borrow#t=browser-token",
+  runScripts: "dangerously",
+  beforeParse(window) {
+    Object.defineProperty(window.crypto, "randomUUID", { value: () => `id-${++uuid}` });
+    window.fetch = async (input, init = {}) => {
+      calls.push({ input: String(input), init: { ...init, headers: new Headers(init.headers) } });
+      if (String(input).includes("/api/borrow-requests")) {
+        return { ok: true, json: async () => ({ requestReference: "BR-0001", message: "Pending IT review." }) };
+      }
+      return { ok: true, json: async () => [asset] };
+    };
+  },
+});
+const document = dom.window.document;
+if (dom.window.location.hash) throw new Error("token fragment remained visible");
+const auth = (call) => call.init.headers.get("Authorization");
+const search = document.getElementById("asset-search");
+const searchButton = document.getElementById("search-btn");
+const submit = document.getElementById("submit-button");
+search.value = "ASSET-001";
+searchButton.click();
+await wait();
+if (!calls[0].input.includes("/api/assets") || auth(calls[0]) !== "Bearer browser-token") throw new Error("borrow search auth failed");
+document.querySelector("[data-add]").click();
+document.getElementById("staff-id").value = "EE1001";
+document.getElementById("full-name").value = "Client name is not authoritative";
+submit.click();
+submit.click();
+await wait();
+const borrowCalls = calls.filter((call) => call.input.includes("/api/borrow-requests"));
+const borrowPayload = JSON.parse(borrowCalls[0].init.body);
+if (borrowCalls.length !== 1 || borrowPayload.requestType !== "borrow" || borrowPayload.clientSessionId !== "id-1") throw new Error("borrow flow contract failed");
+if (auth(borrowCalls[0]) !== "Bearer browser-token") throw new Error("borrow submit auth failed");
+
+document.getElementById("btn-return").click();
+searchButton.click();
+await wait();
+if (!calls.some((call) => call.input.includes("/api/assigned-assets") && auth(call) === "Bearer browser-token")) throw new Error("return search auth failed");
+document.querySelector("[data-add]").click();
+submit.click();
+await wait();
+const submitCalls = calls.filter((call) => call.input.includes("/api/borrow-requests"));
+const returnPayload = JSON.parse(submitCalls[1].init.body);
+if (returnPayload.requestType !== "return" || returnPayload.clientSessionId !== "id-1") throw new Error("return flow contract failed");
+if (returnPayload.requestId === borrowPayload.requestId) throw new Error("requestId was reused");
+if (auth(submitCalls[1]) !== "Bearer browser-token") throw new Error("return submit auth failed");
+console.log("shared-flow-ok");
+"###;
+
+        let mut child = Command::new("node")
+            .args(["--input-type=module", "-e", script])
+            .current_dir(std::env::current_dir().expect("workspace directory"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("node and jsdom are required for browser flow coverage");
+        child
+            .stdin
+            .take()
+            .expect("node stdin")
+            .write_all(html.as_bytes())
+            .expect("write page HTML");
+        let output = child
+            .wait_with_output()
+            .expect("wait for browser flow test");
+        assert!(
+            output.status.success(),
+            "browser flow failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("shared-flow-ok"));
+    }
+
+    #[test]
+    fn borrow_page_handles_malformed_non_success_json_without_html_or_raw_leakage() {
+        let html = borrow_page_html();
+        let script = r###"
+import { JSDOM } from "jsdom";
+import fs from "node:fs";
+
+const page = fs.readFileSync(0, "utf8");
+const maliciousError = '<script>window.__xss=1</script>';
+const wait = () => new Promise((resolve) => setTimeout(resolve, 20));
+const dom = new JSDOM(page, {
+  url: "http://127.0.0.1/borrow#t=browser-token",
+  runScripts: "dangerously",
+  beforeParse(window) {
+    window.__xss = 0;
+    Object.defineProperty(window.crypto, "randomUUID", { value: () => "test-id" });
+    window.fetch = async (input) => {
+      if (String(input).includes("/api/borrow-requests")) {
+        return { ok: false, json: async () => { throw new Error(maliciousError); } };
+      }
+      return { ok: true, json: async () => [{ assetCode: "ASSET-001", assetType: "Laptop", displayName: "Demo", model: null, serialNumber: null }] };
+    };
+  },
+});
+const document = dom.window.document;
+document.getElementById("search-btn").click();
+await wait();
+document.querySelector("[data-add]").click();
+document.getElementById("submit-button").click();
+await wait();
+const message = document.getElementById("message");
+if (message.textContent !== "Submit failed.") throw new Error("unexpected malformed-response message");
+if (message.textContent.includes(maliciousError) || message.querySelector("script")) throw new Error("raw malformed error leaked");
+if (dom.window.__xss !== 0) throw new Error("malformed error executed");
+console.log("malformed-response-safe");
+"###;
+
+        let mut child = Command::new("node")
+            .args(["--input-type=module", "-e", script])
+            .current_dir(std::env::current_dir().expect("workspace directory"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("node and jsdom are required for malformed response coverage");
+        child
+            .stdin
+            .take()
+            .expect("node stdin")
+            .write_all(html.as_bytes())
+            .expect("write page HTML");
+        let output = child
+            .wait_with_output()
+            .expect("wait for malformed response test");
+        assert!(
+            output.status.success(),
+            "malformed response flow failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("malformed-response-safe"));
     }
 
     #[test]
