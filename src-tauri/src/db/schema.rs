@@ -374,6 +374,8 @@ CREATE TABLE IF NOT EXISTS borrow_requests (
   manual_entry INTEGER NOT NULL DEFAULT 0,
   manual_employee_id TEXT,
   manual_employee_name TEXT,
+  manual_employee_email TEXT,
+  manual_employee_team TEXT,
   status TEXT NOT NULL DEFAULT 'pending',
   request_type TEXT NOT NULL DEFAULT 'borrow',
   submit_source_ip TEXT,

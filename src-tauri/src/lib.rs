@@ -622,13 +622,13 @@ fn revoke_borrow_lan_token(
 }
 
 #[tauri::command]
-fn start_borrow_lan_server(
+async fn start_borrow_lan_server(
     session_store: tauri::State<'_, auth_session::SessionStore>,
     lan_server: tauri::State<'_, std::sync::Arc<lan_server::LanServerManager>>,
     session_token: String,
 ) -> Result<lan_server::LanServerStatus, String> {
     let _ctx = auth_session::require_admin(&session_store, &session_token)?;
-    lan_server.start()?;
+    lan_server.start().await?;
     lan_server.status()
 }
 
@@ -974,7 +974,7 @@ pub fn run() {
                     lan_token_store.clone(),
                 ));
                 app.manage(lan_server.clone());
-                if let Err(error) = lan_server.start_if_enabled() {
+                if let Err(error) = tauri::async_runtime::block_on(lan_server.start_if_enabled()) {
                     eprintln!("failed to start Staff Kit LAN borrow server: {error}");
                 }
                 // Show the main window after WebView2 has finished initializing.

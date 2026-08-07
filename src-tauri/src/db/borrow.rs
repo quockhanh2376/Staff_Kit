@@ -55,6 +55,10 @@ pub struct BorrowRequestSubmitInput {
     pub submitted_full_name: String,
     pub asset_codes: Vec<String>,
     pub request_type: Option<String>,
+    #[serde(default)]
+    pub manual_employee_email: Option<String>,
+    #[serde(default)]
+    pub manual_employee_team: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -69,6 +73,8 @@ pub struct BorrowRequestRecord {
     pub asset_codes: Vec<String>,
     pub submitted_at: String,
     pub decision_note: Option<String>,
+    pub manual_employee_email: Option<String>,
+    pub manual_employee_team: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -234,6 +240,8 @@ struct ValidatedBorrowSubmission {
     manual_entry: i64,
     manual_employee_id: Option<String>,
     manual_employee_name: Option<String>,
+    manual_employee_email: Option<String>,
+    manual_employee_team: Option<String>,
     request_type: String,
     assets: Vec<asset::AssetLookupRecord>,
 }
@@ -264,12 +272,34 @@ fn validate_submission_tx(
     }
 
     let employee = load_employee_identity_by_business_id_tx(&tx, submitted_employee_id.as_str())?;
+    let manual_employee_email = input
+        .manual_employee_email
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if manual_employee_email
+        .as_ref()
+        .is_some_and(|value| value.len() > 320)
+    {
+        return Err("manualEmployeeEmail is too long (max 320)".to_string());
+    }
+    let manual_employee_team = input
+        .manual_employee_team
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if manual_employee_team
+        .as_ref()
+        .is_some_and(|value| value.len() > 200)
+    {
+        return Err("manualEmployeeTeam is too long (max 200)".to_string());
+    }
     let (
         employee_id_fk,
         authoritative_full_name,
         manual_entry,
         manual_employee_id,
         manual_employee_name,
+        manual_employee_email,
+        manual_employee_team,
     ) = if let Some(employee) = employee {
         if request_type == REQUEST_TYPE_BORROW
             && employee
@@ -278,7 +308,15 @@ fn validate_submission_tx(
         {
             return Err("offboarding employees cannot borrow assets".to_string());
         }
-        (Some(employee.id), employee.full_name, 0_i64, None, None)
+        (
+            Some(employee.id),
+            employee.full_name,
+            0_i64,
+            None,
+            None,
+            None,
+            None,
+        )
     } else {
         if submitted_full_name.is_empty() {
             return Err("submittedFullName is required for manual entry".to_string());
@@ -289,6 +327,8 @@ fn validate_submission_tx(
             1_i64,
             Some(submitted_employee_id.clone()),
             Some(submitted_full_name.clone()),
+            manual_employee_email,
+            manual_employee_team,
         )
     };
 
@@ -352,6 +392,8 @@ fn validate_submission_tx(
         manual_entry,
         manual_employee_id,
         manual_employee_name,
+        manual_employee_email,
+        manual_employee_team,
         request_type,
         assets,
     })
@@ -384,6 +426,8 @@ pub(crate) fn submit_borrow_request_conn(
         manual_entry,
         manual_employee_id,
         manual_employee_name,
+        manual_employee_email,
+        manual_employee_team,
         request_type,
         assets,
     } = validated;
@@ -399,12 +443,14 @@ pub(crate) fn submit_borrow_request_conn(
           manual_entry,
           manual_employee_id,
           manual_employee_name,
+          manual_employee_email,
+          manual_employee_team,
           status,
           request_type,
           returned_by_employee_id_fk,
           submitted_at
         )
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
         "#,
         params![
             request_key.as_str(),
@@ -414,6 +460,8 @@ pub(crate) fn submit_borrow_request_conn(
             manual_entry,
             manual_employee_id.as_deref(),
             manual_employee_name.as_deref(),
+            manual_employee_email.as_deref(),
+            manual_employee_team.as_deref(),
             REQUEST_STATUS_PENDING,
             request_type,
             if request_type == REQUEST_TYPE_RETURN {
@@ -934,6 +982,8 @@ fn load_borrow_request_record(
         request_type,
         submitted_at,
         decision_note,
+        manual_employee_email,
+        manual_employee_team,
     ) = conn
         .query_row(
             r#"
@@ -945,7 +995,9 @@ fn load_borrow_request_record(
               status,
               COALESCE(request_type, 'borrow'),
               submitted_at,
-              decision_note
+              decision_note,
+              manual_employee_email,
+              manual_employee_team
             FROM borrow_requests
             WHERE id = ?
             "#,
@@ -960,6 +1012,8 @@ fn load_borrow_request_record(
                     row.get::<_, String>(5)?,
                     row.get::<_, String>(6)?,
                     row.get::<_, Option<String>>(7)?,
+                    row.get::<_, Option<String>>(8)?,
+                    row.get::<_, Option<String>>(9)?,
                 ))
             },
         )
@@ -977,6 +1031,8 @@ fn load_borrow_request_record(
         asset_codes: load_request_asset_codes(conn, request_id)?,
         submitted_at,
         decision_note,
+        manual_employee_email,
+        manual_employee_team,
     })
 }
 
@@ -1059,6 +1115,8 @@ mod tests {
                 submitted_full_name: "Untrusted Name".to_string(),
                 asset_codes: vec![" ASSET-001 ".to_string()],
                 request_type: Some("borrow".to_string()),
+                manual_employee_email: None,
+                manual_employee_team: None,
             },
         )
         .expect("known staff ID should submit");
@@ -1089,13 +1147,15 @@ mod tests {
                 submitted_full_name: " Manual Borrower ".to_string(),
                 asset_codes: vec!["ASSET-001".to_string()],
                 request_type: Some("borrow".to_string()),
+                manual_employee_email: Some("manual@example.test".to_string()),
+                manual_employee_team: Some("Operations".to_string()),
             },
         )
         .expect("unknown staff ID should use manual entry");
 
         let row = conn
             .query_row(
-                "SELECT employee_id_fk, manual_entry, manual_employee_id, manual_employee_name FROM borrow_requests WHERE id = ?",
+                "SELECT employee_id_fk, manual_entry, manual_employee_id, manual_employee_name, manual_employee_email, manual_employee_team FROM borrow_requests WHERE id = ?",
                 params![request.id],
                 |row| {
                     Ok((
@@ -1103,6 +1163,8 @@ mod tests {
                         row.get::<_, i64>(1)?,
                         row.get::<_, String>(2)?,
                         row.get::<_, String>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<String>>(5)?,
                     ))
                 },
             )
@@ -1111,6 +1173,8 @@ mod tests {
         assert_eq!(row.2, "UNKNOWN-42");
         assert_eq!(row.3, "Manual Borrower");
         assert_eq!(row.0, None);
+        assert_eq!(row.4.as_deref(), Some("manual@example.test"));
+        assert_eq!(row.5.as_deref(), Some("Operations"));
     }
 
     #[test]
@@ -1137,6 +1201,8 @@ mod tests {
                 submitted_full_name: "Manual Returner".to_string(),
                 asset_codes: vec!["ASSET-MANUAL-RETURN".to_string()],
                 request_type: Some("return".to_string()),
+                manual_employee_email: None,
+                manual_employee_team: None,
             },
         )
         .expect("unknown Staff ID may submit a return");
@@ -1184,6 +1250,8 @@ mod tests {
                 submitted_full_name: "Cancel User".to_string(),
                 asset_codes: vec!["ASSET-CANCEL".to_string()],
                 request_type: Some("borrow".to_string()),
+                manual_employee_email: None,
+                manual_employee_team: None,
             },
         )
         .unwrap();
@@ -1225,6 +1293,8 @@ mod tests {
                 submitted_full_name: "Rollback User".to_string(),
                 asset_codes: vec!["ASSET-ROLLBACK".to_string()],
                 request_type: Some("borrow".to_string()),
+                manual_employee_email: None,
+                manual_employee_team: None,
             },
         )
         .is_err());
@@ -1270,6 +1340,8 @@ mod tests {
                 submitted_full_name: "Offboarding User".to_string(),
                 asset_codes: vec!["ASSET-001".to_string()],
                 request_type: Some("borrow".to_string()),
+                manual_employee_email: None,
+                manual_employee_team: None,
             },
         )
         .unwrap_err();
@@ -1307,6 +1379,8 @@ mod tests {
                 submitted_full_name: "Offboarding User".to_string(),
                 asset_codes: vec!["ASSET-001".to_string()],
                 request_type: Some("return".to_string()),
+                manual_employee_email: None,
+                manual_employee_team: None,
             },
         )
         .expect("offboarding employee may return assets");
@@ -1332,6 +1406,8 @@ mod tests {
                 submitted_full_name: "Wrong Name".to_string(),
                 asset_codes: vec!["ASSET-ON".to_string()],
                 request_type: Some("borrow".to_string()),
+                manual_employee_email: None,
+                manual_employee_team: None,
             },
         )
         .expect("onboarding employee may borrow");
@@ -1371,6 +1447,8 @@ mod tests {
                 submitted_full_name: "Returning Employee".to_string(),
                 asset_codes: vec!["ASSET-RETURN".to_string()],
                 request_type: Some("return".to_string()),
+                manual_employee_email: None,
+                manual_employee_team: None,
             },
         )
         .unwrap();
@@ -1410,6 +1488,8 @@ mod tests {
                 submitted_full_name: "Employee One".to_string(),
                 asset_codes: vec!["ASSET-001".to_string(), "ASSET-002".to_string()],
                 request_type: Some("borrow".to_string()),
+                manual_employee_email: None,
+                manual_employee_team: None,
             },
         )
         .unwrap();
@@ -1421,6 +1501,8 @@ mod tests {
                 submitted_full_name: "Employee Two".to_string(),
                 asset_codes: vec!["ASSET-001".to_string()],
                 request_type: Some("borrow".to_string()),
+                manual_employee_email: None,
+                manual_employee_team: None,
             },
         )
         .unwrap_err();
@@ -1475,6 +1557,8 @@ mod tests {
                     submitted_full_name: "Employee One".to_string(),
                     asset_codes: vec![code.to_string()],
                     request_type: Some("borrow".to_string()),
+                    manual_employee_email: None,
+                    manual_employee_team: None,
                 },
             )
             .unwrap_err();
@@ -1508,6 +1592,8 @@ mod tests {
                 submitted_full_name: "Employee One".to_string(),
                 asset_codes: vec!["ASSET-001".to_string(), "ASSET-002".to_string()],
                 request_type: Some("borrow".to_string()),
+                manual_employee_email: None,
+                manual_employee_team: None,
             },
         )
         .unwrap_err();
@@ -1569,6 +1655,8 @@ mod tests {
                         submitted_full_name: full_name.to_string(),
                         asset_codes: asset_codes.iter().map(|code| (*code).to_string()).collect(),
                         request_type: Some("borrow".to_string()),
+                        manual_employee_email: None,
+                        manual_employee_team: None,
                     },
                 )
                 .map(|request| request.id)
@@ -1636,6 +1724,8 @@ mod tests {
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-001".to_string(), "ASSET-002".to_string()],
                 request_type: None,
+                manual_employee_email: None,
+                manual_employee_team: None,
             },
         )
         .expect("submit borrow request");
@@ -1663,6 +1753,8 @@ mod tests {
                 submitted_full_name: "Ghost User".to_string(),
                 asset_codes: vec!["ASSET-001".to_string()],
                 request_type: None,
+                manual_employee_email: None,
+                manual_employee_team: None,
             },
         )
         .expect("unknown employee should use manual entry");
@@ -1684,6 +1776,8 @@ mod tests {
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-001".to_string(), "ASSET-001".to_string()],
                 request_type: None,
+                manual_employee_email: None,
+                manual_employee_team: None,
             },
         )
         .expect_err("duplicate asset codes should be rejected");
@@ -1704,6 +1798,8 @@ mod tests {
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-001".to_string()],
                 request_type: None,
+                manual_employee_email: None,
+                manual_employee_team: None,
             },
         )
         .expect("submit borrow request");
@@ -1739,6 +1835,8 @@ mod tests {
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-001".to_string()],
                 request_type: None,
+                manual_employee_email: None,
+                manual_employee_team: None,
             },
         )
         .expect("submit borrow request");
@@ -1766,6 +1864,8 @@ mod tests {
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-001".to_string()],
                 request_type: None,
+                manual_employee_email: None,
+                manual_employee_team: None,
             },
         )
         .expect("submit borrow request");
@@ -1790,6 +1890,8 @@ mod tests {
                 submitted_full_name: "Reject User".to_string(),
                 asset_codes: vec!["ASSET-REJECT".to_string()],
                 request_type: Some("borrow".to_string()),
+                manual_employee_email: None,
+                manual_employee_team: None,
             },
         )
         .unwrap();
@@ -1820,6 +1922,8 @@ mod tests {
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-001".to_string()],
                 request_type: None,
+                manual_employee_email: None,
+                manual_employee_team: None,
             },
         )
         .expect("create first pending request");
@@ -1831,6 +1935,8 @@ mod tests {
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-002".to_string()],
                 request_type: None,
+                manual_employee_email: None,
+                manual_employee_team: None,
             },
         )
         .expect("create request to approve");
@@ -1843,6 +1949,8 @@ mod tests {
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-003".to_string()],
                 request_type: None,
+                manual_employee_email: None,
+                manual_employee_team: None,
             },
         )
         .expect("create last pending request");
@@ -1868,6 +1976,8 @@ mod tests {
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-001".to_string()],
                 request_type: None,
+                manual_employee_email: None,
+                manual_employee_team: None,
             },
         )
         .expect("submit request");

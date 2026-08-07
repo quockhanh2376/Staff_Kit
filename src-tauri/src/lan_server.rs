@@ -44,12 +44,63 @@ struct ManagedLanServer {
     port: u16,
 }
 
+#[cfg(test)]
+struct LanLifecycleTestGate {
+    events: Mutex<Vec<LanLifecycleTestEvent>>,
+    listener_ready: tokio::sync::Notify,
+    stop_started: tokio::sync::Notify,
+    release_stop: tokio::sync::Notify,
+    start_attempted: tokio::sync::Notify,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LanLifecycleTestEvent {
+    ListenerReady,
+    StopShutdownStarted,
+    StartAttempted,
+    StartAcquiredLifecycle,
+    ListenerTerminated,
+    StopCompleted,
+    StartCompleted,
+}
+
+#[cfg(test)]
+impl LanLifecycleTestGate {
+    fn new() -> Self {
+        Self {
+            events: Mutex::new(Vec::new()),
+            listener_ready: tokio::sync::Notify::new(),
+            stop_started: tokio::sync::Notify::new(),
+            release_stop: tokio::sync::Notify::new(),
+            start_attempted: tokio::sync::Notify::new(),
+        }
+    }
+
+    fn record(&self, event: LanLifecycleTestEvent) {
+        self.events
+            .lock()
+            .expect("lifecycle test events lock")
+            .push(event);
+    }
+
+    fn events(&self) -> Vec<LanLifecycleTestEvent> {
+        self.events
+            .lock()
+            .expect("lifecycle test events lock")
+            .clone()
+    }
+}
+
 #[derive(Clone)]
 pub struct LanServerManager {
     settings_factory: SettingsFactory,
     db_factory: DbFactory,
     token_store: Arc<lan_auth::LanTokenStore>,
     server: Arc<Mutex<Option<ManagedLanServer>>>,
+    lifecycle: Arc<tokio::sync::Mutex<()>>,
+    #[cfg(test)]
+    lifecycle_test_gate: Arc<Mutex<Option<Arc<LanLifecycleTestGate>>>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -81,18 +132,50 @@ impl LanServerManager {
             db_factory,
             token_store,
             server: Arc::new(Mutex::new(None)),
+            lifecycle: Arc::new(tokio::sync::Mutex::new(())),
+            #[cfg(test)]
+            lifecycle_test_gate: Arc::new(Mutex::new(None)),
         }
     }
 
-    pub fn start_if_enabled(&self) -> Result<(), String> {
+    #[cfg(test)]
+    fn set_lifecycle_test_gate(&self, gate: Option<Arc<LanLifecycleTestGate>>) {
+        *self
+            .lifecycle_test_gate
+            .lock()
+            .expect("lifecycle test gate lock") = gate;
+    }
+
+    pub async fn start_if_enabled(&self) -> Result<(), String> {
         if (self.settings_factory)()?.enabled {
-            self.start()
+            self.start().await
         } else {
             Ok(())
         }
     }
 
-    pub fn start(&self) -> Result<(), String> {
+    pub async fn start(&self) -> Result<(), String> {
+        #[cfg(test)]
+        let test_gate = self
+            .lifecycle_test_gate
+            .lock()
+            .expect("lifecycle test gate lock")
+            .clone();
+        #[cfg(test)]
+        if let Some(gate) = test_gate.clone() {
+            gate.start_attempted.notify_one();
+            gate.record(LanLifecycleTestEvent::StartAttempted);
+        }
+        let _lifecycle = self.lifecycle.lock().await;
+        #[cfg(test)]
+        if let Some(gate) = self
+            .lifecycle_test_gate
+            .lock()
+            .expect("lifecycle test gate lock")
+            .clone()
+        {
+            gate.record(LanLifecycleTestEvent::StartAcquiredLifecycle);
+        }
         let settings = (self.settings_factory)()?;
         if !settings.enabled {
             return Err("Borrow LAN server is disabled in settings.".to_string());
@@ -123,6 +206,11 @@ impl LanServerManager {
         let router = build_router(Arc::clone(&self.db_factory), Arc::clone(&self.token_store));
         let token_store = Arc::clone(&self.token_store);
         let task = tauri::async_runtime::spawn(async move {
+            #[cfg(test)]
+            if let Some(gate) = test_gate.clone() {
+                gate.record(LanLifecycleTestEvent::ListenerReady);
+                gate.listener_ready.notify_one();
+            }
             let _ = axum::serve(
                 listener,
                 router.into_make_service_with_connect_info::<SocketAddr>(),
@@ -136,10 +224,20 @@ impl LanServerManager {
             bind_host: settings.host,
             port: settings.port,
         });
+        #[cfg(test)]
+        if let Some(gate) = self
+            .lifecycle_test_gate
+            .lock()
+            .expect("lifecycle test gate lock")
+            .clone()
+        {
+            gate.record(LanLifecycleTestEvent::StartCompleted);
+        }
         Ok(())
     }
 
     pub async fn stop(&self) -> Result<(), String> {
+        let _lifecycle = self.lifecycle.lock().await;
         let task = {
             let mut server = self
                 .server
@@ -147,11 +245,41 @@ impl LanServerManager {
                 .map_err(|_| "LAN server state is unavailable.".to_string())?;
             server.take().map(|existing| existing.task)
         };
+        #[cfg(test)]
+        let test_gate = self
+            .lifecycle_test_gate
+            .lock()
+            .expect("lifecycle test gate lock")
+            .clone();
+        #[cfg(test)]
+        if let Some(gate) = test_gate {
+            gate.record(LanLifecycleTestEvent::StopShutdownStarted);
+            gate.stop_started.notify_one();
+            gate.release_stop.notified().await;
+        }
         if let Some(task) = task {
             task.abort();
             let _ = task.await;
         }
+        #[cfg(test)]
+        if let Some(gate) = self
+            .lifecycle_test_gate
+            .lock()
+            .expect("lifecycle test gate lock")
+            .clone()
+        {
+            gate.record(LanLifecycleTestEvent::ListenerTerminated);
+        }
         self.token_store.revoke();
+        #[cfg(test)]
+        if let Some(gate) = self
+            .lifecycle_test_gate
+            .lock()
+            .expect("lifecycle test gate lock")
+            .clone()
+        {
+            gate.record(LanLifecycleTestEvent::StopCompleted);
+        }
         Ok(())
     }
 
@@ -511,6 +639,8 @@ async fn submit_borrow_request(
         submitted_full_name: payload.submitted_full_name,
         asset_codes: payload.asset_codes,
         request_type: Some(payload.request_type),
+        manual_employee_email: None,
+        manual_employee_team: None,
     };
 
     // Perform authoritative employee and asset validation before consuming the
@@ -737,6 +867,7 @@ mod tests {
 
         manager
             .start_if_enabled()
+            .await
             .expect("disabled startup is safe");
         assert!(!manager.status().expect("status").running);
         assert!(!listener_accepts(port).await);
@@ -748,10 +879,13 @@ mod tests {
         let port = ephemeral_port();
         let (manager, _, _) = test_manager(&harness, true, port);
 
-        manager.start().expect("enabled server starts");
+        manager.start().await.expect("enabled server starts");
         wait_for_listener(port).await;
         assert!(manager.status().expect("status").running);
-        assert!(manager.start().is_err(), "duplicate start must be rejected");
+        assert!(
+            manager.start().await.is_err(),
+            "duplicate start must be rejected"
+        );
         manager.stop().await.expect("stop");
     }
 
@@ -761,7 +895,7 @@ mod tests {
         let port = ephemeral_port();
         let (manager, _, _) = test_manager(&harness, true, port);
 
-        manager.start().expect("start");
+        manager.start().await.expect("start");
         wait_for_listener(port).await;
         manager.stop().await.expect("stop waits for task");
         assert!(!manager.status().expect("stopped status").running);
@@ -770,9 +904,79 @@ mod tests {
             "socket must be released before stop returns"
         );
         manager.stop().await.expect("duplicate stop is safe");
-        manager.start().expect("immediate restart");
+        manager.start().await.expect("immediate restart");
         wait_for_listener(port).await;
         manager.stop().await.expect("final stop");
+    }
+
+    #[tokio::test]
+    async fn concurrent_stop_then_start_serializes_lifecycle_transition() {
+        let harness = LanServerTestHarness::new();
+        let port = ephemeral_port();
+        let (manager, _, _) = test_manager(&harness, true, port);
+
+        let initial_gate = Arc::new(LanLifecycleTestGate::new());
+        manager.set_lifecycle_test_gate(Some(Arc::clone(&initial_gate)));
+        let listener_ready = initial_gate.listener_ready.notified();
+        manager.start().await.expect("start");
+        listener_ready.await;
+
+        let gate = Arc::new(LanLifecycleTestGate::new());
+        manager.set_lifecycle_test_gate(Some(Arc::clone(&gate)));
+        let stop_started = gate.stop_started.notified();
+        let stopping_manager = manager.clone();
+        let stop_task = tokio::spawn(async move { stopping_manager.stop().await });
+        stop_started.await;
+
+        let start_attempted = gate.start_attempted.notified();
+        let restarting_manager = manager.clone();
+        let start_task = tokio::spawn(async move { restarting_manager.start().await });
+        start_attempted.await;
+
+        gate.release_stop.notify_one();
+        assert!(stop_task.await.expect("stop task join").is_ok());
+        let restarted_listener_ready = gate.listener_ready.notified();
+        let restart = start_task.await.expect("start task join");
+        assert!(
+            restart.is_ok(),
+            "restart after termination must succeed: {restart:?}"
+        );
+        restarted_listener_ready.await;
+        assert!(manager.status().expect("running status").running);
+        let events = gate.events();
+        let event_index = |event| {
+            events
+                .iter()
+                .position(|current| *current == event)
+                .expect("expected lifecycle event")
+        };
+        assert!(
+            event_index(LanLifecycleTestEvent::StopShutdownStarted)
+                < event_index(LanLifecycleTestEvent::StartAttempted),
+            "Start must be attempted after Stop begins"
+        );
+        assert!(
+            event_index(LanLifecycleTestEvent::StartAttempted)
+                < event_index(LanLifecycleTestEvent::ListenerTerminated),
+            "Start must not acquire lifecycle control before listener termination"
+        );
+        assert!(
+            event_index(LanLifecycleTestEvent::ListenerTerminated)
+                < event_index(LanLifecycleTestEvent::StopCompleted),
+            "Stop must complete listener termination before completing"
+        );
+        assert!(
+            event_index(LanLifecycleTestEvent::StopCompleted)
+                < event_index(LanLifecycleTestEvent::StartAcquiredLifecycle),
+            "Start must acquire lifecycle control only after Stop completes"
+        );
+        assert!(
+            event_index(LanLifecycleTestEvent::StartAcquiredLifecycle)
+                < event_index(LanLifecycleTestEvent::StartCompleted),
+            "Start must complete after acquiring lifecycle control"
+        );
+        manager.set_lifecycle_test_gate(None);
+        manager.stop().await.expect("cleanup");
     }
 
     #[tokio::test]
@@ -780,7 +984,7 @@ mod tests {
         let harness = LanServerTestHarness::new();
         let port = ephemeral_port();
         let (manager, _, token_store) = test_manager(&harness, true, port);
-        manager.start().expect("start");
+        manager.start().await.expect("start");
         wait_for_listener(port).await;
 
         let token = token_store.issue();
@@ -810,7 +1014,7 @@ mod tests {
         let (manager, settings, token_store) = test_manager(&harness, true, port);
 
         assert!(manager.require_running().is_err());
-        manager.start().expect("start");
+        manager.start().await.expect("start");
         wait_for_listener(port).await;
         let old_token = token_store.issue();
         manager.stop().await.expect("stop");
@@ -821,7 +1025,7 @@ mod tests {
         ));
 
         settings.lock().expect("settings").port = port;
-        manager.start().expect("restart");
+        manager.start().await.expect("restart");
         wait_for_listener(port).await;
         let new_token = token_store.issue();
         assert_ne!(old_token, new_token);
@@ -833,7 +1037,7 @@ mod tests {
         let harness = LanServerTestHarness::new();
         let port = ephemeral_port();
         let (manager, _, token_store) = test_manager(&harness, true, port);
-        manager.start().expect("start");
+        manager.start().await.expect("start");
         wait_for_listener(port).await;
         let token = token_store.issue();
         manager
@@ -867,7 +1071,7 @@ mod tests {
         let stopped = manager.status().expect("stopped status");
         assert!(!stopped.running);
         assert!(!stopped.token_ready);
-        manager.start().expect("start");
+        manager.start().await.expect("start");
         wait_for_listener(port).await;
         let running_without_token = manager.status().expect("running status");
         assert!(running_without_token.running);
@@ -882,7 +1086,7 @@ mod tests {
         let harness = LanServerTestHarness::new();
         let port = ephemeral_port();
         let (manager, _, token_store) = test_manager(&harness, true, port);
-        manager.start().expect("start");
+        manager.start().await.expect("start");
         wait_for_listener(port).await;
         let token = token_store.issue();
 

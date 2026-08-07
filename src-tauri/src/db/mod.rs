@@ -900,6 +900,8 @@ fn ensure_phase_c_borrow_schema_inner(
             ("manual_entry", "ALTER TABLE borrow_requests ADD COLUMN manual_entry INTEGER NOT NULL DEFAULT 0"),
             ("manual_employee_id", "ALTER TABLE borrow_requests ADD COLUMN manual_employee_id TEXT"),
             ("manual_employee_name", "ALTER TABLE borrow_requests ADD COLUMN manual_employee_name TEXT"),
+            ("manual_employee_email", "ALTER TABLE borrow_requests ADD COLUMN manual_employee_email TEXT"),
+            ("manual_employee_team", "ALTER TABLE borrow_requests ADD COLUMN manual_employee_team TEXT"),
             ("returned_by_employee_id_fk", "ALTER TABLE borrow_requests ADD COLUMN returned_by_employee_id_fk INTEGER REFERENCES employees(id) ON UPDATE CASCADE ON DELETE RESTRICT"),
         ];
         for (column, sql) in additions {
@@ -958,6 +960,8 @@ fn ensure_phase_c_borrow_schema_inner(
                   manual_entry INTEGER NOT NULL DEFAULT 0,
                   manual_employee_id TEXT,
                   manual_employee_name TEXT,
+                  manual_employee_email TEXT,
+                  manual_employee_team TEXT,
                   status TEXT NOT NULL DEFAULT 'pending',
                   request_type TEXT NOT NULL DEFAULT 'borrow',
                   submit_source_ip TEXT,
@@ -969,12 +973,14 @@ fn ensure_phase_c_borrow_schema_inner(
                 );
                 INSERT INTO borrow_requests_phase_c_new(
                   id, request_key, employee_id_fk, submitted_employee_id, submitted_full_name,
-                  manual_entry, manual_employee_id, manual_employee_name, status, request_type,
+                  manual_entry, manual_employee_id, manual_employee_name, manual_employee_email,
+                  manual_employee_team, status, request_type,
                   submit_source_ip, decision_note, decided_by_account_id, returned_by_employee_id_fk,
                   submitted_at, decided_at
                 )
                 SELECT id, request_key, employee_id_fk, submitted_employee_id, submitted_full_name,
-                  manual_entry, manual_employee_id, manual_employee_name, status, request_type,
+                  manual_entry, manual_employee_id, manual_employee_name, manual_employee_email,
+                  manual_employee_team, status, request_type,
                   submit_source_ip, decision_note, decided_by_account_id, returned_by_employee_id_fk,
                   submitted_at, decided_at
                 FROM borrow_requests_phase_c_legacy;
@@ -1546,6 +1552,8 @@ mod tests {
             "manual_entry",
             "manual_employee_id",
             "manual_employee_name",
+            "manual_employee_email",
+            "manual_employee_team",
             "returned_by_employee_id_fk",
         ] {
             assert!(
@@ -1672,6 +1680,16 @@ mod tests {
             .query_row("SELECT \"notnull\" FROM pragma_table_info('borrow_requests') WHERE name = 'employee_id_fk'", [], |row| row.get(0))
             .expect("inspect migrated employee FK");
         assert_eq!(employee_fk_not_null, 0);
+        assert!(column_exists(
+            &conn,
+            "borrow_requests",
+            "manual_employee_email"
+        ));
+        assert!(column_exists(
+            &conn,
+            "borrow_requests",
+            "manual_employee_team"
+        ));
         let foreign_key_errors: i64 = conn
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
                 row.get(0)
@@ -1784,6 +1802,16 @@ mod tests {
             &conn,
             "borrow_requests",
             "manual_employee_name"
+        ));
+        assert!(!column_exists(
+            &conn,
+            "borrow_requests",
+            "manual_employee_email"
+        ));
+        assert!(!column_exists(
+            &conn,
+            "borrow_requests",
+            "manual_employee_team"
         ));
         assert!(!column_exists(
             &conn,

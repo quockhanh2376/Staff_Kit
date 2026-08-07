@@ -1726,3 +1726,33 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Added admin queue coverage for pending Borrow/Return display, pending-only cancellation, loading state, and duplicate action prevention.
 - Validation passed: 17 frontend test files/143 tests and 230 Rust tests; typecheck, lint, build, quality, Tauri check, rustfmt, and `git diff --check` passed.
 - No commit or push performed; Phase D3 and later work were not started.
+## 2026-08-07 SEC-002 PR blocker fixes — Start
+
+- Fixing the managed LAN Stop → Start lifecycle race and aligning Phase C manual employee schema with the approved nullable email/team fields.
+- Scope is limited to lifecycle synchronization, migration/persistence/DTO coverage, and focused regression tests. No commit or push in this session.
+
+## 2026-08-07 SEC-002 PR blocker fixes — End
+
+- Fixed the LAN lifecycle race by serializing Start/Stop with an async lifecycle mutex held through listener task termination; added deterministic concurrent restart coverage.
+- Added nullable manual employee email/team fields to fresh schema, atomic legacy migration/rebuild, request persistence/load mappings, DTOs, validation, and manual-entry coverage.
+- Validation: focused lifecycle test 1/1; focused Phase C tests 14/14; frontend unit tests 17 files/143 tests; full Rust/Tauri tests 231/231; typecheck, lint, build, quality, Tauri check, changed-file rustfmt, and `git diff --check` passed.
+- Warnings: pre-existing React hook dependency, Vite dynamic-import/chunk-size, and Rust dead-code warnings. No commit/push, merge, Phase D3, dependency/generated/database/secret, or main/origin-main changes.
+## 2026-08-07 SEC-002 deterministic lifecycle test — Start
+
+- Strengthening only the Stop → Start concurrency regression test with test-scoped shutdown gating. No production lifecycle redesign, commit, push, or PR metadata changes.
+
+## 2026-08-07 SEC-002 deterministic lifecycle test — End
+
+- Result: made the Stop → Start regression deterministic with a test-only shutdown gate that proves Start remains blocked until Stop completes listener termination and socket release.
+- Validation: focused lifecycle test 1/1; LAN lifecycle tests 32/32; focused Phase C tests 14/14; frontend unit tests 17 files/143 tests; full Rust/Tauri tests 231/231; typecheck, lint, build, quality, Tauri check, rustfmt, and `git diff --check` passed.
+- Warnings: pre-existing React hook dependency, Vite dynamic-import/chunk-size, and Rust dead-code warnings. No production lifecycle redesign, commit/push, schema or manual-field changes, dependency/generated/database/secret changes, or main/origin-main changes.
+
+## 2026-08-07 SEC-002 deterministic lifecycle test hardening — Start
+
+- Replace the remaining timing-based Stop → Start regression-test proof with test-only listener readiness and ordered lifecycle signals. No production lifecycle redesign, commit, push, or PR metadata changes.
+
+## 2026-08-07 SEC-002 deterministic lifecycle test hardening — End
+
+- Result: replaced timing-based Stop → Start proof with test-only listener-ready, shutdown, lifecycle-acquisition, termination, and completion signals plus ordered event assertions. No release lifecycle behavior changed.
+- Validation: focused lifecycle test 1/1; LAN lifecycle tests 32/32; focused Phase C tests 14/14; full Rust/Tauri tests 231/231; frontend unit tests 17 files/143 tests; typecheck, lint, build, quality, Tauri check, changed-file rustfmt, and `git diff --check` passed.
+- Warnings: pre-existing React hook dependency, Vite dynamic-import/chunk-size, and Rust dead-code warnings. No schema/manual-identity changes, dependency/generated/database/secret changes, commit/push, or main/origin-main changes.
