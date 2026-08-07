@@ -1,5 +1,9 @@
 # Daily Log - 2026-04-20
 
+## 2026-08-06 — SEC-002 Phase C blocker fixes (Start)
+
+- Implement cancellation actor attribution, atomic Phase C migration rollback, and corrected pending-claim uniqueness documentation.
+
 ## Objective
 Polish the `Asset Dashboard` serialized UI so the table header, ID presentation, holder layout, and category overview cards align more closely with the approved compact mock.
 
@@ -1651,3 +1655,104 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Known non-blocking warnings: 1 ESLint (`useSettingsState` deps), 9 Cargo (test infrastructure + defense-in-depth).
 - Merge was performed as one local squash commit and pushed directly because GitHub CLI (`gh`) was not authenticated.
 - No SEC-002 (LAN authentication) work started.
+
+## Start — SEC-002 Phase B repair — 2026-08-05
+
+- Branch: `security/lan-borrow-authentication`; Phase A is already committed and pushed.
+- Objective: repair Phase B LAN token lifecycle, fragment-based QR/browser authentication, pre-body bearer authentication, request identity fields, minimal submit responses, and regression coverage.
+- Scope: `src-tauri/src/lan_auth.rs`, `src-tauri/src/lan_server.rs`, `src-tauri/src/lan_assets.rs`, `src-tauri/src/lib.rs`, focused tests, and this session log only.
+- Out of scope: schema migration, Phase C business rules, `main`, `origin/main`, commit, push, merge, rebase, and amend.
+- Planned validation: focused Rust/browser-contract tests followed by the complete requested frontend, Tauri, formatting, and diff gates.
+
+## End — SEC-002 Phase B repair — 2026-08-05
+
+- Result: repaired the end-to-end LAN flow without schema changes or Phase C business rules.
+- Root causes fixed: no issued token at startup/admin boundary, query-token page auth, unauthenticated browser fetches, missing request identity fields, body extraction before auth, full DB record returned to LAN clients, and raw backend submit errors.
+- Token lifecycle: admin-only issue/regenerate, revoke, and readiness IPC commands; token remains memory-only, is revoked on app close, and is never logged or returned in HTTP responses.
+- Browser flow: QR uses `#t=`, page removes the fragment from visible history, API calls use Bearer auth, client session identity is stable in page memory, and each submission gets a fresh request ID.
+- Validation: frontend unit tests 130/130; Rust tests 200/200; typecheck, lint, build, `check:quality`, `check:tauri`, edition-aware `rustfmt --check`, and `git diff --check` passed.
+- Known warnings: one pre-existing React hook dependency warning, existing Vite chunk/dynamic-import warnings, and existing Rust dead-code warnings.
+- Scope: no Phase C schema or business-rule files changed; no commit, push, merge, rebase, amend, or main/origin-main modification.
+
+## Start — SEC-002 Phase C — 2026-08-05
+
+- Branch: `security/lan-borrow-authentication`; starting from Phase B checkpoint `74aef2fb199b4d285705f73b4caabaafd7596141`.
+- Objective: implement only Phase C schema migration, manual borrowers, authoritative employee/asset validation, atomic pending claims, and focused regression tests.
+- Out of scope: Phase D, commit, push, merge, rebase, amend, and any modification to `main` or `origin/main`.
+
+## End — SEC-002 Phase C — 2026-08-05
+
+- Result: implemented non-destructive Phase C schema extensions, authoritative employee rules, lifecycle/loan validation, pending asset claims, immediate transactions, return attribution, and replay-after-business-validation ordering.
+- Validation: frontend unit tests 130/130; Rust/Tauri tests 211/211; typecheck, lint, build, `check:quality`, `check:tauri`, rustfmt checks, and `git diff --check` passed.
+- Warnings: existing React hook dependency warning, existing Vite dynamic-import/chunk-size warnings, and existing Rust dead-code warnings.
+- Scope: no Phase D work, no commit/push, no merge/rebase/amend, no `main`/`origin/main` changes; incidental `db/column.rs` formatting was reverted.
+
+## Start — SEC-002 Phase C correction — 2026-08-06
+
+- Objective: remove the sentinel design, migrate populated borrow requests to a nullable employee foreign key, add cancellation and regression coverage, and preserve Phase B controls.
+- Out of scope: Phase D, commit, push, merge, rebase, amend, and any modification to `main` or `origin/main`.
+
+## End — SEC-002 Phase C correction — 2026-08-06
+
+- Result: removed the sentinel design, added transactional nullable-FK migration coverage against populated legacy data, implemented atomic pending-request cancellation, and added rollback, concurrency, idempotency, and manual-return tests.
+- Validation: frontend unit tests 130/130; Rust/Tauri tests 215/215; typecheck, lint, build, `check:quality`, `check:tauri`, changed-file rustfmt, and `git diff --check` passed.
+- Warnings: existing React hook dependency warning, existing Vite dynamic-import/chunk-size warnings, and existing Rust dead-code warnings.
+- Scope: no Phase D work, no commit/push, no merge/rebase/amend, and no `main`/`origin/main` changes.
+
+## End — SEC-002 Phase C blocker fixes — 2026-08-06
+
+- Result: cancellation now records the authenticated admin actor; Phase C migration is atomic with pragma restoration and rollback coverage; pending-claim uniqueness documentation matches multi-asset behavior.
+- Validation: focused Phase C tests 14/14; full Rust/Tauri tests 216/216; frontend unit tests 130/130; typecheck, lint, build, quality, Tauri check, targeted rustfmt, and `git diff --check` passed.
+- Warnings: pre-existing React hook dependency, Vite dynamic-import/chunk-size, and Rust dead-code warnings.
+- Scope: no Phase D, commit, push, dependency/generated/database/secret changes, or `main`/`origin/main` changes.
+## 2026-08-06 SEC-002 Phase D1 Start
+
+- Implement only the audited D1 blockers: safe LAN browser DOM rendering, managed LAN server lifecycle, and admin pending-request cancellation UI.
+- Preserve Phase A/B/C security and business rules; do not start D2 or commit/push.
+
+## 2026-08-06 SEC-002 Phase D1 End
+
+- Completed safe LAN browser rendering, managed LAN Start/Stop/status lifecycle, and pending-request cancellation UI.
+- Validation passed: 15 frontend test files/133 tests and 227 Rust tests; no commit or push performed.
+
+## 2026-08-06 SEC-002 Phase D2 Start
+
+- Implement only the shared mobile Borrow/Return workflow hardening and pending queue coverage on top of committed D1.
+- Preserve D1 lifecycle, Phase B authentication, and Phase C business rules; do not modify schema or start later Phase D work.
+
+## 2026-08-06 SEC-002 Phase D2 End
+
+- Hardened the shared LAN page with explicit search/submit loading guards, safe API error handling, and executable Borrow/Return flow coverage.
+- Added admin queue coverage for pending Borrow/Return display, pending-only cancellation, loading state, and duplicate action prevention.
+- Validation passed: 17 frontend test files/143 tests and 230 Rust tests; typecheck, lint, build, quality, Tauri check, rustfmt, and `git diff --check` passed.
+- No commit or push performed; Phase D3 and later work were not started.
+## 2026-08-07 SEC-002 PR blocker fixes — Start
+
+- Fixing the managed LAN Stop → Start lifecycle race and aligning Phase C manual employee schema with the approved nullable email/team fields.
+- Scope is limited to lifecycle synchronization, migration/persistence/DTO coverage, and focused regression tests. No commit or push in this session.
+
+## 2026-08-07 SEC-002 PR blocker fixes — End
+
+- Fixed the LAN lifecycle race by serializing Start/Stop with an async lifecycle mutex held through listener task termination; added deterministic concurrent restart coverage.
+- Added nullable manual employee email/team fields to fresh schema, atomic legacy migration/rebuild, request persistence/load mappings, DTOs, validation, and manual-entry coverage.
+- Validation: focused lifecycle test 1/1; focused Phase C tests 14/14; frontend unit tests 17 files/143 tests; full Rust/Tauri tests 231/231; typecheck, lint, build, quality, Tauri check, changed-file rustfmt, and `git diff --check` passed.
+- Warnings: pre-existing React hook dependency, Vite dynamic-import/chunk-size, and Rust dead-code warnings. No commit/push, merge, Phase D3, dependency/generated/database/secret, or main/origin-main changes.
+## 2026-08-07 SEC-002 deterministic lifecycle test — Start
+
+- Strengthening only the Stop → Start concurrency regression test with test-scoped shutdown gating. No production lifecycle redesign, commit, push, or PR metadata changes.
+
+## 2026-08-07 SEC-002 deterministic lifecycle test — End
+
+- Result: made the Stop → Start regression deterministic with a test-only shutdown gate that proves Start remains blocked until Stop completes listener termination and socket release.
+- Validation: focused lifecycle test 1/1; LAN lifecycle tests 32/32; focused Phase C tests 14/14; frontend unit tests 17 files/143 tests; full Rust/Tauri tests 231/231; typecheck, lint, build, quality, Tauri check, rustfmt, and `git diff --check` passed.
+- Warnings: pre-existing React hook dependency, Vite dynamic-import/chunk-size, and Rust dead-code warnings. No production lifecycle redesign, commit/push, schema or manual-field changes, dependency/generated/database/secret changes, or main/origin-main changes.
+
+## 2026-08-07 SEC-002 deterministic lifecycle test hardening — Start
+
+- Replace the remaining timing-based Stop → Start regression-test proof with test-only listener readiness and ordered lifecycle signals. No production lifecycle redesign, commit, push, or PR metadata changes.
+
+## 2026-08-07 SEC-002 deterministic lifecycle test hardening — End
+
+- Result: replaced timing-based Stop → Start proof with test-only listener-ready, shutdown, lifecycle-acquisition, termination, and completion signals plus ordered event assertions. No release lifecycle behavior changed.
+- Validation: focused lifecycle test 1/1; LAN lifecycle tests 32/32; focused Phase C tests 14/14; full Rust/Tauri tests 231/231; frontend unit tests 17 files/143 tests; typecheck, lint, build, quality, Tauri check, changed-file rustfmt, and `git diff --check` passed.
+- Warnings: pre-existing React hook dependency, Vite dynamic-import/chunk-size, and Rust dead-code warnings. No schema/manual-identity changes, dependency/generated/database/secret changes, commit/push, or main/origin-main changes.

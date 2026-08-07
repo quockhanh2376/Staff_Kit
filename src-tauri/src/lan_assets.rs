@@ -277,6 +277,26 @@ pub(crate) fn borrow_page_html() -> &'static str {
       const btnReturn   = document.getElementById("btn-return");
       const searchBtn   = document.getElementById("search-btn");
 
+      // The QR token is carried in the fragment so it is never sent to the
+      // LAN server in the page request, access logs, or referrer headers.
+      const fragmentParams = new URLSearchParams(location.hash.slice(1));
+      const lanToken = fragmentParams.get("t") || "";
+      if (location.hash) {
+        history.replaceState(null, "", location.pathname + location.search);
+      }
+      const clientSessionId = crypto.randomUUID();
+      let isSearching = false;
+      let isSubmitting = false;
+
+      const authorizedFetch = (input, init = {}) => {
+        if (!lanToken) {
+          throw new Error("LAN access token is missing. Scan the current QR code again.");
+        }
+        const headers = new Headers(init.headers || {});
+        headers.set("Authorization", `Bearer ${lanToken}`);
+        return fetch(input, { ...init, headers });
+      };
+
       // Mode switch
       const MODES = {
         borrow: {
@@ -321,7 +341,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
         // Clear state when switching mode
         selectedAssets.clear();
         renderSelected();
-        resultsEl.innerHTML = "";
+        resultsEl.replaceChildren();
         setMessage("");
       }
 
@@ -330,64 +350,97 @@ pub(crate) fn borrow_page_html() -> &'static str {
 
       // Render helpers
       const renderSelected = () => {
-        if (selectedAssets.size === 0) { selectedEl.innerHTML = ""; return; }
-        const chips = Array.from(selectedAssets.values())
-          .map((asset) => `
-            <span class="selected-chip">
-              ${asset.assetCode}
-              <button type="button" data-remove="${asset.assetCode}">&times;</button>
-            </span>
-          `)
-          .join("");
-        selectedEl.innerHTML = `<div class="helper">Selected Assets</div><div>${chips}</div>`;
-        selectedEl.querySelectorAll("[data-remove]").forEach((btn) => {
-          btn.addEventListener("click", () => {
-            selectedAssets.delete(btn.getAttribute("data-remove"));
+        selectedEl.replaceChildren();
+        submitBtn.disabled = isSubmitting || selectedAssets.size === 0;
+        if (selectedAssets.size === 0) return;
+        const heading = document.createElement("div");
+        heading.className = "helper";
+        heading.textContent = "Selected Assets";
+        const chips = document.createElement("div");
+        for (const asset of selectedAssets.values()) {
+          const chip = document.createElement("span");
+          chip.className = "selected-chip";
+          chip.textContent = asset.assetCode;
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.dataset.remove = asset.assetCode;
+          remove.textContent = "×";
+          remove.addEventListener("click", () => {
+            selectedAssets.delete(asset.assetCode);
             renderSelected();
           });
-        });
+          chip.append(remove);
+          chips.append(chip);
+        }
+        selectedEl.append(heading, chips);
       };
 
+      submitBtn.disabled = true;
+
       const setMessage = (text, isSuccess = false) => {
-        if (!text) { messageEl.innerHTML = ""; return; }
-        messageEl.innerHTML = `<div class="message ${isSuccess ? "success" : ""}">${text}</div>`;
+        messageEl.replaceChildren();
+        if (!text) return;
+        const message = document.createElement("div");
+        message.className = isSuccess ? "message success" : "message";
+        message.textContent = text;
+        messageEl.append(message);
       };
 
       const renderResults = (items) => {
+        resultsEl.replaceChildren();
         if (!Array.isArray(items) || items.length === 0) {
-          resultsEl.innerHTML = `<div class="helper">No assets matched your search.</div>`;
+          const empty = document.createElement("div");
+          empty.className = "helper";
+          empty.textContent = "No assets matched your search.";
+          resultsEl.append(empty);
           return;
         }
         const isReturn = mode === "return";
-        resultsEl.innerHTML = items
-          .map((asset) => `
-            <div class="asset-item">
-              <div><strong>${asset.assetCode}</strong></div>
-              <div>${asset.assetType} - ${asset.displayName}</div>
-              <div class="helper">${asset.model ?? ""} ${asset.serialNumber ?? ""}</div>
-              <button type="button" class="${isReturn ? "return-mode" : ""}" data-add="${asset.assetCode}">${MODES[mode].addLabel}</button>
-            </div>
-          `)
-          .join("");
-        resultsEl.querySelectorAll("[data-add]").forEach((btn) => {
-          btn.addEventListener("click", () => {
-            const assetCode = btn.getAttribute("data-add");
-            const asset = items.find((item) => item.assetCode === assetCode);
-            if (!asset) return;
+        for (const asset of items) {
+          const item = document.createElement("div");
+          item.className = "asset-item";
+          const code = document.createElement("div");
+          const strong = document.createElement("strong");
+          strong.textContent = asset.assetCode;
+          code.append(strong);
+          const description = document.createElement("div");
+          description.textContent = `${asset.assetType} - ${asset.displayName}`;
+          const metadata = document.createElement("div");
+          metadata.className = "helper";
+          metadata.textContent = `${asset.model ?? ""} ${asset.serialNumber ?? ""}`;
+          const add = document.createElement("button");
+          add.type = "button";
+          add.className = isReturn ? "return-mode" : "";
+          add.dataset.add = asset.assetCode;
+          add.textContent = MODES[mode].addLabel;
+          add.addEventListener("click", () => {
             selectedAssets.set(asset.assetCode, asset);
             renderSelected();
           });
-        });
+          item.append(code, description, metadata, add);
+          resultsEl.append(item);
+        }
       };
 
       // -- Asset search --------------------------------------------------------
       const doSearch = async () => {
+        if (isSearching) return;
+        isSearching = true;
+        searchBtn.disabled = true;
         try {
           const q = encodeURIComponent(searchInput.value.trim());
-          const res = await fetch(`${MODES[mode].endpoint}?q=${q}`);
-          renderResults(await res.json());
+          const res = await authorizedFetch(`${MODES[mode].endpoint}?q=${q}`);
+          const responsePayload = await res.json().catch(() => null);
+          if (!res.ok) {
+            setMessage(responsePayload?.error || "Asset search failed.");
+            return;
+          }
+          renderResults(responsePayload);
         } catch (err) {
           setMessage(err instanceof Error ? err.message : "Asset search failed.");
+        } finally {
+          isSearching = false;
+          searchBtn.disabled = false;
         }
       };
 
@@ -396,12 +449,15 @@ pub(crate) fn borrow_page_html() -> &'static str {
 
       // Submit
       submitBtn.addEventListener("click", async () => {
+        if (isSubmitting || selectedAssets.size === 0) return;
+        isSubmitting = true;
+        submitBtn.disabled = true;
         try {
           const submittedEmployeeId = document.getElementById("staff-id").value.trim();
           const submittedFullName   = document.getElementById("full-name").value.trim();
           const assetCodes          = Array.from(selectedAssets.keys());
 
-          const res = await fetch("/api/borrow-requests", {
+          const res = await authorizedFetch("/api/borrow-requests", {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({
@@ -409,18 +465,26 @@ pub(crate) fn borrow_page_html() -> &'static str {
               submittedFullName,
               assetCodes,
               requestType: mode,
+              requestId: crypto.randomUUID(),
+              clientSessionId,
             }),
           });
 
-          const payload = await res.json();
-          if (!res.ok) { setMessage(payload.error || "Submit failed."); return; }
+          const responsePayload = await res.json().catch(() => null);
+          if (!res.ok) {
+            setMessage(responsePayload?.error || "Submit failed.");
+            return;
+          }
 
           selectedAssets.clear();
           renderSelected();
           const verb = mode === "return" ? "Return" : "Borrow";
-          setMessage(`${verb} request ${payload.requestKey} submitted. IT will review it shortly.`, true);
+          setMessage(`${verb} request ${responsePayload.requestReference} submitted. ${responsePayload.message}`, true);
         } catch (err) {
           setMessage(err instanceof Error ? err.message : "Submit failed.");
+        } finally {
+          isSubmitting = false;
+          submitBtn.disabled = isSubmitting || selectedAssets.size === 0;
         }
       });
     </script>
@@ -431,6 +495,8 @@ pub(crate) fn borrow_page_html() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::borrow_page_html;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
 
     #[test]
     fn borrow_page_uses_green_submit_button_theme() {
@@ -468,6 +534,270 @@ mod tests {
         assert!(
             !html.contains("â"),
             "expected borrow page HTML comments and labels to avoid mojibake sequences"
+        );
+    }
+
+    #[test]
+    fn borrow_page_uses_fragment_token_and_authorized_fetches() {
+        let html = borrow_page_html();
+
+        assert!(html.contains("location.hash"));
+        assert!(html.contains("history.replaceState"));
+        assert!(html.contains("fragmentParams.get(\"t\")"));
+        assert!(html.contains("Authorization"));
+        assert!(html.contains("Bearer ${lanToken}"));
+        assert!(!html.contains("?t="));
+        assert!(!html.contains("fetch(`${MODES[mode].endpoint}?q=${q}`)"));
+    }
+
+    #[test]
+    fn borrow_page_generates_session_and_submission_request_ids() {
+        let html = borrow_page_html();
+
+        assert!(html.contains("const clientSessionId = crypto.randomUUID()"));
+        assert!(html.contains("requestId: crypto.randomUUID()"));
+        assert!(html.contains("clientSessionId"));
+    }
+
+    #[test]
+    fn borrow_page_prevents_duplicate_submissions_and_surfaces_api_errors() {
+        let html = borrow_page_html();
+
+        assert!(html.contains("let isSubmitting = false"));
+        assert!(html.contains("submitBtn.disabled = true"));
+        assert!(html.contains("if (!res.ok)"));
+        assert!(html.contains("responsePayload?.error"));
+    }
+
+    #[test]
+    fn borrow_page_executes_shared_borrow_and_return_flow_with_bearer_auth() {
+        let html = borrow_page_html();
+        let script = r###"
+import { JSDOM } from "jsdom";
+import fs from "node:fs";
+
+const page = fs.readFileSync(0, "utf8");
+const calls = [];
+const asset = { assetCode: "ASSET-001", assetType: "Laptop", displayName: "Demo Laptop", model: "Model X", serialNumber: "SERIAL-001" };
+let uuid = 0;
+const wait = () => new Promise((resolve) => setTimeout(resolve, 20));
+const dom = new JSDOM(page, {
+  url: "http://127.0.0.1/borrow#t=browser-token",
+  runScripts: "dangerously",
+  beforeParse(window) {
+    Object.defineProperty(window.crypto, "randomUUID", { value: () => `id-${++uuid}` });
+    window.fetch = async (input, init = {}) => {
+      calls.push({ input: String(input), init: { ...init, headers: new Headers(init.headers) } });
+      if (String(input).includes("/api/borrow-requests")) {
+        return { ok: true, json: async () => ({ requestReference: "BR-0001", message: "Pending IT review." }) };
+      }
+      return { ok: true, json: async () => [asset] };
+    };
+  },
+});
+const document = dom.window.document;
+if (dom.window.location.hash) throw new Error("token fragment remained visible");
+const auth = (call) => call.init.headers.get("Authorization");
+const search = document.getElementById("asset-search");
+const searchButton = document.getElementById("search-btn");
+const submit = document.getElementById("submit-button");
+search.value = "ASSET-001";
+searchButton.click();
+await wait();
+if (!calls[0].input.includes("/api/assets") || auth(calls[0]) !== "Bearer browser-token") throw new Error("borrow search auth failed");
+document.querySelector("[data-add]").click();
+document.getElementById("staff-id").value = "EE1001";
+document.getElementById("full-name").value = "Client name is not authoritative";
+submit.click();
+submit.click();
+await wait();
+const borrowCalls = calls.filter((call) => call.input.includes("/api/borrow-requests"));
+const borrowPayload = JSON.parse(borrowCalls[0].init.body);
+if (borrowCalls.length !== 1 || borrowPayload.requestType !== "borrow" || borrowPayload.clientSessionId !== "id-1") throw new Error("borrow flow contract failed");
+if (auth(borrowCalls[0]) !== "Bearer browser-token") throw new Error("borrow submit auth failed");
+
+document.getElementById("btn-return").click();
+searchButton.click();
+await wait();
+if (!calls.some((call) => call.input.includes("/api/assigned-assets") && auth(call) === "Bearer browser-token")) throw new Error("return search auth failed");
+document.querySelector("[data-add]").click();
+submit.click();
+await wait();
+const submitCalls = calls.filter((call) => call.input.includes("/api/borrow-requests"));
+const returnPayload = JSON.parse(submitCalls[1].init.body);
+if (returnPayload.requestType !== "return" || returnPayload.clientSessionId !== "id-1") throw new Error("return flow contract failed");
+if (returnPayload.requestId === borrowPayload.requestId) throw new Error("requestId was reused");
+if (auth(submitCalls[1]) !== "Bearer browser-token") throw new Error("return submit auth failed");
+console.log("shared-flow-ok");
+"###;
+
+        let mut child = Command::new("node")
+            .args(["--input-type=module", "-e", script])
+            .current_dir(std::env::current_dir().expect("workspace directory"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("node and jsdom are required for browser flow coverage");
+        child
+            .stdin
+            .take()
+            .expect("node stdin")
+            .write_all(html.as_bytes())
+            .expect("write page HTML");
+        let output = child
+            .wait_with_output()
+            .expect("wait for browser flow test");
+        assert!(
+            output.status.success(),
+            "browser flow failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("shared-flow-ok"));
+    }
+
+    #[test]
+    fn borrow_page_handles_malformed_non_success_json_without_html_or_raw_leakage() {
+        let html = borrow_page_html();
+        let script = r###"
+import { JSDOM } from "jsdom";
+import fs from "node:fs";
+
+const page = fs.readFileSync(0, "utf8");
+const maliciousError = '<script>window.__xss=1</script>';
+const wait = () => new Promise((resolve) => setTimeout(resolve, 20));
+const dom = new JSDOM(page, {
+  url: "http://127.0.0.1/borrow#t=browser-token",
+  runScripts: "dangerously",
+  beforeParse(window) {
+    window.__xss = 0;
+    Object.defineProperty(window.crypto, "randomUUID", { value: () => "test-id" });
+    window.fetch = async (input) => {
+      if (String(input).includes("/api/borrow-requests")) {
+        return { ok: false, json: async () => { throw new Error(maliciousError); } };
+      }
+      return { ok: true, json: async () => [{ assetCode: "ASSET-001", assetType: "Laptop", displayName: "Demo", model: null, serialNumber: null }] };
+    };
+  },
+});
+const document = dom.window.document;
+document.getElementById("search-btn").click();
+await wait();
+document.querySelector("[data-add]").click();
+document.getElementById("submit-button").click();
+await wait();
+const message = document.getElementById("message");
+if (message.textContent !== "Submit failed.") throw new Error("unexpected malformed-response message");
+if (message.textContent.includes(maliciousError) || message.querySelector("script")) throw new Error("raw malformed error leaked");
+if (dom.window.__xss !== 0) throw new Error("malformed error executed");
+console.log("malformed-response-safe");
+"###;
+
+        let mut child = Command::new("node")
+            .args(["--input-type=module", "-e", script])
+            .current_dir(std::env::current_dir().expect("workspace directory"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("node and jsdom are required for malformed response coverage");
+        child
+            .stdin
+            .take()
+            .expect("node stdin")
+            .write_all(html.as_bytes())
+            .expect("write page HTML");
+        let output = child
+            .wait_with_output()
+            .expect("wait for malformed response test");
+        assert!(
+            output.status.success(),
+            "malformed response flow failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("malformed-response-safe"));
+    }
+
+    #[test]
+    fn borrow_page_renders_api_values_with_text_nodes_not_html() {
+        let html = borrow_page_html();
+
+        assert!(!html.contains("innerHTML"));
+        assert!(html.contains("replaceChildren"));
+
+        let script = r###"
+import { JSDOM } from "jsdom";
+import fs from "node:fs";
+
+const page = fs.readFileSync(0, "utf8");
+const payloads = {
+  assetCode: '<img src=x onerror="window.__xss=1">',
+  assetType: '<script>window.__xss=1</script>',
+  displayName: '</div><svg onload="window.__xss=1">',
+  model: '<script>window.__xss=1</script>',
+  serialNumber: '<img src=x onerror="window.__xss=1">',
+  error: '<script>window.__xss=1</script>',
+};
+const asset = { ...payloads, model: payloads.model, serialNumber: payloads.serialNumber };
+const wait = () => new Promise((resolve) => setTimeout(resolve, 20));
+const dom = new JSDOM(page, {
+  url: "http://127.0.0.1/borrow#t=test-token",
+  runScripts: "dangerously",
+  beforeParse(window) {
+    window.__xss = 0;
+    if (!window.crypto.randomUUID) {
+      Object.defineProperty(window.crypto, "randomUUID", { value: () => "test-session" });
+    }
+    window.fetch = async (_input, init = {}) => init.method === "POST"
+      ? { ok: false, json: async () => ({ error: payloads.error }) }
+      : { ok: true, json: async () => [asset] };
+  },
+});
+const document = dom.window.document;
+document.getElementById("search-btn").click();
+await wait();
+const result = document.querySelector(".asset-item");
+if (!result || [payloads.assetCode, payloads.assetType, payloads.displayName, payloads.model, payloads.serialNumber]
+  .some((value) => !result.textContent.includes(value))) {
+  throw new Error("asset values were not rendered as text");
+}
+if (result.querySelector("img,script,svg")) throw new Error("asset value became markup");
+result.querySelector("[data-add]").click();
+const selected = document.querySelector("#selected-assets");
+if (!selected.textContent.includes(payloads.assetCode) || selected.querySelector("img,script,svg")) {
+  throw new Error("selected asset became markup");
+}
+document.getElementById("staff-id").value = "EE1001";
+document.getElementById("full-name").value = "Test Employee";
+document.getElementById("submit-button").click();
+await wait();
+const message = document.getElementById("message");
+if (!message.textContent.includes(payloads.error) || message.querySelector("img,script,svg")) {
+  throw new Error("backend error became markup");
+}
+if (dom.window.__xss !== 0) throw new Error("XSS payload executed");
+console.log("safe");
+"###;
+
+        let mut child = Command::new("node")
+            .args(["--input-type=module", "-e", script])
+            .current_dir(std::env::current_dir().expect("workspace directory"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("node and jsdom are required for browser rendering coverage");
+        child
+            .stdin
+            .take()
+            .expect("node stdin")
+            .write_all(html.as_bytes())
+            .expect("write page HTML to browser fixture");
+        let output = child.wait_with_output().expect("browser fixture result");
+        assert!(
+            output.status.success(),
+            "browser fixture failed: {}",
+            String::from_utf8_lossy(&output.stderr)
         );
     }
 }

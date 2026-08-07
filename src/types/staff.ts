@@ -37,13 +37,26 @@ export type BackupSettingsUpdateInput = {
 
 /** LAN server configuration for the Borrow/Return QR flow. */
 export type BorrowLanSettings = {
+  enabled: boolean
   host: string
   port: number
   borrowUrl: string
 }
 
 export type BorrowLanSettingsUpdateInput = {
+  enabled?: boolean
   host: string
+  port: number
+}
+
+export type BorrowLanTokenStatus = {
+  ready: boolean
+}
+
+export type BorrowLanServerStatus = {
+  running: boolean
+  tokenReady: boolean
+  bindHost: string
   port: number
 }
 
@@ -368,7 +381,8 @@ export type BorrowRequestSubmitInput = {
   submittedEmployeeId: string
   submittedFullName: string
   assetCodes: string[]
-  submitSourceIp?: string | null
+  manualEmployeeEmail?: string | null
+  manualEmployeeTeam?: string | null
 }
 
 /** A pending or processed borrow/return request (Core Rule: Request Pending → Approve). */
@@ -382,6 +396,8 @@ export type BorrowRequestRecord = {
   assetCodes: string[]
   submittedAt: string
   decisionNote: string | null
+  manualEmployeeEmail?: string | null
+  manualEmployeeTeam?: string | null
 }
 
 export type BorrowRequestRejectInput = {

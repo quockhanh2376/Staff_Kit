@@ -3,7 +3,7 @@ use std::net::IpAddr;
 use std::net::UdpSocket;
 
 use rand::{distributions::Alphanumeric, Rng};
-use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::AppHandle;
@@ -23,6 +23,10 @@ const REQUEST_TYPE_BORROW: &str = "borrow";
 const REQUEST_TYPE_RETURN: &str = "return";
 const ASSET_STATUS_IN_STOCK: &str = "in_stock";
 const ASSET_STATUS_ASSIGNED: &str = "assigned";
+const ASSET_STATUS_RETIRED: &str = "retired";
+const ASSET_STATUS_DISPOSED: &str = "disposed";
+const ASSET_STATUS_LOST: &str = "lost";
+const STAFF_GROUP_OFFBOARDING: &str = "offboarding";
 const DEFAULT_BORROW_LAN_PORT: u16 = 8787;
 const BORROW_LAN_DETECTION_TARGETS: [&str; 3] = ["1.1.1.1:80", "8.8.8.8:80", "208.67.222.222:80"];
 
@@ -50,8 +54,11 @@ pub struct BorrowRequestSubmitInput {
     pub submitted_employee_id: String,
     pub submitted_full_name: String,
     pub asset_codes: Vec<String>,
-    pub submit_source_ip: Option<String>,
     pub request_type: Option<String>,
+    #[serde(default)]
+    pub manual_employee_email: Option<String>,
+    #[serde(default)]
+    pub manual_employee_team: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -66,6 +73,8 @@ pub struct BorrowRequestRecord {
     pub asset_codes: Vec<String>,
     pub submitted_at: String,
     pub decision_note: Option<String>,
+    pub manual_employee_email: Option<String>,
+    pub manual_employee_team: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -177,28 +186,84 @@ pub fn reject_borrow_request_with_actor(
     reject_borrow_request_conn(&mut conn, payload.request_id, ctx.account_id, payload.note)
 }
 
-pub(crate) fn submit_borrow_request_conn(
+/// Cancel a pending request and release all of its asset claims atomically.
+pub(crate) fn cancel_borrow_request_conn(
     conn: &mut Connection,
-    input: BorrowRequestSubmitInput,
+    request_id: i64,
+    reviewer_account_id: i64,
 ) -> Result<BorrowRequestRecord, String> {
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|err| format!("failed to start borrow cancellation transaction: {err}"))?;
+    let (_, status, _, _) = load_request_state_tx(&tx, request_id)?;
+    ensure_pending_status(status.as_str())?;
+    tx.execute(
+        "UPDATE borrow_requests SET status = 'cancelled', decided_by_account_id = ?, decided_at = datetime('now') WHERE id = ?",
+        params![reviewer_account_id, request_id],
+    )
+    .map_err(humanize_sqlite_error)?;
+    let reviewer_account_text = reviewer_account_id.to_string();
+    let request_id_text = request_id.to_string();
+    audit::insert_audit_log_tx(
+        &tx,
+        "borrow_request.cancel",
+        "local_account",
+        Some(reviewer_account_text.as_str()),
+        "borrow_request",
+        request_id_text.as_str(),
+        None,
+    )?;
+    tx.execute(
+        "DELETE FROM asset_pending_claims WHERE borrow_request_id = ?",
+        params![request_id],
+    )
+    .map_err(humanize_sqlite_error)?;
+    tx.commit()
+        .map_err(|err| format!("failed to commit borrow cancellation: {err}"))?;
+    load_borrow_request_record(conn, request_id)
+}
+
+pub fn cancel_borrow_request_with_actor(
+    app: &AppHandle,
+    ctx: crate::auth_session::SessionContext,
+    request_id: i64,
+) -> Result<BorrowRequestRecord, String> {
+    let mut conn = open_runtime_connection(app)?;
+    cancel_borrow_request_conn(&mut conn, request_id, ctx.account_id)
+}
+
+struct ValidatedBorrowSubmission {
+    submitted_employee_id: String,
+    authoritative_full_name: String,
+    asset_codes: Vec<String>,
+    employee_id_fk: Option<i64>,
+    manual_entry: i64,
+    manual_employee_id: Option<String>,
+    manual_employee_name: Option<String>,
+    manual_employee_email: Option<String>,
+    manual_employee_team: Option<String>,
+    request_type: String,
+    assets: Vec<asset::AssetLookupRecord>,
+}
+
+fn validate_submission_tx(
+    tx: &Transaction<'_>,
+    input: BorrowRequestSubmitInput,
+) -> Result<ValidatedBorrowSubmission, String> {
     let submitted_employee_id =
         require_text(input.submitted_employee_id, "submittedEmployeeId")?.to_uppercase();
-    let submitted_full_name = require_text(input.submitted_full_name, "submittedFullName")?;
+    let submitted_full_name = input.submitted_full_name.trim().to_string();
+    if submitted_full_name.len() > 200 {
+        return Err("submittedFullName is too long (max 200)".to_string());
+    }
     let asset_codes = normalize_asset_codes(input.asset_codes)?;
-    let submit_source_ip = input.submit_source_ip.and_then(|value| {
-        let trimmed = value.trim().to_string();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed)
-        }
-    });
     let request_type = input
         .request_type
         .as_deref()
         .map(str::trim)
         .filter(|v| !v.is_empty())
-        .unwrap_or(REQUEST_TYPE_BORROW);
+        .unwrap_or(REQUEST_TYPE_BORROW)
+        .to_string();
     if request_type != REQUEST_TYPE_BORROW && request_type != REQUEST_TYPE_RETURN {
         return Err(format!(
             "invalid request_type '{}', must be 'borrow' or 'return'",
@@ -206,13 +271,66 @@ pub(crate) fn submit_borrow_request_conn(
         ));
     }
 
-    let tx = conn
-        .transaction()
-        .map_err(|err| format!("failed to start borrow submit transaction: {err}"))?;
-
-    let employee_id_fk =
-        load_employee_row_id_by_business_id_tx(&tx, submitted_employee_id.as_str())?
-            .ok_or_else(|| format!("employee '{}' was not found", submitted_employee_id))?;
+    let employee = load_employee_identity_by_business_id_tx(&tx, submitted_employee_id.as_str())?;
+    let manual_employee_email = input
+        .manual_employee_email
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if manual_employee_email
+        .as_ref()
+        .is_some_and(|value| value.len() > 320)
+    {
+        return Err("manualEmployeeEmail is too long (max 320)".to_string());
+    }
+    let manual_employee_team = input
+        .manual_employee_team
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if manual_employee_team
+        .as_ref()
+        .is_some_and(|value| value.len() > 200)
+    {
+        return Err("manualEmployeeTeam is too long (max 200)".to_string());
+    }
+    let (
+        employee_id_fk,
+        authoritative_full_name,
+        manual_entry,
+        manual_employee_id,
+        manual_employee_name,
+        manual_employee_email,
+        manual_employee_team,
+    ) = if let Some(employee) = employee {
+        if request_type == REQUEST_TYPE_BORROW
+            && employee
+                .staff_group
+                .eq_ignore_ascii_case(STAFF_GROUP_OFFBOARDING)
+        {
+            return Err("offboarding employees cannot borrow assets".to_string());
+        }
+        (
+            Some(employee.id),
+            employee.full_name,
+            0_i64,
+            None,
+            None,
+            None,
+            None,
+        )
+    } else {
+        if submitted_full_name.is_empty() {
+            return Err("submittedFullName is required for manual entry".to_string());
+        }
+        (
+            None,
+            submitted_full_name.clone(),
+            1_i64,
+            Some(submitted_employee_id.clone()),
+            Some(submitted_full_name.clone()),
+            manual_employee_email,
+            manual_employee_team,
+        )
+    };
 
     let mut assets = Vec::new();
     for asset_code in &asset_codes {
@@ -224,14 +342,95 @@ pub(crate) fn submit_borrow_request_conn(
                 asset_record.asset_code
             ));
         }
-        if request_type == REQUEST_TYPE_RETURN && asset_record.status != ASSET_STATUS_ASSIGNED {
+        if matches!(
+            asset_record.status.as_str(),
+            ASSET_STATUS_RETIRED | ASSET_STATUS_DISPOSED | ASSET_STATUS_LOST
+        ) {
             return Err(format!(
-                "asset '{}' is not currently assigned",
+                "asset '{}' is not eligible for LAN borrowing",
                 asset_record.asset_code
             ));
         }
+        let active_loan = active_loan_employee_id_tx(&tx, asset_record.id)?;
+        if request_type == REQUEST_TYPE_RETURN {
+            if asset_record.status != ASSET_STATUS_ASSIGNED || active_loan.is_none() {
+                return Err(format!(
+                    "asset '{}' is not currently assigned",
+                    asset_record.asset_code
+                ));
+            }
+        } else {
+            if active_loan.is_some() {
+                return Err(format!(
+                    "asset '{}' already has an active loan",
+                    asset_record.asset_code
+                ));
+            }
+            let has_claim: bool = tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM asset_pending_claims WHERE asset_id = ?)",
+                    params![asset_record.id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map(|value| value > 0)
+                .map_err(|err| format!("failed to check pending asset claim: {err}"))?;
+            if has_claim {
+                return Err(format!(
+                    "asset '{}' has a competing pending borrow claim",
+                    asset_record.asset_code
+                ));
+            }
+        }
         assets.push(asset_record);
     }
+
+    Ok(ValidatedBorrowSubmission {
+        submitted_employee_id,
+        authoritative_full_name,
+        asset_codes,
+        employee_id_fk,
+        manual_entry,
+        manual_employee_id,
+        manual_employee_name,
+        manual_employee_email,
+        manual_employee_team,
+        request_type,
+        assets,
+    })
+}
+
+pub(crate) fn validate_borrow_request_conn(
+    conn: &mut Connection,
+    input: BorrowRequestSubmitInput,
+) -> Result<(), String> {
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|err| format!("failed to start borrow validation transaction: {err}"))?;
+    let _ = validate_submission_tx(&tx, input)?;
+    Ok(())
+}
+
+pub(crate) fn submit_borrow_request_conn(
+    conn: &mut Connection,
+    input: BorrowRequestSubmitInput,
+) -> Result<BorrowRequestRecord, String> {
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|err| format!("failed to start borrow submit transaction: {err}"))?;
+    let validated = validate_submission_tx(&tx, input)?;
+    let ValidatedBorrowSubmission {
+        submitted_employee_id,
+        authoritative_full_name,
+        asset_codes,
+        employee_id_fk,
+        manual_entry,
+        manual_employee_id,
+        manual_employee_name,
+        manual_employee_email,
+        manual_employee_team,
+        request_type,
+        assets,
+    } = validated;
 
     let request_key = generate_request_key_tx(&tx)?;
     tx.execute(
@@ -241,21 +440,35 @@ pub(crate) fn submit_borrow_request_conn(
           employee_id_fk,
           submitted_employee_id,
           submitted_full_name,
+          manual_entry,
+          manual_employee_id,
+          manual_employee_name,
+          manual_employee_email,
+          manual_employee_team,
           status,
           request_type,
-          submit_source_ip,
+          returned_by_employee_id_fk,
           submitted_at
         )
-        VALUES(?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
         "#,
         params![
             request_key.as_str(),
             employee_id_fk,
             submitted_employee_id.as_str(),
-            submitted_full_name.as_str(),
+            authoritative_full_name.as_str(),
+            manual_entry,
+            manual_employee_id.as_deref(),
+            manual_employee_name.as_deref(),
+            manual_employee_email.as_deref(),
+            manual_employee_team.as_deref(),
             REQUEST_STATUS_PENDING,
             request_type,
-            submit_source_ip.as_deref(),
+            if request_type == REQUEST_TYPE_RETURN {
+                Some(employee_id_fk)
+            } else {
+                None
+            },
         ],
     )
     .map_err(humanize_sqlite_error)?;
@@ -280,11 +493,25 @@ pub(crate) fn submit_borrow_request_conn(
             ],
         )
         .map_err(humanize_sqlite_error)?;
+
+        if request_type == REQUEST_TYPE_BORROW {
+            tx.execute(
+                "INSERT INTO asset_pending_claims(asset_id, borrow_request_id, created_at) VALUES(?, ?, datetime('now'))",
+                params![asset_record.id, request_id],
+            )
+            .map_err(|err| {
+                if err.sqlite_error_code() == Some(rusqlite::ErrorCode::ConstraintViolation) {
+                    "asset has a competing pending borrow claim".to_string()
+                } else {
+                    format!("failed to create pending asset claim: {err}")
+                }
+            })?;
+        }
     }
 
     let audit_payload = json!({
         "submittedEmployeeId": submitted_employee_id,
-        "submittedFullName": submitted_full_name,
+        "submittedFullName": authoritative_full_name,
         "requestType": request_type,
         "assetCodes": asset_codes,
     })
@@ -295,7 +522,7 @@ pub(crate) fn submit_borrow_request_conn(
         &tx,
         "borrow_request.submit",
         "lan_public",
-        submit_source_ip.as_deref(),
+        None,
         "borrow_request",
         request_id_text.as_str(),
         Some(audit_payload.as_str()),
@@ -313,10 +540,11 @@ pub(crate) fn approve_borrow_request_conn(
     reviewer_account_id: i64,
 ) -> Result<BorrowRequestRecord, String> {
     let tx = conn
-        .transaction()
+        .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|err| format!("failed to start borrow approval transaction: {err}"))?;
 
-    let (employee_id_fk, status, request_type) = load_request_state_tx(&tx, request_id)?;
+    let (employee_id_fk, status, request_type, returned_by_employee_id_fk) =
+        load_request_state_tx(&tx, request_id)?;
     ensure_pending_status(status.as_str())?;
 
     let request_items = load_request_items_tx(&tx, request_id)?;
@@ -348,8 +576,8 @@ pub(crate) fn approve_borrow_request_conn(
         if request_type == REQUEST_TYPE_RETURN {
             asset::set_asset_status_tx(&tx, item.asset_id, ASSET_STATUS_IN_STOCK)?;
             tx.execute(
-                "UPDATE asset_loans SET returned_at = datetime('now') WHERE asset_id = ? AND returned_at IS NULL",
-                params![item.asset_id],
+                "UPDATE asset_loans SET returned_at = datetime('now'), returned_by_employee_id_fk = ? WHERE asset_id = ? AND returned_at IS NULL",
+                params![returned_by_employee_id_fk, item.asset_id],
             )
             .map_err(humanize_sqlite_error)?;
         } else {
@@ -374,6 +602,14 @@ pub(crate) fn approve_borrow_request_conn(
             )
             .map_err(humanize_sqlite_error)?;
         }
+    }
+
+    if request_type == REQUEST_TYPE_BORROW {
+        tx.execute(
+            "DELETE FROM asset_pending_claims WHERE borrow_request_id = ?",
+            params![request_id],
+        )
+        .map_err(humanize_sqlite_error)?;
     }
 
     tx.execute(
@@ -426,10 +662,10 @@ pub(crate) fn reject_borrow_request_conn(
 ) -> Result<BorrowRequestRecord, String> {
     let decision_note = require_text(note, "decisionNote")?;
     let tx = conn
-        .transaction()
+        .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|err| format!("failed to start borrow reject transaction: {err}"))?;
 
-    let (_, status, _) = load_request_state_tx(&tx, request_id)?;
+    let (_, status, _, _) = load_request_state_tx(&tx, request_id)?;
     ensure_pending_status(status.as_str())?;
 
     tx.execute(
@@ -448,6 +684,12 @@ pub(crate) fn reject_borrow_request_conn(
             reviewer_account_id,
             request_id
         ],
+    )
+    .map_err(humanize_sqlite_error)?;
+
+    tx.execute(
+        "DELETE FROM asset_pending_claims WHERE borrow_request_id = ?",
+        params![request_id],
     )
     .map_err(humanize_sqlite_error)?;
 
@@ -595,17 +837,39 @@ fn format_borrow_lan_url_host(host: &str) -> String {
     }
 }
 
-fn load_employee_row_id_by_business_id_tx(
+struct EmployeeIdentity {
+    id: i64,
+    full_name: String,
+    staff_group: String,
+}
+
+fn load_employee_identity_by_business_id_tx(
     tx: &Transaction<'_>,
     submitted_employee_id: &str,
-) -> Result<Option<i64>, String> {
+) -> Result<Option<EmployeeIdentity>, String> {
     tx.query_row(
-        "SELECT id FROM employees WHERE employee_id = ? COLLATE NOCASE",
+        "SELECT id, full_name, staff_group FROM employees WHERE employee_id = ? COLLATE NOCASE",
         params![submitted_employee_id],
+        |row| {
+            Ok(EmployeeIdentity {
+                id: row.get(0)?,
+                full_name: row.get(1)?,
+                staff_group: row.get(2)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(|err| format!("failed to load employee identity: {err}"))
+}
+
+fn active_loan_employee_id_tx(tx: &Transaction<'_>, asset_id: i64) -> Result<Option<i64>, String> {
+    tx.query_row(
+        "SELECT employee_id_fk FROM asset_loans WHERE asset_id = ? AND returned_at IS NULL",
+        params![asset_id],
         |row| row.get(0),
     )
     .optional()
-    .map_err(|err| format!("failed to load employee row id: {err}"))
+    .map_err(|err| format!("failed to inspect active asset loan: {err}"))
 }
 
 fn request_key_exists_tx(tx: &Transaction<'_>, request_key: &str) -> Result<bool, String> {
@@ -639,11 +903,11 @@ fn generate_request_key_tx(tx: &Transaction<'_>) -> Result<String, String> {
 fn load_request_state_tx(
     tx: &Transaction<'_>,
     request_id: i64,
-) -> Result<(i64, String, String), String> {
+) -> Result<(Option<i64>, String, String, Option<i64>), String> {
     tx.query_row(
-        "SELECT employee_id_fk, status, COALESCE(request_type, 'borrow') FROM borrow_requests WHERE id = ?",
+        "SELECT employee_id_fk, status, COALESCE(request_type, 'borrow'), returned_by_employee_id_fk FROM borrow_requests WHERE id = ?",
         params![request_id],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
     )
     .optional()
     .map_err(|err| format!("failed to load borrow request state: {err}"))?
@@ -718,6 +982,8 @@ fn load_borrow_request_record(
         request_type,
         submitted_at,
         decision_note,
+        manual_employee_email,
+        manual_employee_team,
     ) = conn
         .query_row(
             r#"
@@ -729,7 +995,9 @@ fn load_borrow_request_record(
               status,
               COALESCE(request_type, 'borrow'),
               submitted_at,
-              decision_note
+              decision_note,
+              manual_employee_email,
+              manual_employee_team
             FROM borrow_requests
             WHERE id = ?
             "#,
@@ -744,6 +1012,8 @@ fn load_borrow_request_record(
                     row.get::<_, String>(5)?,
                     row.get::<_, String>(6)?,
                     row.get::<_, Option<String>>(7)?,
+                    row.get::<_, Option<String>>(8)?,
+                    row.get::<_, Option<String>>(9)?,
                 ))
             },
         )
@@ -761,6 +1031,8 @@ fn load_borrow_request_record(
         asset_codes: load_request_asset_codes(conn, request_id)?,
         submitted_at,
         decision_note,
+        manual_employee_email,
+        manual_employee_team,
     })
 }
 
@@ -831,6 +1103,614 @@ mod tests {
     }
 
     #[test]
+    fn phase_c_known_staff_id_uses_authoritative_name_and_records_pending_claims() {
+        let mut conn = open_test_connection();
+        seed_employee(&conn, "EE1001", "Authoritative Name");
+        seed_asset(&conn, "ASSET-001", "Laptop", "in_stock");
+
+        let request = submit_borrow_request_conn(
+            &mut conn,
+            BorrowRequestSubmitInput {
+                submitted_employee_id: " EE1001 ".to_string(),
+                submitted_full_name: "Untrusted Name".to_string(),
+                asset_codes: vec![" ASSET-001 ".to_string()],
+                request_type: Some("borrow".to_string()),
+                manual_employee_email: None,
+                manual_employee_team: None,
+            },
+        )
+        .expect("known staff ID should submit");
+
+        assert_eq!(request.submitted_employee_id, "EE1001");
+        assert_eq!(request.submitted_full_name, "Authoritative Name");
+        assert_eq!(request.status, REQUEST_STATUS_PENDING);
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM asset_pending_claims WHERE borrow_request_id = ?",
+                params![request.id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn phase_c_unknown_staff_id_stores_manual_identity_without_employee_fk() {
+        let mut conn = open_test_connection();
+        seed_asset(&conn, "ASSET-001", "Laptop", "in_stock");
+
+        let request = submit_borrow_request_conn(
+            &mut conn,
+            BorrowRequestSubmitInput {
+                submitted_employee_id: " UNKNOWN-42 ".to_string(),
+                submitted_full_name: " Manual Borrower ".to_string(),
+                asset_codes: vec!["ASSET-001".to_string()],
+                request_type: Some("borrow".to_string()),
+                manual_employee_email: Some("manual@example.test".to_string()),
+                manual_employee_team: Some("Operations".to_string()),
+            },
+        )
+        .expect("unknown staff ID should use manual entry");
+
+        let row = conn
+            .query_row(
+                "SELECT employee_id_fk, manual_entry, manual_employee_id, manual_employee_name, manual_employee_email, manual_employee_team FROM borrow_requests WHERE id = ?",
+                params![request.id],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<i64>>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(row.1, 1);
+        assert_eq!(row.2, "UNKNOWN-42");
+        assert_eq!(row.3, "Manual Borrower");
+        assert_eq!(row.0, None);
+        assert_eq!(row.4.as_deref(), Some("manual@example.test"));
+        assert_eq!(row.5.as_deref(), Some("Operations"));
+    }
+
+    #[test]
+    fn phase_c_unknown_staff_id_return_preserves_manual_identity_and_closes_current_loan() {
+        let mut conn = open_test_connection();
+        let borrower = seed_employee(&conn, "EE-BORROWER", "Original Borrower");
+        let asset_id = seed_asset(&conn, "ASSET-MANUAL-RETURN", "Laptop", "assigned");
+        conn.execute(
+            "INSERT INTO borrow_requests(request_key, employee_id_fk, submitted_employee_id, submitted_full_name, status, request_type) VALUES('MANUAL-LOAN', ?, 'EE-BORROWER', 'Original Borrower', 'approved', 'borrow')",
+            params![borrower],
+        )
+        .unwrap();
+        let borrow_request_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO asset_loans(asset_id, employee_id_fk, borrow_request_id) VALUES(?, ?, ?)",
+            params![asset_id, borrower, borrow_request_id],
+        )
+        .unwrap();
+
+        let request = submit_borrow_request_conn(
+            &mut conn,
+            BorrowRequestSubmitInput {
+                submitted_employee_id: "UNKNOWN-RETURNER".to_string(),
+                submitted_full_name: "Manual Returner".to_string(),
+                asset_codes: vec!["ASSET-MANUAL-RETURN".to_string()],
+                request_type: Some("return".to_string()),
+                manual_employee_email: None,
+                manual_employee_team: None,
+            },
+        )
+        .expect("unknown Staff ID may submit a return");
+        let identity: (Option<i64>, i64, String, String) = conn
+            .query_row(
+                "SELECT employee_id_fk, manual_entry, manual_employee_id, manual_employee_name FROM borrow_requests WHERE id = ?",
+                params![request.id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            identity,
+            (
+                None,
+                1,
+                "UNKNOWN-RETURNER".to_string(),
+                "Manual Returner".to_string()
+            )
+        );
+
+        approve_borrow_request_conn(&mut conn, request.id, 1).expect("approve manual return");
+        let returned_at: Option<String> = conn
+            .query_row("SELECT returned_at FROM asset_loans WHERE id = (SELECT id FROM asset_loans WHERE asset_id = ?)", params![asset_id], |row| row.get(0))
+            .unwrap();
+        assert!(returned_at.is_some());
+        let active_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM asset_loans WHERE asset_id = ? AND returned_at IS NULL",
+                params![asset_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(active_count, 0);
+    }
+
+    #[test]
+    fn phase_c_cancellation_releases_claims_and_is_not_repeatable() {
+        let mut conn = open_test_connection();
+        seed_employee(&conn, "EE-CANCEL", "Cancel User");
+        seed_asset(&conn, "ASSET-CANCEL", "Laptop", "in_stock");
+        let request = submit_borrow_request_conn(
+            &mut conn,
+            BorrowRequestSubmitInput {
+                submitted_employee_id: "EE-CANCEL".to_string(),
+                submitted_full_name: "Cancel User".to_string(),
+                asset_codes: vec!["ASSET-CANCEL".to_string()],
+                request_type: Some("borrow".to_string()),
+                manual_employee_email: None,
+                manual_employee_team: None,
+            },
+        )
+        .unwrap();
+        cancel_borrow_request_conn(&mut conn, request.id, 1).expect("cancel pending request");
+        assert_eq!(request_status(&conn, request.id), "cancelled");
+        assert_eq!(
+            conn.query_row(
+                "SELECT decided_by_account_id FROM borrow_requests WHERE id = ?",
+                params![request.id],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .unwrap(),
+            Some(1)
+        );
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM asset_pending_claims", [], |row| row
+                .get::<_, i64>(
+                0
+            ))
+            .unwrap(),
+            0
+        );
+        assert!(cancel_borrow_request_conn(&mut conn, request.id, 1).is_err());
+    }
+
+    #[test]
+    fn phase_c_item_insert_failure_rolls_back_request_items_and_claims() {
+        let mut conn = open_test_connection();
+        seed_employee(&conn, "EE-ROLLBACK", "Rollback User");
+        seed_asset(&conn, "ASSET-ROLLBACK", "Laptop", "in_stock");
+        conn.execute_batch(
+            "CREATE TRIGGER fail_borrow_item_insert BEFORE INSERT ON borrow_request_items BEGIN SELECT RAISE(ABORT, 'forced item insertion failure'); END;",
+        )
+        .unwrap();
+        assert!(submit_borrow_request_conn(
+            &mut conn,
+            BorrowRequestSubmitInput {
+                submitted_employee_id: "EE-ROLLBACK".to_string(),
+                submitted_full_name: "Rollback User".to_string(),
+                asset_codes: vec!["ASSET-ROLLBACK".to_string()],
+                request_type: Some("borrow".to_string()),
+                manual_employee_email: None,
+                manual_employee_team: None,
+            },
+        )
+        .is_err());
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM borrow_requests", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM borrow_request_items", [], |row| row
+                .get::<_, i64>(
+                0
+            ))
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM asset_pending_claims", [], |row| row
+                .get::<_, i64>(
+                0
+            ))
+            .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn phase_c_offboarding_borrow_is_rejected_but_return_is_pending() {
+        let mut conn = open_test_connection();
+        let employee_id = seed_employee(&conn, "EE-OFF", "Offboarding User");
+        conn.execute(
+            "UPDATE employees SET staff_group = 'offboarding' WHERE id = ?",
+            params![employee_id],
+        )
+        .unwrap();
+        seed_asset(&conn, "ASSET-001", "Laptop", "in_stock");
+
+        let borrow_error = submit_borrow_request_conn(
+            &mut conn,
+            BorrowRequestSubmitInput {
+                submitted_employee_id: "EE-OFF".to_string(),
+                submitted_full_name: "Offboarding User".to_string(),
+                asset_codes: vec!["ASSET-001".to_string()],
+                request_type: Some("borrow".to_string()),
+                manual_employee_email: None,
+                manual_employee_team: None,
+            },
+        )
+        .unwrap_err();
+        assert!(borrow_error.contains("offboarding"));
+
+        conn.execute(
+            "UPDATE assets SET status = 'assigned' WHERE asset_code = 'ASSET-001'",
+            [],
+        )
+        .unwrap();
+        let borrower = seed_employee(&conn, "EE-BORROWER", "Original Borrower");
+        conn.execute(
+                "INSERT INTO borrow_requests(request_key, employee_id_fk, submitted_employee_id, submitted_full_name, status, request_type) VALUES('SEED-RETURN', ?, 'EE-BORROWER', 'Original Borrower', 'approved', 'borrow')",
+                params![borrower],
+            )
+            .unwrap();
+        let request_id = conn.last_insert_rowid();
+        let asset_id: i64 = conn
+            .query_row(
+                "SELECT id FROM assets WHERE asset_code = 'ASSET-001'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        conn.execute(
+            "INSERT INTO asset_loans(asset_id, employee_id_fk, borrow_request_id) VALUES(?, ?, ?)",
+            params![asset_id, borrower, request_id],
+        )
+        .unwrap();
+
+        let return_request = submit_borrow_request_conn(
+            &mut conn,
+            BorrowRequestSubmitInput {
+                submitted_employee_id: "EE-OFF".to_string(),
+                submitted_full_name: "Offboarding User".to_string(),
+                asset_codes: vec!["ASSET-001".to_string()],
+                request_type: Some("return".to_string()),
+                manual_employee_email: None,
+                manual_employee_team: None,
+            },
+        )
+        .expect("offboarding employee may return assets");
+        assert_eq!(return_request.status, REQUEST_STATUS_PENDING);
+        assert_eq!(asset_status(&conn, asset_id), ASSET_STATUS_ASSIGNED);
+    }
+
+    #[test]
+    fn phase_c_onboarding_borrow_does_not_mutate_employee_group() {
+        let mut conn = open_test_connection();
+        let employee_id = seed_employee(&conn, "EE-ON", "Onboarding User");
+        conn.execute(
+            "UPDATE employees SET staff_group = 'onboarding' WHERE id = ?",
+            params![employee_id],
+        )
+        .unwrap();
+        seed_asset(&conn, "ASSET-ON", "Laptop", "in_stock");
+
+        let request = submit_borrow_request_conn(
+            &mut conn,
+            BorrowRequestSubmitInput {
+                submitted_employee_id: "EE-ON".to_string(),
+                submitted_full_name: "Wrong Name".to_string(),
+                asset_codes: vec!["ASSET-ON".to_string()],
+                request_type: Some("borrow".to_string()),
+                manual_employee_email: None,
+                manual_employee_team: None,
+            },
+        )
+        .expect("onboarding employee may borrow");
+        assert_eq!(request.status, REQUEST_STATUS_PENDING);
+        let group: String = conn
+            .query_row(
+                "SELECT staff_group FROM employees WHERE id = ?",
+                params![employee_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(group, "onboarding");
+    }
+
+    #[test]
+    fn phase_c_return_by_another_employee_preserves_borrower_and_returner() {
+        let mut conn = open_test_connection();
+        let borrower = seed_employee(&conn, "EE-BORROWER", "Original Borrower");
+        seed_employee(&conn, "EE-RETURNER", "Returning Employee");
+        let asset_id = seed_asset(&conn, "ASSET-RETURN", "Laptop", "assigned");
+        conn.execute(
+                "INSERT INTO borrow_requests(request_key, employee_id_fk, submitted_employee_id, submitted_full_name, status, request_type) VALUES('SEED-LOAN', ?, 'EE-BORROWER', 'Original Borrower', 'approved', 'borrow')",
+                params![borrower],
+            )
+            .unwrap();
+        let borrow_request_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO asset_loans(asset_id, employee_id_fk, borrow_request_id) VALUES(?, ?, ?)",
+            params![asset_id, borrower, borrow_request_id],
+        )
+        .unwrap();
+
+        let request = submit_borrow_request_conn(
+            &mut conn,
+            BorrowRequestSubmitInput {
+                submitted_employee_id: "EE-RETURNER".to_string(),
+                submitted_full_name: "Returning Employee".to_string(),
+                asset_codes: vec!["ASSET-RETURN".to_string()],
+                request_type: Some("return".to_string()),
+                manual_employee_email: None,
+                manual_employee_team: None,
+            },
+        )
+        .unwrap();
+        approve_borrow_request_conn(&mut conn, request.id, 1).unwrap();
+
+        let (loan_borrower, returned_by): (i64, i64) = conn
+            .query_row(
+                "SELECT employee_id_fk, returned_by_employee_id_fk FROM asset_loans WHERE asset_id = ?",
+                params![asset_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        let returner: i64 = conn
+            .query_row(
+                "SELECT id FROM employees WHERE employee_id = 'EE-RETURNER'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(loan_borrower, borrower);
+        assert_eq!(returned_by, returner);
+        assert_eq!(asset_status(&conn, asset_id), ASSET_STATUS_IN_STOCK);
+    }
+
+    #[test]
+    fn phase_c_duplicate_asset_codes_and_competing_claims_are_rejected_atomically() {
+        let mut conn = open_test_connection();
+        seed_employee(&conn, "EE1001", "Employee One");
+        seed_employee(&conn, "EE1002", "Employee Two");
+        seed_asset(&conn, "ASSET-001", "Laptop", "in_stock");
+        seed_asset(&conn, "ASSET-002", "Mouse", "in_stock");
+
+        let first = submit_borrow_request_conn(
+            &mut conn,
+            BorrowRequestSubmitInput {
+                submitted_employee_id: "EE1001".to_string(),
+                submitted_full_name: "Employee One".to_string(),
+                asset_codes: vec!["ASSET-001".to_string(), "ASSET-002".to_string()],
+                request_type: Some("borrow".to_string()),
+                manual_employee_email: None,
+                manual_employee_team: None,
+            },
+        )
+        .unwrap();
+
+        let duplicate = submit_borrow_request_conn(
+            &mut conn,
+            BorrowRequestSubmitInput {
+                submitted_employee_id: "EE1002".to_string(),
+                submitted_full_name: "Employee Two".to_string(),
+                asset_codes: vec!["ASSET-001".to_string()],
+                request_type: Some("borrow".to_string()),
+                manual_employee_email: None,
+                manual_employee_team: None,
+            },
+        )
+        .unwrap_err();
+        assert!(duplicate.contains("pending") || duplicate.contains("claim"));
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM borrow_requests WHERE request_key != (SELECT request_key FROM borrow_requests WHERE id = ?)",
+                params![first.id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn phase_c_unavailable_lifecycle_and_active_loan_assets_are_rejected() {
+        let mut conn = open_test_connection();
+        let borrower = seed_employee(&conn, "EE1001", "Employee One");
+        for (code, status) in [
+            ("ASSET-ASSIGNED", "assigned"),
+            ("ASSET-RETIRED", "retired"),
+            ("ASSET-DISPOSED", "disposed"),
+            ("ASSET-LOST", "lost"),
+        ] {
+            seed_asset(&conn, code, "Laptop", status);
+        }
+        let active_asset = seed_asset(&conn, "ASSET-ACTIVE", "Laptop", "in_stock");
+        let borrow_request_id = conn
+            .execute(
+                "INSERT INTO borrow_requests(request_key, employee_id_fk, submitted_employee_id, submitted_full_name, status, request_type) VALUES('ACTIVE-LOAN', ?, 'EE1001', 'Employee One', 'approved', 'borrow')",
+                params![borrower],
+            )
+            .unwrap();
+        conn.execute(
+            "INSERT INTO asset_loans(asset_id, employee_id_fk, borrow_request_id) VALUES(?, ?, ?)",
+            params![active_asset, borrower, borrow_request_id as i64],
+        )
+        .unwrap();
+
+        for code in [
+            "ASSET-ASSIGNED",
+            "ASSET-RETIRED",
+            "ASSET-DISPOSED",
+            "ASSET-LOST",
+            "ASSET-ACTIVE",
+        ] {
+            let error = submit_borrow_request_conn(
+                &mut conn,
+                BorrowRequestSubmitInput {
+                    submitted_employee_id: "EE1001".to_string(),
+                    submitted_full_name: "Employee One".to_string(),
+                    asset_codes: vec![code.to_string()],
+                    request_type: Some("borrow".to_string()),
+                    manual_employee_email: None,
+                    manual_employee_team: None,
+                },
+            )
+            .unwrap_err();
+            assert!(error.contains("asset"));
+        }
+    }
+
+    #[test]
+    fn phase_c_multi_asset_failure_rolls_back_request_items_and_claims() {
+        let mut conn = open_test_connection();
+        seed_employee(&conn, "EE1001", "Employee One");
+        seed_employee(&conn, "EE1002", "Employee Two");
+        seed_asset(&conn, "ASSET-001", "Laptop", "in_stock");
+        let claimed_asset = seed_asset(&conn, "ASSET-002", "Mouse", "in_stock");
+        conn.execute(
+                "INSERT INTO borrow_requests(request_key, employee_id_fk, submitted_employee_id, submitted_full_name, status, request_type) VALUES('CLAIM-SEED', (SELECT id FROM employees WHERE employee_id = 'EE1002'), 'EE1002', 'Employee Two', 'pending', 'borrow')",
+                [],
+            )
+            .unwrap();
+        let claim_request_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO asset_pending_claims(asset_id, borrow_request_id) VALUES(?, ?)",
+            params![claimed_asset, claim_request_id],
+        )
+        .unwrap();
+
+        let error = submit_borrow_request_conn(
+            &mut conn,
+            BorrowRequestSubmitInput {
+                submitted_employee_id: "EE1001".to_string(),
+                submitted_full_name: "Employee One".to_string(),
+                asset_codes: vec!["ASSET-001".to_string(), "ASSET-002".to_string()],
+                request_type: Some("borrow".to_string()),
+                manual_employee_email: None,
+                manual_employee_team: None,
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("pending") || error.contains("claim"));
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM borrow_requests WHERE submitted_employee_id = 'EE1001'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM borrow_request_items WHERE borrow_request_id != 999",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn phase_c_concurrent_overlapping_multi_asset_claims_leave_one_complete_request() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let path = std::env::temp_dir().join(format!(
+            "staff-kit-phase-c-concurrency-{}.sqlite3",
+            rand::random::<u64>()
+        ));
+        let setup = Connection::open(&path).expect("open concurrency database");
+        configure_connection(&setup).expect("configure concurrency database");
+        apply_migrations(&setup).expect("migrate concurrency database");
+        seed_employee(&setup, "EE1001", "Employee One");
+        seed_employee(&setup, "EE1002", "Employee Two");
+        seed_asset(&setup, "ASSET-CONCURRENT", "Laptop", "in_stock");
+        seed_asset(&setup, "ASSET-A", "Mouse", "in_stock");
+        seed_asset(&setup, "ASSET-B", "Mouse", "in_stock");
+        drop(setup);
+
+        let barrier = Arc::new(Barrier::new(2));
+        let run = |employee_id: &'static str,
+                   full_name: &'static str,
+                   request_id: &'static str,
+                   barrier: Arc<Barrier>,
+                   asset_codes: &'static [&'static str],
+                   path: std::path::PathBuf| {
+            thread::spawn(move || {
+                let mut conn = Connection::open(path).expect("open worker database");
+                configure_connection(&conn).expect("configure worker database");
+                barrier.wait();
+                submit_borrow_request_conn(
+                    &mut conn,
+                    BorrowRequestSubmitInput {
+                        submitted_employee_id: employee_id.to_string(),
+                        submitted_full_name: full_name.to_string(),
+                        asset_codes: asset_codes.iter().map(|code| (*code).to_string()).collect(),
+                        request_type: Some("borrow".to_string()),
+                        manual_employee_email: None,
+                        manual_employee_team: None,
+                    },
+                )
+                .map(|request| request.id)
+                .map_err(|error| error.to_string())
+                .map(|_| request_id)
+            })
+        };
+
+        let first = run(
+            "EE1001",
+            "Employee One",
+            "request-a",
+            Arc::clone(&barrier),
+            &["ASSET-CONCURRENT", "ASSET-A"],
+            path.clone(),
+        );
+        let second = run(
+            "EE1002",
+            "Employee Two",
+            "request-b",
+            barrier,
+            &["ASSET-CONCURRENT", "ASSET-B"],
+            path.clone(),
+        );
+        let first = first.join().expect("first worker must not panic");
+        let second = second.join().expect("second worker must not panic");
+        assert_eq!((first.is_ok() as usize) + (second.is_ok() as usize), 1);
+        assert_eq!((first.is_err() as usize) + (second.is_err() as usize), 1);
+
+        let verify = Connection::open(&path).expect("open verification database");
+        configure_connection(&verify).expect("configure verification database");
+        let request_count: i64 = verify
+            .query_row("SELECT COUNT(*) FROM borrow_requests", [], |row| row.get(0))
+            .unwrap();
+        let item_count: i64 = verify
+            .query_row("SELECT COUNT(*) FROM borrow_request_items", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        let claim_count: i64 = verify
+            .query_row("SELECT COUNT(*) FROM asset_pending_claims", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(request_count, 1);
+        assert_eq!(item_count, 2);
+        assert_eq!(claim_count, 2);
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("sqlite3-wal"));
+        let _ = std::fs::remove_file(path.with_extension("sqlite3-shm"));
+    }
+
+    #[test]
     fn submit_borrow_request_creates_pending_request_for_valid_employee_and_assets() {
         let mut conn = open_test_connection();
         seed_employee(&conn, "EE1001", "Nguyen Van A");
@@ -843,8 +1723,9 @@ mod tests {
                 submitted_employee_id: "EE1001".to_string(),
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-001".to_string(), "ASSET-002".to_string()],
-                submit_source_ip: Some("192.168.1.50".to_string()),
                 request_type: None,
+                manual_employee_email: None,
+                manual_employee_team: None,
             },
         )
         .expect("submit borrow request");
@@ -861,23 +1742,25 @@ mod tests {
     }
 
     #[test]
-    fn submit_borrow_request_rejects_unknown_staff_id() {
+    fn submit_borrow_request_accepts_unknown_staff_id_as_manual_entry() {
         let mut conn = open_test_connection();
         seed_asset(&conn, "ASSET-001", "Laptop", "in_stock");
 
-        let error = submit_borrow_request_conn(
+        let request = submit_borrow_request_conn(
             &mut conn,
             BorrowRequestSubmitInput {
                 submitted_employee_id: "UNKNOWN".to_string(),
                 submitted_full_name: "Ghost User".to_string(),
                 asset_codes: vec!["ASSET-001".to_string()],
-                submit_source_ip: None,
                 request_type: None,
+                manual_employee_email: None,
+                manual_employee_team: None,
             },
         )
-        .expect_err("unknown employee should be rejected");
+        .expect("unknown employee should use manual entry");
 
-        assert!(error.contains("employee"));
+        assert_eq!(request.submitted_employee_id, "UNKNOWN");
+        assert_eq!(request.submitted_full_name, "Ghost User");
     }
 
     #[test]
@@ -892,8 +1775,9 @@ mod tests {
                 submitted_employee_id: "EE1001".to_string(),
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-001".to_string(), "ASSET-001".to_string()],
-                submit_source_ip: None,
                 request_type: None,
+                manual_employee_email: None,
+                manual_employee_team: None,
             },
         )
         .expect_err("duplicate asset codes should be rejected");
@@ -913,8 +1797,9 @@ mod tests {
                 submitted_employee_id: "EE1001".to_string(),
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-001".to_string()],
-                submit_source_ip: None,
                 request_type: None,
+                manual_employee_email: None,
+                manual_employee_team: None,
             },
         )
         .expect("submit borrow request");
@@ -949,8 +1834,9 @@ mod tests {
                 submitted_employee_id: "EE1001".to_string(),
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-001".to_string()],
-                submit_source_ip: None,
                 request_type: None,
+                manual_employee_email: None,
+                manual_employee_team: None,
             },
         )
         .expect("submit borrow request");
@@ -977,8 +1863,9 @@ mod tests {
                 submitted_employee_id: "EE1001".to_string(),
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-001".to_string()],
-                submit_source_ip: None,
                 request_type: None,
+                manual_employee_email: None,
+                manual_employee_team: None,
             },
         )
         .expect("submit borrow request");
@@ -989,6 +1876,35 @@ mod tests {
             .expect_err("second approval must be blocked");
 
         assert!(error.contains("pending"));
+    }
+
+    #[test]
+    fn reject_borrow_request_blocks_second_decision_and_claim_is_already_released() {
+        let mut conn = open_test_connection();
+        seed_employee(&conn, "EE-REJECT", "Reject User");
+        seed_asset(&conn, "ASSET-REJECT", "Laptop", "in_stock");
+        let request = submit_borrow_request_conn(
+            &mut conn,
+            BorrowRequestSubmitInput {
+                submitted_employee_id: "EE-REJECT".to_string(),
+                submitted_full_name: "Reject User".to_string(),
+                asset_codes: vec!["ASSET-REJECT".to_string()],
+                request_type: Some("borrow".to_string()),
+                manual_employee_email: None,
+                manual_employee_team: None,
+            },
+        )
+        .unwrap();
+        reject_borrow_request_conn(&mut conn, request.id, 1, "not needed".to_string()).unwrap();
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM asset_pending_claims", [], |row| row
+                .get::<_, i64>(
+                0
+            ))
+            .unwrap(),
+            0
+        );
+        assert!(reject_borrow_request_conn(&mut conn, request.id, 1, "retry".to_string()).is_err());
     }
 
     #[test]
@@ -1005,8 +1921,9 @@ mod tests {
                 submitted_employee_id: "EE1001".to_string(),
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-001".to_string()],
-                submit_source_ip: None,
                 request_type: None,
+                manual_employee_email: None,
+                manual_employee_team: None,
             },
         )
         .expect("create first pending request");
@@ -1017,8 +1934,9 @@ mod tests {
                 submitted_employee_id: "EE1001".to_string(),
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-002".to_string()],
-                submit_source_ip: None,
                 request_type: None,
+                manual_employee_email: None,
+                manual_employee_team: None,
             },
         )
         .expect("create request to approve");
@@ -1030,8 +1948,9 @@ mod tests {
                 submitted_employee_id: "EE1001".to_string(),
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-003".to_string()],
-                submit_source_ip: None,
                 request_type: None,
+                manual_employee_email: None,
+                manual_employee_team: None,
             },
         )
         .expect("create last pending request");
@@ -1056,8 +1975,9 @@ mod tests {
                 submitted_employee_id: "EE1001".to_string(),
                 submitted_full_name: "Nguyen Van A".to_string(),
                 asset_codes: vec!["ASSET-001".to_string()],
-                submit_source_ip: Some("192.168.1.50".to_string()),
                 request_type: None,
+                manual_employee_email: None,
+                manual_employee_team: None,
             },
         )
         .expect("submit request");

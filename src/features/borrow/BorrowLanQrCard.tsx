@@ -8,9 +8,9 @@ type BorrowLanQrCardProps = {
 }
 
 export function BorrowLanQrCard({ settings, isAdmin }: BorrowLanQrCardProps) {
-  const borrowUrl = settings.borrowLanUrlPreview.startsWith("http://")
-    ? settings.borrowLanUrlPreview
-    : ""
+  if (!isAdmin) return null
+
+  const borrowUrl = settings.borrowLanQrUrl
 
   return (
     <div className="mt-4 max-w-6xl rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-4">
@@ -26,13 +26,13 @@ export function BorrowLanQrCard({ settings, isAdmin }: BorrowLanQrCardProps) {
               Checking LAN server…
             </div>
           )}
-          {settings.lanServerAlive === true && (
+          {settings.lanServerStatus?.running && (
             <div className="mt-3 flex items-center gap-2 text-xs text-emerald-400">
               <CheckCircle2 size={13} />
               LAN server active on port {settings.borrowLanSettings?.port}.
             </div>
           )}
-          {settings.lanServerAlive === false && (
+          {settings.lanServerStatus && !settings.lanServerStatus.running && (
             <div className="mt-3 flex items-center gap-2 text-xs text-amber-300">
               <XCircle size={13} />
               LAN server not responding on port {settings.borrowLanSettings?.port ?? "?"}.
@@ -91,7 +91,62 @@ export function BorrowLanQrCard({ settings, isAdmin }: BorrowLanQrCardProps) {
             >
               {settings.isSavingBorrowLanSettings ? "Saving..." : "Save Borrow LAN Settings"}
             </button>
+            <button
+              className="rounded-[8px] border border-[var(--primary)]/45 px-3 py-1.5 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--primary)]/10 disabled:opacity-50"
+              onClick={() => void settings.handleIssueBorrowLanToken()}
+              type="button"
+              disabled={!isAdmin || settings.isManagingLanToken || settings.isSavingBorrowLanSettings || settings.lanServerStatus?.running !== true}
+            >
+              {settings.isManagingLanToken
+                ? "Working..."
+                : settings.lanTokenReady
+                  ? "Regenerate QR Token"
+                : "Generate QR Token"}
+            </button>
+            <button
+              className="rounded-[8px] border border-emerald-400/45 px-3 py-1.5 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-400/10 disabled:opacity-50"
+              onClick={() => void settings.handleStartBorrowLanServer()}
+              type="button"
+              disabled={!isAdmin || settings.isManagingLanToken || settings.lanServerStatus?.running === true}
+            >
+              Start LAN Server
+            </button>
+            <button
+              className="rounded-[8px] border border-amber-400/45 px-3 py-1.5 text-xs font-semibold text-amber-200 transition hover:bg-amber-400/10 disabled:opacity-50"
+              onClick={() => void settings.handleStopBorrowLanServer()}
+              type="button"
+              disabled={!isAdmin || settings.isManagingLanToken || settings.lanServerStatus?.running !== true}
+            >
+              Stop LAN Server
+            </button>
+            <button
+              className="rounded-[8px] border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)] disabled:opacity-50"
+              onClick={() => void settings.refreshBorrowLanStatus()}
+              type="button"
+              disabled={!isAdmin || settings.isManagingLanToken}
+            >
+              Refresh Status
+            </button>
+            {settings.lanTokenReady && (
+              <button
+                className="rounded-[8px] border border-rose-400/40 px-3 py-1.5 text-xs font-semibold text-rose-200 transition hover:bg-rose-400/10 disabled:opacity-50"
+                onClick={() => void settings.handleRevokeBorrowLanToken()}
+                type="button"
+                disabled={!isAdmin || settings.isManagingLanToken}
+              >
+                Revoke QR Token
+              </button>
+            )}
           </div>
+          <label className="mt-3 flex items-center gap-2 text-xs text-[var(--text-primary)]">
+            <input
+              type="checkbox"
+              checked={settings.borrowLanSettings?.enabled ?? false}
+              onChange={(event) => settings.handleBorrowLanEnabledChange(event.target.checked)}
+              disabled={!isAdmin || settings.isSavingBorrowLanSettings || settings.isManagingLanToken}
+            />
+            Enable LAN server on app startup
+          </label>
           {settings.borrowLanMessage && (
             <div className="mt-2 rounded-[8px] border border-[var(--primary)]/35 bg-[var(--primary)]/8 px-3 py-2 text-xs text-[var(--text-primary)]">
               {settings.borrowLanMessage}
@@ -126,7 +181,7 @@ export function BorrowLanQrCard({ settings, isAdmin }: BorrowLanQrCardProps) {
                     </div>
                   ) : (
                     <div className="px-3 py-12 text-center text-xs text-slate-500">
-                      Borrow URL is empty.
+                      Generate a QR token to activate the LAN flow.
                     </div>
                   )}
                 </div>

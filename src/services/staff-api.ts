@@ -17,6 +17,8 @@ import type {
   BackupSettingsUpdateInput,
   BorrowLanSettings,
   BorrowLanSettingsUpdateInput,
+  BorrowLanTokenStatus,
+  BorrowLanServerStatus,
   AssetCategoryDetailRecord,
   AssetCategoryUpsertInput,
   AssetCategoryRecord,
@@ -196,10 +198,29 @@ export const staffApi = {
   updateBorrowLanSettings: (payload: BorrowLanSettingsUpdateInput) =>
     call<BorrowLanSettings>("update_borrow_lan_settings", {
       payload: {
+        enabled: payload.enabled ?? null,
         host: payload.host,
         port: payload.port,
       },
     }),
+
+  getBorrowLanTokenStatus: () =>
+    call<BorrowLanTokenStatus>("get_borrow_lan_token_status"),
+
+  issueBorrowLanToken: () =>
+    call<string>("issue_borrow_lan_token"),
+
+  revokeBorrowLanToken: () =>
+    call<void>("revoke_borrow_lan_token"),
+
+  startBorrowLanServer: () =>
+    call<BorrowLanServerStatus>("start_borrow_lan_server"),
+
+  stopBorrowLanServer: () =>
+    call<BorrowLanServerStatus>("stop_borrow_lan_server"),
+
+  getBorrowLanStatus: () =>
+    call<BorrowLanServerStatus>("get_borrow_lan_status"),
 
   inspectAssetImportFile: (payload: AssetImportInspectInput) =>
     call<AssetImportFileInspection>("inspect_asset_import_file", {
@@ -372,6 +393,9 @@ export const staffApi = {
         note: payload.note,
       },
     }),
+
+  cancelBorrowRequest: (requestId: number) =>
+    call<BorrowRequestRecord>("cancel_borrow_request", { requestId }),
 
   listEmployees: (filters: EmployeeQueryInput) =>
     call<EmployeeListResponse>("list_employees", {

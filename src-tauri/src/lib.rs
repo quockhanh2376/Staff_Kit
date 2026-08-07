@@ -1,6 +1,7 @@
 mod auth_session;
 mod db;
 mod lan_assets;
+mod lan_auth;
 mod lan_server;
 use tauri::Manager;
 
@@ -562,14 +563,94 @@ fn get_borrow_lan_settings(
 }
 
 #[tauri::command]
-fn update_borrow_lan_settings(
+async fn update_borrow_lan_settings(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
+    lan_server: tauri::State<'_, std::sync::Arc<lan_server::LanServerManager>>,
     session_token: String,
     payload: db::BorrowLanSettingsUpdateInput,
 ) -> Result<db::BorrowLanSettings, String> {
     let ctx = auth_session::require_admin(&session_store, &session_token)?;
-    db::update_borrow_lan_settings_with_actor(&app, ctx, payload)
+    let updated = db::update_borrow_lan_settings_with_actor(&app, ctx, payload)?;
+    if !updated.enabled {
+        lan_server.stop().await?;
+    }
+    Ok(updated)
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BorrowLanTokenStatus {
+    ready: bool,
+}
+
+#[tauri::command]
+fn get_borrow_lan_token_status(
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    lan_token_store: tauri::State<'_, std::sync::Arc<lan_auth::LanTokenStore>>,
+    lan_server: tauri::State<'_, std::sync::Arc<lan_server::LanServerManager>>,
+    session_token: String,
+) -> Result<BorrowLanTokenStatus, String> {
+    let _ctx = auth_session::require_admin(&session_store, &session_token)?;
+    let server_status = lan_server.status()?;
+    Ok(BorrowLanTokenStatus {
+        ready: server_status.running && lan_token_store.is_ready(),
+    })
+}
+
+#[tauri::command]
+fn issue_borrow_lan_token(
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    lan_token_store: tauri::State<'_, std::sync::Arc<lan_auth::LanTokenStore>>,
+    lan_server: tauri::State<'_, std::sync::Arc<lan_server::LanServerManager>>,
+    session_token: String,
+) -> Result<String, String> {
+    let _ctx = auth_session::require_admin(&session_store, &session_token)?;
+    lan_server.require_running()?;
+    Ok(lan_token_store.issue())
+}
+
+#[tauri::command]
+fn revoke_borrow_lan_token(
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    lan_token_store: tauri::State<'_, std::sync::Arc<lan_auth::LanTokenStore>>,
+    session_token: String,
+) -> Result<(), String> {
+    let _ctx = auth_session::require_admin(&session_store, &session_token)?;
+    lan_token_store.revoke();
+    Ok(())
+}
+
+#[tauri::command]
+async fn start_borrow_lan_server(
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    lan_server: tauri::State<'_, std::sync::Arc<lan_server::LanServerManager>>,
+    session_token: String,
+) -> Result<lan_server::LanServerStatus, String> {
+    let _ctx = auth_session::require_admin(&session_store, &session_token)?;
+    lan_server.start().await?;
+    lan_server.status()
+}
+
+#[tauri::command]
+async fn stop_borrow_lan_server(
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    lan_server: tauri::State<'_, std::sync::Arc<lan_server::LanServerManager>>,
+    session_token: String,
+) -> Result<lan_server::LanServerStatus, String> {
+    let _ctx = auth_session::require_admin(&session_store, &session_token)?;
+    lan_server.stop().await?;
+    lan_server.status()
+}
+
+#[tauri::command]
+fn get_borrow_lan_status(
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    lan_server: tauri::State<'_, std::sync::Arc<lan_server::LanServerManager>>,
+    session_token: String,
+) -> Result<lan_server::LanServerStatus, String> {
+    let _ctx = auth_session::require_admin(&session_store, &session_token)?;
+    lan_server.status()
 }
 
 #[tauri::command]
@@ -867,22 +948,43 @@ fn reject_borrow_request(
     db::reject_borrow_request_with_actor(&app, ctx, payload)
 }
 
+#[tauri::command]
+fn cancel_borrow_request(
+    app: tauri::AppHandle,
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    session_token: String,
+    request_id: i64,
+) -> Result<db::BorrowRequestRecord, String> {
+    let ctx = auth_session::require_admin(&session_store, &session_token)?;
+    db::cancel_borrow_request_with_actor(&app, ctx, request_id)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let lan_token_store = std::sync::Arc::new(lan_auth::LanTokenStore::new());
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(auth_session::SessionStore::new())
-        .setup(|app| {
-            if let Err(error) = lan_server::start(app.handle().clone()) {
-                eprintln!("failed to start Staff Kit LAN borrow server: {error}");
+        .manage(lan_token_store.clone())
+        .setup({
+            let lan_token_store = lan_token_store.clone();
+            move |app| {
+                let lan_server = std::sync::Arc::new(lan_server::LanServerManager::new(
+                    app.handle().clone(),
+                    lan_token_store.clone(),
+                ));
+                app.manage(lan_server.clone());
+                if let Err(error) = tauri::async_runtime::block_on(lan_server.start_if_enabled()) {
+                    eprintln!("failed to start Staff Kit LAN borrow server: {error}");
+                }
+                // Show the main window after WebView2 has finished initializing.
+                // We set visible:false in tauri.conf.json to avoid the black flash
+                // that appears before the first frame is rendered.
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                }
+                Ok(())
             }
-            // Show the main window after WebView2 has finished initializing.
-            // We set visible:false in tauri.conf.json to avoid the black flash
-            // that appears before the first frame is rendered.
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-            }
-            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             // ── Public (bootstrap/login/diagnostics) ───────────────────────────
@@ -908,6 +1010,12 @@ pub fn run() {
             restore_database_from_file,
             get_borrow_lan_settings,
             update_borrow_lan_settings,
+            get_borrow_lan_token_status,
+            issue_borrow_lan_token,
+            revoke_borrow_lan_token,
+            start_borrow_lan_server,
+            stop_borrow_lan_server,
+            get_borrow_lan_status,
             inspect_asset_import_file,
             preview_asset_import_file,
             import_asset_import_file,
@@ -933,6 +1041,7 @@ pub fn run() {
             get_borrow_request_detail,
             approve_borrow_request,
             reject_borrow_request,
+            cancel_borrow_request,
             list_employees,
             search_employees,
             preview_employee_asset_seed,
@@ -972,6 +1081,14 @@ pub fn run() {
                 // Clear all in-memory sessions on shutdown. No tokens persist.
                 if let Some(store) = app.try_state::<auth_session::SessionStore>() {
                     store.invalidate_all();
+                }
+                if let Some(store) = app.try_state::<std::sync::Arc<lan_auth::LanTokenStore>>() {
+                    store.revoke();
+                }
+                if let Some(server) =
+                    app.try_state::<std::sync::Arc<lan_server::LanServerManager>>()
+                {
+                    let _ = tauri::async_runtime::block_on(server.stop());
                 }
             }
         })
@@ -1023,6 +1140,12 @@ mod tests {
         "get_db_custom_path",
         "get_borrow_lan_settings",
         "update_borrow_lan_settings",
+        "get_borrow_lan_token_status",
+        "issue_borrow_lan_token",
+        "revoke_borrow_lan_token",
+        "start_borrow_lan_server",
+        "stop_borrow_lan_server",
+        "get_borrow_lan_status",
         "inspect_asset_import_file",
         "preview_asset_import_file",
         "import_asset_import_file",
@@ -1039,6 +1162,7 @@ mod tests {
         "get_borrow_request_detail",
         "approve_borrow_request",
         "reject_borrow_request",
+        "cancel_borrow_request",
         "preview_employee_asset_seed",
         "import_employee_asset_seed",
         "upsert_employee_column",
@@ -1078,10 +1202,7 @@ mod tests {
     ];
 
     /// Commands that must NOT be registered for IPC (internal-only or removed).
-    const FORBIDDEN_IPC_COMMANDS: &[&str] = &[
-        "set_active_local_account",
-        "run_auto_backup_if_due",
-    ];
+    const FORBIDDEN_IPC_COMMANDS: &[&str] = &["set_active_local_account", "run_auto_backup_if_due"];
 
     /// The exact set of commands registered in `generate_handler!`.
     fn registered_commands() -> Vec<&'static str> {
@@ -1131,7 +1252,10 @@ mod tests {
         // No command appears in two sets.
         let mut seen = std::collections::HashSet::new();
         for cmd in registered_commands() {
-            assert!(seen.insert(cmd), "command '{cmd}' appears in multiple classification sets");
+            assert!(
+                seen.insert(cmd),
+                "command '{cmd}' appears in multiple classification sets"
+            );
         }
     }
 
@@ -1180,7 +1304,9 @@ mod tests {
         let store = auth_session::SessionStore::new();
         let user_tok = store.issue_session(3, "u", auth_session::Role::User);
         assert_eq!(
-            auth_session::require_admin(&store, &user_tok).unwrap_err().code(),
+            auth_session::require_admin(&store, &user_tok)
+                .unwrap_err()
+                .code(),
             auth_session::AUTH_FORBIDDEN
         );
     }
@@ -1192,6 +1318,32 @@ mod tests {
             auth_session::require_admin(&store, "").unwrap_err().code(),
             auth_session::AUTH_REQUIRED
         );
+    }
+
+    #[test]
+    fn lan_lifecycle_commands_are_admin_only() {
+        let store = auth_session::SessionStore::new();
+        let user_token = store.issue_session(7, "user", auth_session::Role::User);
+        for command in [
+            "start_borrow_lan_server",
+            "stop_borrow_lan_server",
+            "get_borrow_lan_status",
+            "get_borrow_lan_token_status",
+            "issue_borrow_lan_token",
+            "revoke_borrow_lan_token",
+        ] {
+            assert!(
+                ADMIN_COMMANDS.contains(&command),
+                "LAN lifecycle command must be admin-classified: {command}"
+            );
+            assert_eq!(
+                auth_session::require_admin(&store, &user_token)
+                    .unwrap_err()
+                    .code(),
+                auth_session::AUTH_FORBIDDEN,
+                "standard users must be rejected before {command} executes"
+            );
+        }
     }
 
     // ── Phase D: session invalidation matrix ──────────────────────────────────
@@ -1225,7 +1377,9 @@ mod tests {
         store.invalidate_account(9);
 
         // Actor session survives.
-        store.resolve_session(&actor_tok).expect("actor session preserved");
+        store
+            .resolve_session(&actor_tok)
+            .expect("actor session preserved");
         // Target session revoked.
         assert_eq!(
             store.resolve_session(&target_tok).unwrap_err().code(),
@@ -1272,7 +1426,9 @@ mod tests {
 
         // Simulate: mutation fails, no invalidation called.
         // The session must still be valid.
-        store.resolve_session(&tok).expect("session valid after failed mutation");
+        store
+            .resolve_session(&tok)
+            .expect("session valid after failed mutation");
     }
 
     #[test]
