@@ -9,7 +9,7 @@ import {
 import * as borrowLanAutoFillModule from "../src/features/settings/borrowLanAutoFill.ts"
 
 const settingsState = readFileSync("src/features/settings/useSettingsState.ts", "utf8")
-const settingsView = readFileSync("src/features/settings/SettingsView.tsx", "utf8")
+const borrowLanQrCard = readFileSync("src/features/borrow/BorrowLanQrCard.tsx", "utf8")
 
 const applyDetectedBorrowLanSettings = (
   borrowLanAutoFillModule as {
@@ -43,6 +43,7 @@ assert.deepEqual(applyDetectedBorrowLanSettings?.(savedSettings, null), savedSet
 assert.match(settingsState, /handleRefreshBorrowLanHost/)
 assert.match(settingsState, /detectBorrowLanHost/)
 assert.match(settingsState, /setBorrowLanSettings\(\(current\) => applyDetectedBorrowLanSettings\(current, nextHost\)\)/)
-assert.match(settingsView, /RefreshCw/)
+assert.match(borrowLanQrCard, /RefreshCw/)
+assert.match(borrowLanQrCard, /handleRefreshBorrowLanHost/)
 
 console.log("borrow-lan-autofill tests passed")
