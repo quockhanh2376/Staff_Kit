@@ -87,6 +87,138 @@ export function SettingsView({
     return (
         <section className="bg-[var(--bg)] px-4 py-7 text-[var(--text-secondary)] md:px-8">
             <h2 className="text-[30px] font-bold text-[var(--text-primary)]">Settings</h2>
+            {auth.isAdminAccount && (
+                <div
+                    className="mt-4 max-w-6xl rounded-[16px] border border-[var(--border)] bg-[var(--surface)] p-4"
+                    data-testid="settings-lan-controls"
+                >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                            <h3 className="text-sm font-semibold uppercase tracking-[0.08em] text-[var(--text-primary)]">
+                                Borrow / Return LAN
+                            </h3>
+                            <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                                Configure the address used by the shared Borrow / Return QR workflow.
+                            </p>
+                        </div>
+                        <div className="text-xs text-[var(--text-secondary)]">
+                            Status: {settings.lanServerStatus?.running ? "running" : "stopped"}
+                        </div>
+                    </div>
+
+                    <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_140px]">
+                        <div>
+                            <label className={`mb-1 block ${settingsMutedTextClass}`} htmlFor="settings-lan-host">
+                                LAN host / IP
+                            </label>
+                            <input
+                                id="settings-lan-host"
+                                className="form-input text-xs"
+                                value={settings.borrowLanHostInput}
+                                onChange={(event) => settings.handleBorrowLanHostInputChange(event.target.value)}
+                                placeholder="192.168.1.25 or OFFICE-PC"
+                                disabled={settings.isSavingBorrowLanSettings || settings.isDetectingBorrowLanHost}
+                            />
+                        </div>
+                        <div>
+                            <label className={`mb-1 block ${settingsMutedTextClass}`} htmlFor="settings-lan-port">
+                                Port
+                            </label>
+                            <input
+                                id="settings-lan-port"
+                                className="form-input text-xs"
+                                value={settings.borrowLanPortInput}
+                                onChange={(event) => settings.setBorrowLanPortInput(event.target.value)}
+                                placeholder="8787"
+                                disabled={settings.isSavingBorrowLanSettings || settings.isDetectingBorrowLanHost}
+                            />
+                        </div>
+                    </div>
+                    {settings.borrowLanDetectionNote && (
+                        <div className="mt-2 text-[11px] text-[var(--primary)]">{settings.borrowLanDetectionNote}</div>
+                    )}
+                    <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                            className={settingsSecondaryButtonClass}
+                            onClick={settings.handleRefreshBorrowLanHost}
+                            type="button"
+                            disabled={settings.isSavingBorrowLanSettings || settings.isDetectingBorrowLanHost}
+                        >
+                            {settings.isDetectingBorrowLanHost ? "Detecting..." : "Refresh LAN IP"}
+                        </button>
+                        <button
+                            className={settingsSecondaryButtonClass}
+                            onClick={() => void settings.handleSaveBorrowLanSettings()}
+                            type="button"
+                            disabled={settings.isSavingBorrowLanSettings || settings.isDetectingBorrowLanHost}
+                        >
+                            {settings.isSavingBorrowLanSettings ? "Saving..." : "Save LAN settings"}
+                        </button>
+                    </div>
+                    <label className="mt-3 flex items-center gap-2 text-xs text-[var(--text-primary)]">
+                        <input
+                            type="checkbox"
+                            checked={settings.borrowLanSettings?.enabled ?? false}
+                            onChange={(event) => settings.handleBorrowLanEnabledChange(event.target.checked)}
+                            disabled={settings.isSavingBorrowLanSettings || settings.isManagingLanToken}
+                        />
+                        Enable LAN server on app startup
+                    </label>
+
+                    <details className="mt-4 rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/30 p-3">
+                        <summary className="cursor-pointer text-xs font-semibold text-[var(--text-primary)]">
+                            Advanced lifecycle and token controls
+                        </summary>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                            <button
+                                className={settingsSecondaryButtonClass}
+                                onClick={() => void settings.handleStartBorrowLanServer()}
+                                type="button"
+                                disabled={settings.isManagingLanToken || settings.lanServerStatus?.running === true}
+                            >
+                                Start LAN server
+                            </button>
+                            <button
+                                className={settingsSecondaryButtonClass}
+                                onClick={() => void settings.handleStopBorrowLanServer()}
+                                type="button"
+                                disabled={settings.isManagingLanToken || settings.lanServerStatus?.running !== true}
+                            >
+                                Stop LAN server
+                            </button>
+                            <button
+                                className={settingsSecondaryButtonClass}
+                                onClick={() => void settings.refreshBorrowLanStatus()}
+                                type="button"
+                                disabled={settings.isManagingLanToken}
+                            >
+                                Refresh status
+                            </button>
+                            <button
+                                className={settingsSecondaryButtonClass}
+                                onClick={() => void settings.handleIssueBorrowLanToken()}
+                                type="button"
+                                disabled={settings.isManagingLanToken || settings.lanServerStatus?.running !== true}
+                            >
+                                {settings.lanTokenReady ? "Regenerate QR token" : "Generate QR token"}
+                            </button>
+                            <button
+                                className="inline-flex items-center justify-center gap-2 rounded-[10px] border border-rose-400/40 px-3 py-2 text-sm font-semibold text-rose-200 transition hover:bg-rose-400/10 disabled:opacity-50"
+                                onClick={() => void settings.handleRevokeBorrowLanToken()}
+                                type="button"
+                                disabled={settings.isManagingLanToken || !settings.lanTokenReady}
+                            >
+                                Revoke QR token
+                            </button>
+                        </div>
+                    </details>
+                    {settings.borrowLanMessage && (
+                        <div className="mt-3 rounded-[8px] border border-[var(--primary)]/35 bg-[var(--primary)]/8 px-3 py-2 text-xs text-[var(--text-primary)]">
+                            {settings.borrowLanMessage}
+                        </div>
+                    )}
+                </div>
+            )}
             <div className="mt-4 grid gap-4 lg:grid-cols-2">
                 {/* Admin Portal — 2-column: left = user mgmt, right = import */}
                 <div

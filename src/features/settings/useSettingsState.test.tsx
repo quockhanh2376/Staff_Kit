@@ -62,6 +62,10 @@ beforeEach(() => {
                 return null
             case "get_borrow_lan_settings":
                 return { host: "127.0.0.1", port: 8787 }
+            case "get_borrow_lan_token_status":
+                return { ready: false }
+            case "get_borrow_lan_status":
+                return { running: false, tokenReady: false, bindHost: "127.0.0.1", port: 8787 }
             case "list_history_snapshots":
                 return []
             default:
@@ -347,5 +351,103 @@ describe("standard-user startup avoids admin commands (Regression B)", () => {
         })
 
         expect(setGlobalError).not.toHaveBeenCalled()
+    })
+})
+
+describe("Borrow / Return LAN automatic lifecycle", () => {
+    it("starts a stopped server once and issues one token", async () => {
+        setSession({ sessionToken: "lan-token", expiresAt: "2099-01-01T00:00:00Z" })
+        const { result, rerender } = renderHook(() => useSettingsState(baseOptions))
+        await act(async () => {
+            await Promise.resolve()
+            await Promise.resolve()
+        })
+
+        invokeMock.mockImplementation(async (command: string) => {
+            if (command === "start_borrow_lan_server") {
+                return { running: true, tokenReady: false, bindHost: "127.0.0.1", port: 8787 }
+            }
+            if (command === "issue_borrow_lan_token") return "session-token"
+            return undefined
+        })
+
+        await act(async () => {
+            await result.current.ensureBorrowLanReady()
+            await result.current.ensureBorrowLanReady()
+        })
+        rerender()
+        await act(async () => {
+            await result.current.ensureBorrowLanReady()
+        })
+
+        expect(invokeMock.mock.calls.filter(([command]) => command === "start_borrow_lan_server")).toHaveLength(1)
+        expect(invokeMock.mock.calls.filter(([command]) => command === "issue_borrow_lan_token")).toHaveLength(1)
+        expect(result.current.lanAutoStartState).toBe("ready")
+        expect(result.current.borrowLanQrUrl).toBe("http://127.0.0.1:8787/borrow#t=session-token")
+    })
+
+    it("does not restart or regenerate when the running session is already token-ready", async () => {
+        setSession({ sessionToken: "lan-token", expiresAt: "2099-01-01T00:00:00Z" })
+        invokeMock.mockImplementation(async (command: string) => {
+            if (command === "get_backup_settings") return { backupDirectoryPath: "C:/backups", autoBackupEnabled: false }
+            if (command === "get_db_custom_path") return null
+            if (command === "get_borrow_lan_settings") return { host: "127.0.0.1", port: 8787 }
+            if (command === "get_borrow_lan_token_status") return { ready: true }
+            if (command === "get_borrow_lan_status") return { running: true, tokenReady: true, bindHost: "127.0.0.1", port: 8787 }
+            return undefined
+        })
+        const { result } = renderHook(() => useSettingsState(baseOptions))
+        await act(async () => {
+            await Promise.resolve()
+            await Promise.resolve()
+            await result.current.ensureBorrowLanReady()
+            await result.current.ensureBorrowLanReady()
+        })
+
+        expect(invokeMock.mock.calls.filter(([command]) => command === "start_borrow_lan_server")).toHaveLength(0)
+        expect(invokeMock.mock.calls.filter(([command]) => command === "issue_borrow_lan_token")).toHaveLength(0)
+        expect(result.current.lanAutoStartState).toBe("ready")
+    })
+
+    it("shows safe retry state after failure and deduplicates concurrent retry calls", async () => {
+        setSession({ sessionToken: "lan-token", expiresAt: "2099-01-01T00:00:00Z" })
+        let rejectStart: ((error: Error) => void) | null = null
+        let startAttempts = 0
+        invokeMock.mockImplementation(async (command: string) => {
+            if (command === "get_backup_settings") return { backupDirectoryPath: "C:/backups", autoBackupEnabled: false }
+            if (command === "get_db_custom_path") return null
+            if (command === "get_borrow_lan_settings") return { host: "127.0.0.1", port: 8787 }
+            if (command === "get_borrow_lan_token_status") return { ready: false }
+            if (command === "get_borrow_lan_status") return { running: false, tokenReady: false, bindHost: "127.0.0.1", port: 8787 }
+            if (command === "start_borrow_lan_server") {
+                startAttempts += 1
+                if (startAttempts === 1) throw new Error("Address already in use at 127.0.0.1:8787")
+                return new Promise((_, reject) => { rejectStart = reject })
+            }
+            return undefined
+        })
+        const { result } = renderHook(() => useSettingsState(baseOptions))
+        await act(async () => {
+            await Promise.resolve()
+            await Promise.resolve()
+            await result.current.ensureBorrowLanReady()
+        })
+        expect(result.current.lanAutoStartState).toBe("error")
+        expect(result.current.lanAutoStartError).toBe(
+            "LAN server could not start on the configured port. Check the LAN settings or close the process using that port, then retry.",
+        )
+
+        let retryOne!: Promise<void>
+        let retryTwo!: Promise<void>
+        act(() => {
+            retryOne = result.current.ensureBorrowLanReady()
+            retryTwo = result.current.ensureBorrowLanReady()
+        })
+        expect(retryOne).toBe(retryTwo)
+        expect(startAttempts).toBe(2)
+        const failRetry = rejectStart as ((error: Error) => void) | null
+        failRetry?.(new Error("second failure"))
+        await act(async () => { await retryOne })
+        expect(startAttempts).toBe(2)
     })
 })

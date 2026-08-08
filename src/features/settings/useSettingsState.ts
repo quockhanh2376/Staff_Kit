@@ -10,6 +10,18 @@ import {
     chooseBorrowLanHostInput,
 } from "./borrowLanAutoFill"
 
+export type BorrowLanAutoStartState = "idle" | "starting" | "ready" | "error"
+
+export function getBorrowLanAutoStartErrorMessage(error: unknown): string {
+    const raw = error instanceof Error ? error.message : String(error)
+    const normalized = raw.toLowerCase()
+
+    if (normalized.includes("address") || normalized.includes("bind") || normalized.includes("port")) {
+        return "LAN server could not start on the configured port. Check the LAN settings or close the process using that port, then retry."
+    }
+    return "LAN server could not start. Check the LAN host and port in Settings, then retry."
+}
+
 type UseSettingsStateOptions = {
     dbReady: boolean
     isAuthenticated: boolean
@@ -71,7 +83,13 @@ export function useSettingsState({
     const [lanToken, setLanToken] = useState<string | null>(null)
     const [lanTokenReady, setLanTokenReady] = useState(false)
     const [isManagingLanToken, setManagingLanToken] = useState(false)
+    const [lanAutoStartState, setLanAutoStartState] = useState<BorrowLanAutoStartState>("idle")
+    const [lanAutoStartError, setLanAutoStartError] = useState<string | null>(null)
     const borrowLanHostTouchedRef = useRef(false)
+    const lanServerStatusRef = useRef<BorrowLanServerStatus | null>(null)
+    const lanTokenRef = useRef<string | null>(null)
+    const lanTokenReadyRef = useRef(false)
+    const lanAutoStartPromiseRef = useRef<Promise<void> | null>(null)
 
     // Asset seed utility
     const [assetSeedText, setAssetSeedText] = useState("")
@@ -172,7 +190,15 @@ export function useSettingsState({
                     setBorrowLanPortInput(String(lanSettings.port))
                     setBorrowLanDetectionNote("")
                     borrowLanHostTouchedRef.current = false
-                    setLanTokenReady(tokenStatus?.ready ?? false)
+                    lanServerStatusRef.current = serverStatus ?? null
+                    if (!serverStatus?.running) {
+                        lanTokenRef.current = null
+                        setLanToken(null)
+                    }
+                    const tokenReady = serverStatus?.running === true &&
+                        (lanTokenRef.current !== null || tokenStatus?.ready === true)
+                    lanTokenReadyRef.current = tokenReady
+                    setLanTokenReady(tokenReady)
                     setLanServerStatus(serverStatus ?? null)
                     setLanServerAlive(serverStatus?.running ?? false)
                     setDbCustomPathInput(customPathValue ?? "")
@@ -427,6 +453,8 @@ export function useSettingsState({
             setManagingLanToken(true)
             setBorrowLanMessage("")
             const token = await staffApi.issueBorrowLanToken()
+            lanTokenRef.current = token
+            lanTokenReadyRef.current = true
             setLanToken(token)
             setLanTokenReady(true)
             setBorrowLanMessage("LAN QR token generated. Regenerating it invalidates the previous QR.")
@@ -441,9 +469,14 @@ export function useSettingsState({
         try {
             const status = await staffApi.getBorrowLanStatus()
             setLanServerStatus(status)
+            lanServerStatusRef.current = status
             setLanServerAlive(status.running)
+            lanTokenReadyRef.current = status.tokenReady
             setLanTokenReady(status.tokenReady)
-            if (!status.running) setLanToken(null)
+            if (!status.running) {
+                lanTokenRef.current = null
+                setLanToken(null)
+            }
         } catch (error) {
             setBorrowLanMessage(getUserErrorMessage(error))
         }
@@ -454,8 +487,10 @@ export function useSettingsState({
             setManagingLanToken(true)
             setBorrowLanMessage("")
             const status = await staffApi.startBorrowLanServer()
+            lanServerStatusRef.current = status
             setLanServerStatus(status)
             setLanServerAlive(status.running)
+            lanTokenReadyRef.current = status.tokenReady
             setLanTokenReady(status.tokenReady)
             setBorrowLanMessage("Borrow LAN server started. Generate a QR token to allow access.")
         } catch (error) {
@@ -470,6 +505,9 @@ export function useSettingsState({
             setManagingLanToken(true)
             setBorrowLanMessage("")
             const status = await staffApi.stopBorrowLanServer()
+            lanServerStatusRef.current = status
+            lanTokenRef.current = null
+            lanTokenReadyRef.current = status.tokenReady
             setLanServerStatus(status)
             setLanServerAlive(status.running)
             setLanToken(null)
@@ -486,6 +524,8 @@ export function useSettingsState({
         try {
             setManagingLanToken(true)
             await staffApi.revokeBorrowLanToken()
+            lanTokenRef.current = null
+            lanTokenReadyRef.current = false
             setLanToken(null)
             setLanTokenReady(false)
             setBorrowLanMessage("LAN QR token revoked. Existing QR codes no longer work.")
@@ -495,6 +535,60 @@ export function useSettingsState({
             setManagingLanToken(false)
         }
     }
+
+    const ensureBorrowLanReady = useCallback(() => {
+        if (lanAutoStartPromiseRef.current) return lanAutoStartPromiseRef.current
+
+        const operation = (async () => {
+            setLanAutoStartState("starting")
+            setLanAutoStartError(null)
+
+            let status = lanServerStatusRef.current
+            if (!status) {
+                status = await staffApi.getBorrowLanStatus()
+                lanServerStatusRef.current = status
+                setLanServerStatus(status)
+                setLanServerAlive(status.running)
+            }
+
+            if (!status.running) {
+                status = await staffApi.startBorrowLanServer()
+                lanServerStatusRef.current = status
+                setLanServerStatus(status)
+                setLanServerAlive(status.running)
+                lanTokenReadyRef.current = status.tokenReady
+                setLanTokenReady(status.tokenReady)
+            }
+
+            if (!status.running) {
+                throw new Error("LAN server did not become ready")
+            }
+
+            if (!lanTokenReadyRef.current) {
+                const token = await staffApi.issueBorrowLanToken()
+                lanTokenRef.current = token
+                lanTokenReadyRef.current = true
+                setLanToken(token)
+                setLanTokenReady(true)
+                status = { ...status, tokenReady: true }
+                lanServerStatusRef.current = status
+                setLanServerStatus(status)
+            }
+
+            setLanAutoStartState("ready")
+        })().catch((error) => {
+            const message = getBorrowLanAutoStartErrorMessage(error)
+            setLanAutoStartState("error")
+            setLanAutoStartError(message)
+            setBorrowLanMessage(message)
+        })
+
+        lanAutoStartPromiseRef.current = operation
+        operation.finally(() => {
+            lanAutoStartPromiseRef.current = null
+        })
+        return operation
+    }, [])
 
     const handleBorrowLanHostInputChange = useCallback((nextValue: string) => {
         borrowLanHostTouchedRef.current = true
@@ -599,6 +693,9 @@ export function useSettingsState({
         refreshBorrowLanStatus,
         handleStartBorrowLanServer,
         handleStopBorrowLanServer,
+        ensureBorrowLanReady,
+        lanAutoStartState,
+        lanAutoStartError,
         // Asset seed
         assetSeedText,
         setAssetSeedText,
