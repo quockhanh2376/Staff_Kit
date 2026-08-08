@@ -45,18 +45,18 @@ type SettingsViewProps = {
     triggerReload: () => void
 }
 
-const settingsSubCardClass = "rounded-[12px] border border-slate-800 bg-[#1c2128] p-3"
+const settingsSubCardClass = "rounded-[12px] border border-[var(--border)] bg-[var(--surface-hover)] p-3"
 const settingsLabelClass =
-    "text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400"
+    "text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]"
 const settingsInputClass =
-    "w-full rounded-[10px] border border-slate-800 bg-[#0d1117] px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 outline-none transition focus:border-emerald-500/50"
+    "w-full rounded-[10px] border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] outline-none transition focus:border-emerald-500/50"
 const settingsSecondaryButtonClass =
-    "inline-flex items-center justify-center gap-2 rounded-[10px] border border-slate-700 bg-slate-800 px-3 py-2 text-sm font-semibold text-slate-100 transition hover:bg-slate-700 disabled:opacity-50"
+    "inline-flex items-center justify-center gap-2 rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)] px-3 py-2 text-sm font-semibold text-[var(--text-primary)] transition hover:brightness-95 disabled:opacity-50"
 const settingsPrimaryButtonClass =
     "inline-flex items-center justify-center gap-2 rounded-[10px] border border-emerald-500/70 bg-emerald-500 px-3 py-2 text-sm font-semibold text-[#03130d] transition hover:bg-emerald-400 disabled:opacity-50"
-const settingsMutedTextClass = "text-slate-400"
+const settingsMutedTextClass = "text-[var(--text-secondary)]"
 const settingsPanelHeadingClass =
-    "text-sm font-semibold uppercase tracking-[0.08em] text-slate-100"
+    "text-sm font-semibold uppercase tracking-[0.08em] text-[var(--text-primary)]"
 const adminPortalImportOptions: Array<{ key: StaffGroupKey; label: string }> = [
     { key: "employee_list", label: "Employee List" },
     { key: "onboarding", label: "Onboarding" },
@@ -64,9 +64,9 @@ const adminPortalImportOptions: Array<{ key: StaffGroupKey; label: string }> = [
     { key: "internal_movement", label: "Movement" },
 ]
 const settingsCardHeaderClass =
-    "min-h-[68px] bg-[#1c2128] px-4 py-4"
+    "min-h-[68px] bg-[var(--surface-hover)] px-4 py-4"
 const settingsCardHeaderTitleClass =
-    "flex min-h-[36px] min-w-0 items-center gap-2 text-xl font-semibold text-slate-100"
+    "flex min-h-[36px] min-w-0 items-center gap-2 text-xl font-semibold text-[var(--text-primary)]"
 
 export function SettingsView({
     auth,
@@ -85,23 +85,23 @@ export function SettingsView({
     const databaseBackupCard = useIdleCollapse(60000, false)
 
     return (
-        <section className="bg-[#0f141b] px-4 py-7 text-slate-300 md:px-8">
-            <h2 className="text-[30px] font-bold text-slate-100">Settings</h2>
+        <section className="bg-[var(--bg)] px-4 py-7 text-[var(--text-secondary)] md:px-8">
+            <h2 className="text-[30px] font-bold text-[var(--text-primary)]">Settings</h2>
             <div className="mt-4 grid gap-4 lg:grid-cols-2">
                 {/* Admin Portal — 2-column: left = user mgmt, right = import */}
                 <div
                     {...adminPortalCard.bindActivityHandlers}
-                    className="self-start overflow-hidden rounded-[16px] border border-slate-800 bg-[#161b22] text-sm text-slate-300 shadow-[0_18px_42px_rgba(0,0,0,0.22)]"
+                    className="self-start overflow-hidden rounded-[16px] border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text-secondary)] shadow-[0_18px_42px_rgba(0,0,0,0.22)]"
                 >
                     <div
-                        className={`cursor-pointer transition-colors hover:bg-[#222a35] ${settingsCardHeaderClass} ${adminPortalCard.isExpanded ? "border-b border-slate-800" : ""}`}
+                        className={`cursor-pointer transition-colors hover:bg-[var(--surface-hover)] ${settingsCardHeaderClass} ${adminPortalCard.isExpanded ? "border-b border-[var(--border)]" : ""}`}
                         onClick={() => adminPortalCard.setExpanded((current) => !current)}
                     >
                         <div className="flex items-center justify-between gap-3">
                             <div className={settingsCardHeaderTitleClass}>
                                 <Users size={20} className="shrink-0 text-emerald-400" />
                                 <div>Admin Portal</div>
-                                <span className="ml-1 inline-flex items-center justify-center rounded-[8px] border border-slate-700 bg-slate-800 p-1 text-slate-400">
+                                <span className="ml-1 inline-flex items-center justify-center rounded-[8px] border border-[var(--border)] bg-[var(--surface-hover)] p-1 text-[var(--text-secondary)]">
                                     {adminPortalCard.isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                                 </span>
                             </div>
@@ -112,8 +112,8 @@ export function SettingsView({
                         className={`origin-top overflow-hidden transition-[max-height,opacity] duration-300 ease-out ${adminPortalCard.isExpanded ? "max-h-[1400px] opacity-100" : "max-h-0 opacity-0"}`}
                     >
                         <div className="space-y-4 p-4">
-                            <div className="border-b border-slate-800 pb-4">
-                                <div className="inline-flex max-w-full flex-wrap overflow-hidden rounded-[10px] border border-emerald-500/45 bg-[#0d1117] shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+                            <div className="border-b border-[var(--border)] pb-4">
+                                <div className="inline-flex max-w-full flex-wrap overflow-hidden rounded-[10px] border border-emerald-500/45 bg-[var(--bg)] shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
                                     <button
                                         className="inline-flex items-center gap-2 border-r border-emerald-500/35 bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-[#03130d] transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
                                         onClick={() => void imp.handlePickImportFiles()}
@@ -128,11 +128,11 @@ export function SettingsView({
                                         {imp.isImporting ? "Preparing import..." : "Import"}
                                     </button>
                                     <div className="relative flex min-w-0 items-center gap-2 px-3 py-2.5">
-                                        <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+                                        <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
                                             TO:
                                         </span>
                                         <select
-                                            className="min-w-[180px] appearance-none bg-transparent pr-6 text-sm font-semibold text-slate-100 outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                                            className="min-w-[180px] appearance-none bg-transparent pr-6 text-sm font-semibold text-[var(--text-primary)] outline-none disabled:cursor-not-allowed disabled:opacity-60"
                                             value={imp.importTargetGroup}
                                             onChange={(event) =>
                                                 imp.setImportTargetGroup(event.target.value as StaffGroupKey)
@@ -140,19 +140,19 @@ export function SettingsView({
                                             disabled={!auth.canImportData || imp.isImporting}
                                         >
                                             {adminPortalImportOptions.map((item) => (
-                                                <option key={item.key} value={item.key} className="bg-[#1c2128] text-slate-100">
+                                            <option key={item.key} value={item.key} className="bg-[var(--surface-hover)] text-[var(--text-primary)]">
                                                     {item.label}
                                                 </option>
                                             ))}
                                         </select>
                                         <ChevronDown
                                             size={14}
-                                            className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-500"
+                                            className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-secondary)]"
                                         />
                                     </div>
                                 </div>
                                 {!auth.canImportData && (
-                                    <div className="mt-2 text-xs text-slate-500">
+                                    <div className="mt-2 text-xs text-[var(--text-secondary)]">
                                         Admin access required for import.
                                     </div>
                                 )}
@@ -191,7 +191,7 @@ export function SettingsView({
                                 </div>
                                 <div className={`mt-2 text-xs ${settingsMutedTextClass}`}>
                                     Default password for every new user:{" "}
-                                    <span className="font-semibold text-slate-100">{DEFAULT_NEW_ACCOUNT_PASSWORD}</span>
+                                    <span className="font-semibold text-[var(--text-primary)]">{DEFAULT_NEW_ACCOUNT_PASSWORD}</span>
                                 </div>
                                 <div className="mt-2 flex flex-wrap items-center gap-2">
                                     <select
@@ -222,8 +222,8 @@ export function SettingsView({
 
                                 </div>
 
-                                <div className="overflow-hidden rounded-[12px] border border-slate-800 bg-[#1c2128]">
-                                    <div className="border-b border-slate-800 px-3 py-3">
+                                <div className="overflow-hidden rounded-[12px] border border-[var(--border)] bg-[var(--surface-hover)]">
+                                    <div className="border-b border-[var(--border)] px-3 py-3">
                                         <div className={settingsPanelHeadingClass}>
                                             Accounts ({auth.accounts.length})
                                         </div>
@@ -242,12 +242,12 @@ export function SettingsView({
                                             key={account.id}
                                             className={`rounded-[12px] border px-3 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)] ${isActive
                                                 ? "border-emerald-500/55 bg-emerald-500/10"
-                                                : "border-slate-800 bg-[#1c2128]"
+                                                : "border-[var(--border)] bg-[var(--surface-hover)]"
                                                 }`}
                                         >
                                             <div className="flex flex-wrap items-center gap-2">
-                                                <div className="text-sm font-semibold text-slate-100">{account.displayName}</div>
-                                                <span className="rounded-[999px] border border-slate-700 bg-slate-900/60 px-2 py-0.5 text-[10px] uppercase tracking-[0.06em] text-slate-400">
+                                                <div className="text-sm font-semibold text-[var(--text-primary)]">{account.displayName}</div>
+                                                <span className="rounded-[999px] border border-[var(--border)] bg-[var(--bg)]/60 px-2 py-0.5 text-[10px] uppercase tracking-[0.06em] text-[var(--text-secondary)]">
                                                     {account.role}
                                                 </span>
                                                 {isActive && (
@@ -354,7 +354,7 @@ export function SettingsView({
                                                     <div className="mt-2">
                                                         <label className={`mb-1 block ${settingsMutedTextClass}`}>Role</label>
                                                         {account.isSuperAdmin ? (
-                                                            <div className="rounded-[10px] border border-slate-700 bg-[#0d1117] px-2 py-1.5 text-xs text-slate-400">
+                                                            <div className="rounded-[10px] border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5 text-xs text-[var(--text-secondary)]">
                                                                 🔑 Super Admin (locked — only adman)
                                                             </div>
                                                         ) : (
@@ -405,7 +405,7 @@ export function SettingsView({
                                     <>
                                         <div className={`text-xs ${settingsMutedTextClass}`}>
                                             Import target:{" "}
-                                            <span className="font-semibold text-slate-100">{imp.importTargetGroupLabel}</span>
+                                            <span className="font-semibold text-[var(--text-primary)]">{imp.importTargetGroupLabel}</span>
                                         </div>
                                         <button
                                             className={`mt-3 ${settingsPrimaryButtonClass}`}
@@ -445,14 +445,14 @@ export function SettingsView({
                                             key={item.key}
                                             className={`rounded-[12px] border px-3 py-2 text-left transition ${isSelected
                                                 ? "border-emerald-500/55 bg-emerald-500/10"
-                                                : "border-slate-800 bg-[#1c2128] hover:border-emerald-500/35"
+                                                : "border-[var(--border)] bg-[var(--surface-hover)] hover:border-emerald-500/35"
                                                 } ${!auth.canImportData ? "pointer-events-none opacity-60" : ""}`}
                                             onClick={() => auth.canImportData && imp.setImportTargetGroup(item.key as StaffGroupKey)}
                                             type="button"
                                             disabled={!auth.canImportData}
                                         >
                                             <div className={`text-xs uppercase tracking-[0.06em] ${settingsMutedTextClass}`}>{item.label}</div>
-                                            <div className="mt-1 text-[18px] font-semibold text-slate-100">
+                                            <div className="mt-1 text-[18px] font-semibold text-[var(--text-primary)]">
                                                 {getGroupCount(employeeGroupCounts as Parameters<typeof getGroupCount>[0], item.key)}
                                             </div>
                                             {isSelected && (
@@ -476,17 +476,17 @@ export function SettingsView({
 
                 <div
                     {...databaseBackupCard.bindActivityHandlers}
-                    className="self-start overflow-hidden rounded-[16px] border border-slate-800 bg-[#161b22] text-sm text-slate-300 shadow-[0_18px_42px_rgba(0,0,0,0.22)]"
+                    className="self-start overflow-hidden rounded-[16px] border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text-secondary)] shadow-[0_18px_42px_rgba(0,0,0,0.22)]"
                 >
                     <div
-                        className={`cursor-pointer transition-colors hover:bg-[#222a35] ${settingsCardHeaderClass} ${databaseBackupCard.isExpanded ? "border-b border-slate-800" : ""}`}
+                        className={`cursor-pointer transition-colors hover:bg-[var(--surface-hover)] ${settingsCardHeaderClass} ${databaseBackupCard.isExpanded ? "border-b border-[var(--border)]" : ""}`}
                         onClick={() => databaseBackupCard.setExpanded((current) => !current)}
                     >
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                             <div className={settingsCardHeaderTitleClass}>
                                 <Database size={20} className="shrink-0 text-emerald-400" />
                                 <div>Data-Backup</div>
-                                <span className="ml-1 inline-flex items-center justify-center rounded-[8px] border border-slate-700 bg-slate-800 p-1 text-slate-400">
+                                <span className="ml-1 inline-flex items-center justify-center rounded-[8px] border border-[var(--border)] bg-[var(--surface-hover)] p-1 text-[var(--text-secondary)]">
                                     {databaseBackupCard.isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                                 </span>
                             </div>
@@ -531,17 +531,17 @@ export function SettingsView({
                                     <div className={`mb-1.5 ${settingsLabelClass}`}>
                                         Database Path
                                     </div>
-                                    <div className="cursor-default truncate rounded-[10px] border border-slate-800 bg-[#0d1117] px-3 py-2 text-sm font-medium text-slate-100">
+                                    <div className="cursor-default truncate rounded-[10px] border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm font-medium text-[var(--text-primary)]">
                                         {dbStatus?.dbPath || "-"}
                                     </div>
                                 </div>
 
-                                <div className="space-y-3 rounded-[12px] border border-slate-800 bg-[#1c2128] p-3">
+                                <div className="space-y-3 rounded-[12px] border border-[var(--border)] bg-[var(--surface-hover)] p-3">
                                     <div className="flex flex-wrap items-center justify-between gap-2">
                                         <div className={settingsPanelHeadingClass}>
                                             DB Location
                                         </div>
-                                        <span className="inline-flex items-center gap-1 rounded-[999px] border border-slate-700 bg-slate-900/70 px-2 py-0.5 text-[10px] font-semibold text-slate-300">
+                                        <span className="inline-flex items-center gap-1 rounded-[999px] border border-[var(--border)] bg-[var(--bg)]/70 px-2 py-0.5 text-[10px] font-semibold text-[var(--text-secondary)]">
                                             <AlertTriangle size={12} />
                                             Only one person should edit
                                         </span>
@@ -603,7 +603,7 @@ export function SettingsView({
                                         placeholder="D:\\MGdrive\\Backupdata"
                                         disabled={settings.isSavingBackupSettings || settings.isBackingUpData}
                                     />
-                                    <label className="group flex items-start gap-2 text-sm text-slate-400">
+                                    <label className="group flex items-start gap-2 text-sm text-[var(--text-secondary)]">
                                         <span className="relative mt-0.5 flex shrink-0 items-center justify-center">
                                             <input
                                                 type="checkbox"
@@ -612,11 +612,11 @@ export function SettingsView({
                                                 onChange={(event) => settings.setBackupAutoEnabled(event.target.checked)}
                                                 disabled={settings.isSavingBackupSettings || settings.isBackingUpData}
                                             />
-                                            <span className="flex h-4 w-4 items-center justify-center rounded-[5px] border border-slate-700 bg-[#0d1117] text-transparent transition peer-checked:border-emerald-500 peer-checked:bg-emerald-500 peer-checked:text-[#03130d]">
+                                            <span className="flex h-4 w-4 items-center justify-center rounded-[5px] border border-[var(--border)] bg-[var(--bg)] text-transparent transition peer-checked:border-emerald-500 peer-checked:bg-emerald-500 peer-checked:text-[#03130d]">
                                                 <CheckCircle2 size={12} />
                                             </span>
                                         </span>
-                                        <span className="leading-snug transition-colors group-hover:text-slate-200">
+                                        <span className="leading-snug transition-colors group-hover:text-[var(--text-primary)]">
                                             7 versions and delete after 400 days
                                         </span>
                                     </label>
@@ -637,16 +637,16 @@ export function SettingsView({
                                 </div>
                             </div>
 
-                            <div className="overflow-hidden rounded-[12px] border border-slate-800 bg-[#1c2128]">
-                                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 px-3 py-3">
+                            <div className="overflow-hidden rounded-[12px] border border-[var(--border)] bg-[var(--surface-hover)]">
+                                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] px-3 py-3">
                                     <div className="flex items-center gap-2">
-                                        <History size={15} className="text-slate-400" />
+                                        <History size={15} className="text-[var(--text-secondary)]" />
                                         <div className={settingsPanelHeadingClass}>
                                             Snapshot History ({settings.snapshots.length || 7})
                                         </div>
                                     </div>
                                     <button
-                                        className="inline-flex items-center gap-1 rounded-[10px] border border-slate-700 bg-[#0d1117] px-2.5 py-1.5 text-xs font-semibold text-slate-100 transition hover:bg-slate-800"
+                                        className="inline-flex items-center gap-1 rounded-[10px] border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1.5 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)]"
                                         onClick={() => void settings.handleCreateSnapshot()}
                                         type="button"
                                     >
@@ -655,7 +655,7 @@ export function SettingsView({
                                     </button>
                                 </div>
                                 <div className="space-y-2 px-3 pb-3 pt-2">
-                                    <div className="text-[11px] leading-relaxed text-slate-400">
+                                    <div className="text-[11px] leading-relaxed text-[var(--text-secondary)]">
                                         Auto Save and Restore Back
                                     </div>
                                     {settings.snapshotMessage && (
@@ -664,9 +664,9 @@ export function SettingsView({
                                         </div>
                                     )}
                                     {settings.isLoadingSnapshots ? (
-                                        <div className="py-10 text-center text-xs text-slate-400">Loading...</div>
+                                        <div className="py-10 text-center text-xs text-[var(--text-secondary)]">Loading...</div>
                                     ) : settings.snapshots.length === 0 ? (
-                                        <div className="py-10 text-center text-xs text-slate-400">
+                                        <div className="py-10 text-center text-xs text-[var(--text-secondary)]">
                                             No snapshots yet. Import or close the app to create one.
                                         </div>
                                     ) : (
@@ -677,13 +677,13 @@ export function SettingsView({
                                             {settings.snapshots.map((snap) => (
                                                 <div
                                                     key={snap.filename}
-                                                    className="flex items-center justify-between gap-3 rounded-[10px] border border-slate-800 bg-[#0d1117] px-3 py-2"
+                                                    className="flex items-center justify-between gap-3 rounded-[10px] border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
                                                 >
                                                     <div className="min-w-0 flex-1">
-                                                        <div className="truncate text-sm font-semibold text-slate-100">
+                                                        <div className="truncate text-sm font-semibold text-[var(--text-primary)]">
                                                             {snap.timestamp}
                                                         </div>
-                                                        <div className="text-[11px] text-slate-400">
+                                                        <div className="text-[11px] text-[var(--text-secondary)]">
                                                             {snap.label} · {snap.sizeMb.toFixed(1)} MB
                                                         </div>
                                                     </div>
