@@ -273,13 +273,16 @@ export function useEmployeeState({
             setMssqlUpdateStatus("idle")
             setGlobalError(null)
             const defaults = await staffApi.getMssqlConnectionDefaults()
-            if (!defaults.host || !defaults.user || !defaults.password) {
+            const host = defaults.host.trim()
+            const user = defaults.user.trim()
+            if (!host || !user || !defaults.password) {
                 throw new Error("Missing MSSQL configuration. Open Settings > Import from MSSQL, or set STAFFKIT_MSSQL_HOST, STAFFKIT_MSSQL_USER, and STAFFKIT_MSSQL_PASSWORD.")
             }
+            await staffApi.testMssqlConnection(host, defaults.port, user, defaults.password)
             const report = await staffApi.importMssqlStaff(
-                defaults.host,
+                host,
                 defaults.port,
-                defaults.user,
+                user,
                 defaults.password,
                 undefined,
                 "employee_list",
@@ -295,8 +298,8 @@ export function useEmployeeState({
             setCurrentPage(1)
             setMssqlRefreshToken((value) => value + 1)
         } catch (error) {
-            console.error("[Staff Kit] MSSQL employee update failed:", error)
-            const message = getUserErrorMessage(error)
+            console.error("[Staff Kit] MSSQL employee update failed")
+            const message = getMssqlEmployeeUpdateErrorMessage(error)
             setMssqlUpdateStatus("error")
             setMssqlUpdateMessage(message)
             setGlobalError(message)
@@ -344,4 +347,43 @@ export function useEmployeeState({
         updateEmployeeListFromMssql,
         resetEmployeeStateOnLogout,
     }
+}
+
+export function getMssqlEmployeeUpdateErrorMessage(error: unknown): string {
+    const raw = error instanceof Error ? error.message : String(error)
+    const normalized = raw.toLowerCase()
+
+    if (normalized.includes("missing mssql configuration")) {
+        return "MSSQL configuration is incomplete. Open Settings > Import from MSSQL and provide the required connection settings."
+    }
+
+    if (
+        normalized.includes("connection") ||
+        normalized.includes("network") ||
+        normalized.includes("timed out") ||
+        normalized.includes("os error 10060") ||
+        normalized.includes("os error 10061") ||
+        normalized.includes("os error 10065")
+    ) {
+        return "Cannot connect to the MSSQL server. Check network or VPN access, server availability, port, and firewall settings, then try again."
+    }
+
+    if (
+        normalized.includes("authentication") ||
+        normalized.includes("login failed") ||
+        normalized.includes("username") ||
+        normalized.includes("password")
+    ) {
+        return "MSSQL authentication failed. Check the username and password, then try again."
+    }
+
+    if (
+        normalized.includes("query") ||
+        normalized.includes("read mssql results") ||
+        normalized.includes("import failed during preview")
+    ) {
+        return "The MSSQL employee query failed. Check database permissions and query configuration, then try again."
+    }
+
+    return "The MSSQL employee update failed. Check the connection settings and try again."
 }

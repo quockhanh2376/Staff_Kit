@@ -360,7 +360,7 @@ export function EmployeeView({
 
                     {emp.mssqlUpdateMessage && (
                         <span
-                            className={`max-w-[360px] truncate text-xs ${
+                            className={`max-w-[520px] break-words text-xs leading-snug ${
                                 emp.mssqlUpdateStatus === "success"
                                     ? "text-emerald-300"
                                     : "text-red-300"
