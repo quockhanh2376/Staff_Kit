@@ -830,6 +830,24 @@ pub(crate) fn validate_borrow_request_conn(
     Ok(())
 }
 
+pub(crate) fn validate_borrow_request_with_confirmation_conn(
+    conn: &mut Connection,
+    input: BorrowRequestWithConfirmationInput,
+) -> Result<(), String> {
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|err| format!("failed to start confirmed borrow validation transaction: {err}"))?;
+    let validated = validate_submission_tx(&tx, input.request)?;
+    validate_confirmation_tx(
+        &tx,
+        &validated,
+        input
+            .confirmation
+            .ok_or_else(|| "borrow or return confirmation is required".to_string())?,
+    )?;
+    Ok(())
+}
+
 pub(crate) fn submit_borrow_request_conn(
     conn: &mut Connection,
     input: BorrowRequestSubmitInput,

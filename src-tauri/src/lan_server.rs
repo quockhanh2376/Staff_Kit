@@ -29,6 +29,7 @@ type SettingsFactory = Arc<dyn Fn() -> Result<db::BorrowLanSettings, String> + S
 const SEARCH_RATE_LIMIT: u32 = 30;
 const SUBMIT_RATE_LIMIT: u32 = 10;
 const LAN_BODY_LIMIT: usize = 4096;
+const SUBMIT_BODY_LIMIT: usize = 512 * 1024;
 
 // ── Application state ───────────────────────────────────────────────────────
 
@@ -342,11 +343,32 @@ struct AssetSearchQuery {
     limit: Option<usize>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LanBorrowPolicyResponse {
+    version: i64,
+    text_en: String,
+    text_vi: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LanConfirmationInput {
+    policy_version: Option<i64>,
+    policy_acknowledged: bool,
+    confirmation_method: String,
+    signature_png_base64: Option<String>,
+    signature_stroke_count: Option<u32>,
+    signature_ink_present: Option<bool>,
+    typed_name: Option<String>,
+    asset_codes_snapshot: Vec<String>,
+}
+
 /// LAN submit input — carries requestId/clientSessionId for replay protection
 /// alongside the borrow request fields. Source IP is never accepted from the
 /// client and is derived only from the peer socket for rate limiting.
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct LanSubmitInput {
     submitted_employee_id: String,
     submitted_full_name: String,
@@ -356,6 +378,8 @@ struct LanSubmitInput {
     request_id: String,
     /// Required: per-browser-session ID for audit traceability.
     client_session_id: String,
+    #[serde(default)]
+    confirmation: Option<LanConfirmationInput>,
 }
 
 #[derive(Debug, Serialize)]
@@ -500,7 +524,12 @@ fn build_router(db_factory: DbFactory, token_store: Arc<lan_auth::LanTokenStore>
     let api_routes = Router::new()
         .route("/api/assets", get(search_assets))
         .route("/api/assigned-assets", get(search_assigned_assets))
-        .route("/api/borrow-requests", post(submit_borrow_request))
+        .route("/api/borrow-policy", get(get_borrow_policy))
+        .route(
+            "/api/borrow-requests",
+            post(submit_borrow_request)
+                .layer(axum::extract::DefaultBodyLimit::max(SUBMIT_BODY_LIMIT)),
+        )
         .layer(axum::extract::DefaultBodyLimit::max(LAN_BODY_LIMIT))
         .layer(middleware::from_fn_with_state(
             Arc::clone(&token_store),
@@ -571,10 +600,90 @@ async fn search_assigned_assets(
     Ok(Json(summaries))
 }
 
+async fn get_borrow_policy(
+    State(state): State<LanServerState>,
+    ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
+) -> Result<Json<LanBorrowPolicyResponse>, (StatusCode, Json<ApiErrorPayload>)> {
+    let rl_key = format!("{}:policy", peer_addr.ip());
+    state
+        .token_store
+        .check_rate_limit(&rl_key, SEARCH_RATE_LIMIT)
+        .map_err(|e| auth_error(&e))?;
+    let conn = (state.db_factory)().map_err(|_| internal_error())?;
+    let policy = db::borrow::get_current_handle_with_care_policy_conn(&conn)
+        .map_err(|_| internal_error())?
+        .ok_or_else(|| bad_request_error("Handle with Care policy is not configured"))?;
+    Ok(Json(LanBorrowPolicyResponse {
+        version: policy.version,
+        text_en: policy.text_en,
+        text_vi: policy.text_vi,
+    }))
+}
+
+fn map_confirmation_input(
+    input: LanConfirmationInput,
+) -> Result<db::BorrowRequestConfirmationInput, String> {
+    let confirmation_method = match input.confirmation_method.as_str() {
+        "signature" => db::ConfirmationMethod::Signature,
+        "typed_name" => db::ConfirmationMethod::TypedName,
+        "both" => db::ConfirmationMethod::Both,
+        _ => return Err("confirmationMethod must be signature, typed_name, or both".to_string()),
+    };
+    Ok(db::BorrowRequestConfirmationInput {
+        policy_version: input.policy_version,
+        policy_acknowledged: input.policy_acknowledged,
+        confirmation_method,
+        signature_png_base64: input.signature_png_base64,
+        signature_stroke_count: input.signature_stroke_count,
+        signature_ink_present: input.signature_ink_present,
+        typed_name: input.typed_name,
+        asset_codes_snapshot: input.asset_codes_snapshot,
+    })
+}
+
+fn sanitized_submission_error(detail: &str) -> &'static str {
+    let normalized = detail.to_ascii_lowercase();
+    if normalized.contains("policy changed") || normalized.contains("stale") {
+        "The Handle with Care policy changed. Reload it and acknowledge the current version."
+    } else if normalized.contains("policy acknowledgment")
+        || normalized.contains("policy is not configured")
+    {
+        "The current Handle with Care policy must be acknowledged before Borrow."
+    } else if normalized.contains("signature") {
+        "Please provide a valid handwritten signature."
+    } else if normalized.contains("typed full name") {
+        "Typed full name must match the submitting employee's name."
+    } else if normalized.contains("confirmation") {
+        "Please provide a valid signature, typed name, or both."
+    } else if normalized.contains("same borrower") {
+        "All returned assets must belong to the same borrower."
+    } else if normalized.contains("asset list") || normalized.contains("asset snapshot") {
+        "The selected asset list changed. Search and select the assets again."
+    } else {
+        "The request could not be submitted. Please check the employee and asset details."
+    }
+}
+
+fn sanitized_json_rejection(
+    rejection: &axum::extract::rejection::JsonRejection,
+) -> (StatusCode, Json<ApiErrorPayload>) {
+    if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE {
+        (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(ApiErrorPayload {
+                error: "The request is too large. Please use a smaller signature image."
+                    .to_string(),
+            }),
+        )
+    } else {
+        bad_request_error("The request payload is invalid.")
+    }
+}
+
 async fn submit_borrow_request(
     State(state): State<LanServerState>,
     ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
-    Json(payload): Json<LanSubmitInput>,
+    payload: Result<Json<LanSubmitInput>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<LanSubmitResponse>, (StatusCode, Json<ApiErrorPayload>)> {
     // Authentication is enforced by `require_bearer` before this JSON
     // extractor runs. Only authenticated requests reach this handler.
@@ -584,6 +693,8 @@ async fn submit_borrow_request(
         .token_store
         .check_rate_limit(&rl_key, SUBMIT_RATE_LIMIT)
         .map_err(|e| auth_error(&e))?;
+
+    let Json(payload) = payload.map_err(|rejection| sanitized_json_rejection(&rejection))?;
 
     // Validate input fields before replay check and DB mutation.
     if payload.submitted_employee_id.trim().is_empty() {
@@ -624,25 +735,29 @@ async fn submit_borrow_request(
         return Err(bad_request_error("requestType must be borrow or return"));
     }
 
-    // Build the backend DTO. The DB layer derives employee identity and does
-    // not accept a client-supplied source IP.
-    let backend_payload = db::BorrowRequestSubmitInput {
-        submitted_employee_id: payload.submitted_employee_id,
-        submitted_full_name: payload.submitted_full_name,
-        asset_codes: payload.asset_codes,
-        request_type: Some(payload.request_type),
-        manual_employee_email: None,
-        manual_employee_team: None,
+    let confirmation = payload
+        .confirmation
+        .ok_or_else(|| bad_request_error("A Borrow/Return confirmation is required."))
+        .and_then(|input| {
+            map_confirmation_input(input).map_err(|message| bad_request_error(message.as_str()))
+        })?;
+    let backend_payload = db::BorrowRequestWithConfirmationInput {
+        request: db::BorrowRequestSubmitInput {
+            submitted_employee_id: payload.submitted_employee_id,
+            submitted_full_name: payload.submitted_full_name,
+            asset_codes: payload.asset_codes,
+            request_type: Some(payload.request_type),
+            manual_employee_email: None,
+            manual_employee_team: None,
+        },
+        confirmation: Some(confirmation),
     };
 
     // Perform authoritative employee and asset validation before consuming the
     // replay ID. The final submission revalidates under BEGIN IMMEDIATE.
     let mut conn = (state.db_factory)().map_err(|_| internal_error())?;
-    db::borrow::validate_borrow_request_conn(&mut conn, backend_payload.clone()).map_err(|_| {
-        bad_request_error(
-            "The request could not be submitted. Please check the employee and asset details.",
-        )
-    })?;
+    db::borrow::validate_borrow_request_with_confirmation_conn(&mut conn, backend_payload.clone())
+        .map_err(|detail| bad_request_error(sanitized_submission_error(detail.as_str())))?;
 
     // Replay check — after syntax and business validation, before DB mutation.
     // A validation failure does not consume the requestId.
@@ -652,15 +767,15 @@ async fn submit_borrow_request(
         .map_err(|e| auth_error(&e))?;
 
     // Execute DB mutation. Never return raw backend error text to the LAN.
-    match db::borrow::submit_borrow_request_conn(&mut conn, backend_payload) {
+    match db::borrow::submit_borrow_request_with_confirmation_conn(&mut conn, backend_payload) {
         Ok(record) => Ok(Json(LanSubmitResponse {
             request_reference: record.request_key,
             status: record.status,
             message: "Request submitted for IT review.".to_string(),
         })),
-        Err(_) => Err(bad_request_error(
-            "The request could not be submitted. Please check the employee and asset details.",
-        )),
+        Err(detail) => Err(bad_request_error(sanitized_submission_error(
+            detail.as_str(),
+        ))),
     }
 }
 
@@ -718,6 +833,15 @@ impl LanServerTestHarness {
 
         conn.execute(
             r#"
+            INSERT INTO borrow_handle_with_care_policies(version, text_en, text_vi, created_at)
+            VALUES(1, 'Handle with care: protect the equipment.', 'Vui lòng giữ gìn thiết bị.', datetime('now'))
+            "#,
+            [],
+        )
+        .expect("seed Handle with Care policy");
+
+        conn.execute(
+            r#"
             INSERT INTO assets(asset_code, asset_type, display_name, status, created_at, updated_at)
             VALUES('ASSET-001', 'Laptop', 'Dell Latitude', 'in_stock', datetime('now'), datetime('now'))
             "#,
@@ -770,8 +894,10 @@ mod tests {
         extract::connect_info::MockConnectInfo,
         http::{Request, StatusCode},
     };
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
     use rusqlite::params;
     use serde_json::json;
+    use std::io::Cursor;
     use std::sync::Mutex;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
@@ -1089,6 +1215,91 @@ mod tests {
         format!("Bearer {token}")
     }
 
+    fn typed_confirmation(
+        policy_version: i64,
+        typed_name: &str,
+        asset_codes: &[&str],
+    ) -> serde_json::Value {
+        json!({
+            "policyVersion": policy_version,
+            "policyAcknowledged": true,
+            "confirmationMethod": "typed_name",
+            "signaturePngBase64": null,
+            "signatureStrokeCount": null,
+            "signatureInkPresent": null,
+            "typedName": typed_name,
+            "assetCodesSnapshot": asset_codes,
+        })
+    }
+
+    fn signature_data_url() -> String {
+        let mut bytes = Vec::new();
+        let mut encoder = png::Encoder::new(Cursor::new(&mut bytes), 4, 4);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().expect("write signature header");
+        let mut pixels = vec![255_u8; 4 * 4 * 4];
+        pixels[0..8].copy_from_slice(&[0, 0, 0, 255, 0, 0, 0, 255]);
+        writer
+            .write_image_data(&pixels)
+            .expect("write signature pixels");
+        drop(writer);
+        format!("data:image/png;base64,{}", STANDARD.encode(bytes))
+    }
+
+    #[tokio::test]
+    async fn borrow_policy_requires_bearer_and_returns_only_current_public_fields() {
+        let (router, _h) = build_router_for_tests_no_token().await;
+        let unauthorized = send(
+            router,
+            Request::builder()
+                .uri("/api/borrow-policy")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+        let (router, _h, token) = build_router_for_tests_with_token().await;
+        let response = send(
+            router,
+            Request::builder()
+                .uri("/api/borrow-policy")
+                .header("authorization", bearer(&token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), LAN_BODY_LIMIT)
+            .await
+            .expect("read policy body");
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("parse policy");
+        assert_eq!(payload["version"], 1);
+        assert_eq!(
+            payload["textEn"],
+            "Handle with care: protect the equipment."
+        );
+        assert_eq!(payload["textVi"], "Vui lòng giữ gìn thiết bị.");
+        assert!(payload.get("createdByAccountId").is_none());
+        assert!(payload.get("supersededAt").is_none());
+    }
+
+    #[tokio::test]
+    async fn borrow_policy_invalid_bearer_is_rejected_without_exposing_metadata() {
+        let (router, _h, _token) = build_router_for_tests_with_token().await;
+        let response = send(
+            router,
+            Request::builder()
+                .uri("/api/borrow-policy")
+                .header("authorization", "Bearer invalid")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
     // ── /borrow page tests ───────────────────────────────────────────────────
 
     #[tokio::test]
@@ -1248,7 +1459,8 @@ mod tests {
             let body = axum::body::to_bytes(response.into_body(), usize::MAX)
                 .await
                 .expect("read derived-name search response");
-            let payload: serde_json::Value = serde_json::from_slice(&body).expect("parse search JSON");
+            let payload: serde_json::Value =
+                serde_json::from_slice(&body).expect("parse search JSON");
             assert_eq!(payload.as_array().unwrap().len(), 1);
             assert_eq!(payload[0]["assetCode"], "VNLAP326");
             assert_eq!(payload[0]["displayName"], "Dell Latitude");
@@ -1381,7 +1593,8 @@ mod tests {
                         "assetCodes": ["ASSET-001"],
                         "requestType": "borrow",
                         "requestId": "request-valid-1",
-                        "clientSessionId": "client-session-1"
+                        "clientSessionId": "client-session-1",
+                        "confirmation": typed_confirmation(1, "Nguyen Van A", &["ASSET-001"])
                     })
                     .to_string(),
                 ))
@@ -1403,6 +1616,311 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn submit_typed_confirmation_persists_evidence_and_rejects_raw_policy_text() {
+        let (router, harness, token) = build_router_for_tests_with_token().await;
+        let response = send(
+            router,
+            Request::builder()
+                .method("POST")
+                .uri("/api/borrow-requests")
+                .header("content-type", "application/json")
+                .header("authorization", bearer(&token))
+                .body(Body::from(
+                    json!({
+                        "submittedEmployeeId": "EE1001",
+                        "submittedFullName": "ignored",
+                        "assetCodes": ["ASSET-001"],
+                        "requestType": "borrow",
+                        "requestId": "confirmation-typed-1",
+                        "clientSessionId": "confirmation-session-1",
+                        "confirmation": typed_confirmation(1, "Nguyen Van A", &["ASSET-001"])
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), LAN_BODY_LIMIT)
+            .await
+            .expect("read submit response");
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("parse response");
+        let request_reference = payload["requestReference"].as_str().unwrap();
+        let conn = Connection::open(&harness.db_path).expect("open test database");
+        let evidence: (String, String, String) = conn
+            .query_row(
+                "SELECT confirmation_method, policy_text_en_snapshot, asset_codes_snapshot_json FROM borrow_request_confirmations WHERE borrow_request_id = (SELECT id FROM borrow_requests WHERE request_key = ?)",
+                params![request_reference],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("load persisted evidence");
+        assert_eq!(evidence.0, "typed_name");
+        assert_eq!(evidence.1, "Handle with care: protect the equipment.");
+        assert_eq!(evidence.2, "[\"ASSET-001\"]");
+    }
+
+    #[tokio::test]
+    async fn submit_signature_confirmation_is_accepted() {
+        let (router, _harness, token) = build_router_for_tests_with_token().await;
+        let response = send(
+            router,
+            Request::builder()
+                .method("POST")
+                .uri("/api/borrow-requests")
+                .header("content-type", "application/json")
+                .header("authorization", bearer(&token))
+                .body(Body::from(
+                    json!({
+                        "submittedEmployeeId": "EE1001",
+                        "submittedFullName": "ignored",
+                        "assetCodes": ["ASSET-001"],
+                        "requestType": "borrow",
+                        "requestId": "confirmation-signature-1",
+                        "clientSessionId": "confirmation-session-2",
+                        "confirmation": {
+                            "policyVersion": 1,
+                            "policyAcknowledged": true,
+                            "confirmationMethod": "signature",
+                            "signaturePngBase64": signature_data_url(),
+                            "signatureStrokeCount": 2,
+                            "signatureInkPresent": true,
+                            "typedName": null,
+                            "assetCodesSnapshot": ["ASSET-001"]
+                        }
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn submit_rejects_client_policy_text_and_return_borrower_override_fields() {
+        let (router, _harness, token) = build_router_for_tests_with_token().await;
+        for (request_id, extra) in [
+            ("reject-policy-text", json!({"policyTextEn": "forged"})),
+            (
+                "reject-borrower-override",
+                json!({"borrowerEmployeeId": 999}),
+            ),
+        ] {
+            let mut payload = json!({
+                "submittedEmployeeId": "EE1001",
+                "submittedFullName": "ignored",
+                "assetCodes": ["ASSET-001"],
+                "requestType": "borrow",
+                "requestId": request_id,
+                "clientSessionId": "forbidden-field-session",
+                "confirmation": typed_confirmation(1, "Nguyen Van A", &["ASSET-001"])
+            });
+            for (key, value) in extra.as_object().unwrap() {
+                payload[key] = value.clone();
+            }
+            let response = send(
+                router.clone(),
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/borrow-requests")
+                    .header("content-type", "application/json")
+                    .header("authorization", bearer(&token))
+                    .body(Body::from(payload.to_string()))
+                    .unwrap(),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        }
+    }
+
+    #[tokio::test]
+    async fn submit_return_by_another_employee_uses_active_loan_borrower() {
+        let (router, harness, token) = build_router_for_tests_with_token().await;
+        let conn = Connection::open(&harness.db_path).expect("open LAN test database");
+        conn.execute(
+            "INSERT INTO employees(employee_id, full_name, updated_at) VALUES('EE2002', 'Actual Returner', datetime('now'))",
+            [],
+        )
+        .expect("seed returner");
+        let borrower_id: i64 = conn
+            .query_row(
+                "SELECT id FROM employees WHERE employee_id = 'EE1001'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("load borrower");
+        let loan_request_id = {
+            conn.execute(
+                "INSERT INTO borrow_requests(request_key, employee_id_fk, submitted_employee_id, submitted_full_name, status, request_type) VALUES('LAN-LOAN', ?, 'EE1001', 'Nguyen Van A', 'approved', 'borrow')",
+                params![borrower_id],
+            )
+            .expect("insert loan request");
+            conn.last_insert_rowid()
+        };
+        let asset_id: i64 = conn
+            .query_row(
+                "SELECT id FROM assets WHERE asset_code = 'ASSET-002'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("load assigned asset");
+        conn.execute(
+            "INSERT INTO asset_loans(asset_id, employee_id_fk, borrow_request_id) VALUES(?, ?, ?)",
+            params![asset_id, borrower_id, loan_request_id],
+        )
+        .expect("insert active loan");
+        drop(conn);
+
+        let response = send(
+            router,
+            Request::builder()
+                .method("POST")
+                .uri("/api/borrow-requests")
+                .header("content-type", "application/json")
+                .header("authorization", bearer(&token))
+                .body(Body::from(
+                    json!({
+                        "submittedEmployeeId": "EE2002",
+                        "submittedFullName": "Actual Returner",
+                        "assetCodes": ["ASSET-002"],
+                        "requestType": "return",
+                        "requestId": "return-by-another-1",
+                        "clientSessionId": "return-by-another-session",
+                        "confirmation": {
+                            "policyVersion": null,
+                            "policyAcknowledged": false,
+                            "confirmationMethod": "typed_name",
+                            "signaturePngBase64": null,
+                            "signatureStrokeCount": null,
+                            "signatureInkPresent": null,
+                            "typedName": "Actual Returner",
+                            "assetCodesSnapshot": ["ASSET-002"]
+                        }
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), LAN_BODY_LIMIT)
+            .await
+            .expect("read return response");
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("parse return");
+        let conn = Connection::open(&harness.db_path).expect("reopen LAN test database");
+        let identities: (i64, i64) = conn
+            .query_row(
+                "SELECT borrower_employee_id_fk, submitted_by_employee_id_fk FROM borrow_requests WHERE request_key = ?",
+                params![payload["requestReference"].as_str().unwrap()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("load persisted return identities");
+        assert_eq!(identities.0, borrower_id);
+        assert_ne!(identities.0, identities.1);
+    }
+
+    #[tokio::test]
+    async fn stale_policy_is_actionable_and_does_not_consume_replay_id() {
+        let (router, _harness, token) = build_router_for_tests_with_token().await;
+        let stale_body = json!({
+            "submittedEmployeeId": "EE1001",
+            "submittedFullName": "ignored",
+            "assetCodes": ["ASSET-001"],
+            "requestType": "borrow",
+            "requestId": "stale-policy-retry",
+            "clientSessionId": "stale-policy-session",
+            "confirmation": typed_confirmation(99, "Nguyen Van A", &["ASSET-001"])
+        });
+        let stale = send(
+            router.clone(),
+            Request::builder()
+                .method("POST")
+                .uri("/api/borrow-requests")
+                .header("content-type", "application/json")
+                .header("authorization", bearer(&token))
+                .body(Body::from(stale_body.to_string()))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(stale.status(), StatusCode::BAD_REQUEST);
+        let stale_text = String::from_utf8(
+            axum::body::to_bytes(stale.into_body(), LAN_BODY_LIMIT)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(stale_text.contains("Reload"));
+        assert!(!stale_text.contains("policy_text"));
+
+        let valid = send(
+            router,
+            Request::builder()
+                .method("POST")
+                .uri("/api/borrow-requests")
+                .header("content-type", "application/json")
+                .header("authorization", bearer(&token))
+                .body(Body::from(
+                    json!({
+                        "submittedEmployeeId": "EE1001",
+                        "submittedFullName": "ignored",
+                        "assetCodes": ["ASSET-001"],
+                        "requestType": "borrow",
+                        "requestId": "stale-policy-retry",
+                        "clientSessionId": "stale-policy-session",
+                        "confirmation": typed_confirmation(1, "Nguyen Van A", &["ASSET-001"])
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(valid.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn missing_confirmation_and_typed_name_mismatch_are_sanitized() {
+        let (router, _harness, token) = build_router_for_tests_with_token().await;
+        for (request_id, confirmation) in [
+            ("missing-confirmation", serde_json::Value::Null),
+            (
+                "typed-name-mismatch",
+                typed_confirmation(1, "Someone Else", &["ASSET-001"]),
+            ),
+        ] {
+            let mut payload = json!({
+                "submittedEmployeeId": "EE1001",
+                "submittedFullName": "ignored",
+                "assetCodes": ["ASSET-001"],
+                "requestType": "borrow",
+                "requestId": request_id,
+                "clientSessionId": "sanitized-session"
+            });
+            if !confirmation.is_null() {
+                payload["confirmation"] = confirmation;
+            }
+            let response = send(
+                router.clone(),
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/borrow-requests")
+                    .header("content-type", "application/json")
+                    .header("authorization", bearer(&token))
+                    .body(Body::from(payload.to_string()))
+                    .unwrap(),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            let body = axum::body::to_bytes(response.into_body(), LAN_BODY_LIMIT)
+                .await
+                .unwrap();
+            let body_text = String::from_utf8_lossy(&body);
+            assert!(!body_text.contains("sqlite"));
+            assert!(!body_text.contains("panicked"));
+        }
+    }
+
+    #[tokio::test]
     async fn submit_unknown_employee_uses_manual_entry() {
         let (router, _h, token) = build_router_for_tests_with_token().await;
         let response = send(
@@ -1419,7 +1937,8 @@ mod tests {
                         "assetCodes": ["ASSET-001"],
                         "requestType": "borrow",
                         "clientSessionId": "client-session-invalid-employee",
-                        "requestId": "request-invalid-employee"
+                        "requestId": "request-invalid-employee",
+                        "confirmation": typed_confirmation(1, "Ghost", &["ASSET-001"])
                     })
                     .to_string(),
                 ))
@@ -1474,7 +1993,8 @@ mod tests {
                         "assetCodes": ["ASSET-001"],
                         "requestType": "borrow",
                         "clientSessionId": "client-session-retry",
-                        "requestId": "request-retry-after-validation"
+                        "requestId": "request-retry-after-validation",
+                        "confirmation": typed_confirmation(1, "Nguyen Van A", &["ASSET-001"])
                     })
                     .to_string(),
                 ))
@@ -1516,7 +2036,7 @@ mod tests {
     #[tokio::test]
     async fn submit_oversized_body_rejected() {
         let (router, _h, token) = build_router_for_tests_with_token().await;
-        let big_payload = "x".repeat(5000);
+        let big_payload = "x".repeat(SUBMIT_BODY_LIMIT + 1024);
         let body_json = json!({
             "submittedEmployeeId": "EE1001",
             "submittedFullName": &big_payload,
@@ -1539,8 +2059,14 @@ mod tests {
         assert_eq!(
             response.status(),
             StatusCode::PAYLOAD_TOO_LARGE,
-            "body over 4 KB must be rejected"
+            "body over the bounded submit limit must be rejected"
         );
+        let body = axum::body::to_bytes(response.into_body(), LAN_BODY_LIMIT)
+            .await
+            .expect("read sanitized oversized response");
+        let body_text = String::from_utf8_lossy(&body);
+        assert!(body_text.contains("too large"));
+        assert!(!body_text.contains(&big_payload));
     }
 
     // ── Rate limiting ───────────────────────────────────────────────────────
