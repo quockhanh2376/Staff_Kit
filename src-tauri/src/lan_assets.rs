@@ -154,6 +154,14 @@ pub(crate) fn borrow_page_html() -> &'static str {
         background: var(--accent-hover);
       }
 
+      #submit-button:disabled {
+        background: var(--surface-2);
+        border-color: var(--border);
+        color: var(--muted);
+        cursor: not-allowed;
+        opacity: 0.7;
+      }
+
       #submit-button.return-mode {
         background: #f59e0b;
         color: #1c0a00;
@@ -182,6 +190,29 @@ pub(crate) fn borrow_page_html() -> &'static str {
         padding: 12px;
       }
 
+      .asset-code-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .selected-indicator {
+        display: inline-flex;
+        flex: 0 0 auto;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 24px;
+        border: 1px solid rgba(69, 212, 131, 0.5);
+        border-radius: 999px;
+        background: rgba(69, 212, 131, 0.16);
+        color: var(--success);
+        font-size: 16px;
+        font-weight: 800;
+        line-height: 1;
+      }
+
       .asset-item button {
         margin-top: 10px;
         background: var(--accent);
@@ -205,6 +236,53 @@ pub(crate) fn borrow_page_html() -> &'static str {
         color: var(--text);
       }
 
+      .selected-card {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 10px;
+        padding: 10px 12px;
+        border: 1px solid rgba(69, 212, 131, 0.5);
+        border-radius: 12px;
+        background: rgba(69, 212, 131, 0.12);
+      }
+
+      .selected-card .check {
+        color: var(--success);
+        font-size: 18px;
+        font-weight: 800;
+      }
+
+      .selected-card .details {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .selected-card .canonical {
+        font-weight: 700;
+      }
+
+      .selected-card .matched {
+        margin-top: 2px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .selected-card .availability {
+        color: var(--success);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .selected-card .remove {
+        width: auto;
+        margin: 0;
+        padding: 4px 8px;
+        border: 0;
+        background: transparent;
+        color: var(--muted);
+      }
+
       .selected-chip button {
         width: auto;
         margin: 0;
@@ -225,6 +303,12 @@ pub(crate) fn borrow_page_html() -> &'static str {
       .message.success {
         border: 1px solid rgba(69, 212, 131, 0.4);
         background: rgba(69, 212, 131, 0.12);
+      }
+
+      .message.error {
+        border: 1px solid rgba(248, 113, 113, 0.45);
+        background: rgba(248, 113, 113, 0.12);
+        color: #fecaca;
       }
     </style>
   </head>
@@ -284,7 +368,28 @@ pub(crate) fn borrow_page_html() -> &'static str {
       if (location.hash) {
         history.replaceState(null, "", location.pathname + location.search);
       }
-      const clientSessionId = crypto.randomUUID();
+
+      // LAN pages are commonly opened over plain HTTP from a phone. The
+      // randomUUID() API is restricted to secure contexts, while
+      // getRandomValues() remains available for this non-secret identifier.
+      const createRequestId = () => {
+        const cryptoApi = globalThis.crypto;
+        if (typeof cryptoApi?.randomUUID === "function") {
+          return cryptoApi.randomUUID();
+        }
+        if (typeof cryptoApi?.getRandomValues === "function") {
+          const bytes = new Uint8Array(16);
+          cryptoApi.getRandomValues(bytes);
+          bytes[6] = (bytes[6] & 0x0f) | 0x40;
+          bytes[8] = (bytes[8] & 0x3f) | 0x80;
+          return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0"))
+            .join("")
+            .replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, "$1-$2-$3-$4-$5");
+        }
+        return `lan-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+      };
+
+      const clientSessionId = createRequestId();
       let isSearching = false;
       let isSubmitting = false;
 
@@ -338,11 +443,8 @@ pub(crate) fn borrow_page_html() -> &'static str {
           btnReturn.classList.remove("active-borrow", "active-return");
         }
 
-        // Clear state when switching mode
-        selectedAssets.clear();
-        renderSelected();
-        resultsEl.replaceChildren();
-        setMessage("");
+        // Clear state when switching mode because eligibility changes.
+        clearInteractionState();
       }
 
       btnBorrow.addEventListener("click", () => applyMode("borrow"));
@@ -356,23 +458,40 @@ pub(crate) fn borrow_page_html() -> &'static str {
         const heading = document.createElement("div");
         heading.className = "helper";
         heading.textContent = "Selected Assets";
-        const chips = document.createElement("div");
+        const cards = document.createElement("div");
         for (const asset of selectedAssets.values()) {
-          const chip = document.createElement("span");
-          chip.className = "selected-chip";
-          chip.textContent = asset.assetCode;
+          const card = document.createElement("div");
+          card.className = "selected-card";
+          const check = document.createElement("span");
+          check.className = "check";
+          check.textContent = "\u2713";
+          const details = document.createElement("div");
+          details.className = "details";
+          const canonical = document.createElement("div");
+          canonical.className = "canonical";
+          canonical.textContent = asset.assetCode;
+          const matched = document.createElement("div");
+          matched.className = "matched";
+          matched.textContent = asset.matchedIdentifier
+            ? `Matched: ${asset.matchedIdentifier}`
+            : `${asset.assetType} - ${asset.displayName}`;
+          const availability = document.createElement("div");
+          availability.className = "availability";
+          availability.textContent = mode === "return" ? "Eligible · Assigned" : "Eligible · In Stock";
+          details.append(canonical, matched, availability);
           const remove = document.createElement("button");
           remove.type = "button";
+          remove.className = "remove";
           remove.dataset.remove = asset.assetCode;
           remove.textContent = "×";
           remove.addEventListener("click", () => {
             selectedAssets.delete(asset.assetCode);
             renderSelected();
           });
-          chip.append(remove);
-          chips.append(chip);
+          card.append(check, details, remove);
+          cards.append(card);
         }
-        selectedEl.append(heading, chips);
+        selectedEl.append(heading, cards);
       };
 
       submitBtn.disabled = true;
@@ -381,17 +500,26 @@ pub(crate) fn borrow_page_html() -> &'static str {
         messageEl.replaceChildren();
         if (!text) return;
         const message = document.createElement("div");
-        message.className = isSuccess ? "message success" : "message";
+        message.className = isSuccess ? "message success" : "message error";
         message.textContent = text;
         messageEl.append(message);
       };
 
-      const renderResults = (items) => {
+      const clearInteractionState = () => {
+        selectedAssets.clear();
+        renderSelected();
+        resultsEl.replaceChildren();
+        setMessage("");
+      };
+
+      const renderResults = (items, searchTerm) => {
         resultsEl.replaceChildren();
         if (!Array.isArray(items) || items.length === 0) {
           const empty = document.createElement("div");
           empty.className = "helper";
-          empty.textContent = "No assets matched your search.";
+          empty.textContent = mode === "return"
+            ? "No eligible assigned assets matched. Check the identifier and try again."
+            : "No eligible in-stock assets matched. Check the identifier and try again.";
           resultsEl.append(empty);
           return;
         }
@@ -400,6 +528,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
           const item = document.createElement("div");
           item.className = "asset-item";
           const code = document.createElement("div");
+          code.className = "asset-code-row";
           const strong = document.createElement("strong");
           strong.textContent = asset.assetCode;
           code.append(strong);
@@ -408,16 +537,28 @@ pub(crate) fn borrow_page_html() -> &'static str {
           const metadata = document.createElement("div");
           metadata.className = "helper";
           metadata.textContent = `${asset.model ?? ""} ${asset.serialNumber ?? ""}`;
-          const add = document.createElement("button");
-          add.type = "button";
-          add.className = isReturn ? "return-mode" : "";
-          add.dataset.add = asset.assetCode;
-          add.textContent = MODES[mode].addLabel;
-          add.addEventListener("click", () => {
-            selectedAssets.set(asset.assetCode, asset);
-            renderSelected();
-          });
-          item.append(code, description, metadata, add);
+          const alreadySelected = selectedAssets.has(asset.assetCode);
+          if (alreadySelected) {
+            const indicator = document.createElement("span");
+            indicator.className = "selected-indicator";
+            indicator.setAttribute("aria-label", "Selected asset");
+            indicator.title = "Selected asset";
+            indicator.textContent = "\u2713";
+            code.append(indicator);
+          } else {
+            const add = document.createElement("button");
+            add.type = "button";
+            add.className = isReturn ? "return-mode" : "";
+            add.dataset.add = asset.assetCode;
+            add.textContent = MODES[mode].addLabel;
+            add.addEventListener("click", () => {
+              selectedAssets.set(asset.assetCode, { ...asset, matchedIdentifier: searchTerm });
+              renderSelected();
+              setMessage(`\u2713 ${asset.assetCode} selected and eligible for ${mode}.`, true);
+            });
+            item.append(add);
+          }
+          item.prepend(code, description, metadata);
           resultsEl.append(item);
         }
       };
@@ -427,17 +568,50 @@ pub(crate) fn borrow_page_html() -> &'static str {
         if (isSearching) return;
         isSearching = true;
         searchBtn.disabled = true;
+        const searchTerm = searchInput.value.trim();
         try {
-          const q = encodeURIComponent(searchInput.value.trim());
+          const q = encodeURIComponent(searchTerm);
           const res = await authorizedFetch(`${MODES[mode].endpoint}?q=${q}`);
           const responsePayload = await res.json().catch(() => null);
           if (!res.ok) {
-            setMessage(responsePayload?.error || "Asset search failed.");
+            selectedAssets.clear();
+            renderSelected();
+            resultsEl.replaceChildren();
+            setMessage("Asset search failed. Please try again.");
             return;
           }
-          renderResults(responsePayload);
+          const items = Array.isArray(responsePayload)
+            ? responsePayload.filter((asset) => asset && typeof asset.assetCode === "string" && asset.assetCode.trim())
+            : [];
+          if (items.length === 0) {
+            selectedAssets.clear();
+            renderSelected();
+          }
+          const autoSelected = items.length === 1;
+          if (autoSelected) {
+            selectedAssets.set(items[0].assetCode, {
+              ...items[0],
+              matchedIdentifier: searchTerm,
+            });
+            renderSelected();
+          }
+          renderResults(items, searchTerm);
+          if (items.length > 0) {
+            setMessage(autoSelected
+              ? `\u2713 Found and selected ${items[0].assetCode}. Ready to submit.`
+              : `\u2713 Found ${items.length} eligible assets. Select one below.`, true);
+          } else {
+            setMessage(mode === "return"
+              ? "No eligible assigned asset matched. Verify the identifier and try again."
+              : "No eligible in-stock asset matched. Verify the identifier and try again.");
+          }
         } catch (err) {
-          setMessage(err instanceof Error ? err.message : "Asset search failed.");
+          selectedAssets.clear();
+          renderSelected();
+          resultsEl.replaceChildren();
+          setMessage(err instanceof Error && err.message.includes("token")
+            ? err.message
+            : "Asset search failed. Please try again.");
         } finally {
           isSearching = false;
           searchBtn.disabled = false;
@@ -465,7 +639,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
               submittedFullName,
               assetCodes,
               requestType: mode,
-              requestId: crypto.randomUUID(),
+              requestId: createRequestId(),
               clientSessionId,
             }),
           });
@@ -479,6 +653,8 @@ pub(crate) fn borrow_page_html() -> &'static str {
           selectedAssets.clear();
           renderSelected();
           const verb = mode === "return" ? "Return" : "Borrow";
+          resultsEl.replaceChildren();
+          searchInput.value = "";
           setMessage(`${verb} request ${responsePayload.requestReference} submitted. ${responsePayload.message}`, true);
         } catch (err) {
           setMessage(err instanceof Error ? err.message : "Submit failed.");
@@ -486,6 +662,12 @@ pub(crate) fn borrow_page_html() -> &'static str {
           isSubmitting = false;
           submitBtn.disabled = isSubmitting || selectedAssets.size === 0;
         }
+      });
+
+      // A mobile browser may restore this page from its back-forward cache.
+      // Do not carry an old selection into a new visible interaction session.
+      window.addEventListener("pageshow", (event) => {
+        if (event.persisted) clearInteractionState();
       });
     </script>
   </body>
@@ -554,9 +736,117 @@ mod tests {
     fn borrow_page_generates_session_and_submission_request_ids() {
         let html = borrow_page_html();
 
-        assert!(html.contains("const clientSessionId = crypto.randomUUID()"));
-        assert!(html.contains("requestId: crypto.randomUUID()"));
+        assert!(html.contains("const createRequestId = () =>"));
+        assert!(html.contains("const clientSessionId = createRequestId()"));
+        assert!(html.contains("requestId: createRequestId()"));
         assert!(html.contains("clientSessionId"));
+    }
+
+    #[test]
+    fn borrow_page_starts_empty_and_does_not_retain_interaction_state() {
+        let html = borrow_page_html();
+        assert!(!html.contains("ASWVNLAP326"));
+        assert!(!html.contains("VNLAP326"));
+
+        let script = r###"
+import { JSDOM } from "jsdom";
+import fs from "node:fs";
+
+const page = fs.readFileSync(0, "utf8");
+const asset = { assetCode: "VNLAP326", assetType: "Laptop", displayName: "ASWVNLAP326", model: null, serialNumber: null };
+const wait = () => new Promise((resolve) => setTimeout(resolve, 20));
+const dom = new JSDOM(page, {
+  url: "http://192.168.2.1:8787/borrow#t=browser-token",
+  runScripts: "dangerously",
+  beforeParse(window) {
+    Object.defineProperty(window.crypto, "randomUUID", { value: () => "state-test-id" });
+    window.fetch = async (input, init = {}) => {
+      if (init.method === "POST") {
+        return { ok: true, json: async () => ({ requestReference: "BR-STATE", message: "Pending IT review." }) };
+      }
+      return { ok: true, json: async () => String(input).includes("ASWVNLAP326") ? [asset] : [] };
+    };
+  },
+});
+const document = dom.window.document;
+const selected = document.getElementById("selected-assets");
+const results = document.getElementById("asset-results");
+const submit = document.getElementById("submit-button");
+const search = document.getElementById("asset-search");
+const searchButton = document.getElementById("search-btn");
+if (selected.textContent || results.childElementCount !== 0 || !submit.disabled || document.body.textContent.includes("VNLAP326")) {
+  throw new Error("fresh LAN page was not empty");
+}
+
+search.value = "ASWVNLAP326";
+searchButton.click();
+await wait();
+if (!selected.textContent.includes("VNLAP326") || submit.disabled) {
+  throw new Error("successful search did not select the asset");
+}
+
+document.getElementById("btn-return").click();
+if (selected.textContent || results.childElementCount !== 0 || !submit.disabled) {
+  throw new Error("mode switch retained borrow state");
+}
+
+document.getElementById("btn-borrow").click();
+search.value = "ASWVNLAP326";
+searchButton.click();
+await wait();
+document.getElementById("staff-id").value = "1301";
+document.getElementById("full-name").value = "Test user";
+submit.click();
+await wait();
+if (selected.textContent || results.childElementCount !== 0 || !submit.disabled || !document.querySelector("#message .success")) {
+  throw new Error("successful submit did not clear interaction state");
+}
+
+search.value = "ASWVNLAP326";
+searchButton.click();
+await wait();
+search.value = "MISSING-ASSET";
+searchButton.click();
+await wait();
+if (selected.textContent || !submit.disabled) {
+  throw new Error("failed search resurrected stale selection");
+}
+
+search.value = "ASWVNLAP326";
+searchButton.click();
+await wait();
+const pageshow = new dom.window.Event("pageshow");
+Object.defineProperty(pageshow, "persisted", { value: true });
+dom.window.dispatchEvent(pageshow);
+if (selected.textContent || results.childElementCount !== 0 || !submit.disabled) {
+  throw new Error("restored LAN page retained prior selection");
+}
+console.log("state-reset-ok");
+"###;
+
+        let mut child = Command::new("node")
+            .args(["--input-type=module", "-e", script])
+            .current_dir(std::env::current_dir().expect("workspace directory"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("node and jsdom are required for LAN state coverage");
+        child
+            .stdin
+            .take()
+            .expect("node stdin")
+            .write_all(html.as_bytes())
+            .expect("write page HTML");
+        let output = child
+            .wait_with_output()
+            .expect("wait for LAN state test");
+        assert!(
+            output.status.success(),
+            "LAN state flow failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("state-reset-ok"));
     }
 
     #[test]
@@ -605,7 +895,6 @@ search.value = "ASSET-001";
 searchButton.click();
 await wait();
 if (!calls[0].input.includes("/api/assets") || auth(calls[0]) !== "Bearer browser-token") throw new Error("borrow search auth failed");
-document.querySelector("[data-add]").click();
 document.getElementById("staff-id").value = "EE1001";
 document.getElementById("full-name").value = "Client name is not authoritative";
 submit.click();
@@ -620,7 +909,6 @@ document.getElementById("btn-return").click();
 searchButton.click();
 await wait();
 if (!calls.some((call) => call.input.includes("/api/assigned-assets") && auth(call) === "Bearer browser-token")) throw new Error("return search auth failed");
-document.querySelector("[data-add]").click();
 submit.click();
 await wait();
 const submitCalls = calls.filter((call) => call.input.includes("/api/borrow-requests"));
@@ -657,6 +945,178 @@ console.log("shared-flow-ok");
     }
 
     #[test]
+    fn borrow_page_makes_derived_search_results_obvious_and_submits_canonical_code() {
+        let html = borrow_page_html();
+        let script = r###"
+import { JSDOM } from "jsdom";
+import fs from "node:fs";
+
+const page = fs.readFileSync(0, "utf8");
+const calls = [];
+const asset = { assetCode: "VNLAP326", assetType: "Laptop", displayName: "Dell Latitude 5540", model: null, serialNumber: null };
+const wait = () => new Promise((resolve) => setTimeout(resolve, 20));
+const dom = new JSDOM(page, {
+  url: "http://127.0.0.1/borrow#t=browser-token",
+  runScripts: "dangerously",
+  beforeParse(window) {
+    Object.defineProperty(window.crypto, "randomUUID", { value: () => "search-test-id" });
+    window.fetch = async (input, init = {}) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url.includes("/api/borrow-requests")) {
+        return { ok: true, json: async () => ({ requestReference: "BR-0002", message: "Pending IT review." }) };
+      }
+      if (url.includes("FAIL")) {
+        return { ok: false, json: async () => ({ error: "raw database error should not render" }) };
+      }
+      if (url.includes("ASWVNLAP326")) {
+        return { ok: true, json: async () => [asset] };
+      }
+      return { ok: true, json: async () => [] };
+    };
+  },
+});
+const document = dom.window.document;
+const search = document.getElementById("asset-search");
+const searchButton = document.getElementById("search-btn");
+const submit = document.getElementById("submit-button");
+if (!submit.disabled) throw new Error("submit must begin disabled");
+
+search.value = "ASWVNLAP326";
+searchButton.click();
+await wait();
+const success = document.querySelector("#message .success");
+if (!success || !success.textContent.includes("✓")) throw new Error("search success was not obvious");
+const result = document.querySelector(".asset-item");
+if (!result || !result.textContent.includes("VNLAP326")) {
+  throw new Error("derived search response did not map to canonical selectable asset");
+}
+const selectedIndicator = result.querySelector(".selected-indicator");
+if (!selectedIndicator || selectedIndicator.getAttribute("aria-label") !== "Selected asset" || result.querySelector("[data-add]")) {
+  throw new Error("selected asset did not render as a compact accessible indicator");
+}
+if (submit.disabled) throw new Error("submit remained disabled after selection");
+if (!document.querySelector(".selected-card")?.textContent.includes("VNLAP326")) {
+  throw new Error("selected asset card was not rendered");
+}
+document.getElementById("staff-id").value = "1301";
+document.getElementById("full-name").value = "Test user";
+submit.click();
+await wait();
+const submitCall = calls.find((call) => call.url.includes("/api/borrow-requests"));
+const payload = JSON.parse(submitCall.init.body);
+if (payload.assetCodes.length !== 1 || payload.assetCodes[0] !== "VNLAP326") {
+  throw new Error("submission did not use canonical asset code");
+}
+
+search.value = "MISSING-ASSET";
+searchButton.click();
+await wait();
+if (!submit.disabled || document.querySelector(".selected-card")) {
+  throw new Error("failed search left stale selected asset");
+}
+if (!document.querySelector("#message .error")?.textContent.includes("No eligible")) {
+  throw new Error("no-match feedback was not actionable");
+}
+
+search.value = "FAIL";
+searchButton.click();
+await wait();
+const error = document.querySelector("#message .error");
+if (!error || !error.textContent.includes("Please try again") || error.textContent.includes("raw database")) {
+  throw new Error("failed search feedback was not sanitized");
+}
+console.log("selection-feedback-ok");
+"###;
+
+        let mut child = Command::new("node")
+            .args(["--input-type=module", "-e", script])
+            .current_dir(std::env::current_dir().expect("workspace directory"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("node and jsdom are required for selection feedback coverage");
+        child
+            .stdin
+            .take()
+            .expect("node stdin")
+            .write_all(html.as_bytes())
+            .expect("write page HTML");
+        let output = child
+            .wait_with_output()
+            .expect("wait for selection feedback test");
+        assert!(
+            output.status.success(),
+            "selection feedback flow failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("selection-feedback-ok"));
+    }
+
+    #[test]
+    fn borrow_page_searches_on_insecure_lan_origins_without_random_uuid() {
+        let html = borrow_page_html();
+        let script = r###"
+import { JSDOM } from "jsdom";
+import fs from "node:fs";
+
+const page = fs.readFileSync(0, "utf8");
+const calls = [];
+const wait = () => new Promise((resolve) => setTimeout(resolve, 20));
+const dom = new JSDOM(page, {
+  url: "http://192.168.2.1:8787/borrow#t=browser-token",
+  runScripts: "dangerously",
+  beforeParse(window) {
+    Object.defineProperty(window.crypto, "randomUUID", { value: undefined, configurable: true });
+    window.fetch = async (input, init = {}) => {
+      calls.push({ input: String(input), init });
+      return { ok: true, json: async () => [{
+        assetCode: "VNLAP326",
+        assetType: "Laptop",
+        displayName: "Demo Laptop",
+        model: null,
+        serialNumber: null,
+      }] };
+    };
+  },
+});
+const document = dom.window.document;
+document.getElementById("asset-search").value = "ASWVNLAP326";
+document.getElementById("search-btn").click();
+await wait();
+if (calls.length !== 1 || !document.querySelector(".selected-card")) {
+  throw new Error("insecure-origin search handler did not run");
+}
+console.log("insecure-origin-search-ok");
+"###;
+
+        let mut child = Command::new("node")
+            .args(["--input-type=module", "-e", script])
+            .current_dir(std::env::current_dir().expect("workspace directory"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("node and jsdom are required for insecure-origin browser coverage");
+        child
+            .stdin
+            .take()
+            .expect("node stdin")
+            .write_all(html.as_bytes())
+            .expect("write page HTML");
+        let output = child
+            .wait_with_output()
+            .expect("wait for insecure-origin browser test");
+        assert!(
+            output.status.success(),
+            "insecure-origin browser flow failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("insecure-origin-search-ok"));
+    }
+
+    #[test]
     fn borrow_page_handles_malformed_non_success_json_without_html_or_raw_leakage() {
         let html = borrow_page_html();
         let script = r###"
@@ -683,7 +1143,6 @@ const dom = new JSDOM(page, {
 const document = dom.window.document;
 document.getElementById("search-btn").click();
 await wait();
-document.querySelector("[data-add]").click();
 document.getElementById("submit-button").click();
 await wait();
 const message = document.getElementById("message");
@@ -762,7 +1221,6 @@ if (!result || [payloads.assetCode, payloads.assetType, payloads.displayName, pa
   throw new Error("asset values were not rendered as text");
 }
 if (result.querySelector("img,script,svg")) throw new Error("asset value became markup");
-result.querySelector("[data-add]").click();
 const selected = document.querySelector("#selected-assets");
 if (!selected.textContent.includes(payloads.assetCode) || selected.querySelector("img,script,svg")) {
   throw new Error("selected asset became markup");

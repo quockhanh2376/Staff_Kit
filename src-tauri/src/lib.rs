@@ -974,9 +974,8 @@ pub fn run() {
                     lan_token_store.clone(),
                 ));
                 app.manage(lan_server.clone());
-                if let Err(error) = tauri::async_runtime::block_on(lan_server.start_if_enabled()) {
-                    eprintln!("failed to start Staff Kit LAN borrow server: {error}");
-                }
+                // LAN is intentionally manual-only. The QR card owns the
+                // serialized start/stop lifecycle after the app is ready.
                 // Show the main window after WebView2 has finished initializing.
                 // We set visible:false in tauri.conf.json to avoid the black flash
                 // that appears before the first frame is rendered.

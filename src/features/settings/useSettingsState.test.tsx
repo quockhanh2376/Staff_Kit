@@ -355,6 +355,47 @@ describe("standard-user startup avoids admin commands (Regression B)", () => {
 })
 
 describe("Borrow / Return LAN automatic lifecycle", () => {
+    it("detects a different LAN IP without overwriting the configured host", async () => {
+        setSession({ sessionToken: "lan-token", expiresAt: "2099-01-01T00:00:00Z" })
+        const { result } = renderHook(() => useSettingsState(baseOptions))
+        await act(async () => {
+            await Promise.resolve()
+            await Promise.resolve()
+        })
+
+        invokeMock.mockImplementation(async (command: string) =>
+            command === "detect_borrow_lan_host" ? "192.168.2.1" : undefined,
+        )
+        await act(async () => {
+            result.current.handleRefreshBorrowLanHost()
+            await Promise.resolve()
+            await Promise.resolve()
+        })
+
+        expect(result.current.borrowLanHostInput).toBe("127.0.0.1")
+        expect(result.current.borrowLanDetectedHost).toBe("192.168.2.1")
+        expect(result.current.borrowLanDetectionNote).toContain("saved host is 127.0.0.1")
+    })
+
+    it("validates the port before saving LAN settings", async () => {
+        setSession({ sessionToken: "lan-token", expiresAt: "2099-01-01T00:00:00Z" })
+        const { result } = renderHook(() => useSettingsState(baseOptions))
+        await act(async () => {
+            await Promise.resolve()
+            await Promise.resolve()
+        })
+        await act(async () => { result.current.handleBorrowLanHostInputChange("127.0.0.1") })
+        await act(async () => { result.current.setBorrowLanPortInput("70000") })
+        expect(result.current.borrowLanPortInput).toBe("70000")
+
+        await act(async () => {
+            await result.current.handleSaveBorrowLanSettings()
+        })
+
+        expect(result.current.borrowLanMessage).toBe("LAN port must be between 1 and 65535.")
+        expect(invokeMock.mock.calls.some(([command]) => command === "update_borrow_lan_settings")).toBe(false)
+    })
+
     it("starts a stopped server once and issues one token", async () => {
         setSession({ sessionToken: "lan-token", expiresAt: "2099-01-01T00:00:00Z" })
         const { result, rerender } = renderHook(() => useSettingsState(baseOptions))

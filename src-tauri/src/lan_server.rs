@@ -146,14 +146,6 @@ impl LanServerManager {
             .expect("lifecycle test gate lock") = gate;
     }
 
-    pub async fn start_if_enabled(&self) -> Result<(), String> {
-        if (self.settings_factory)()?.enabled {
-            self.start().await
-        } else {
-            Ok(())
-        }
-    }
-
     pub async fn start(&self) -> Result<(), String> {
         #[cfg(test)]
         let test_gate = self
@@ -778,6 +770,7 @@ mod tests {
         extract::connect_info::MockConnectInfo,
         http::{Request, StatusCode},
     };
+    use rusqlite::params;
     use serde_json::json;
     use std::sync::Mutex;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -857,20 +850,6 @@ mod tests {
             .split_whitespace()
             .nth(1)
             .and_then(|value| value.parse().ok())
-    }
-
-    #[tokio::test]
-    async fn disabled_startup_does_not_bind_listener() {
-        let harness = LanServerTestHarness::new();
-        let port = ephemeral_port();
-        let (manager, _, _) = test_manager(&harness, false, port);
-
-        manager
-            .start_if_enabled()
-            .await
-            .expect("disabled startup is safe");
-        assert!(!manager.status().expect("status").running);
-        assert!(!listener_accepts(port).await);
     }
 
     #[tokio::test]
@@ -1236,6 +1215,45 @@ mod tests {
         let payload: serde_json::Value = serde_json::from_slice(&body).expect("parse json");
         assert_eq!(payload.as_array().unwrap().len(), 1);
         assert_eq!(payload[0]["assetCode"], "ASSET-001");
+    }
+
+    #[tokio::test]
+    async fn derived_computer_name_search_returns_canonical_asset_dto() {
+        let (router, harness, token) = build_router_for_tests_with_token().await;
+        let conn = Connection::open(&harness.db_path).expect("open LAN test database");
+        let laptop_category_id: i64 = conn
+            .query_row(
+                "SELECT id FROM asset_categories WHERE category_code = 'laptop'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("load laptop category");
+        conn.execute(
+            "UPDATE assets SET asset_code = ?, category_id = ? WHERE asset_code = ?",
+            params!["VNLAP326", laptop_category_id, "ASSET-001"],
+        )
+        .expect("seed derived-name search asset");
+
+        for query in ["ASWVNLAP326", "VNLAP326"] {
+            let response = send(
+                router.clone(),
+                Request::builder()
+                    .uri(format!("/api/assets?q={query}"))
+                    .header("authorization", bearer(&token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("read derived-name search response");
+            let payload: serde_json::Value = serde_json::from_slice(&body).expect("parse search JSON");
+            assert_eq!(payload.as_array().unwrap().len(), 1);
+            assert_eq!(payload[0]["assetCode"], "VNLAP326");
+            assert_eq!(payload[0]["displayName"], "Dell Latitude");
+            assert!(payload[0].get("status").is_none());
+        }
     }
 
     #[tokio::test]

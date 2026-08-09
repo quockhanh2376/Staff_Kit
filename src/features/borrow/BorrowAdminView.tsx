@@ -1,5 +1,4 @@
-import { RefreshCw } from "lucide-react"
-import { useEffect } from "react"
+import { useEffect, useRef } from "react"
 import type { AuthState } from "../auth/useAuthState"
 import type { SettingsState } from "../settings/useSettingsState"
 import { BorrowLanQrCard } from "./BorrowLanQrCard"
@@ -14,14 +13,48 @@ type BorrowAdminViewProps = {
   settings: SettingsState
 }
 
+const ACTIVE_QUEUE_INTERVAL_MS = 3000
+const QUIET_QUEUE_INTERVAL_MS = 10000
+const QUIET_QUEUE_THRESHOLD_MS = 120000
+
 export function BorrowAdminView({ auth, borrow, settings }: BorrowAdminViewProps) {
-  const { ensureBorrowLanReady, lanServerAlive } = settings
+  const refreshQueueRef = useRef(borrow.refreshQueue)
 
   useEffect(() => {
-    if (auth.isAdminAccount && lanServerAlive !== null) {
-      void ensureBorrowLanReady()
+    refreshQueueRef.current = borrow.refreshQueue
+  }, [borrow.refreshQueue])
+
+  useEffect(() => {
+    if (!auth.isAdminAccount) return
+
+    let disposed = false
+    let timer: number | undefined
+    let quietSince = Date.now()
+
+    const scheduleNext = (delay: number) => {
+      timer = window.setTimeout(async () => {
+        const changed = await refreshQueueRef.current(undefined, { silent: true })
+        if (disposed) return
+        if (changed) quietSince = Date.now()
+        const quiet = Date.now() - quietSince >= QUIET_QUEUE_THRESHOLD_MS
+        scheduleNext(quiet ? QUIET_QUEUE_INTERVAL_MS : ACTIVE_QUEUE_INTERVAL_MS)
+      }, delay)
     }
-  }, [auth.isAdminAccount, ensureBorrowLanReady, lanServerAlive])
+
+    const fetchImmediately = async () => {
+      const changed = await refreshQueueRef.current()
+      if (disposed) return
+      if (changed) quietSince = Date.now()
+      scheduleNext(ACTIVE_QUEUE_INTERVAL_MS)
+    }
+
+    void fetchImmediately()
+
+    return () => {
+      disposed = true
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  }, [auth.isAdminAccount])
 
   if (!auth.isAdminAccount) {
     return (
@@ -36,25 +69,23 @@ export function BorrowAdminView({ auth, borrow, settings }: BorrowAdminViewProps
 
   return (
     <section className="px-4 py-7 md:px-8">
-      <div className="flex flex-wrap items-end justify-between gap-3">
+      <div>
         <div>
           <h2 className="text-[30px] font-bold">{buildBorrowReviewHeading()}</h2>
           <p className="mt-1 text-sm text-[var(--text-secondary)]">
             {buildBorrowReviewHeaderDescription()}
           </p>
         </div>
-        <button
-          className="inline-flex items-center gap-2 rounded-[8px] border border-[var(--border)] px-3 py-2 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)] disabled:opacity-50"
-          onClick={() => void borrow.refreshQueue(borrow.selectedRequestId)}
-          type="button"
-          disabled={borrow.isLoadingQueue}
-        >
-          <RefreshCw className={borrow.isLoadingQueue ? "animate-spin" : ""} size={14} />
-          Refresh Queue
-        </button>
       </div>
 
-      <BorrowLanQrCard settings={settings} isAdmin={auth.isAdminAccount} />
+      <BorrowLanQrCard
+        settings={settings}
+        isAdmin={auth.isAdminAccount}
+        isQueueRefreshing={borrow.isLoadingQueue}
+        onRefreshQueue={() => void borrow.refreshQueue()}
+        onStartLan={() => void settings.ensureBorrowLanReady()}
+        onStopLan={() => void settings.handleStopBorrowLanServer()}
+      />
 
       <div className="mt-4">
         <BorrowPendingQueue borrow={borrow} />

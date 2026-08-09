@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react"
+import { render, screen } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 import type { BorrowState } from "./useBorrowState"
 import { BorrowRequestDetail } from "./BorrowRequestDetail"
@@ -39,28 +39,10 @@ function borrowState(status = "pending", overrides: Partial<BorrowState> = {}) {
   } as unknown as BorrowState
 }
 
-describe("BorrowRequestDetail actions", () => {
-  it("shows Cancel only for pending requests and invokes it once", () => {
-    const handleCancelRequest = vi.fn()
-    render(<BorrowRequestDetail borrow={borrowState("pending", { handleCancelRequest })} />)
+describe("BorrowRequestDetail", () => {
+  it("does not render review action buttons in the request detail", () => {
+    render(<BorrowRequestDetail borrow={borrowState("pending")} />)
 
-    const cancel = screen.getByRole("button", { name: "Cancel Request" })
-    fireEvent.click(cancel)
-
-    expect(handleCancelRequest).toHaveBeenCalledTimes(1)
-  })
-
-  it("disables review actions while cancellation is loading", () => {
-    render(<BorrowRequestDetail borrow={borrowState("pending", { isCancelling: true })} />)
-
-    expect((screen.getByRole("button", { name: "Cancelling..." }) as HTMLButtonElement).disabled).toBe(true)
-    expect((screen.getByRole("button", { name: /Approve Return/ }) as HTMLButtonElement).disabled).toBe(true)
-    expect((screen.getByRole("button", { name: /Reject Return/ }) as HTMLButtonElement).disabled).toBe(true)
-  })
-
-  it("does not show Cancel after a request leaves Pending", () => {
-    render(<BorrowRequestDetail borrow={borrowState("approved")} />)
-
-    expect(screen.queryByRole("button", { name: "Cancel Request" })).toBeNull()
+    expect(screen.queryByRole("button", { name: /Approve|Cancel|Reject/ })).toBeNull()
   })
 })

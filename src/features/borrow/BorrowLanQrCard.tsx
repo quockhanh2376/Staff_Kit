@@ -1,40 +1,141 @@
-import { CheckCircle2, LoaderCircle, Smartphone, Sparkles, XCircle } from "lucide-react"
+import { CheckCircle2, Crosshair, LoaderCircle, RefreshCw, Save, Sparkles, XCircle } from "lucide-react"
+import { useRef, useState } from "react"
 import { QRCodeSVG } from "qrcode.react"
 import type { SettingsState } from "../settings/useSettingsState"
 
 type BorrowLanQrCardProps = {
   settings: SettingsState
   isAdmin: boolean
+  isQueueRefreshing?: boolean
+  onRefreshQueue?: () => void
+  onStartLan?: () => void
+  onStopLan?: () => void
 }
 
-export function BorrowLanQrCard({ settings, isAdmin }: BorrowLanQrCardProps) {
+export function BorrowLanQrCard({
+  settings,
+  isAdmin,
+  isQueueRefreshing = false,
+  onRefreshQueue,
+  onStartLan,
+  onStopLan,
+}: BorrowLanQrCardProps) {
+  const [isTogglePending, setTogglePending] = useState(false)
+  const togglePendingRef = useRef(false)
   if (!isAdmin) return null
 
   const isReady =
-    settings.lanAutoStartState === "ready" &&
-    settings.lanServerStatus?.running === true &&
+    (settings.lanServerStatus?.running ?? settings.lanServerAlive === true) &&
+    (settings.lanServerStatus?.tokenReady ?? settings.lanTokenReady) &&
     Boolean(settings.borrowLanQrUrl)
   const host = settings.borrowLanSettings?.host || settings.lanServerStatus?.bindHost || "configured LAN host"
   const port = settings.borrowLanSettings?.port || settings.lanServerStatus?.port || "?"
+  const isLanRunning = settings.lanServerStatus?.running ?? settings.lanServerAlive === true
+  const isLanStarting = settings.lanAutoStartState === "starting" || (settings.isManagingLanToken && !isLanRunning) || (isTogglePending && !isLanRunning)
+  const isLanStopping = (settings.isManagingLanToken && isLanRunning) || (isTogglePending && isLanRunning)
+  const isLanTransitioning = isLanStarting || isLanStopping
+
+  const handleLanCardToggle = async () => {
+    if (isLanTransitioning || isTogglePending || togglePendingRef.current) return
+    const action = isLanRunning ? onStopLan : onStartLan
+    if (!action) return
+    togglePendingRef.current = true
+    setTogglePending(true)
+    try {
+      await action()
+    } finally {
+      togglePendingRef.current = false
+      setTogglePending(false)
+    }
+  }
 
   return (
     <div className="mt-4 max-w-6xl rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-4">
-      <div className="grid gap-3 xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)_300px]">
-        <div className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/25 p-3">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
-            LAN readiness
+      <div data-testid="lan-top-cards" className="grid gap-3 xl:grid-cols-[minmax(280px,320px)_minmax(0,1fr)] xl:items-stretch">
+        <div data-testid="qr-code-card" className="relative order-first aspect-square min-w-0 overflow-hidden rounded-[24px] border border-white/8 bg-[#101722] p-3 shadow-[0_18px_50px_rgba(2,8,23,0.46)]">
+          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_18%,rgba(74,222,128,0.28),transparent_26%),radial-gradient(circle_at_82%_18%,rgba(250,204,21,0.26),transparent_28%),radial-gradient(circle_at_20%_82%,rgba(236,72,153,0.24),transparent_28%),radial-gradient(circle_at_80%_82%,rgba(96,165,250,0.24),transparent_28%)]" />
+          <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),transparent_22%,transparent_78%,rgba(255,255,255,0.03))]" />
+          <div className="relative flex items-center justify-between gap-2">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/70">QR Code</div>
+            <div className="flex items-center gap-1.5">
+              {onRefreshQueue && (
+                <button
+                  aria-label="Refresh Queue"
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-[7px] border border-white/20 text-white/80 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={isQueueRefreshing}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onRefreshQueue()
+                  }}
+                  title="Refresh Queue"
+                  type="button"
+                >
+                  <RefreshCw aria-hidden="true" className={isQueueRefreshing ? "animate-spin" : ""} size={13} />
+                </button>
+              )}
+              <Sparkles size={13} className="text-white/40" />
+            </div>
           </div>
 
-          {(settings.lanAutoStartState === "starting" || settings.lanServerAlive === null || settings.lanAutoStartState === "idle") && (
+          <div
+            aria-disabled={isLanTransitioning ? "true" : undefined}
+            aria-label={isLanStarting ? "Starting LAN" : isLanStopping ? "Stopping LAN" : isLanRunning ? "Stop LAN" : "Start Borrow/Return"}
+            className={`relative mt-3 rounded-[28px] p-[3px] transition ${isReady ? "cursor-pointer bg-[linear-gradient(135deg,#46ff80_0%,#80ffea_16%,#60a5fa_34%,#c084fc_52%,#f472b6_70%,#facc15_88%,#46ff80_100%)] shadow-[0_0_22px_rgba(96,165,250,0.26),0_0_34px_rgba(250,204,21,0.12)]" : "cursor-pointer bg-slate-500/40 grayscale opacity-60"}`}
+            onClick={() => void handleLanCardToggle()}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault()
+                void handleLanCardToggle()
+              }
+            }}
+            role="button"
+            tabIndex={isLanTransitioning ? -1 : 0}
+            title={isLanStarting ? "Starting LAN" : isLanStopping ? "Stopping LAN" : isLanRunning ? "Stop LAN" : "Start Borrow/Return"}
+          >
+            <div className="rounded-[26px] bg-[#152032] p-[3px]">
+              <div className="rounded-[24px] bg-[linear-gradient(135deg,#5fd0ff_0%,#c084fc_34%,#f472b6_66%,#5df980_100%)] p-[3px] shadow-[0_0_16px_rgba(192,132,252,0.24)]">
+                <div data-testid="qr-code-surface" className="mx-auto flex aspect-square w-full max-w-[250px] items-center justify-center rounded-[22px] bg-white p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]">
+                  {isReady ? (
+                    <div className="flex aspect-square w-full items-center justify-center">
+                      <QRCodeSVG className="h-full w-full" value={settings.borrowLanQrUrl} size={220} bgColor="#ffffff" fgColor="#111827" />
+                    </div>
+                  ) : (
+                    <div className="px-3 py-12 text-center text-xs text-slate-500">
+                      {isLanStarting ? "Starting…" : isLanStopping ? "Stopping…" : "Start Borrow/Return"}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div data-testid="lan-address-card" className="order-last min-w-0 rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/25 p-3 xl:h-full">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
+            LAN Address
+          </div>
+
+          {isLanStarting && (
             <div className="mt-3 flex items-center gap-2 text-xs text-[var(--text-secondary)]">
               <LoaderCircle className="animate-spin" size={13} />
-              Starting LAN server…
+              Starting…
+            </div>
+          )}
+          {isLanStopping && (
+            <div className="mt-3 flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+              <LoaderCircle className="animate-spin" size={13} />
+              Stopping…
             </div>
           )}
           {isReady && (
             <div className="mt-3 flex items-center gap-2 text-xs text-emerald-400">
               <CheckCircle2 size={13} />
               Ready at {host}:{port}
+            </div>
+          )}
+          {!isLanStarting && !isLanStopping && !isReady && (
+            <div className="mt-3 flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+              LAN server inactive.
             </div>
           )}
           {settings.lanAutoStartState === "error" && (
@@ -45,7 +146,7 @@ export function BorrowLanQrCard({ settings, isAdmin }: BorrowLanQrCardProps) {
               </div>
               <button
                 className="rounded-[8px] border border-[var(--border)] px-3 py-1.5 font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)]"
-                onClick={() => void settings.ensureBorrowLanReady()}
+                onClick={() => void onStartLan?.()}
                 type="button"
               >
                 Retry
@@ -53,49 +154,71 @@ export function BorrowLanQrCard({ settings, isAdmin }: BorrowLanQrCardProps) {
             </div>
           )}
 
-          <div className="mt-3 flex items-start gap-2 rounded-[8px] border border-[var(--primary)]/30 bg-[var(--primary)]/8 px-3 py-2 text-xs text-[var(--text-primary)]">
-            <Smartphone size={14} className="mt-0.5 shrink-0 text-[var(--primary)]" />
-            <span>Use the same Wi-Fi/LAN as the Staff Kit machine when scanning this QR.</span>
+          <div
+            aria-label="LAN address and Wi-Fi guidance"
+            className="mt-3 rounded-[8px] border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm font-semibold text-[var(--text-primary)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
+            tabIndex={0}
+            title="Use the same Wi-Fi/LAN as the Staff Kit machine when scanning this QR."
+          >
+            {settings.borrowLanHostInput.trim() || host}:{settings.borrowLanPortInput.trim() || port}
           </div>
-        </div>
-
-        <div className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/25 p-3">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
-            Reachable address
-          </div>
-          <div className="mt-3 rounded-[8px] border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm font-semibold text-[var(--text-primary)]">
-            {host}:{port}
-          </div>
-          <p className="mt-2 text-xs text-[var(--text-secondary)]">
-            LAN configuration and lifecycle controls are available in Settings.
-          </p>
-        </div>
-
-        <div className="relative overflow-hidden rounded-[24px] border border-white/8 bg-[#101722] p-3 shadow-[0_18px_50px_rgba(2,8,23,0.46)] xl:self-start">
-          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_18%,rgba(74,222,128,0.28),transparent_26%),radial-gradient(circle_at_82%_18%,rgba(250,204,21,0.26),transparent_28%),radial-gradient(circle_at_20%_82%,rgba(236,72,153,0.24),transparent_28%),radial-gradient(circle_at_80%_82%,rgba(96,165,250,0.24),transparent_28%)]" />
-          <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),transparent_22%,transparent_78%,rgba(255,255,255,0.03))]" />
-          <div className="relative flex items-center justify-between gap-2">
-            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/70">QR code</div>
-            <Sparkles size={13} className="text-white/40" />
-          </div>
-
-          <div className="relative mt-3 rounded-[28px] bg-[linear-gradient(135deg,#46ff80_0%,#80ffea_16%,#60a5fa_34%,#c084fc_52%,#f472b6_70%,#facc15_88%,#46ff80_100%)] p-[3px] shadow-[0_0_22px_rgba(96,165,250,0.26),0_0_34px_rgba(250,204,21,0.12)]">
-            <div className="rounded-[26px] bg-[#152032] p-[3px]">
-              <div className="rounded-[24px] bg-[linear-gradient(135deg,#5fd0ff_0%,#c084fc_34%,#f472b6_66%,#5df980_100%)] p-[3px] shadow-[0_0_16px_rgba(192,132,252,0.24)]">
-                <div className="rounded-[22px] bg-white p-[6px] shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]">
-                  {isReady ? (
-                    <div className="flex items-center justify-center">
-                      <QRCodeSVG value={settings.borrowLanQrUrl} size={220} bgColor="#ffffff" fgColor="#111827" />
-                    </div>
-                  ) : (
-                    <div className="px-3 py-12 text-center text-xs text-slate-500">
-                      QR appears when the LAN server is ready.
-                    </div>
-                  )}
-                </div>
-              </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_110px_auto]">
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]" htmlFor="borrow-lan-host">
+                LAN Host / IP
+              </label>
+              <input
+                id="borrow-lan-host"
+                className="w-full rounded-[8px] border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1.5 text-xs text-[var(--text-primary)] outline-none focus:border-emerald-500/50"
+                value={settings.borrowLanHostInput}
+                onChange={(event) => settings.handleBorrowLanHostInputChange(event.target.value)}
+                disabled={settings.isSavingBorrowLanSettings || settings.isDetectingBorrowLanHost}
+                placeholder="192.168.1.25"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]" htmlFor="borrow-lan-port">
+                Port
+              </label>
+              <input
+                id="borrow-lan-port"
+                className="w-full rounded-[8px] border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1.5 text-xs text-[var(--text-primary)] outline-none focus:border-emerald-500/50"
+                inputMode="numeric"
+                value={settings.borrowLanPortInput}
+                onChange={(event) => settings.setBorrowLanPortInput(event.target.value)}
+                disabled={settings.isSavingBorrowLanSettings || settings.isDetectingBorrowLanHost}
+                placeholder="8787"
+              />
+            </div>
+            <div className="flex items-end gap-1.5">
+              <button
+                aria-label="Detect LAN IP"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-[8px] border border-[var(--border)] text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={() => settings.handleRefreshBorrowLanHost()}
+                disabled={settings.isSavingBorrowLanSettings || settings.isDetectingBorrowLanHost}
+                title="Detect LAN IP"
+                type="button"
+              >
+                <Crosshair aria-hidden="true" className={settings.isDetectingBorrowLanHost ? "animate-pulse" : ""} size={14} />
+              </button>
+              <button
+                aria-label="Save LAN settings"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-[8px] border border-emerald-500/60 bg-emerald-500 text-[#03130d] transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={() => void settings.handleSaveBorrowLanSettings()}
+                disabled={settings.isSavingBorrowLanSettings || settings.isDetectingBorrowLanHost}
+                title="Save LAN settings"
+                type="button"
+              >
+                <Save aria-hidden="true" size={14} />
+              </button>
             </div>
           </div>
+          {settings.borrowLanDetectionNote && (
+            <div className="mt-2 text-[11px] text-[var(--primary)]">{settings.borrowLanDetectionNote}</div>
+          )}
+          {settings.borrowLanMessage && (
+            <div className="mt-2 text-[11px] text-[var(--text-secondary)]">{settings.borrowLanMessage}</div>
+          )}
         </div>
       </div>
     </div>

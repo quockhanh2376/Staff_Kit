@@ -4,11 +4,7 @@ import { staffApi } from "../../services/staff-api"
 import { clearSession } from "../../services/session"
 import type { AssetRecord, AssetSeedItemInput, BackupSettings, BorrowLanServerStatus, BorrowLanSettings, SnapshotInfo } from "../../types/staff"
 import { getUserErrorMessage } from "../../lib/errorHandling"
-import {
-    applyDetectedBorrowLanSettings,
-    buildBorrowLanUrlPreview,
-    chooseBorrowLanHostInput,
-} from "./borrowLanAutoFill"
+import { buildBorrowLanUrlPreview } from "./borrowLanAutoFill"
 
 export type BorrowLanAutoStartState = "idle" | "starting" | "ready" | "error"
 
@@ -76,6 +72,7 @@ export function useSettingsState({
     const [borrowLanPortInput, setBorrowLanPortInput] = useState("8787")
     const [borrowLanMessage, setBorrowLanMessage] = useState("")
     const [borrowLanDetectionNote, setBorrowLanDetectionNote] = useState("")
+    const [borrowLanDetectedHost, setBorrowLanDetectedHost] = useState<string | null>(null)
     const [isDetectingBorrowLanHost, setDetectingBorrowLanHost] = useState(false)
     const [isSavingBorrowLanSettings, setSavingBorrowLanSettings] = useState(false)
     const [lanServerAlive, setLanServerAlive] = useState<boolean | null>(null)
@@ -85,7 +82,6 @@ export function useSettingsState({
     const [isManagingLanToken, setManagingLanToken] = useState(false)
     const [lanAutoStartState, setLanAutoStartState] = useState<BorrowLanAutoStartState>("idle")
     const [lanAutoStartError, setLanAutoStartError] = useState<string | null>(null)
-    const borrowLanHostTouchedRef = useRef(false)
     const lanServerStatusRef = useRef<BorrowLanServerStatus | null>(null)
     const lanTokenRef = useRef<string | null>(null)
     const lanTokenReadyRef = useRef(false)
@@ -100,11 +96,9 @@ export function useSettingsState({
     const detectBorrowLanHost = useCallback(
         async ({
             savedHost,
-            forceReplace = false,
             showMissingMessage = false,
         }: {
             savedHost: string
-            forceReplace?: boolean
             showMissingMessage?: boolean
         }) => {
             try {
@@ -114,7 +108,7 @@ export function useSettingsState({
                 }
 
                 const detectedHost = await staffApi.detectBorrowLanHost()
-                const nextHost = chooseBorrowLanHostInput(savedHost, detectedHost)
+                const nextHost = detectedHost?.trim() ?? ""
                 const normalizedSavedHost = savedHost.trim()
 
                 if (!detectedHost?.trim()) {
@@ -126,26 +120,13 @@ export function useSettingsState({
                     return null
                 }
 
-                if (forceReplace) {
-                    borrowLanHostTouchedRef.current = false
-                    setBorrowLanHostInput(nextHost)
-                    setBorrowLanSettings((current) => applyDetectedBorrowLanSettings(current, nextHost))
-                    setBorrowLanDetectionNote(
-                        `Detected current LAN IP ${nextHost}. The Borrow URL and QR are updated for this session. Save to keep it for the next launch.`,
-                    )
-                    return nextHost
-                }
-
-                if (borrowLanHostTouchedRef.current) {
-                    return nextHost
-                }
-
-                setBorrowLanHostInput(nextHost)
-                setBorrowLanSettings((current) => applyDetectedBorrowLanSettings(current, nextHost))
+                setBorrowLanDetectedHost(nextHost)
                 if (nextHost !== normalizedSavedHost) {
                     setBorrowLanDetectionNote(
-                        `Auto-detected current LAN IP ${nextHost}. The Borrow URL and QR are updated for this session. Save to keep it for the next launch, or edit it manually if needed.`,
+                        `Detected LAN IP ${nextHost}; saved host is ${normalizedSavedHost || "not configured"}. Save to use it on the next start.`,
                     )
+                } else {
+                    setBorrowLanDetectionNote(`Detected LAN IP ${nextHost}.`)
                 }
 
                 return nextHost
@@ -189,7 +170,6 @@ export function useSettingsState({
                     setBorrowLanHostInput(lanSettings.host)
                     setBorrowLanPortInput(String(lanSettings.port))
                     setBorrowLanDetectionNote("")
-                    borrowLanHostTouchedRef.current = false
                     lanServerStatusRef.current = serverStatus ?? null
                     if (!serverStatus?.running) {
                         lanTokenRef.current = null
@@ -435,7 +415,6 @@ export function useSettingsState({
             setBorrowLanSettings(updated)
             setBorrowLanHostInput(updated.host)
             setBorrowLanPortInput(String(updated.port))
-            borrowLanHostTouchedRef.current = false
             setBorrowLanMessage("Borrow LAN settings saved.")
         } catch (error) {
             setBorrowLanMessage(getUserErrorMessage(error))
@@ -591,7 +570,6 @@ export function useSettingsState({
     }, [])
 
     const handleBorrowLanHostInputChange = useCallback((nextValue: string) => {
-        borrowLanHostTouchedRef.current = true
         setBorrowLanHostInput(nextValue)
     }, [])
 
@@ -599,7 +577,6 @@ export function useSettingsState({
         setBorrowLanMessage("")
         void detectBorrowLanHost({
             savedHost: borrowLanHostInput,
-            forceReplace: true,
             showMissingMessage: true,
         })
     }, [borrowLanHostInput, detectBorrowLanHost])
@@ -680,6 +657,7 @@ export function useSettingsState({
         borrowLanQrUrl,
         borrowLanMessage,
         borrowLanDetectionNote,
+        borrowLanDetectedHost,
         isDetectingBorrowLanHost,
         isSavingBorrowLanSettings,
         handleRefreshBorrowLanHost,

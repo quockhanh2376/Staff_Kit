@@ -16,6 +16,10 @@ type UseBorrowStateOptions = {
   triggerReload: () => void
 }
 
+type RefreshQueueOptions = {
+  silent?: boolean
+}
+
 export type BorrowState = ReturnType<typeof useBorrowState>
 
 export function useBorrowState({
@@ -37,10 +41,23 @@ export function useBorrowState({
   const [isRejecting, setRejecting] = useState(false)
   const [isCancelling, setCancelling] = useState(false)
   const reviewActionInFlightRef = useRef(false)
+  const queueRefreshInFlightRef = useRef<Promise<boolean> | null>(null)
+  const pendingRequestsRef = useRef(pendingRequests)
+  const selectedRequestIdRef = useRef(selectedRequestId)
+  const selectedRequestRef = useRef(selectedRequest)
+
+  useEffect(() => {
+    selectedRequestIdRef.current = selectedRequestId
+  }, [selectedRequestId])
+
+  useEffect(() => {
+    selectedRequestRef.current = selectedRequest
+  }, [selectedRequest])
 
   const loadRequestDetail = useCallback(
     async (requestId: number | null) => {
       if (!requestId) {
+        selectedRequestRef.current = null
         setSelectedRequest(null)
         return
       }
@@ -48,6 +65,7 @@ export function useBorrowState({
       try {
         setLoadingDetail(true)
         const detail = await staffApi.getBorrowRequestDetail(requestId)
+        selectedRequestRef.current = detail
         setSelectedRequest(detail)
       } catch (error) {
         setGlobalError(getUserErrorMessage(error))
@@ -59,42 +77,76 @@ export function useBorrowState({
   )
 
   const refreshQueue = useCallback(
-    async (preferredRequestId?: number | null) => {
-      if (!dbReady || !isAuthenticated || !isAdminAccount) {
-        setPendingRequests([])
-        setSelectedRequestId(null)
-        setSelectedRequest(null)
-        return
+    async (preferredRequestId?: number | null, options: RefreshQueueOptions = {}) => {
+      if (queueRefreshInFlightRef.current) return queueRefreshInFlightRef.current
+
+      const refresh = async () => {
+        if (!dbReady || !isAuthenticated || !isAdminAccount) {
+          selectedRequestIdRef.current = null
+          selectedRequestRef.current = null
+          setPendingRequests([])
+          setSelectedRequestId(null)
+          setSelectedRequest(null)
+          pendingRequestsRef.current = []
+          return false
+        }
+
+        try {
+          if (!options.silent) setLoadingQueue(true)
+          const items = await staffApi.listPendingBorrowRequests()
+          const previousQueue = JSON.stringify(pendingRequestsRef.current)
+          const nextQueue = JSON.stringify(items)
+          const changed = previousQueue !== nextQueue
+          if (changed) {
+            pendingRequestsRef.current = items
+            setPendingRequests(items)
+          }
+
+          const currentSelectedId = selectedRequestIdRef.current
+          const nextSelectedId =
+            preferredRequestId && items.some((item) => item.id === preferredRequestId)
+              ? preferredRequestId
+              : currentSelectedId && items.some((item) => item.id === currentSelectedId)
+                ? currentSelectedId
+                : items[0]?.id ?? null
+
+          if (nextSelectedId !== currentSelectedId) {
+            selectedRequestIdRef.current = nextSelectedId
+            setSelectedRequestId(nextSelectedId)
+          }
+          if (!nextSelectedId) {
+            selectedRequestRef.current = null
+            setSelectedRequest(null)
+          } else if (nextSelectedId !== currentSelectedId || selectedRequestRef.current?.id !== nextSelectedId) {
+            await loadRequestDetail(nextSelectedId)
+          }
+          return changed
+        } catch (error) {
+          if (!options.silent) {
+            setGlobalError(getUserErrorMessage(error))
+          }
+        } finally {
+          if (!options.silent) setLoadingQueue(false)
+        }
+        return false
       }
 
+      const request = refresh()
+      queueRefreshInFlightRef.current = request
       try {
-        setLoadingQueue(true)
-        const items = await staffApi.listPendingBorrowRequests()
-        setPendingRequests(items)
-
-        const nextSelectedId =
-          preferredRequestId && items.some((item) => item.id === preferredRequestId)
-            ? preferredRequestId
-            : items[0]?.id ?? null
-
-        setSelectedRequestId(nextSelectedId)
-        await loadRequestDetail(nextSelectedId)
-      } catch (error) {
-        setGlobalError(getUserErrorMessage(error))
+        return await request
       } finally {
-        setLoadingQueue(false)
+        if (queueRefreshInFlightRef.current === request) {
+          queueRefreshInFlightRef.current = null
+        }
       }
     },
     [dbReady, isAuthenticated, isAdminAccount, loadRequestDetail, setGlobalError],
   )
 
-  const selectedRequestIdRef = useRef(selectedRequestId)
-  useEffect(() => {
-    selectedRequestIdRef.current = selectedRequestId
-  }, [selectedRequestId])
-
   useEffect(() => {
     if (!dbReady || !isAuthenticated || !isAdminAccount) {
+      pendingRequestsRef.current = []
       setPendingRequests([])
       setSelectedRequestId(null)
       setSelectedRequest(null)
@@ -105,6 +157,7 @@ export function useBorrowState({
   }, [dbReady, isAuthenticated, isAdminAccount, reloadToken, refreshQueue])
 
   const handleSelectRequest = async (requestId: number) => {
+    selectedRequestIdRef.current = requestId
     setSelectedRequestId(requestId)
     await loadRequestDetail(requestId)
   }

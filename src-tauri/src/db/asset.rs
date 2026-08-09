@@ -8,6 +8,9 @@ use super::{
     humanize_sqlite_error, normalize_optional_text, open_runtime_connection, require_text,
 };
 
+const DERIVED_COMPUTER_NAME_SQL: &str =
+    "CASE WHEN COALESCE(c.has_computer_name, 0) = 1 THEN 'ASW' || UPPER(a.asset_code) ELSE NULL END";
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetUpsertInput {
@@ -700,36 +703,39 @@ pub(crate) fn search_in_stock_assets_conn(
         .map(|value| format!("%{}%", value.to_uppercase()));
 
     let mut stmt = conn
-        .prepare(
+        .prepare(&format!(
             r#"
             SELECT
-              id,
-              asset_code,
-              asset_type,
-              display_name,
-              model,
-              serial_number,
-              notes,
-              status
-            FROM assets
-            WHERE status = 'in_stock'
+              a.id,
+              a.asset_code,
+              a.asset_type,
+              a.display_name,
+              a.model,
+              a.serial_number,
+              a.notes,
+              a.status
+            FROM assets a
+            LEFT JOIN asset_categories c ON c.id = a.category_id
+            WHERE a.status = 'in_stock'
               AND (
                 ? IS NULL
-                OR UPPER(asset_code) LIKE ?
-                OR UPPER(asset_type) LIKE ?
-                OR UPPER(display_name) LIKE ?
-                OR UPPER(COALESCE(model, '')) LIKE ?
-                OR UPPER(COALESCE(serial_number, '')) LIKE ?
+                OR UPPER(a.asset_code) LIKE ?
+                OR UPPER(a.asset_type) LIKE ?
+                OR UPPER(a.display_name) LIKE ?
+                OR UPPER(COALESCE(a.model, '')) LIKE ?
+                OR UPPER(COALESCE(a.serial_number, '')) LIKE ?
+                OR UPPER({DERIVED_COMPUTER_NAME_SQL}) LIKE ?
               )
-            ORDER BY asset_code ASC, id ASC
+            ORDER BY a.asset_code ASC, a.id ASC
             LIMIT ?
             "#,
-        )
+        ))
         .map_err(|err| format!("failed to prepare asset search query: {err}"))?;
 
     let rows = stmt
         .query_map(
             params![
+                like_query.as_deref(),
                 like_query.as_deref(),
                 like_query.as_deref(),
                 like_query.as_deref(),
@@ -773,36 +779,39 @@ pub(crate) fn search_assigned_assets_conn(
         .map(|value| format!("%{}%", value.to_uppercase()));
 
     let mut stmt = conn
-        .prepare(
+        .prepare(&format!(
             r#"
             SELECT
-              id,
-              asset_code,
-              asset_type,
-              display_name,
-              model,
-              serial_number,
-              notes,
-              status
-            FROM assets
-            WHERE status = 'assigned'
+              a.id,
+              a.asset_code,
+              a.asset_type,
+              a.display_name,
+              a.model,
+              a.serial_number,
+              a.notes,
+              a.status
+            FROM assets a
+            LEFT JOIN asset_categories c ON c.id = a.category_id
+            WHERE a.status = 'assigned'
               AND (
                 ? IS NULL
-                OR UPPER(asset_code) LIKE ?
-                OR UPPER(asset_type) LIKE ?
-                OR UPPER(display_name) LIKE ?
-                OR UPPER(COALESCE(model, '')) LIKE ?
-                OR UPPER(COALESCE(serial_number, '')) LIKE ?
+                OR UPPER(a.asset_code) LIKE ?
+                OR UPPER(a.asset_type) LIKE ?
+                OR UPPER(a.display_name) LIKE ?
+                OR UPPER(COALESCE(a.model, '')) LIKE ?
+                OR UPPER(COALESCE(a.serial_number, '')) LIKE ?
+                OR UPPER({DERIVED_COMPUTER_NAME_SQL}) LIKE ?
               )
-            ORDER BY asset_code ASC, id ASC
+            ORDER BY a.asset_code ASC, a.id ASC
             LIMIT ?
             "#,
-        )
+        ))
         .map_err(|err| format!("failed to prepare assigned asset search query: {err}"))?;
 
     let rows = stmt
         .query_map(
             params![
+                like_query.as_deref(),
                 like_query.as_deref(),
                 like_query.as_deref(),
                 like_query.as_deref(),
@@ -1367,17 +1376,14 @@ pub(crate) fn list_asset_dashboard_serialized_conn(
     conn: &Connection,
 ) -> Result<Vec<AssetDashboardSerializedRecord>, String> {
     let mut stmt = conn
-        .prepare(
+        .prepare(&format!(
             r#"
             SELECT
               a.id,
               a.asset_code,
               c.category_code,
               c.category_name,
-                            CASE
-                                WHEN COALESCE(c.has_computer_name, 0) = 1 THEN 'ASW' || UPPER(a.asset_code)
-                                ELSE NULL
-                            END AS computer_name,
+              {DERIVED_COMPUTER_NAME_SQL} AS computer_name,
               a.display_name,
               a.display_name_short,
               a.model,
@@ -1399,7 +1405,7 @@ pub(crate) fn list_asset_dashboard_serialized_conn(
               a.asset_code COLLATE NOCASE ASC,
               a.id ASC
             "#,
-        )
+        ))
         .map_err(|err| format!("failed to prepare serialized dashboard query: {err}"))?;
 
     let rows = stmt
@@ -1689,6 +1695,98 @@ mod tests {
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].asset_code, "ASSET-001");
         assert_eq!(records[0].status, "in_stock");
+    }
+
+    #[test]
+    fn lan_asset_search_matches_derived_computer_names_by_category_and_status() {
+        let mut conn = open_test_connection();
+        let laptop_category_id = category_id(&conn, "laptop");
+        let monitor_category_id = category_id(&conn, "monitor");
+
+        let records = upsert_assets_conn(
+            &mut conn,
+            vec![
+                AssetUpsertInput {
+                    asset_code: "VNLAP326".to_string(),
+                    category_id: Some(laptop_category_id),
+                    asset_type: "Laptop".to_string(),
+                    display_name: "Dell Latitude 5540".to_string(),
+                    display_name_short: None,
+                    brand: None,
+                    model: None,
+                    serial_number: None,
+                    usage_location: None,
+                    adapter_number: None,
+                    warehouse: None,
+                    notes: None,
+                },
+                AssetUpsertInput {
+                    asset_code: "VNLAP327".to_string(),
+                    category_id: Some(laptop_category_id),
+                    asset_type: "Laptop".to_string(),
+                    display_name: "Dell Latitude 5550".to_string(),
+                    display_name_short: None,
+                    brand: None,
+                    model: None,
+                    serial_number: None,
+                    usage_location: None,
+                    adapter_number: None,
+                    warehouse: None,
+                    notes: None,
+                },
+                AssetUpsertInput {
+                    asset_code: "VNLAP900".to_string(),
+                    category_id: Some(monitor_category_id),
+                    asset_type: "Monitor".to_string(),
+                    display_name: "Monitor with VNLAP900 code".to_string(),
+                    display_name_short: None,
+                    brand: None,
+                    model: None,
+                    serial_number: None,
+                    usage_location: None,
+                    adapter_number: None,
+                    warehouse: None,
+                    notes: None,
+                },
+            ],
+        )
+        .expect("seed LAN search assets");
+
+        conn.execute(
+            "UPDATE assets SET status = 'assigned' WHERE id = ?",
+            params![records[1].id],
+        )
+        .expect("assign return-search asset");
+
+        let canonical = search_in_stock_assets_conn(&conn, Some("VNLAP326"), 12)
+            .expect("search canonical asset code");
+        assert_eq!(
+            canonical
+                .iter()
+                .map(|asset| asset.asset_code.as_str())
+                .collect::<Vec<_>>(),
+            vec!["VNLAP326"]
+        );
+
+        let derived = search_in_stock_assets_conn(&conn, Some("ASWVNLAP326"), 12)
+            .expect("search derived computer name");
+        assert_eq!(derived[0].asset_code, "VNLAP326");
+
+        let mixed_case = search_in_stock_assets_conn(&conn, Some("aSwVnLaP326"), 12)
+            .expect("search mixed-case derived computer name");
+        assert_eq!(mixed_case[0].asset_code, "VNLAP326");
+
+        let assigned_borrow = search_in_stock_assets_conn(&conn, Some("ASWVNLAP327"), 12)
+            .expect("exclude assigned asset from borrow search");
+        assert!(assigned_borrow.is_empty());
+
+        let monitor_alias = search_in_stock_assets_conn(&conn, Some("ASWVNLAP900"), 12)
+            .expect("do not synthesize alias for monitor category");
+        assert!(monitor_alias.is_empty());
+
+        let assigned_return = search_assigned_assets_conn(&conn, Some("aSwVnLaP327"), 12)
+            .expect("search assigned asset by derived computer name");
+        assert_eq!(assigned_return[0].asset_code, "VNLAP327");
     }
 
     #[test]

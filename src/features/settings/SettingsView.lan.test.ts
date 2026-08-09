@@ -5,11 +5,10 @@ import { describe, expect, it } from "vitest"
 const settingsView = readFileSync(resolve(process.cwd(), "src/features/settings/SettingsView.tsx"), "utf8")
 
 describe("SettingsView LAN controls", () => {
-    it("keeps configuration and advanced lifecycle controls in Settings", () => {
-        expect(settingsView).toContain('data-testid="settings-lan-controls"')
+    it("does not render Borrow / Return LAN controls in Settings", () => {
+        expect(settingsView).not.toContain('data-testid="settings-lan-controls"')
         for (const label of [
             "LAN host / IP",
-            "Port",
             "Refresh LAN IP",
             "Save LAN settings",
             "Enable LAN server on app startup",
@@ -19,7 +18,7 @@ describe("SettingsView LAN controls", () => {
             "Regenerate QR token",
             "Revoke QR token",
         ]) {
-            expect(settingsView).toContain(label)
+            expect(settingsView).not.toContain(label)
         }
     })
 })

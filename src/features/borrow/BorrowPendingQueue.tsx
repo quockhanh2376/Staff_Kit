@@ -1,4 +1,4 @@
-import { LoaderCircle } from "lucide-react"
+import { CheckCircle2, LoaderCircle, XCircle } from "lucide-react"
 import type { BorrowState } from "./useBorrowState"
 import { buildBorrowReviewEmptyQueueMessage } from "./borrowReviewCopy"
 import { RequestTypeBadge } from "./RequestTypeBadge"
@@ -10,10 +10,43 @@ type BorrowPendingQueueProps = {
 export function BorrowPendingQueue({ borrow }: BorrowPendingQueueProps) {
   return (
     <div className="rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-4">
-      <div className="text-sm font-semibold text-[var(--text-primary)]">Pending Queue</div>
-      <p className="mt-1 text-xs text-[var(--text-secondary)]">
-        {borrow.pendingRequests.length} request(s) waiting for IT review.
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold text-[var(--text-primary)]">Pending Queue</div>
+          <p className="mt-1 text-xs text-[var(--text-secondary)]">
+            {borrow.pendingRequests.length} request(s) waiting for IT review.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <button
+            className="inline-flex items-center gap-1.5 rounded-[8px] bg-[var(--primary)] px-2.5 py-1.5 text-xs font-semibold text-[#00131c] disabled:opacity-50"
+            disabled={!borrow.selectedRequest || borrow.isApproving || borrow.isRejecting || borrow.isCancelling}
+            onClick={() => void borrow.handleApproveRequest()}
+            type="button"
+          >
+            {borrow.isApproving ? <LoaderCircle className="animate-spin" size={13} /> : <CheckCircle2 size={13} />}
+            {borrow.isApproving ? "Approving..." : "Approve"}
+          </button>
+          <button
+            className="inline-flex items-center gap-1.5 rounded-[8px] border border-amber-400/50 bg-amber-500/10 px-2.5 py-1.5 text-xs font-semibold text-amber-200 disabled:opacity-50"
+            disabled={!borrow.selectedRequest || borrow.selectedRequest.status !== "pending" || borrow.isApproving || borrow.isRejecting || borrow.isCancelling}
+            onClick={() => void borrow.handleCancelRequest()}
+            type="button"
+          >
+            {borrow.isCancelling ? <LoaderCircle className="animate-spin" size={13} /> : <XCircle size={13} />}
+            {borrow.isCancelling ? "Cancelling..." : "Cancel"}
+          </button>
+          <button
+            className="inline-flex items-center gap-1.5 rounded-[8px] border border-red-400/50 bg-red-500/10 px-2.5 py-1.5 text-xs font-semibold text-red-200 disabled:opacity-50"
+            disabled={!borrow.selectedRequest || borrow.isApproving || borrow.isRejecting || borrow.isCancelling}
+            onClick={() => void borrow.handleRejectRequest()}
+            type="button"
+          >
+            {borrow.isRejecting ? <LoaderCircle className="animate-spin" size={13} /> : <XCircle size={13} />}
+            {borrow.isRejecting ? "Rejecting..." : "Reject"}
+          </button>
+        </div>
+      </div>
 
       <div className="mt-4 space-y-2">
         {borrow.isLoadingQueue && (

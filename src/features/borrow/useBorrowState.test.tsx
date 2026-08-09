@@ -81,6 +81,95 @@ describe("useBorrowState cancellation", () => {
     expect(result.current.queueMessage).toContain("BR-0007")
   })
 
+  it("prevents overlapping queue refreshes and preserves the selected request", async () => {
+    let resolveRefresh: ((value: (typeof pending)[]) => void) | undefined
+    mocks.listPendingBorrowRequests.mockImplementationOnce(() => Promise.resolve([pending]))
+    mocks.listPendingBorrowRequests.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveRefresh = resolve }),
+    )
+    const { result } = renderReadyState()
+    await waitFor(() => expect(result.current.selectedRequest?.id).toBe(7))
+
+    let firstRefresh: Promise<boolean>
+    let secondRefresh: Promise<boolean>
+    await act(async () => {
+      firstRefresh = result.current.refreshQueue()
+      secondRefresh = result.current.refreshQueue()
+      await Promise.resolve()
+    })
+
+    expect(mocks.listPendingBorrowRequests).toHaveBeenCalledTimes(2)
+    resolveRefresh?.([pending])
+    await act(async () => {
+      await firstRefresh
+      await secondRefresh
+    })
+    expect(result.current.selectedRequestId).toBe(7)
+    expect(mocks.getBorrowRequestDetail).toHaveBeenCalledTimes(1)
+  })
+
+  it("selects the next pending request when the selected request disappears", async () => {
+    const next = { ...pending, id: 8, requestKey: "BR-0008" }
+    mocks.listPendingBorrowRequests.mockResolvedValueOnce([pending]).mockResolvedValueOnce([next])
+    mocks.getBorrowRequestDetail.mockImplementation((requestId: number) =>
+      Promise.resolve(requestId === next.id ? next : pending),
+    )
+    const { result } = renderReadyState()
+    await waitFor(() => expect(result.current.selectedRequestId).toBe(7))
+
+    await act(async () => {
+      await result.current.refreshQueue()
+    })
+    expect(result.current.selectedRequestId).toBe(8)
+    expect(result.current.selectedRequest?.requestKey).toBe("BR-0008")
+  })
+
+  it("does not replace queue state when a refresh returns unchanged data", async () => {
+    const { result } = renderReadyState()
+    await waitFor(() => expect(result.current.pendingRequests).toHaveLength(1))
+    const previousQueue = result.current.pendingRequests
+
+    await act(async () => {
+      await result.current.refreshQueue(undefined, { silent: true })
+    })
+
+    expect(result.current.pendingRequests).toBe(previousQueue)
+  })
+
+  it("keeps silent background refreshes out of foreground loading state", async () => {
+    let resolveRefresh: ((value: (typeof pending)[]) => void) | undefined
+    mocks.listPendingBorrowRequests.mockResolvedValueOnce([pending]).mockImplementationOnce(
+      () => new Promise((resolve) => { resolveRefresh = resolve }),
+    )
+    const { result } = renderReadyState()
+    await waitFor(() => expect(result.current.pendingRequests).toHaveLength(1))
+    expect(result.current.isLoadingQueue).toBe(false)
+
+    let refresh: Promise<boolean>
+    await act(async () => {
+      refresh = result.current.refreshQueue(undefined, { silent: true })
+      await Promise.resolve()
+    })
+    expect(result.current.isLoadingQueue).toBe(false)
+    resolveRefresh?.([pending])
+    await act(async () => { await refresh })
+    expect(result.current.isLoadingQueue).toBe(false)
+  })
+
+  it("replaces queue state when a refresh returns changed data", async () => {
+    const next = { ...pending, id: 8, requestKey: "BR-0008" }
+    mocks.listPendingBorrowRequests.mockResolvedValueOnce([pending]).mockResolvedValueOnce([next])
+    mocks.getBorrowRequestDetail.mockResolvedValue(next)
+    const { result } = renderReadyState()
+    await waitFor(() => expect(result.current.pendingRequests).toHaveLength(1))
+    const previousQueue = result.current.pendingRequests
+
+    await act(async () => { await result.current.refreshQueue(undefined, { silent: true }) })
+
+    expect(result.current.pendingRequests).not.toBe(previousQueue)
+    expect(result.current.pendingRequests[0].id).toBe(8)
+  })
+
   it("guards duplicate cancellation calls while the first request is pending", async () => {
     let resolveCancellation: ((value: typeof pending) => void) | undefined
     mocks.cancelBorrowRequest.mockImplementation(
