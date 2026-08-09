@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog"
 import { staffApi } from "../../services/staff-api"
 import { clearSession } from "../../services/session"
-import type { AssetRecord, AssetSeedItemInput, BackupSettings, BorrowLanServerStatus, BorrowLanSettings, SnapshotInfo } from "../../types/staff"
+import type { AssetRecord, AssetSeedItemInput, BackupSettings, BorrowLanServerStatus, BorrowLanSettings, BorrowPolicyRecord, SnapshotInfo } from "../../types/staff"
 import { getUserErrorMessage } from "../../lib/errorHandling"
 import { buildBorrowLanUrlPreview } from "./borrowLanAutoFill"
 
@@ -75,6 +75,12 @@ export function useSettingsState({
     const [borrowLanDetectedHost, setBorrowLanDetectedHost] = useState<string | null>(null)
     const [isDetectingBorrowLanHost, setDetectingBorrowLanHost] = useState(false)
     const [isSavingBorrowLanSettings, setSavingBorrowLanSettings] = useState(false)
+    const [borrowPolicy, setBorrowPolicy] = useState<BorrowPolicyRecord | null>(null)
+    const [borrowPolicyEnglishInput, setBorrowPolicyEnglishInput] = useState("")
+    const [borrowPolicyVietnameseInput, setBorrowPolicyVietnameseInput] = useState("")
+    const [isLoadingBorrowPolicy, setLoadingBorrowPolicy] = useState(false)
+    const [isSavingBorrowPolicy, setSavingBorrowPolicy] = useState(false)
+    const [borrowPolicyMessage, setBorrowPolicyMessage] = useState("")
     const [lanServerAlive, setLanServerAlive] = useState<boolean | null>(null)
     const [lanServerStatus, setLanServerStatus] = useState<BorrowLanServerStatus | null>(null)
     const [lanToken, setLanToken] = useState<string | null>(null)
@@ -86,6 +92,49 @@ export function useSettingsState({
     const lanTokenRef = useRef<string | null>(null)
     const lanTokenReadyRef = useRef(false)
     const lanAutoStartPromiseRef = useRef<Promise<void> | null>(null)
+
+    const loadBorrowPolicy = useCallback(async () => {
+        if (!dbReady || !isAuthenticated || !isAdminAccount) return
+        try {
+            setLoadingBorrowPolicy(true)
+            const policy = await staffApi.getBorrowPolicy()
+            setBorrowPolicy(policy)
+            setBorrowPolicyEnglishInput(policy?.textEn ?? "")
+            setBorrowPolicyVietnameseInput(policy?.textVi ?? "")
+            setBorrowPolicyMessage("")
+        } catch (error) {
+            setBorrowPolicyMessage(getUserErrorMessage(error))
+        } finally {
+            setLoadingBorrowPolicy(false)
+        }
+    }, [dbReady, isAuthenticated, isAdminAccount])
+
+    const saveBorrowPolicy = useCallback(async () => {
+        const textEn = borrowPolicyEnglishInput.trim()
+        const textVi = borrowPolicyVietnameseInput.trim()
+        if (!textEn) {
+            setBorrowPolicyMessage("English Handle with Care policy text is required.")
+            return
+        }
+        if (!textVi) {
+            setBorrowPolicyMessage("Vietnamese Handle with Care policy text is required.")
+            return
+        }
+        if (borrowPolicy && textEn === borrowPolicy.textEn && textVi === borrowPolicy.textVi) return
+        try {
+            setSavingBorrowPolicy(true)
+            setBorrowPolicyMessage("")
+            const saved = await staffApi.saveBorrowPolicy({ textEn, textVi })
+            setBorrowPolicy(saved)
+            setBorrowPolicyEnglishInput(saved.textEn)
+            setBorrowPolicyVietnameseInput(saved.textVi)
+            setBorrowPolicyMessage("Saved")
+        } catch (error) {
+            setBorrowPolicyMessage(getUserErrorMessage(error))
+        } finally {
+            setSavingBorrowPolicy(false)
+        }
+    }, [borrowPolicy, borrowPolicyEnglishInput, borrowPolicyVietnameseInput])
 
     // Asset seed utility
     const [assetSeedText, setAssetSeedText] = useState("")
@@ -196,6 +245,10 @@ export function useSettingsState({
 
         return () => { disposed = true }
     }, [dbReady, detectBorrowLanHost, isAuthenticated, isAdminAccount, reloadToken, setGlobalError])
+
+    useEffect(() => {
+        void loadBorrowPolicy()
+    }, [loadBorrowPolicy, reloadToken])
 
     // Load history snapshots (admin-only command)
     const loadSnapshots = useCallback(async () => {
@@ -674,6 +727,16 @@ export function useSettingsState({
         ensureBorrowLanReady,
         lanAutoStartState,
         lanAutoStartError,
+        borrowPolicy,
+        borrowPolicyEnglishInput,
+        setBorrowPolicyEnglishInput,
+        borrowPolicyVietnameseInput,
+        setBorrowPolicyVietnameseInput,
+        isLoadingBorrowPolicy,
+        isSavingBorrowPolicy,
+        borrowPolicyMessage,
+        loadBorrowPolicy,
+        saveBorrowPolicy,
         // Asset seed
         assetSeedText,
         setAssetSeedText,

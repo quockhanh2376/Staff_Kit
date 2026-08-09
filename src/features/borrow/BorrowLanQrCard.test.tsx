@@ -101,13 +101,14 @@ describe("BorrowLanQrCard operational UX", () => {
     expect(screen.queryByText("Refresh Queue")).toBeNull()
   })
 
-  it("renders exactly QR Code then LAN Address as the top two cards", () => {
+  it("renders QR Code, LAN Address, then Handle with Care as the top cards", () => {
     render(<BorrowLanQrCard settings={settings()} isAdmin onRefreshQueue={vi.fn()} />)
 
     const topCards = screen.getByTestId("lan-top-cards")
-    expect(topCards.children).toHaveLength(2)
+    expect(topCards.children).toHaveLength(3)
     expect(topCards.children[0]).toBe(screen.getByTestId("qr-code-card"))
     expect(topCards.children[1]).toBe(screen.getByTestId("lan-address-card"))
+    expect(topCards.children[2]).toBe(screen.getByTestId("handle-with-care-card"))
     expect(screen.queryByText("Reachable address")).toBeNull()
     expect(screen.queryByText("Use the same Wi-Fi/LAN as the Staff Kit machine when scanning this QR.")).toBeNull()
     expect(screen.queryByText("LAN configuration and lifecycle controls are available in Settings.")).toBeNull()
@@ -121,7 +122,7 @@ describe("BorrowLanQrCard operational UX", () => {
     const qrSurface = screen.getByTestId("qr-code-surface")
     const lanCard = screen.getByTestId("lan-address-card")
 
-    expect(topCards.className).toContain("xl:grid-cols-[minmax(280px,320px)_minmax(0,1fr)]")
+    expect(topCards.className).toContain("xl:grid-cols-[minmax(280px,320px)_minmax(280px,320px)_minmax(0,1fr)]")
     expect(topCards.className).toContain("xl:items-stretch")
     expect(qrCard.className).toContain("aspect-square")
     expect(qrSurface.className).toContain("aspect-square")
@@ -130,7 +131,7 @@ describe("BorrowLanQrCard operational UX", () => {
     expect(qrSurface.className).toContain("justify-center")
     expect(qrSurface.className).toContain("max-w-[250px]")
     expect(lanCard.className).toContain("min-w-0")
-    expect(lanCard.className).toContain("xl:h-full")
+    expect(lanCard.className).toContain("xl:aspect-square")
   })
 
   it("exposes Wi-Fi guidance as a keyboard-focusable address tooltip", () => {

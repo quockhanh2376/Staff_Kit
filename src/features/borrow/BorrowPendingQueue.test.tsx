@@ -16,6 +16,10 @@ function borrowState(overrides: Partial<BorrowState> = {}) {
         assetCodes: ["ASSET-001"],
         submittedAt: "2026-08-06T00:00:00Z",
         decisionNote: null,
+        hasAcknowledgment: true,
+        confirmationMethod: "typed_name",
+        hasSignature: false,
+        hasTypedName: true,
       },
       {
         id: 2,
@@ -27,6 +31,10 @@ function borrowState(overrides: Partial<BorrowState> = {}) {
         assetCodes: ["ASSET-002", "ASSET-003"],
         submittedAt: "2026-08-06T00:01:00Z",
         decisionNote: null,
+        hasAcknowledgment: false,
+        confirmationMethod: "signature",
+        hasSignature: true,
+        hasTypedName: false,
       },
     ],
     selectedRequestId: null,
@@ -70,8 +78,8 @@ describe("BorrowPendingQueue", () => {
 
     expect(screen.getByTestId("pending-request-details-1")).toBeTruthy()
     expect(screen.queryByTestId("pending-request-details-2")).toBeNull()
-    expect(screen.getAllByText("EE1001")).toHaveLength(1)
-    expect(screen.getAllByText("Borrower")).toHaveLength(1)
+    expect(screen.getByTestId("pending-request-summary-1").textContent).toContain("EE1001")
+    expect(screen.getByTestId("pending-request-summary-1").textContent).toContain("Borrower")
     expect(screen.getByText("Request ID")).toBeTruthy()
     expect(screen.getByLabelText("Rejection note")).toBeTruthy()
   })
@@ -124,6 +132,27 @@ describe("BorrowPendingQueue", () => {
     expect(screen.getAllByText("Borrow").length).toBeGreaterThan(0)
     expect(screen.getAllByText("Return").length).toBeGreaterThan(0)
     expect(screen.getByText("2 assets")).toBeTruthy()
+  })
+
+  it("renders compact evidence metadata without signature payloads", () => {
+    render(<BorrowPendingQueue borrow={borrowState()} />)
+
+    expect(screen.getByTestId("pending-request-summary-1").textContent).toContain("typed_name")
+    expect(screen.getByTestId("pending-request-summary-2").textContent).toContain("signature")
+    expect(screen.queryByText(/base64|PNG|iVBOR/)).toBeNull()
+  })
+
+  it("requests evidence only when the reviewer opens it", () => {
+    const loadRequestEvidence = vi.fn()
+    render(<BorrowPendingQueue borrow={borrowState({
+      selectedRequestId: 1,
+      selectedRequest: { ...borrowState().pendingRequests[0] },
+      loadRequestEvidence,
+    })} />)
+
+    expect(loadRequestEvidence).toHaveBeenCalledTimes(0)
+    fireEvent.click(screen.getByRole("button", { name: "View evidence" }))
+    expect(loadRequestEvidence).toHaveBeenCalledWith(1)
   })
 
   it("shows compact review actions in the queue header and disables them without a selection", () => {

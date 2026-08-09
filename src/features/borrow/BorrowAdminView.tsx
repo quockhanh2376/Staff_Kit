@@ -84,6 +84,16 @@ export function BorrowAdminView({ auth, borrow, settings }: BorrowAdminViewProps
         onRefreshQueue={() => void borrow.refreshQueue()}
         onStartLan={() => void settings.ensureBorrowLanReady()}
         onStopLan={() => void settings.handleStopBorrowLanServer()}
+        policyEnglish={settings.borrowPolicyEnglishInput}
+        policyVietnamese={settings.borrowPolicyVietnameseInput}
+        savedPolicyEnglish={settings.borrowPolicy?.textEn ?? ""}
+        savedPolicyVietnamese={settings.borrowPolicy?.textVi ?? ""}
+        isLoadingPolicy={settings.isLoadingBorrowPolicy}
+        isSavingPolicy={settings.isSavingBorrowPolicy}
+        policyMessage={settings.borrowPolicyMessage}
+        onPolicyEnglishChange={settings.setBorrowPolicyEnglishInput}
+        onPolicyVietnameseChange={settings.setBorrowPolicyVietnameseInput}
+        onSavePolicy={() => void settings.saveBorrowPolicy()}
       />
 
       <div className="mt-4">

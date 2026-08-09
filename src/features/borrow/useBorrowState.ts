@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { staffApi } from "../../services/staff-api"
-import type { BorrowRequestRecord } from "../../types/staff"
+import type { BorrowRequestEvidenceRecord, BorrowRequestRecord } from "../../types/staff"
 import { getUserErrorMessage } from "../../lib/errorHandling"
 import {
   buildBorrowReviewApproveSuccessMessage,
@@ -33,6 +33,8 @@ export function useBorrowState({
   const [pendingRequests, setPendingRequests] = useState<BorrowRequestRecord[]>([])
   const [selectedRequestId, setSelectedRequestId] = useState<number | null>(null)
   const [selectedRequest, setSelectedRequest] = useState<BorrowRequestRecord | null>(null)
+  const [selectedEvidence, setSelectedEvidence] = useState<BorrowRequestEvidenceRecord | null>(null)
+  const [isLoadingEvidence, setLoadingEvidence] = useState(false)
   const [reviewNote, setReviewNote] = useState("")
   const [queueMessage, setQueueMessage] = useState("")
   const [isLoadingQueue, setLoadingQueue] = useState(false)
@@ -117,7 +119,9 @@ export function useBorrowState({
           if (!nextSelectedId) {
             selectedRequestRef.current = null
             setSelectedRequest(null)
+            setSelectedEvidence(null)
           } else if (nextSelectedId !== currentSelectedId || selectedRequestRef.current?.id !== nextSelectedId) {
+            setSelectedEvidence(null)
             await loadRequestDetail(nextSelectedId)
           }
           return changed
@@ -160,7 +164,20 @@ export function useBorrowState({
     selectedRequestIdRef.current = requestId
     setSelectedRequestId(requestId)
     await loadRequestDetail(requestId)
+    setSelectedEvidence(null)
   }
+
+  const loadRequestEvidence = useCallback(async (requestId: number) => {
+    try {
+      setLoadingEvidence(true)
+      const evidence = await staffApi.getBorrowRequestEvidence(requestId)
+      setSelectedEvidence(evidence)
+    } catch (error) {
+      setGlobalError(getUserErrorMessage(error))
+    } finally {
+      setLoadingEvidence(false)
+    }
+  }, [setGlobalError])
 
   const handleApproveRequest = async () => {
     if (!selectedRequest || reviewActionInFlightRef.current) return
@@ -238,6 +255,8 @@ export function useBorrowState({
     pendingRequests,
     selectedRequestId,
     selectedRequest,
+    selectedEvidence,
+    isLoadingEvidence,
     reviewNote,
     setReviewNote,
     queueMessage,
@@ -247,6 +266,7 @@ export function useBorrowState({
     isRejecting,
     isCancelling,
     handleSelectRequest,
+    loadRequestEvidence,
     handleApproveRequest,
     handleRejectRequest,
     handleCancelRequest,

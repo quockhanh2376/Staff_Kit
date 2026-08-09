@@ -906,6 +906,38 @@ fn update_stock_item_quantity(
 // ── Borrow review (admin; actor from SessionContext) ─────────────────────────
 
 #[tauri::command]
+fn get_borrow_policy(
+    app: tauri::AppHandle,
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    session_token: String,
+) -> Result<Option<db::borrow::BorrowPolicyDesktopRecord>, String> {
+    let _ctx = auth_session::require_admin(&session_store, &session_token)?;
+    db::borrow::get_borrow_policy(&app)
+}
+
+#[tauri::command]
+fn save_borrow_policy(
+    app: tauri::AppHandle,
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    session_token: String,
+    payload: db::borrow::BorrowPolicyUpdateInput,
+) -> Result<db::borrow::BorrowPolicyDesktopRecord, String> {
+    let ctx = auth_session::require_admin(&session_store, &session_token)?;
+    db::borrow::save_borrow_policy(&app, ctx.account_id, &payload.text_en, &payload.text_vi)
+}
+
+#[tauri::command]
+fn get_borrow_request_evidence(
+    app: tauri::AppHandle,
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    session_token: String,
+    request_id: i64,
+) -> Result<Option<db::borrow::BorrowRequestEvidenceRecord>, String> {
+    let _ctx = auth_session::require_admin(&session_store, &session_token)?;
+    db::borrow::get_borrow_request_evidence(&app, request_id)
+}
+
+#[tauri::command]
 fn list_pending_borrow_requests(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -1036,6 +1068,9 @@ pub fn run() {
             list_asset_dashboard_serialized,
             list_asset_dashboard_quantity,
             update_stock_item_quantity,
+            get_borrow_policy,
+            save_borrow_policy,
+            get_borrow_request_evidence,
             list_pending_borrow_requests,
             get_borrow_request_detail,
             approve_borrow_request,
@@ -1157,6 +1192,9 @@ mod tests {
         "update_asset_category",
         "deactivate_asset_category",
         "update_stock_item_quantity",
+        "get_borrow_policy",
+        "save_borrow_policy",
+        "get_borrow_request_evidence",
         "list_pending_borrow_requests",
         "get_borrow_request_detail",
         "approve_borrow_request",

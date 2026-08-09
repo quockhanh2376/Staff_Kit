@@ -398,6 +398,35 @@ export type BorrowRequestRecord = {
   decisionNote: string | null
   manualEmployeeEmail?: string | null
   manualEmployeeTeam?: string | null
+  borrowerEmployeeIdFk?: number | null
+  borrowerStaffId?: string | null
+  borrowerName?: string | null
+  submittedByEmployeeIdFk?: number | null
+  submittedByStaffId?: string | null
+  submittedByName?: string | null
+  hasAcknowledgment?: boolean
+  confirmationMethod?: string | null
+  hasSignature?: boolean
+  hasTypedName?: boolean
+}
+
+export type BorrowPolicyRecord = {
+  version: number
+  textEn: string
+  textVi: string
+}
+
+export type BorrowRequestEvidenceRecord = {
+  borrowRequestId: number
+  policyVersion: number | null
+  policyTextEnSnapshot: string | null
+  policyTextViSnapshot: string | null
+  policyAcknowledged: boolean
+  confirmationMethod: string
+  typedName: string | null
+  hasSignature: boolean
+  confirmedAt: string
+  signaturePngBase64: string | null
 }
 
 export type BorrowRequestRejectInput = {

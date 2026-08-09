@@ -1,4 +1,4 @@
-import { CheckCircle2, ChevronDown, ChevronRight, LoaderCircle, XCircle } from "lucide-react"
+import { CheckCircle2, ChevronDown, ChevronRight, FileCheck2, LoaderCircle, PenLine, UserRound, XCircle } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import type { BorrowState } from "./useBorrowState"
 import { buildBorrowReviewEmptyQueueMessage, buildBorrowReviewRejectPlaceholder } from "./borrowReviewCopy"
@@ -142,6 +142,12 @@ export function BorrowPendingQueue({ borrow }: BorrowPendingQueueProps) {
                   <span className="rounded-[999px] border border-[var(--border)] px-2 py-0.5 text-[10px] text-[var(--text-secondary)]">
                     {formatAssetSummary(request.assetCodes)}
                   </span>
+                  <span className="flex items-center gap-1" title={request.requestType === "borrow" ? "Handle with Care acknowledged" : "Return confirmation recorded"}>
+                    {request.requestType === "borrow" && request.hasAcknowledgment && <FileCheck2 aria-label="Acknowledged" className="text-emerald-400" size={13} />}
+                    {request.confirmationMethod && <span className="rounded-[999px] border border-[var(--border)] px-1.5 py-0.5 text-[10px] text-[var(--text-secondary)]">{request.confirmationMethod}</span>}
+                    {request.hasSignature && <span title="Signature available"><PenLine aria-label="Signature available" className="text-emerald-400" size={13} /></span>}
+                    {request.hasTypedName && <span title="Typed name available"><UserRound aria-label="Typed name available" className="text-sky-400" size={13} /></span>}
+                  </span>
                   <span className="ml-auto text-[11px] text-[var(--text-secondary)]">{formatSubmittedTime(request.submittedAt)}</span>
                   </div>
                 </button>
@@ -159,6 +165,16 @@ export function BorrowPendingQueue({ borrow }: BorrowPendingQueueProps) {
                   {detail && (
                     <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr),280px]">
                       <div className="space-y-2 text-xs">
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <div>
+                            <div className="text-[10px] uppercase tracking-[0.06em] text-[var(--text-secondary)]">{detail.requestType === "return" ? "Borrowed by" : "Borrower"}</div>
+                            <div className="mt-1 font-semibold text-[var(--text-primary)]">{detail.borrowerStaffId || "Historical identity unavailable"}{detail.borrowerName ? ` · ${detail.borrowerName}` : ""}</div>
+                          </div>
+                          <div>
+                            <div className="text-[10px] uppercase tracking-[0.06em] text-[var(--text-secondary)]">{detail.requestType === "return" ? "Returned by" : "Submitted by"}</div>
+                            <div className="mt-1 font-semibold text-[var(--text-primary)]">{detail.submittedByStaffId || detail.submittedEmployeeId} · {detail.submittedByName || detail.submittedFullName}</div>
+                          </div>
+                        </div>
                         <div>
                           <div className="text-[10px] uppercase tracking-[0.06em] text-[var(--text-secondary)]">Asset Items</div>
                           <div className="mt-1 flex flex-wrap gap-1.5">
@@ -180,6 +196,32 @@ export function BorrowPendingQueue({ borrow }: BorrowPendingQueueProps) {
                           <span className="mr-1 uppercase tracking-[0.06em]">Request ID</span>
                           {detail.requestKey}
                         </div>
+                        <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-[var(--text-secondary)]">
+                          <span>Evidence:</span>
+                          {detail.requestType === "borrow" && detail.hasAcknowledgment && <span className="rounded border border-emerald-500/40 px-1.5 py-0.5 text-emerald-300">Acknowledged</span>}
+                          {detail.confirmationMethod && <span className="rounded border border-[var(--border)] px-1.5 py-0.5">{detail.confirmationMethod}</span>}
+                          {detail.hasSignature && <span className="rounded border border-emerald-500/40 px-1.5 py-0.5 text-emerald-300">Signature</span>}
+                          {detail.hasTypedName && <span className="rounded border border-sky-500/40 px-1.5 py-0.5 text-sky-300">Typed name</span>}
+                        </div>
+                        <button
+                          className="rounded border border-[var(--border)] px-2 py-1 text-[11px] font-semibold text-[var(--text-primary)] disabled:opacity-50"
+                          disabled={borrow.isLoadingEvidence}
+                          onClick={() => void borrow.loadRequestEvidence(detail.id)}
+                          type="button"
+                        >
+                          {borrow.isLoadingEvidence ? "Loading evidence..." : "View evidence"}
+                        </button>
+                        {borrow.selectedEvidence?.borrowRequestId === detail.id && (
+                          <div className="rounded border border-[var(--border)] bg-[var(--surface)] p-2 text-[11px] text-[var(--text-secondary)]">
+                            <div>Policy acknowledged: {borrow.selectedEvidence.policyAcknowledged ? "Yes" : "No"}</div>
+                            {borrow.selectedEvidence.policyVersion !== null && <div>Policy version: {borrow.selectedEvidence.policyVersion}</div>}
+                            {borrow.selectedEvidence.typedName && <div>Typed name: {borrow.selectedEvidence.typedName}</div>}
+                            <div>Signature: {borrow.selectedEvidence.hasSignature ? "Available" : "Not provided"}</div>
+                            <div>Confirmed: {borrow.selectedEvidence.confirmedAt}</div>
+                            {borrow.selectedEvidence.policyTextEnSnapshot && <details className="mt-1"><summary className="cursor-pointer">Policy snapshot</summary><div className="mt-1 whitespace-pre-wrap">{borrow.selectedEvidence.policyTextEnSnapshot}</div>{borrow.selectedEvidence.policyTextViSnapshot && <div className="mt-2 whitespace-pre-wrap">{borrow.selectedEvidence.policyTextViSnapshot}</div>}</details>}
+                            {borrow.selectedEvidence.signaturePngBase64 && <img alt="Signature preview" className="mt-2 max-h-24 max-w-full rounded border border-[var(--border)] bg-white object-contain" src={`data:image/png;base64,${borrow.selectedEvidence.signaturePngBase64}`} />}
+                          </div>
+                        )}
                       </div>
 
                       <div>

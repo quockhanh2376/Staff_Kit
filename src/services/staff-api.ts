@@ -66,6 +66,8 @@ import type {
   ImportReport,
   ImportPreviewResult,
   BorrowRequestRecord,
+  BorrowPolicyRecord,
+  BorrowRequestEvidenceRecord,
   BorrowRequestRejectInput,
   TeamRecord,
   TeamUpsertInput,
@@ -380,8 +382,21 @@ export const staffApi = {
   listPendingBorrowRequests: () =>
     call<BorrowRequestRecord[]>("list_pending_borrow_requests"),
 
+  getBorrowPolicy: () => call<BorrowPolicyRecord | null>("get_borrow_policy"),
+
+  saveBorrowPolicy: (payload: { textEn: string; textVi: string }) =>
+    call<BorrowPolicyRecord>("save_borrow_policy", {
+      payload: {
+        textEn: payload.textEn,
+        textVi: payload.textVi,
+      },
+    }),
+
   getBorrowRequestDetail: (requestId: number) =>
     call<BorrowRequestRecord>("get_borrow_request_detail", { requestId }),
+
+  getBorrowRequestEvidence: (requestId: number) =>
+    call<BorrowRequestEvidenceRecord | null>("get_borrow_request_evidence", { requestId }),
 
   approveBorrowRequest: (requestId: number) =>
     call<BorrowRequestRecord>("approve_borrow_request", { requestId }),

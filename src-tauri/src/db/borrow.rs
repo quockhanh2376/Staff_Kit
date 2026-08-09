@@ -45,6 +45,21 @@ pub struct HandleWithCarePolicyRecord {
     pub superseded_at: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BorrowPolicyDesktopRecord {
+    pub version: i64,
+    pub text_en: String,
+    pub text_vi: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BorrowPolicyUpdateInput {
+    pub text_en: String,
+    pub text_vi: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfirmationMethod {
     Signature,
@@ -143,6 +158,31 @@ pub struct BorrowRequestRecord {
     pub decision_note: Option<String>,
     pub manual_employee_email: Option<String>,
     pub manual_employee_team: Option<String>,
+    pub borrower_employee_id_fk: Option<i64>,
+    pub borrower_staff_id: Option<String>,
+    pub borrower_name: Option<String>,
+    pub submitted_by_employee_id_fk: Option<i64>,
+    pub submitted_by_staff_id: Option<String>,
+    pub submitted_by_name: Option<String>,
+    pub has_acknowledgment: bool,
+    pub confirmation_method: Option<String>,
+    pub has_signature: bool,
+    pub has_typed_name: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BorrowRequestEvidenceRecord {
+    pub borrow_request_id: i64,
+    pub policy_version: Option<i64>,
+    pub policy_text_en_snapshot: Option<String>,
+    pub policy_text_vi_snapshot: Option<String>,
+    pub policy_acknowledged: bool,
+    pub confirmation_method: String,
+    pub typed_name: Option<String>,
+    pub has_signature: bool,
+    pub confirmed_at: String,
+    pub signature_png_base64: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -336,6 +376,54 @@ pub fn detect_borrow_lan_host() -> Result<Option<String>, String> {
     }
 
     Ok(None)
+}
+
+pub fn get_borrow_policy(app: &AppHandle) -> Result<Option<BorrowPolicyDesktopRecord>, String> {
+    let conn = open_runtime_connection(app)?;
+    get_current_handle_with_care_policy_conn(&conn).map(|policy| {
+        policy.map(|record| BorrowPolicyDesktopRecord {
+            version: record.version,
+            text_en: record.text_en,
+            text_vi: record.text_vi,
+        })
+    })
+}
+
+pub fn save_borrow_policy(
+    app: &AppHandle,
+    account_id: i64,
+    text_en: &str,
+    text_vi: &str,
+) -> Result<BorrowPolicyDesktopRecord, String> {
+    let mut conn = open_runtime_connection(app)?;
+    save_handle_with_care_policy_conn(&mut conn, account_id, text_en, text_vi).map(|record| {
+        BorrowPolicyDesktopRecord {
+            version: record.version,
+            text_en: record.text_en,
+            text_vi: record.text_vi,
+        }
+    })
+}
+
+pub fn get_borrow_request_evidence(
+    app: &AppHandle,
+    request_id: i64,
+) -> Result<Option<BorrowRequestEvidenceRecord>, String> {
+    let conn = open_runtime_connection(app)?;
+    load_borrow_request_confirmation_conn(&conn, request_id).map(|record| {
+        record.map(|evidence| BorrowRequestEvidenceRecord {
+            borrow_request_id: evidence.borrow_request_id,
+            policy_version: evidence.policy_version,
+            policy_text_en_snapshot: evidence.policy_text_en_snapshot,
+            policy_text_vi_snapshot: evidence.policy_text_vi_snapshot,
+            policy_acknowledged: evidence.policy_acknowledged,
+            confirmation_method: confirmation_method_text(evidence.confirmation_method).to_string(),
+            typed_name: evidence.typed_name,
+            has_signature: evidence.signature_png_blob.is_some(),
+            confirmed_at: evidence.confirmed_at,
+            signature_png_base64: evidence.signature_png_blob.map(|blob| STANDARD.encode(blob)),
+        })
+    })
 }
 
 pub fn list_pending_borrow_requests(app: &AppHandle) -> Result<Vec<BorrowRequestRecord>, String> {
@@ -1638,6 +1726,12 @@ fn load_borrow_request_record(
         decision_note,
         manual_employee_email,
         manual_employee_team,
+        borrower_employee_id_fk,
+        borrower_staff_id,
+        borrower_name,
+        submitted_by_employee_id_fk,
+        submitted_by_staff_id,
+        submitted_by_name,
     ) = conn
         .query_row(
             r#"
@@ -1651,7 +1745,13 @@ fn load_borrow_request_record(
               submitted_at,
               decision_note,
               manual_employee_email,
-              manual_employee_team
+              manual_employee_team,
+              borrower_employee_id_fk,
+              borrower_staff_id_snapshot,
+              borrower_name_snapshot,
+              submitted_by_employee_id_fk,
+              submitted_by_staff_id_snapshot,
+              submitted_by_name_snapshot
             FROM borrow_requests
             WHERE id = ?
             "#,
@@ -1668,12 +1768,38 @@ fn load_borrow_request_record(
                     row.get::<_, Option<String>>(7)?,
                     row.get::<_, Option<String>>(8)?,
                     row.get::<_, Option<String>>(9)?,
+                    row.get::<_, Option<i64>>(10)?,
+                    row.get::<_, Option<String>>(11)?,
+                    row.get::<_, Option<String>>(12)?,
+                    row.get::<_, Option<i64>>(13)?,
+                    row.get::<_, Option<String>>(14)?,
+                    row.get::<_, Option<String>>(15)?,
                 ))
             },
         )
         .optional()
         .map_err(|err| format!("failed to load borrow request record: {err}"))?
         .ok_or_else(|| format!("borrow request with id {request_id} was not found"))?;
+
+    let evidence_metadata = conn
+        .query_row(
+            "SELECT policy_acknowledged, confirmation_method, signature_png_blob IS NOT NULL, typed_name IS NOT NULL FROM borrow_request_confirmations WHERE borrow_request_id = ?",
+            params![request_id],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)? != 0,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, bool>(2)?,
+                    row.get::<_, bool>(3)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|err| format!("failed to load borrow request evidence metadata: {err}"))?;
+
+    let effective_submitted_by_staff_id =
+        submitted_by_staff_id.or_else(|| Some(submitted_employee_id.clone()));
+    let effective_submitted_by_name = submitted_by_name.or_else(|| Some(submitted_full_name.clone()));
 
     Ok(BorrowRequestRecord {
         id,
@@ -1687,6 +1813,16 @@ fn load_borrow_request_record(
         decision_note,
         manual_employee_email,
         manual_employee_team,
+        borrower_employee_id_fk,
+        borrower_staff_id,
+        borrower_name,
+        submitted_by_employee_id_fk,
+        submitted_by_staff_id: effective_submitted_by_staff_id,
+        submitted_by_name: effective_submitted_by_name,
+        has_acknowledgment: evidence_metadata.as_ref().map(|value| value.0).unwrap_or(false),
+        confirmation_method: evidence_metadata.as_ref().map(|value| value.1.clone()),
+        has_signature: evidence_metadata.as_ref().map(|value| value.2).unwrap_or(false),
+        has_typed_name: evidence_metadata.as_ref().map(|value| value.3).unwrap_or(false),
     })
 }
 
@@ -3045,6 +3181,11 @@ mod tests {
             },
         )
         .expect("create first pending request");
+        conn.execute(
+            "INSERT INTO borrow_request_confirmations(borrow_request_id, policy_version, policy_acknowledged, asset_codes_snapshot_json, confirmation_method, typed_name, confirmed_at) VALUES(?, NULL, 1, '[\\\"ASSET-001\\\"]', 'typed_name', 'Nguyen Van A', datetime('now'))",
+            params![first_pending.id],
+        )
+        .expect("insert queue evidence metadata");
 
         let approved_request = submit_borrow_request_conn(
             &mut conn,
@@ -3079,6 +3220,10 @@ mod tests {
         assert_eq!(pending[0].id, last_pending.id);
         assert_eq!(pending[1].id, first_pending.id);
         assert!(pending.iter().all(|record| record.status == "pending"));
+        assert!(pending[1].has_acknowledgment);
+        assert_eq!(pending[1].confirmation_method.as_deref(), Some("typed_name"));
+        assert!(!pending[1].has_signature);
+        assert!(pending[1].has_typed_name);
     }
 
     #[test]
