@@ -26,6 +26,8 @@ describe("BorrowPolicyCard", () => {
 
     expect(screen.getByLabelText("English Handle with Care policy")).toBeTruthy()
     expect(screen.getByLabelText("Vietnamese Handle with Care policy")).toBeTruthy()
+    expect(screen.getByLabelText("English Handle with Care policy").getAttribute("spellcheck")).toBe("false")
+    expect(screen.getByLabelText("Vietnamese Handle with Care policy").getAttribute("spellcheck")).toBe("false")
     expect((screen.getByRole("button", { name: "Save Handle with Care policy" }) as HTMLButtonElement).disabled).toBe(true)
   })
 

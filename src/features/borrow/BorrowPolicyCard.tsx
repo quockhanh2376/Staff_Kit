@@ -30,7 +30,7 @@ export function BorrowPolicyCard({
     : english !== savedEnglish || vietnamese !== savedVietnamese
 
   return (
-    <div data-testid="handle-with-care-card" className="min-w-0 rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/25 p-3 xl:h-full">
+    <div data-testid="handle-with-care-card" className="min-w-0 rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/25 p-3">
       <div className="flex items-center justify-between gap-2">
         <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
           Handle with Care
@@ -62,6 +62,7 @@ export function BorrowPolicyCard({
               id="borrow-policy-english"
               aria-label="English Handle with Care policy"
               className="form-input min-h-[96px] resize-y text-sm"
+              spellCheck={false}
               value={english}
               onChange={(event) => onEnglishChange(event.target.value)}
               placeholder="Enter the English policy..."
@@ -75,6 +76,7 @@ export function BorrowPolicyCard({
               id="borrow-policy-vietnamese"
               aria-label="Vietnamese Handle with Care policy"
               className="form-input min-h-[96px] resize-y text-sm"
+              spellCheck={false}
               value={vietnamese}
               onChange={(event) => onVietnameseChange(event.target.value)}
               placeholder="Nhập chính sách tiếng Việt..."

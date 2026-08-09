@@ -72,7 +72,7 @@ export function BorrowLanQrCard({
 
   return (
     <div className="mt-4 max-w-6xl rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-4">
-      <div data-testid="lan-top-cards" className="grid gap-3 xl:grid-cols-[minmax(280px,320px)_minmax(280px,320px)_minmax(0,1fr)] xl:items-stretch">
+      <div data-testid="lan-top-cards" className="grid items-start gap-3 xl:grid-cols-[minmax(300px,320px)_minmax(340px,380px)_minmax(420px,1fr)]">
         <div data-testid="qr-code-card" className="relative order-first aspect-square min-w-0 overflow-hidden rounded-[24px] border border-white/8 bg-[#101722] p-3 shadow-[0_18px_50px_rgba(2,8,23,0.46)]">
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_18%,rgba(74,222,128,0.28),transparent_26%),radial-gradient(circle_at_82%_18%,rgba(250,204,21,0.26),transparent_28%),radial-gradient(circle_at_20%_82%,rgba(236,72,153,0.24),transparent_28%),radial-gradient(circle_at_80%_82%,rgba(96,165,250,0.24),transparent_28%)]" />
           <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),transparent_22%,transparent_78%,rgba(255,255,255,0.03))]" />
@@ -131,7 +131,7 @@ export function BorrowLanQrCard({
           </div>
         </div>
 
-        <div data-testid="lan-address-card" className="order-last min-w-0 rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/25 p-3 xl:aspect-square xl:h-full">
+        <div data-testid="lan-address-card" className="min-w-0 rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/25 p-3">
           <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
             LAN Address
           </div>

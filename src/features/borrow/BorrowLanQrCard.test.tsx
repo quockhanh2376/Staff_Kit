@@ -121,9 +121,10 @@ describe("BorrowLanQrCard operational UX", () => {
     const qrCard = screen.getByTestId("qr-code-card")
     const qrSurface = screen.getByTestId("qr-code-surface")
     const lanCard = screen.getByTestId("lan-address-card")
+    const policyCard = screen.getByTestId("handle-with-care-card")
 
-    expect(topCards.className).toContain("xl:grid-cols-[minmax(280px,320px)_minmax(280px,320px)_minmax(0,1fr)]")
-    expect(topCards.className).toContain("xl:items-stretch")
+    expect(topCards.className).toContain("xl:grid-cols-[minmax(300px,320px)_minmax(340px,380px)_minmax(420px,1fr)]")
+    expect(topCards.className).toContain("items-start")
     expect(qrCard.className).toContain("aspect-square")
     expect(qrSurface.className).toContain("aspect-square")
     expect(qrSurface.className).toContain("flex")
@@ -131,7 +132,10 @@ describe("BorrowLanQrCard operational UX", () => {
     expect(qrSurface.className).toContain("justify-center")
     expect(qrSurface.className).toContain("max-w-[250px]")
     expect(lanCard.className).toContain("min-w-0")
-    expect(lanCard.className).toContain("xl:aspect-square")
+    expect(lanCard.className).not.toContain("order-last")
+    expect(lanCard.className).not.toContain("xl:aspect-square")
+    expect(lanCard.className).not.toContain("xl:h-full")
+    expect(policyCard.className).not.toContain("xl:h-full")
   })
 
   it("exposes Wi-Fi guidance as a keyboard-focusable address tooltip", () => {
