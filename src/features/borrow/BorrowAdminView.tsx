@@ -5,7 +5,6 @@ import { BorrowLanQrCard } from "./BorrowLanQrCard"
 import type { BorrowState } from "./useBorrowState"
 import { buildBorrowReviewHeaderDescription, buildBorrowReviewHeading } from "./borrowReviewCopy"
 import { BorrowPendingQueue } from "./BorrowPendingQueue"
-import { BorrowRequestDetail } from "./BorrowRequestDetail"
 
 type BorrowAdminViewProps = {
   auth: AuthState
@@ -90,8 +89,6 @@ export function BorrowAdminView({ auth, borrow, settings }: BorrowAdminViewProps
       <div className="mt-4">
         <BorrowPendingQueue borrow={borrow} />
       </div>
-
-      <BorrowRequestDetail borrow={borrow} />
     </section>
   )
 }

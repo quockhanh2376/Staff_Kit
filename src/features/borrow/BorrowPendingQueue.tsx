@@ -1,21 +1,45 @@
-import { CheckCircle2, LoaderCircle, XCircle } from "lucide-react"
+import { CheckCircle2, ChevronDown, ChevronRight, LoaderCircle, XCircle } from "lucide-react"
+import { useEffect, useRef, useState } from "react"
 import type { BorrowState } from "./useBorrowState"
-import { buildBorrowReviewEmptyQueueMessage } from "./borrowReviewCopy"
+import { buildBorrowReviewEmptyQueueMessage, buildBorrowReviewRejectPlaceholder } from "./borrowReviewCopy"
 import { RequestTypeBadge } from "./RequestTypeBadge"
 
 type BorrowPendingQueueProps = {
   borrow: BorrowState
 }
 
+function formatSubmittedTime(value: string) {
+  const time = value.split("T")[1]?.replace(/Z$/, "")
+  return time?.slice(0, 8) || value
+}
+
+function formatAssetSummary(assetCodes: string[]) {
+  return assetCodes.length === 1 ? assetCodes[0] : `${assetCodes.length} assets`
+}
+
 export function BorrowPendingQueue({ borrow }: BorrowPendingQueueProps) {
+  const rejectionNoteRef = useRef<HTMLTextAreaElement>(null)
+  const [expandedRequestIds, setExpandedRequestIds] = useState<Set<number>>(
+    () => (borrow.selectedRequestId === null ? new Set() : new Set([borrow.selectedRequestId])),
+  )
+  const needsRejectNote = borrow.queueMessage === "A rejection note is required."
+  const selectedDetail = borrow.selectedRequest
+
+  useEffect(() => {
+    if (needsRejectNote) rejectionNoteRef.current?.focus()
+  }, [needsRejectNote, selectedDetail?.id])
+
+  const pendingIds = new Set(borrow.pendingRequests.map((request) => request.id))
+  const visibleExpandedRequestIds = new Set([...expandedRequestIds].filter((id) => pendingIds.has(id)))
+
   return (
-    <div className="rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-4">
+    <div
+      data-testid="pending-requests-card"
+      className="rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-4"
+    >
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <div className="text-sm font-semibold text-[var(--text-primary)]">Pending Queue</div>
-          <p className="mt-1 text-xs text-[var(--text-secondary)]">
-            {borrow.pendingRequests.length} request(s) waiting for IT review.
-          </p>
+        <div className="text-sm font-semibold text-[var(--text-primary)]">
+          Pending Requests ({borrow.pendingRequests.length})
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <button
@@ -48,7 +72,13 @@ export function BorrowPendingQueue({ borrow }: BorrowPendingQueueProps) {
         </div>
       </div>
 
-      <div className="mt-4 space-y-2">
+      {borrow.queueMessage && !needsRejectNote && (
+        <div className="mt-3 rounded-[8px] border border-[var(--primary)]/35 bg-[var(--primary)]/8 px-3 py-2 text-xs text-[var(--text-primary)]">
+          {borrow.queueMessage}
+        </div>
+      )}
+
+      <div data-testid="pending-request-grid" className="mt-3 grid grid-cols-1 gap-2 xl:grid-cols-2">
         {borrow.isLoadingQueue && (
           <div className="flex items-center gap-2 rounded-[8px] border border-[var(--border)] bg-[var(--surface-hover)]/20 px-3 py-3 text-sm text-[var(--text-secondary)]">
             <LoaderCircle className="animate-spin" size={15} />
@@ -63,32 +93,121 @@ export function BorrowPendingQueue({ borrow }: BorrowPendingQueueProps) {
         )}
 
         {borrow.pendingRequests.map((request) => {
+          const isExpanded = visibleExpandedRequestIds.has(request.id)
           const isSelected = borrow.selectedRequestId === request.id
+          const detail = isSelected && selectedDetail?.id === request.id ? selectedDetail : request
+
           return (
-            <button
+            <div
               key={request.id}
-              className={`w-full rounded-[10px] border px-3 py-3 text-left transition ${
+              data-testid={`pending-request-row-${request.id}`}
+              data-selected={isSelected}
+              className={`overflow-hidden rounded-[10px] border transition ${
                 isSelected
                   ? "border-[var(--primary)]/55 bg-[var(--primary)]/10"
-                  : "border-[var(--border)] bg-[var(--surface-hover)]/20 hover:border-[var(--primary)]/30"
+                  : "border-[var(--border)] bg-[var(--surface-hover)]/20"
               }`}
-              onClick={() => void borrow.handleSelectRequest(request.id)}
-              type="button"
             >
-              <div className="flex items-center gap-2">
-                <div className="text-sm font-semibold text-[var(--text-primary)]">
-                  {request.submittedEmployeeId}
-                </div>
-                <RequestTypeBadge requestType={request.requestType} />
-                <div className="rounded-[999px] border border-[var(--border)] px-2 py-0.5 text-[10px] uppercase tracking-[0.06em] text-[var(--text-secondary)]">
-                  {request.assetCodes.length} asset
-                </div>
+              <div className="flex items-center gap-1 px-2 py-2.5 hover:bg-[var(--surface-hover)]/30">
+                <button
+                  aria-expanded={isExpanded}
+                  aria-label={`${isExpanded ? "Collapse" : "Expand"} request ${request.id}`}
+                  className="shrink-0 rounded p-1 text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"
+                  data-testid={`pending-request-toggle-${request.id}`}
+                  onClick={() => {
+                    setExpandedRequestIds((current) => {
+                      const next = new Set(current)
+                      if (next.has(request.id)) next.delete(request.id)
+                      else next.add(request.id)
+                      return next
+                    })
+                  }}
+                  type="button"
+                >
+                  {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                </button>
+                <button
+                  className="min-w-0 flex-1 px-1 text-left"
+                  data-testid={`pending-request-summary-${request.id}`}
+                  onClick={() => {
+                    setExpandedRequestIds((current) => new Set(current).add(request.id))
+                    void borrow.handleSelectRequest(request.id)
+                  }}
+                  type="button"
+                >
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                  <span className="font-semibold text-[var(--text-primary)]">{request.submittedEmployeeId}</span>
+                  <span className="min-w-0 text-[var(--text-secondary)]">{request.submittedFullName}</span>
+                  <RequestTypeBadge requestType={request.requestType} />
+                  <span className="rounded-[999px] border border-[var(--border)] px-2 py-0.5 text-[10px] text-[var(--text-secondary)]">
+                    {formatAssetSummary(request.assetCodes)}
+                  </span>
+                  <span className="ml-auto text-[11px] text-[var(--text-secondary)]">{formatSubmittedTime(request.submittedAt)}</span>
+                  </div>
+                </button>
               </div>
-              <div className="mt-1 text-xs text-[var(--text-secondary)]">{request.submittedFullName}</div>
-              <div className="mt-2 text-[11px] text-[var(--text-secondary)]">
-                {request.assetCodes.join(", ")}
-              </div>
-            </button>
+
+              {isExpanded && (
+                <div data-testid={`pending-request-details-${request.id}`} className="border-t border-[var(--border)] px-3 pb-3 pt-2.5">
+                  {borrow.isLoadingDetail && isSelected && selectedDetail === null && (
+                    <div className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+                      <LoaderCircle className="animate-spin" size={14} />
+                      Loading request detail...
+                    </div>
+                  )}
+
+                  {detail && (
+                    <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr),280px]">
+                      <div className="space-y-2 text-xs">
+                        <div>
+                          <div className="text-[10px] uppercase tracking-[0.06em] text-[var(--text-secondary)]">Asset Items</div>
+                          <div className="mt-1 flex flex-wrap gap-1.5">
+                            {detail.assetCodes.map((assetCode) => (
+                              <span
+                                key={assetCode}
+                                className="rounded-[999px] border border-[var(--primary)]/35 bg-[var(--primary)]/10 px-2.5 py-1 font-semibold text-[var(--text-primary)]"
+                              >
+                                {assetCode}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="text-[var(--text-secondary)]">
+                          <span className="mr-1 uppercase tracking-[0.06em]">Submitted At</span>
+                          {detail.submittedAt}
+                        </div>
+                        <div className="text-[11px] text-[var(--text-secondary)]">
+                          <span className="mr-1 uppercase tracking-[0.06em]">Request ID</span>
+                          {detail.requestKey}
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]" htmlFor={`rejection-note-${request.id}`}>
+                          Review / rejection note
+                        </label>
+                        <textarea
+                          ref={rejectionNoteRef}
+                          id={`rejection-note-${request.id}`}
+                          aria-label="Rejection note"
+                          aria-invalid={needsRejectNote}
+                          className={`form-input mt-1 min-h-[92px] resize-y text-sm ${needsRejectNote ? "border-red-400 ring-1 ring-red-400/50" : ""}`}
+                          value={borrow.reviewNote}
+                          onChange={(event) => borrow.setReviewNote(event.target.value)}
+                          placeholder={buildBorrowReviewRejectPlaceholder(detail.requestType)}
+                          disabled={!isSelected || borrow.isApproving || borrow.isRejecting || borrow.isCancelling}
+                        />
+                        {needsRejectNote && (
+                          <div className="mt-1 text-xs text-red-300" role="alert">
+                            {borrow.queueMessage}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           )
         })}
       </div>
