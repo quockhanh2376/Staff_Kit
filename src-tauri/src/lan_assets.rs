@@ -970,7 +970,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
           const submittedFullName   = document.getElementById("full-name").value.trim();
           const assetCodes          = Array.from(selectedAssets.keys());
           const signaturePngBase64 = hasSignatureEvidence() && signatureCanvas?.toDataURL
-            ? signatureCanvas.toDataURL("image/png").replace(/^data:image\/png;base64,/, "")
+            ? signatureCanvas.toDataURL("image/png")
             : null;
           const confirmation = {
             policyVersion: mode === "borrow" ? borrowPolicy?.version ?? null : null,
@@ -1237,7 +1237,8 @@ document.getElementById("submit-button").click();
 await wait();
 const post = calls.find((call) => call.url.includes("/api/borrow-requests"));
 const payload = JSON.parse(post.init.body);
-if (payload.confirmation.confirmationMethod !== "signature" || !payload.confirmation.signaturePngBase64 ||
+if (payload.confirmation.confirmationMethod !== "signature" ||
+    !payload.confirmation.signaturePngBase64?.startsWith("data:image/png;base64,") ||
     payload.confirmation.typedName !== null || payload.confirmation.signatureStrokeCount !== 1 ||
     dom.window.localStorage.length !== 0 || dom.window.sessionStorage.length !== 0) throw new Error("signature evidence contract failed");
 document.getElementById("btn-return").click();
