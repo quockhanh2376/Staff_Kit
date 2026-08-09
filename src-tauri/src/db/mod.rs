@@ -302,6 +302,7 @@ pub(crate) fn apply_migrations(conn: &Connection) -> Result<(), String> {
     ensure_asset_model_tables(conn)?;
     ensure_borrow_request_columns(conn)?;
     ensure_phase_c_borrow_schema(conn)?;
+    ensure_handle_with_care_schema(conn)?;
     auth::ensure_local_accounts_seed(conn)?;
     normalize_staff_group_values(conn)?;
     normalize_legacy_dynamic_field_aliases(conn)?;
@@ -842,12 +843,21 @@ fn ensure_borrow_request_columns(conn: &Connection) -> Result<(), String> {
         .collect::<Result<Vec<_>, _>>()
         .map_err(|err| format!("failed to collect borrow_requests columns: {err}"))?;
 
-    if !existing.iter().any(|name| name == "request_type") {
-        conn.execute(
-            "ALTER TABLE borrow_requests ADD COLUMN request_type TEXT NOT NULL DEFAULT 'borrow'",
-            [],
-        )
-        .map_err(|err| format!("failed to add borrow_requests.request_type column: {err}"))?;
+    let additions = [
+        ("request_type", "ALTER TABLE borrow_requests ADD COLUMN request_type TEXT NOT NULL DEFAULT 'borrow'"),
+        ("borrower_employee_id_fk", "ALTER TABLE borrow_requests ADD COLUMN borrower_employee_id_fk INTEGER REFERENCES employees(id) ON UPDATE CASCADE ON DELETE SET NULL"),
+        ("borrower_staff_id_snapshot", "ALTER TABLE borrow_requests ADD COLUMN borrower_staff_id_snapshot TEXT"),
+        ("borrower_name_snapshot", "ALTER TABLE borrow_requests ADD COLUMN borrower_name_snapshot TEXT"),
+        ("submitted_by_employee_id_fk", "ALTER TABLE borrow_requests ADD COLUMN submitted_by_employee_id_fk INTEGER REFERENCES employees(id) ON UPDATE CASCADE ON DELETE SET NULL"),
+        ("submitted_by_staff_id_snapshot", "ALTER TABLE borrow_requests ADD COLUMN submitted_by_staff_id_snapshot TEXT"),
+        ("submitted_by_name_snapshot", "ALTER TABLE borrow_requests ADD COLUMN submitted_by_name_snapshot TEXT"),
+    ];
+
+    for (column, sql) in additions {
+        if !existing.iter().any(|name| name == column) {
+            conn.execute(sql, [])
+                .map_err(|err| format!("failed to add borrow_requests.{column} column: {err}"))?;
+        }
     }
 
     Ok(())
@@ -903,6 +913,12 @@ fn ensure_phase_c_borrow_schema_inner(
             ("manual_employee_email", "ALTER TABLE borrow_requests ADD COLUMN manual_employee_email TEXT"),
             ("manual_employee_team", "ALTER TABLE borrow_requests ADD COLUMN manual_employee_team TEXT"),
             ("returned_by_employee_id_fk", "ALTER TABLE borrow_requests ADD COLUMN returned_by_employee_id_fk INTEGER REFERENCES employees(id) ON UPDATE CASCADE ON DELETE RESTRICT"),
+            ("borrower_employee_id_fk", "ALTER TABLE borrow_requests ADD COLUMN borrower_employee_id_fk INTEGER REFERENCES employees(id) ON UPDATE CASCADE ON DELETE SET NULL"),
+            ("borrower_staff_id_snapshot", "ALTER TABLE borrow_requests ADD COLUMN borrower_staff_id_snapshot TEXT"),
+            ("borrower_name_snapshot", "ALTER TABLE borrow_requests ADD COLUMN borrower_name_snapshot TEXT"),
+            ("submitted_by_employee_id_fk", "ALTER TABLE borrow_requests ADD COLUMN submitted_by_employee_id_fk INTEGER REFERENCES employees(id) ON UPDATE CASCADE ON DELETE SET NULL"),
+            ("submitted_by_staff_id_snapshot", "ALTER TABLE borrow_requests ADD COLUMN submitted_by_staff_id_snapshot TEXT"),
+            ("submitted_by_name_snapshot", "ALTER TABLE borrow_requests ADD COLUMN submitted_by_name_snapshot TEXT"),
         ];
         for (column, sql) in additions {
             if !existing.iter().any(|(name, _)| name == column) {
@@ -968,6 +984,12 @@ fn ensure_phase_c_borrow_schema_inner(
                   decision_note TEXT,
                   decided_by_account_id INTEGER REFERENCES app_local_accounts(id) ON UPDATE CASCADE ON DELETE SET NULL,
                   returned_by_employee_id_fk INTEGER REFERENCES employees(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+                  borrower_employee_id_fk INTEGER REFERENCES employees(id) ON UPDATE CASCADE ON DELETE SET NULL,
+                  borrower_staff_id_snapshot TEXT,
+                  borrower_name_snapshot TEXT,
+                  submitted_by_employee_id_fk INTEGER REFERENCES employees(id) ON UPDATE CASCADE ON DELETE SET NULL,
+                  submitted_by_staff_id_snapshot TEXT,
+                  submitted_by_name_snapshot TEXT,
                   submitted_at TEXT NOT NULL DEFAULT (datetime('now')),
                   decided_at TEXT
                 );
@@ -976,12 +998,16 @@ fn ensure_phase_c_borrow_schema_inner(
                   manual_entry, manual_employee_id, manual_employee_name, manual_employee_email,
                   manual_employee_team, status, request_type,
                   submit_source_ip, decision_note, decided_by_account_id, returned_by_employee_id_fk,
+                  borrower_employee_id_fk, borrower_staff_id_snapshot, borrower_name_snapshot,
+                  submitted_by_employee_id_fk, submitted_by_staff_id_snapshot, submitted_by_name_snapshot,
                   submitted_at, decided_at
                 )
                 SELECT id, request_key, employee_id_fk, submitted_employee_id, submitted_full_name,
                   manual_entry, manual_employee_id, manual_employee_name, manual_employee_email,
                   manual_employee_team, status, request_type,
                   submit_source_ip, decision_note, decided_by_account_id, returned_by_employee_id_fk,
+                  borrower_employee_id_fk, borrower_staff_id_snapshot, borrower_name_snapshot,
+                  submitted_by_employee_id_fk, submitted_by_staff_id_snapshot, submitted_by_name_snapshot,
                   submitted_at, decided_at
                 FROM borrow_requests_phase_c_legacy;
                 DROP TABLE borrow_requests_phase_c_legacy;
@@ -1024,6 +1050,137 @@ fn ensure_phase_c_borrow_schema_inner(
 
 fn quote_sql_identifier(value: &str) -> String {
     format!("\"{}\"", value.replace('"', "\"\""))
+}
+
+fn ensure_handle_with_care_schema(conn: &Connection) -> Result<(), String> {
+    ensure_borrow_request_item_retention(conn)?;
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS borrow_handle_with_care_policies (
+          version INTEGER PRIMARY KEY AUTOINCREMENT,
+          text_en TEXT NOT NULL CHECK(length(trim(text_en)) > 0 AND length(text_en) <= 20000),
+          text_vi TEXT NOT NULL CHECK(length(trim(text_vi)) > 0 AND length(text_vi) <= 20000),
+          created_by_account_id INTEGER REFERENCES app_local_accounts(id) ON UPDATE CASCADE ON DELETE SET NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          superseded_at TEXT
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_borrow_handle_with_care_current
+          ON borrow_handle_with_care_policies((1))
+          WHERE superseded_at IS NULL;
+        CREATE TABLE IF NOT EXISTS borrow_request_confirmations (
+          borrow_request_id INTEGER PRIMARY KEY REFERENCES borrow_requests(id) ON DELETE RESTRICT,
+          policy_version INTEGER REFERENCES borrow_handle_with_care_policies(version) ON DELETE RESTRICT,
+          policy_text_en_snapshot TEXT,
+          policy_text_vi_snapshot TEXT,
+          policy_acknowledged INTEGER NOT NULL DEFAULT 0 CHECK(policy_acknowledged IN (0, 1)),
+          asset_codes_snapshot_json TEXT NOT NULL,
+          confirmation_method TEXT,
+          signature_png_blob BLOB,
+          typed_name TEXT,
+          confirmed_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_borrow_handle_with_care_created_at
+          ON borrow_handle_with_care_policies(created_at DESC, version DESC);
+        CREATE INDEX IF NOT EXISTS idx_borrow_request_confirmations_policy_version
+          ON borrow_request_confirmations(policy_version);
+        "#,
+    )
+    .map_err(|err| format!("failed to ensure Handle with Care schema: {err}"))
+}
+
+fn ensure_borrow_request_item_retention(conn: &Connection) -> Result<(), String> {
+    let mut stmt = conn
+        .prepare("PRAGMA foreign_key_list(borrow_request_items)")
+        .map_err(|err| format!("failed to inspect borrow request item foreign keys: {err}"))?;
+    let foreign_keys = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
+            ))
+        })
+        .map_err(|err| format!("failed to read borrow request item foreign keys: {err}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("failed to collect borrow request item foreign keys: {err}"))?;
+
+    let uses_cascade = foreign_keys
+        .iter()
+        .any(|(table, _, on_delete)| table == "borrow_requests" && on_delete == "CASCADE");
+    if !uses_cascade {
+        return Ok(());
+    }
+
+    let pragma_foreign_keys: i64 = conn
+        .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
+        .map_err(|err| format!("failed to read foreign_keys pragma: {err}"))?;
+    let pragma_legacy_alter_table: i64 = conn
+        .query_row("PRAGMA legacy_alter_table", [], |row| row.get(0))
+        .map_err(|err| format!("failed to read legacy_alter_table pragma: {err}"))?;
+    let restore = || -> Result<(), String> {
+        conn.execute_batch(&format!(
+            "PRAGMA legacy_alter_table = {pragma_legacy_alter_table}; PRAGMA foreign_keys = {pragma_foreign_keys};"
+        ))
+        .map_err(|err| format!("failed to restore sqlite migration pragmas: {err}"))
+    };
+
+    let indexes = conn
+        .prepare("SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'borrow_request_items' AND sql IS NOT NULL ORDER BY name")
+        .map_err(|err| format!("failed to inspect borrow request item indexes: {err}"))?
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .map_err(|err| format!("failed to read borrow request item indexes: {err}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("failed to collect borrow request item indexes: {err}"))?;
+
+    conn.execute_batch(
+        "PRAGMA foreign_keys = OFF; PRAGMA legacy_alter_table = ON; BEGIN IMMEDIATE;",
+    )
+    .map_err(|err| format!("failed to start request item retention migration: {err}"))?;
+    let result = (|| -> Result<(), String> {
+        for (name, _) in &indexes {
+            conn.execute_batch(&format!("DROP INDEX {}", quote_sql_identifier(name)))
+                .map_err(|err| format!("failed to preserve request item index {name}: {err}"))?;
+        }
+        conn.execute_batch(
+            r#"
+            ALTER TABLE borrow_request_items RENAME TO borrow_request_items_phase1_legacy;
+            CREATE TABLE borrow_request_items_phase1_new (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              borrow_request_id INTEGER NOT NULL REFERENCES borrow_requests(id) ON DELETE RESTRICT,
+              asset_id INTEGER NOT NULL REFERENCES assets(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+              asset_code_snapshot TEXT NOT NULL,
+              created_at TEXT NOT NULL DEFAULT (datetime('now')),
+              UNIQUE(borrow_request_id, asset_id)
+            );
+            INSERT INTO borrow_request_items_phase1_new(
+              id, borrow_request_id, asset_id, asset_code_snapshot, created_at
+            )
+            SELECT id, borrow_request_id, asset_id, asset_code_snapshot, created_at
+            FROM borrow_request_items_phase1_legacy;
+            DROP TABLE borrow_request_items_phase1_legacy;
+            ALTER TABLE borrow_request_items_phase1_new RENAME TO borrow_request_items;
+            "#,
+        )
+        .map_err(|err| format!("failed to rebuild request item retention schema: {err}"))?;
+        for (_, sql) in indexes {
+            conn.execute_batch(&sql)
+                .map_err(|err| format!("failed to restore request item index: {err}"))?;
+        }
+        conn.execute_batch("COMMIT;")
+            .map_err(|err| format!("failed to commit request item retention migration: {err}"))?;
+        Ok(())
+    })();
+
+    if result.is_err() {
+        let _ = conn.execute_batch("ROLLBACK;");
+    }
+    let restore_result = restore();
+    match (result, restore_result) {
+        (Err(err), Err(restore_err)) => Err(format!("{err}; {restore_err}")),
+        (Err(err), Ok(())) => Err(err),
+        (Ok(()), Err(err)) => Err(err),
+        (Ok(()), Ok(())) => Ok(()),
+    }
 }
 
 fn normalize_staff_group_values(conn: &Connection) -> Result<(), String> {
@@ -1541,6 +1698,8 @@ mod tests {
             "asset_loans",
             "asset_pending_claims",
             "audit_logs",
+            "borrow_handle_with_care_policies",
+            "borrow_request_confirmations",
         ] {
             assert!(
                 table_exists(&conn, table_name),
@@ -1555,6 +1714,12 @@ mod tests {
             "manual_employee_email",
             "manual_employee_team",
             "returned_by_employee_id_fk",
+            "borrower_employee_id_fk",
+            "borrower_staff_id_snapshot",
+            "borrower_name_snapshot",
+            "submitted_by_employee_id_fk",
+            "submitted_by_staff_id_snapshot",
+            "submitted_by_name_snapshot",
         ] {
             assert!(
                 column_exists(&conn, "borrow_requests", column),
@@ -1566,6 +1731,98 @@ mod tests {
             "asset_loans",
             "returned_by_employee_id_fk"
         ));
+
+        for (table_name, column_name) in [
+            ("borrow_request_confirmations", "borrow_request_id"),
+            ("borrow_request_confirmations", "policy_version"),
+            ("borrow_request_confirmations", "policy_text_en_snapshot"),
+            ("borrow_request_confirmations", "policy_text_vi_snapshot"),
+            ("borrow_request_confirmations", "policy_acknowledged"),
+            ("borrow_request_confirmations", "asset_codes_snapshot_json"),
+            ("borrow_request_confirmations", "confirmation_method"),
+            ("borrow_request_confirmations", "signature_png_blob"),
+            ("borrow_request_confirmations", "typed_name"),
+            ("borrow_request_confirmations", "confirmed_at"),
+        ] {
+            assert!(column_exists(&conn, table_name, column_name));
+        }
+
+        let confirmation_fk_action: String = conn
+            .query_row(
+                "SELECT on_delete FROM pragma_foreign_key_list('borrow_request_confirmations') WHERE \"table\" = 'borrow_requests'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("confirmation request foreign key");
+        assert!(matches!(
+            confirmation_fk_action.as_str(),
+            "RESTRICT" | "NO ACTION"
+        ));
+
+        let item_fk_action: String = conn
+            .query_row(
+                "SELECT on_delete FROM pragma_foreign_key_list('borrow_request_items') WHERE \"table\" = 'borrow_requests'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("request item foreign key");
+        assert!(matches!(item_fk_action.as_str(), "RESTRICT" | "NO ACTION"));
+    }
+
+    #[test]
+    fn phase1_migration_preserves_pre_feature_request_without_fabricating_evidence() {
+        let conn = Connection::open_in_memory().expect("open legacy database");
+        configure_connection(&conn).expect("configure sqlite pragmas");
+        conn.execute_batch(
+            r#"
+            CREATE TABLE employees (id INTEGER PRIMARY KEY, employee_id TEXT NOT NULL, full_name TEXT NOT NULL, team_id INTEGER, asw_start_date TEXT, email TEXT, nick_name TEXT, project TEXT, job_title TEXT, notes TEXT, computername TEXT);
+            CREATE TABLE app_local_accounts (id INTEGER PRIMARY KEY, account_key TEXT NOT NULL, username TEXT NOT NULL, display_name TEXT NOT NULL, role TEXT NOT NULL, password_hash TEXT NOT NULL, recovery_code_hash TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+            CREATE TABLE borrow_requests (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              request_key TEXT NOT NULL UNIQUE,
+              employee_id_fk INTEGER NOT NULL REFERENCES employees(id) ON DELETE RESTRICT,
+              submitted_employee_id TEXT NOT NULL,
+              submitted_full_name TEXT NOT NULL,
+              manual_entry INTEGER NOT NULL DEFAULT 0,
+              manual_employee_id TEXT,
+              manual_employee_name TEXT,
+              manual_employee_email TEXT,
+              manual_employee_team TEXT,
+              status TEXT NOT NULL DEFAULT 'pending',
+              request_type TEXT NOT NULL DEFAULT 'borrow',
+              submit_source_ip TEXT,
+              decision_note TEXT,
+              decided_by_account_id INTEGER,
+              returned_by_employee_id_fk INTEGER,
+              submitted_at TEXT NOT NULL DEFAULT (datetime('now')),
+              decided_at TEXT
+            );
+            INSERT INTO employees(id, employee_id, full_name) VALUES(1, 'EE-OLD', 'Old Employee');
+            INSERT INTO borrow_requests(request_key, employee_id_fk, submitted_employee_id, submitted_full_name) VALUES('OLD-REQUEST', 1, 'EE-OLD', 'Old Employee');
+            "#,
+        ).expect("create pre-feature schema");
+
+        apply_migrations(&conn).expect("upgrade pre-feature schema");
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM borrow_requests WHERE request_key = 'OLD-REQUEST'",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM borrow_request_confirmations",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0
+        );
+        assert!(conn.query_row("SELECT borrower_employee_id_fk FROM borrow_requests WHERE request_key = 'OLD-REQUEST'", [], |row| row.get::<_, Option<i64>>(0)).unwrap().is_none());
+        apply_migrations(&conn).expect("reapply phase1 migration idempotently");
     }
 
     #[test]

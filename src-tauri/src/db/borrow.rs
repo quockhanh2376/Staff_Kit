@@ -29,6 +29,17 @@ const ASSET_STATUS_LOST: &str = "lost";
 const STAFF_GROUP_OFFBOARDING: &str = "offboarding";
 const DEFAULT_BORROW_LAN_PORT: u16 = 8787;
 const BORROW_LAN_DETECTION_TARGETS: [&str; 3] = ["1.1.1.1:80", "8.8.8.8:80", "208.67.222.222:80"];
+const HANDLE_WITH_CARE_POLICY_MAX_BYTES: usize = 20_000;
+
+#[derive(Debug, Clone)]
+pub struct HandleWithCarePolicyRecord {
+    pub version: i64,
+    pub text_en: String,
+    pub text_vi: String,
+    pub created_by_account_id: Option<i64>,
+    pub created_at: String,
+    pub superseded_at: Option<String>,
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -88,6 +99,124 @@ pub struct BorrowRequestRejectInput {
 struct BorrowRequestItemRecord {
     asset_id: i64,
     asset_code_snapshot: String,
+}
+
+pub(crate) fn get_current_handle_with_care_policy_conn(
+    conn: &Connection,
+) -> Result<Option<HandleWithCarePolicyRecord>, String> {
+    conn.query_row(
+        r#"
+        SELECT version, text_en, text_vi, created_by_account_id, created_at, superseded_at
+        FROM borrow_handle_with_care_policies
+        WHERE superseded_at IS NULL
+        ORDER BY version DESC
+        LIMIT 1
+        "#,
+        [],
+        map_handle_with_care_policy_row,
+    )
+    .optional()
+    .map_err(|err| format!("failed to load current Handle with Care policy: {err}"))
+}
+
+pub(crate) fn get_handle_with_care_policy_conn(
+    conn: &Connection,
+    version: i64,
+) -> Result<Option<HandleWithCarePolicyRecord>, String> {
+    conn.query_row(
+        r#"
+        SELECT version, text_en, text_vi, created_by_account_id, created_at, superseded_at
+        FROM borrow_handle_with_care_policies
+        WHERE version = ?
+        "#,
+        params![version],
+        map_handle_with_care_policy_row,
+    )
+    .optional()
+    .map_err(|err| format!("failed to load Handle with Care policy version: {err}"))
+}
+
+pub(crate) fn save_handle_with_care_policy_conn(
+    conn: &mut Connection,
+    created_by_account_id: i64,
+    text_en: &str,
+    text_vi: &str,
+) -> Result<HandleWithCarePolicyRecord, String> {
+    let text_en = normalize_handle_with_care_policy_text(text_en, "English")?;
+    let text_vi = normalize_handle_with_care_policy_text(text_vi, "Vietnamese")?;
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|err| format!("failed to start Handle with Care policy transaction: {err}"))?;
+
+    if let Some(current) = tx
+        .query_row(
+            r#"
+            SELECT version, text_en, text_vi, created_by_account_id, created_at, superseded_at
+            FROM borrow_handle_with_care_policies
+            WHERE superseded_at IS NULL
+            ORDER BY version DESC
+            LIMIT 1
+            "#,
+            [],
+            map_handle_with_care_policy_row,
+        )
+        .optional()
+        .map_err(|err| format!("failed to inspect current Handle with Care policy: {err}"))?
+    {
+        if current.text_en == text_en && current.text_vi == text_vi {
+            tx.commit()
+                .map_err(|err| format!("failed to commit unchanged policy lookup: {err}"))?;
+            return Ok(current);
+        }
+    }
+
+    tx.execute(
+        "UPDATE borrow_handle_with_care_policies SET superseded_at = datetime('now') WHERE superseded_at IS NULL",
+        [],
+    )
+    .map_err(|err| format!("failed to supersede current Handle with Care policy: {err}"))?;
+    tx.execute(
+        "INSERT INTO borrow_handle_with_care_policies(text_en, text_vi, created_by_account_id) VALUES(?, ?, ?)",
+        params![text_en, text_vi, created_by_account_id],
+    )
+    .map_err(|err| format!("failed to save Handle with Care policy: {err}"))?;
+    let version = tx.last_insert_rowid();
+    let policy = tx
+        .query_row(
+            "SELECT version, text_en, text_vi, created_by_account_id, created_at, superseded_at FROM borrow_handle_with_care_policies WHERE version = ?",
+            params![version],
+            map_handle_with_care_policy_row,
+        )
+        .map_err(|err| format!("failed to load saved Handle with Care policy: {err}"))?;
+    tx.commit()
+        .map_err(|err| format!("failed to commit Handle with Care policy: {err}"))?;
+    Ok(policy)
+}
+
+fn map_handle_with_care_policy_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<HandleWithCarePolicyRecord> {
+    Ok(HandleWithCarePolicyRecord {
+        version: row.get(0)?,
+        text_en: row.get(1)?,
+        text_vi: row.get(2)?,
+        created_by_account_id: row.get(3)?,
+        created_at: row.get(4)?,
+        superseded_at: row.get(5)?,
+    })
+}
+
+fn normalize_handle_with_care_policy_text(value: &str, label: &str) -> Result<String, String> {
+    let normalized = value.trim().to_string();
+    if normalized.is_empty() {
+        return Err(format!("{label} Handle with Care policy text is required"));
+    }
+    if normalized.len() > HANDLE_WITH_CARE_POLICY_MAX_BYTES {
+        return Err(format!(
+            "{label} Handle with Care policy text is too long (max {HANDLE_WITH_CARE_POLICY_MAX_BYTES} bytes)"
+        ));
+    }
+    Ok(normalized)
 }
 
 pub fn get_borrow_lan_settings(app: &AppHandle) -> Result<BorrowLanSettings, String> {
@@ -1100,6 +1229,127 @@ mod tests {
             |row| row.get(0),
         )
         .expect("count active loans")
+    }
+
+    #[test]
+    fn handle_with_care_policy_versions_are_immutable_and_identical_saves_reuse_current() {
+        let mut conn = open_test_connection();
+        let account_id: i64 = conn
+            .query_row(
+                "SELECT id FROM app_local_accounts ORDER BY id LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("load seeded account");
+
+        let first = save_handle_with_care_policy_conn(
+            &mut conn,
+            account_id,
+            "Handle with care",
+            "Vui long giu gin",
+        )
+        .expect("save first policy");
+        let same = save_handle_with_care_policy_conn(
+            &mut conn,
+            account_id,
+            "Handle with care",
+            "Vui long giu gin",
+        )
+        .expect("reuse identical policy");
+        assert_eq!(first.version, same.version);
+
+        let second = save_handle_with_care_policy_conn(
+            &mut conn,
+            account_id,
+            "Handle with care - updated",
+            "Vui long giu gin - cap nhat",
+        )
+        .expect("save updated policy");
+        assert!(second.version > first.version);
+        assert_eq!(
+            get_handle_with_care_policy_conn(&conn, first.version)
+                .unwrap()
+                .unwrap()
+                .text_en,
+            "Handle with care"
+        );
+        assert_eq!(
+            get_current_handle_with_care_policy_conn(&conn)
+                .unwrap()
+                .unwrap()
+                .version,
+            second.version
+        );
+
+        assert!(
+            save_handle_with_care_policy_conn(&mut conn, account_id, "", "Valid Vietnamese")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn confirmation_evidence_restricts_request_deletion_and_round_trips_through_backup() {
+        let mut conn = open_test_connection();
+        let account_id: i64 = conn
+            .query_row(
+                "SELECT id FROM app_local_accounts ORDER BY id LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("load seeded account");
+        let policy =
+            save_handle_with_care_policy_conn(&mut conn, account_id, "English", "Vietnamese")
+                .expect("save policy");
+
+        conn.execute(
+            "INSERT INTO borrow_requests(request_key, submitted_employee_id, submitted_full_name) VALUES('CONFIRMATION-1', 'EE-1', 'Employee')",
+            [],
+        ).expect("insert request");
+        let request_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO borrow_request_confirmations(borrow_request_id, policy_version, policy_text_en_snapshot, policy_text_vi_snapshot, policy_acknowledged, asset_codes_snapshot_json, confirmation_method, confirmed_at) VALUES(?, ?, ?, ?, 1, '[]', 'typed_name', datetime('now'))",
+            params![request_id, policy.version, policy.text_en, policy.text_vi],
+        ).expect("insert confirmation");
+
+        let delete_result = conn.execute(
+            "DELETE FROM borrow_requests WHERE id = ?",
+            params![request_id],
+        );
+        assert!(
+            delete_result.is_err(),
+            "confirmation must prevent request deletion"
+        );
+
+        let backup_path = std::env::temp_dir().join(format!(
+            "staff-kit-phase1-{}-{}.sqlite3",
+            std::process::id(),
+            request_id
+        ));
+        let _ = std::fs::remove_file(&backup_path);
+        let escaped = backup_path.to_string_lossy().replace('\'', "''");
+        conn.execute_batch(&format!("VACUUM INTO '{escaped}'"))
+            .expect("create backup");
+        let restored = Connection::open(&backup_path).expect("open restored backup");
+        configure_connection(&restored).expect("configure restored backup");
+        apply_migrations(&restored).expect("migrate restored backup");
+        assert_eq!(
+            get_current_handle_with_care_policy_conn(&restored)
+                .unwrap()
+                .unwrap()
+                .version,
+            policy.version
+        );
+        assert_eq!(
+            restored
+                .query_row(
+                    "SELECT COUNT(*) FROM borrow_request_confirmations",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            1
+        );
+        let _ = std::fs::remove_file(backup_path);
     }
 
     #[test]

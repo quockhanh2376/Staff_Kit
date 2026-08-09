@@ -510,35 +510,41 @@ pub fn move_employees_group(
 
 pub fn delete_employee(app: &AppHandle, id: i64) -> Result<bool, String> {
     let mut conn = open_runtime_connection(app)?;
+    delete_employee_conn(&mut conn, id)
+}
+
+pub(crate) fn delete_employee_conn(conn: &mut Connection, id: i64) -> Result<bool, String> {
     let tx = conn
         .transaction()
         .map_err(|err| format!("failed to start employee delete transaction: {err}"))?;
 
+    let loan_count: i64 = tx
+        .query_row(
+            "SELECT COUNT(*) FROM asset_loans WHERE employee_id_fk = ? OR returned_by_employee_id_fk = ?",
+            params![id, id],
+            |row| row.get(0),
+        )
+        .map_err(humanize_sqlite_error)?;
+    if loan_count > 0 {
+        return Err("cannot delete an employee with historical asset loan records; preserve the employee for audit history".to_string());
+    }
+
+    // Preserve request rows, item snapshots, and confirmation evidence. Only
+    // nullable employee references are cleared; immutable identity snapshots
+    // remain available for audit.
     tx.execute(
         r#"
-        UPDATE assets
-        SET status = 'in_stock',
-            updated_at = datetime('now')
-        WHERE id IN (
-          SELECT asset_id
-          FROM asset_loans
-          WHERE employee_id_fk = ?
-            AND returned_at IS NULL
-        )
+        UPDATE borrow_requests
+        SET employee_id_fk = NULL,
+            returned_by_employee_id_fk = NULL,
+            borrower_employee_id_fk = NULL,
+            submitted_by_employee_id_fk = NULL
+        WHERE employee_id_fk = ?
+           OR returned_by_employee_id_fk = ?
+           OR borrower_employee_id_fk = ?
+           OR submitted_by_employee_id_fk = ?
         "#,
-        params![id],
-    )
-    .map_err(humanize_sqlite_error)?;
-
-    tx.execute(
-        "DELETE FROM asset_loans WHERE employee_id_fk = ?",
-        params![id],
-    )
-    .map_err(humanize_sqlite_error)?;
-
-    tx.execute(
-        "DELETE FROM borrow_requests WHERE employee_id_fk = ?",
-        params![id],
+        params![id, id, id, id],
     )
     .map_err(humanize_sqlite_error)?;
 
@@ -547,7 +553,7 @@ pub fn delete_employee(app: &AppHandle, id: i64) -> Result<bool, String> {
         .map_err(humanize_sqlite_error)?;
 
     tx.commit()
-        .map_err(|err| format!("failed to commit employee delete: {err}"))?;
+        .map_err(|err| format!("failed to commit employee delete transaction: {err}"))?;
 
     Ok(changed > 0)
 }
@@ -1305,9 +1311,9 @@ mod tests {
     use crate::db::{apply_migrations, configure_connection, COMPUTER_NAME_2_FIELD_KEY};
 
     use super::{
-        build_employee_from_clause, query_employees, reconcile_employee_laptop_loans_tx,
-        upsert_employee_from_payload, EmployeePayload, EmployeeQuery, NormalizedEmployeePayload,
-        EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL,
+        build_employee_from_clause, delete_employee_conn, query_employees,
+        reconcile_employee_laptop_loans_tx, upsert_employee_from_payload, EmployeePayload,
+        EmployeeQuery, NormalizedEmployeePayload, EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL,
     };
 
     fn open_test_connection() -> Connection {
@@ -1315,6 +1321,58 @@ mod tests {
         configure_connection(&conn).expect("configure sqlite pragmas");
         apply_migrations(&conn).expect("apply migrations");
         conn
+    }
+
+    #[test]
+    fn employee_deletion_preserves_historical_borrow_requests_and_confirmation_evidence() {
+        let mut conn = open_test_connection();
+        let employee_id = seed_employee(&conn, "EE-HISTORY", "Historical Employee");
+        conn.execute(
+            "INSERT INTO borrow_requests(request_key, employee_id_fk, submitted_employee_id, submitted_full_name, borrower_employee_id_fk, borrower_staff_id_snapshot, borrower_name_snapshot, submitted_by_employee_id_fk, submitted_by_staff_id_snapshot, submitted_by_name_snapshot, status) VALUES('HISTORY-REQUEST', ?, 'EE-HISTORY', 'Historical Employee', ?, 'EE-HISTORY', 'Historical Employee', ?, 'EE-HISTORY', 'Historical Employee', 'approved')",
+            params![employee_id, employee_id, employee_id],
+        ).expect("insert historical request");
+        let request_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO borrow_request_confirmations(borrow_request_id, asset_codes_snapshot_json, confirmation_method, confirmed_at) VALUES(?, '[]', 'typed_name', datetime('now'))",
+            params![request_id],
+        ).expect("insert confirmation evidence");
+
+        assert!(delete_employee_conn(&mut conn, employee_id).expect("delete employee"));
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM employees WHERE id = ?",
+                params![employee_id],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM borrow_requests WHERE id = ?",
+                params![request_id],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM borrow_request_confirmations WHERE borrow_request_id = ?",
+                params![request_id],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+        assert!(conn
+            .query_row(
+                "SELECT employee_id_fk FROM borrow_requests WHERE id = ?",
+                params![request_id],
+                |row| row.get::<_, Option<i64>>(0)
+            )
+            .unwrap()
+            .is_none());
     }
 
     fn seed_employee(conn: &Connection, employee_id: &str, full_name: &str) -> i64 {

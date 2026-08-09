@@ -382,13 +382,19 @@ CREATE TABLE IF NOT EXISTS borrow_requests (
   decision_note TEXT,
   decided_by_account_id INTEGER REFERENCES app_local_accounts(id) ON UPDATE CASCADE ON DELETE SET NULL,
   returned_by_employee_id_fk INTEGER REFERENCES employees(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+  borrower_employee_id_fk INTEGER REFERENCES employees(id) ON UPDATE CASCADE ON DELETE SET NULL,
+  borrower_staff_id_snapshot TEXT,
+  borrower_name_snapshot TEXT,
+  submitted_by_employee_id_fk INTEGER REFERENCES employees(id) ON UPDATE CASCADE ON DELETE SET NULL,
+  submitted_by_staff_id_snapshot TEXT,
+  submitted_by_name_snapshot TEXT,
   submitted_at TEXT NOT NULL DEFAULT (datetime('now')),
   decided_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS borrow_request_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  borrow_request_id INTEGER NOT NULL REFERENCES borrow_requests(id) ON DELETE CASCADE,
+  borrow_request_id INTEGER NOT NULL REFERENCES borrow_requests(id) ON DELETE RESTRICT,
   asset_id INTEGER NOT NULL REFERENCES assets(id) ON UPDATE CASCADE ON DELETE RESTRICT,
   asset_code_snapshot TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -410,6 +416,32 @@ CREATE TABLE IF NOT EXISTS asset_pending_claims (
   asset_id INTEGER PRIMARY KEY REFERENCES assets(id) ON UPDATE CASCADE ON DELETE RESTRICT,
   borrow_request_id INTEGER NOT NULL REFERENCES borrow_requests(id) ON DELETE CASCADE,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS borrow_handle_with_care_policies (
+  version INTEGER PRIMARY KEY AUTOINCREMENT,
+  text_en TEXT NOT NULL CHECK(length(trim(text_en)) > 0 AND length(text_en) <= 20000),
+  text_vi TEXT NOT NULL CHECK(length(trim(text_vi)) > 0 AND length(text_vi) <= 20000),
+  created_by_account_id INTEGER REFERENCES app_local_accounts(id) ON UPDATE CASCADE ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  superseded_at TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_borrow_handle_with_care_current
+  ON borrow_handle_with_care_policies((1))
+  WHERE superseded_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS borrow_request_confirmations (
+  borrow_request_id INTEGER PRIMARY KEY REFERENCES borrow_requests(id) ON DELETE RESTRICT,
+  policy_version INTEGER REFERENCES borrow_handle_with_care_policies(version) ON DELETE RESTRICT,
+  policy_text_en_snapshot TEXT,
+  policy_text_vi_snapshot TEXT,
+  policy_acknowledged INTEGER NOT NULL DEFAULT 0 CHECK(policy_acknowledged IN (0, 1)),
+  asset_codes_snapshot_json TEXT NOT NULL,
+  confirmation_method TEXT,
+  signature_png_blob BLOB,
+  typed_name TEXT,
+  confirmed_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS audit_logs (
@@ -451,6 +483,10 @@ CREATE INDEX IF NOT EXISTS idx_borrow_requests_status_submitted_at
   ON borrow_requests(status, submitted_at);
 CREATE INDEX IF NOT EXISTS idx_borrow_request_items_request_id
   ON borrow_request_items(borrow_request_id);
+CREATE INDEX IF NOT EXISTS idx_borrow_handle_with_care_created_at
+  ON borrow_handle_with_care_policies(created_at DESC, version DESC);
+CREATE INDEX IF NOT EXISTS idx_borrow_request_confirmations_policy_version
+  ON borrow_request_confirmations(policy_version);
 CREATE INDEX IF NOT EXISTS idx_asset_pending_claims_request_id
   ON asset_pending_claims(borrow_request_id);
 CREATE INDEX IF NOT EXISTS idx_asset_loans_employee_active
