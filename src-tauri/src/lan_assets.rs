@@ -310,6 +310,92 @@ pub(crate) fn borrow_page_html() -> &'static str {
         background: rgba(248, 113, 113, 0.12);
         color: #fecaca;
       }
+
+      .confirmation-section {
+        margin-top: 16px;
+        padding: 14px;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: var(--surface-2);
+      }
+
+      .confirmation-section h2 {
+        margin: 0 0 10px;
+        font-size: 16px;
+      }
+
+      .policy-block {
+        margin-top: 8px;
+        padding: 10px;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.04);
+        color: var(--text);
+        line-height: 1.45;
+        white-space: pre-wrap;
+      }
+
+      .policy-language {
+        margin: 0 0 4px;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .acknowledgment {
+        display: flex;
+        gap: 8px;
+        align-items: flex-start;
+        margin-top: 12px;
+        font-size: 13px;
+        line-height: 1.4;
+      }
+
+      .acknowledgment input {
+        width: auto;
+        margin-top: 2px;
+      }
+
+      .signature-label {
+        margin-top: 12px;
+        margin-bottom: 6px;
+      }
+
+      #signature-canvas {
+        display: block;
+        width: 100%;
+        aspect-ratio: 2 / 1;
+        min-height: 120px;
+        max-height: 240px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: white;
+        touch-action: none;
+      }
+
+      .confirmation-actions {
+        display: flex;
+        justify-content: flex-end;
+        margin-top: 6px;
+      }
+
+      .clear-signature {
+        width: auto;
+        padding: 6px 10px;
+        background: transparent;
+        color: var(--muted);
+      }
+
+      .confirmation-hint {
+        margin: 8px 0 0;
+        font-size: 12px;
+      }
+
+      @media (max-width: 480px) {
+        main { padding: 16px 10px 28px; }
+        .card { padding: 14px; }
+        .search-row { gap: 6px; }
+        #search-btn { padding-inline: 12px; }
+      }
     </style>
   </head>
   <body>
@@ -338,6 +424,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
 
         <div id="selected-assets"></div>
         <div id="asset-results" class="asset-list"></div>
+        <div id="confirmation-section"></div>
         <button id="submit-button" type="button">Submit Borrow Request</button>
         <div id="message"></div>
       </div>
@@ -347,10 +434,22 @@ pub(crate) fn borrow_page_html() -> &'static str {
       // State
       let mode = "borrow"; // "borrow" | "return"
       const selectedAssets = new Map();
+      let borrowPolicy = null;
+      let policyLoading = false;
+      let policyError = "";
+      let policyAcknowledged = false;
+      let typedName = "";
+      let signatureStrokeCount = 0;
+      let signatureInkPresent = false;
+      let signatureCanvas = null;
+      let isDrawing = false;
+      let currentStrokeHasInk = false;
+      let strokeStartPoint = null;
 
       // Element refs
       const resultsEl   = document.getElementById("asset-results");
       const selectedEl  = document.getElementById("selected-assets");
+      const confirmationEl = document.getElementById("confirmation-section");
       const messageEl   = document.getElementById("message");
       const searchInput = document.getElementById("asset-search");
       const submitBtn   = document.getElementById("submit-button");
@@ -392,6 +491,222 @@ pub(crate) fn borrow_page_html() -> &'static str {
       const clientSessionId = createRequestId();
       let isSearching = false;
       let isSubmitting = false;
+
+      const normalizedTypedName = () => typedName.trim().replace(/\\s+/g, " ");
+      const hasSignatureEvidence = () => signatureStrokeCount > 0 && signatureInkPresent;
+      const hasConfirmationEvidence = () => Boolean(normalizedTypedName()) || hasSignatureEvidence();
+      const getCanvasContext = (canvas) => {
+        try { return canvas?.getContext?.("2d") || null; } catch (_error) { return null; }
+      };
+
+      const clearSignature = () => {
+        signatureStrokeCount = 0;
+        signatureInkPresent = false;
+        currentStrokeHasInk = false;
+        strokeStartPoint = null;
+        if (signatureCanvas) {
+          const context = getCanvasContext(signatureCanvas);
+          if (context) {
+            context.clearRect(0, 0, signatureCanvas.width, signatureCanvas.height);
+            context.fillStyle = "white";
+            context.fillRect(0, 0, signatureCanvas.width, signatureCanvas.height);
+          }
+        }
+      };
+
+      const resetEvidence = () => {
+        policyAcknowledged = false;
+        typedName = "";
+        clearSignature();
+      };
+
+      const updateSubmitState = () => {
+        const policyReady = mode === "return" || Boolean(borrowPolicy);
+        const acknowledged = mode === "return" || policyAcknowledged;
+        submitBtn.disabled = isSubmitting || selectedAssets.size === 0 || !policyReady || !acknowledged || !hasConfirmationEvidence();
+      };
+
+      const initializeSignatureCanvas = () => {
+        if (!signatureCanvas || signatureCanvas.dataset.initialized === "true") return;
+        signatureCanvas.dataset.initialized = "true";
+        const context = getCanvasContext(signatureCanvas);
+        const resize = () => {
+          const ratio = globalThis.devicePixelRatio || 1;
+          const width = Math.max(signatureCanvas.clientWidth || 480, 240);
+          const height = Math.round(width / 2);
+          signatureCanvas.width = Math.round(width * ratio);
+          signatureCanvas.height = Math.round(height * ratio);
+          if (context) {
+            context.setTransform(ratio, 0, 0, ratio, 0, 0);
+            context.fillStyle = "white";
+            context.fillRect(0, 0, width, height);
+            context.strokeStyle = "rgb(17, 24, 39)";
+            context.lineWidth = 2;
+            context.lineCap = "round";
+            context.lineJoin = "round";
+          }
+        };
+        resize();
+        const point = (event) => {
+          const rect = signatureCanvas.getBoundingClientRect();
+          return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+        };
+        signatureCanvas.addEventListener("pointerdown", (event) => {
+          event.preventDefault();
+          isDrawing = true;
+          const pointValue = point(event);
+          currentStrokeHasInk = false;
+          strokeStartPoint = pointValue;
+          context?.beginPath();
+          context?.moveTo(pointValue.x, pointValue.y);
+        });
+        signatureCanvas.addEventListener("pointermove", (event) => {
+          if (!isDrawing) return;
+          event.preventDefault();
+          const pointValue = point(event);
+          if (!currentStrokeHasInk && strokeStartPoint && Math.hypot(pointValue.x - strokeStartPoint.x, pointValue.y - strokeStartPoint.y) >= 2) {
+            currentStrokeHasInk = true;
+            signatureStrokeCount += 1;
+            signatureInkPresent = true;
+            updateSubmitState();
+          }
+          context?.lineTo(pointValue.x, pointValue.y);
+          context?.stroke();
+        });
+        const stopDrawing = () => { isDrawing = false; currentStrokeHasInk = false; strokeStartPoint = null; };
+        signatureCanvas.addEventListener("pointerup", stopDrawing);
+        signatureCanvas.addEventListener("pointercancel", stopDrawing);
+        signatureCanvas.addEventListener("pointerleave", stopDrawing);
+        window.addEventListener("resize", resize);
+      };
+
+      const renderConfirmation = () => {
+        confirmationEl.replaceChildren();
+        if (selectedAssets.size === 0) {
+          updateSubmitState();
+          return;
+        }
+        const section = document.createElement("section");
+        section.id = "confirmation-section-content";
+        section.className = "confirmation-section";
+        const heading = document.createElement("h2");
+        heading.textContent = mode === "borrow" ? "Handle with Care" : "Return Confirmation";
+        section.append(heading);
+
+        if (mode === "borrow") {
+          if (policyLoading) {
+            const loading = document.createElement("p");
+            loading.className = "helper";
+            loading.textContent = "Loading the current Handle with Care policy...";
+            section.append(loading);
+          } else if (policyError) {
+            const error = document.createElement("p");
+            error.className = "message error";
+            error.textContent = policyError;
+            section.append(error);
+          } else if (borrowPolicy) {
+            const enLabel = document.createElement("div");
+            enLabel.className = "policy-language";
+            enLabel.textContent = "English";
+            const en = document.createElement("div");
+            en.id = "policy-english";
+            en.className = "policy-block";
+            en.textContent = borrowPolicy.textEn;
+            const viLabel = document.createElement("div");
+            viLabel.className = "policy-language";
+            viLabel.textContent = "Tiếng Việt";
+            const vi = document.createElement("div");
+            vi.id = "policy-vietnamese";
+            vi.className = "policy-block";
+            vi.textContent = borrowPolicy.textVi;
+            section.append(enLabel, en, viLabel, vi);
+            const acknowledgment = document.createElement("label");
+            acknowledgment.className = "acknowledgment";
+            const checkbox = document.createElement("input");
+            checkbox.id = "acknowledgment-checkbox";
+            checkbox.type = "checkbox";
+            checkbox.checked = policyAcknowledged;
+            checkbox.addEventListener("change", () => {
+              policyAcknowledged = checkbox.checked;
+              updateSubmitState();
+            });
+            const checkboxText = document.createElement("span");
+            checkboxText.textContent = "I have carefully read and agree to the above.\nTôi đã đọc kỹ và đồng ý với nội dung trên.";
+            acknowledgment.append(checkbox, checkboxText);
+            section.append(acknowledgment);
+          }
+        } else {
+          const en = document.createElement("div");
+          en.id = "return-confirmation-en";
+          en.className = "policy-block";
+          en.textContent = "I confirm that I am returning the device(s) listed above to IT.";
+          const vi = document.createElement("div");
+          vi.id = "return-confirmation-vi";
+          vi.className = "policy-block";
+          vi.textContent = "Tôi xác nhận đang bàn giao lại cho IT các thiết bị được liệt kê ở trên.";
+          section.append(en, vi);
+        }
+
+        const signatureLabel = document.createElement("div");
+        signatureLabel.className = "signature-label";
+        signatureLabel.textContent = "Signature (optional if typing your full name)";
+        section.append(signatureLabel);
+        const canvas = document.createElement("canvas");
+        canvas.id = "signature-canvas";
+        canvas.setAttribute("aria-label", "Handwritten signature");
+        signatureCanvas = canvas;
+        section.append(canvas);
+        const signatureActions = document.createElement("div");
+        signatureActions.className = "confirmation-actions";
+        const clearButton = document.createElement("button");
+        clearButton.type = "button";
+        clearButton.className = "clear-signature";
+        clearButton.textContent = "Clear signature";
+        clearButton.addEventListener("click", () => { clearSignature(); updateSubmitState(); });
+        signatureActions.append(clearButton);
+        section.append(signatureActions);
+        const typedLabel = document.createElement("label");
+        typedLabel.className = "signature-label";
+        typedLabel.setAttribute("for", "typed-name");
+        typedLabel.textContent = "Type your full name (optional if signing)";
+        section.append(typedLabel);
+        const typedInput = document.createElement("input");
+        typedInput.id = "typed-name";
+        typedInput.autocomplete = "name";
+        typedInput.value = typedName;
+        typedInput.addEventListener("input", () => { typedName = typedInput.value; updateSubmitState(); });
+        section.append(typedInput);
+        const hint = document.createElement("p");
+        hint.className = "helper confirmation-hint";
+        hint.textContent = "Use a handwritten signature, your typed full name, or both.";
+        section.append(hint);
+        confirmationEl.append(section);
+        initializeSignatureCanvas();
+        updateSubmitState();
+      };
+
+      const loadBorrowPolicy = async () => {
+        if (mode !== "borrow") return;
+        policyLoading = true;
+        policyError = "";
+        renderConfirmation();
+        try {
+          const res = await authorizedFetch("/api/borrow-policy");
+          const payload = await res.json().catch(() => null);
+          if (!res.ok || !payload || !Number.isInteger(payload.version) || typeof payload.textEn !== "string" || !payload.textEn.trim() || typeof payload.textVi !== "string" || !payload.textVi.trim()) {
+            throw new Error("policy");
+          }
+          if (borrowPolicy && borrowPolicy.version !== payload.version) resetEvidence();
+          borrowPolicy = { version: payload.version, textEn: payload.textEn, textVi: payload.textVi };
+        } catch (_error) {
+          resetEvidence();
+          borrowPolicy = null;
+          policyError = "The Handle with Care policy could not be loaded. Please try again.";
+        } finally {
+          policyLoading = false;
+          renderConfirmation();
+        }
+      };
 
       const authorizedFetch = (input, init = {}) => {
         if (!lanToken) {
@@ -445,6 +760,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
 
         // Clear state when switching mode because eligibility changes.
         clearInteractionState();
+        if (mode === "borrow") loadBorrowPolicy();
       }
 
       btnBorrow.addEventListener("click", () => applyMode("borrow"));
@@ -453,8 +769,10 @@ pub(crate) fn borrow_page_html() -> &'static str {
       // Render helpers
       const renderSelected = () => {
         selectedEl.replaceChildren();
-        submitBtn.disabled = isSubmitting || selectedAssets.size === 0;
-        if (selectedAssets.size === 0) return;
+        if (selectedAssets.size === 0) {
+          renderConfirmation();
+          return;
+        }
         const heading = document.createElement("div");
         heading.className = "helper";
         heading.textContent = "Selected Assets";
@@ -486,15 +804,18 @@ pub(crate) fn borrow_page_html() -> &'static str {
           remove.textContent = "×";
           remove.addEventListener("click", () => {
             selectedAssets.delete(asset.assetCode);
+            resetEvidence();
+            signatureCanvas = null;
             renderSelected();
           });
           card.append(check, details, remove);
           cards.append(card);
         }
         selectedEl.append(heading, cards);
+        renderConfirmation();
       };
 
-      submitBtn.disabled = true;
+      updateSubmitState();
 
       const setMessage = (text, isSuccess = false) => {
         messageEl.replaceChildren();
@@ -505,8 +826,21 @@ pub(crate) fn borrow_page_html() -> &'static str {
         messageEl.append(message);
       };
 
+      const sanitizedSubmitError = (payload) => {
+        const code = typeof payload?.error === "string" ? payload.error.toLowerCase() : "";
+        if (code.includes("policy") || code.includes("acknowledg")) return "The policy has changed. Reload it and acknowledge it again.";
+        if (code.includes("typed") || code.includes("name")) return "The typed name must match the submitted employee name.";
+        if (code.includes("signature") || code.includes("png") || code.includes("ink")) return "Please provide a valid, non-blank signature.";
+        if (code.includes("size") || code.includes("body")) return "The confirmation is too large. Please use a smaller signature.";
+        if (code.includes("asset") || code.includes("stock") || code.includes("loan") || code.includes("claim")) return "The selected asset is no longer available. Search again.";
+        if (code.includes("borrower")) return "The selected return assets must belong to the same borrower.";
+        return "Submit failed. Please review the form and try again.";
+      };
+
       const clearInteractionState = () => {
         selectedAssets.clear();
+        resetEvidence();
+        signatureCanvas = null;
         renderSelected();
         resultsEl.replaceChildren();
         setMessage("");
@@ -553,6 +887,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
             add.textContent = MODES[mode].addLabel;
             add.addEventListener("click", () => {
               selectedAssets.set(asset.assetCode, { ...asset, matchedIdentifier: searchTerm });
+              resetEvidence();
               renderSelected();
               setMessage(`\u2713 ${asset.assetCode} selected and eligible for ${mode}.`, true);
             });
@@ -575,6 +910,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
           const responsePayload = await res.json().catch(() => null);
           if (!res.ok) {
             selectedAssets.clear();
+            resetEvidence();
             renderSelected();
             resultsEl.replaceChildren();
             setMessage("Asset search failed. Please try again.");
@@ -585,10 +921,12 @@ pub(crate) fn borrow_page_html() -> &'static str {
             : [];
           if (items.length === 0) {
             selectedAssets.clear();
+            resetEvidence();
             renderSelected();
           }
           const autoSelected = items.length === 1;
           if (autoSelected) {
+            resetEvidence();
             selectedAssets.set(items[0].assetCode, {
               ...items[0],
               matchedIdentifier: searchTerm,
@@ -607,6 +945,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
           }
         } catch (err) {
           selectedAssets.clear();
+          resetEvidence();
           renderSelected();
           resultsEl.replaceChildren();
           setMessage(err instanceof Error && err.message.includes("token")
@@ -623,13 +962,26 @@ pub(crate) fn borrow_page_html() -> &'static str {
 
       // Submit
       submitBtn.addEventListener("click", async () => {
-        if (isSubmitting || selectedAssets.size === 0) return;
+        if (isSubmitting || submitBtn.disabled || selectedAssets.size === 0) return;
         isSubmitting = true;
         submitBtn.disabled = true;
         try {
           const submittedEmployeeId = document.getElementById("staff-id").value.trim();
           const submittedFullName   = document.getElementById("full-name").value.trim();
           const assetCodes          = Array.from(selectedAssets.keys());
+          const signaturePngBase64 = hasSignatureEvidence() && signatureCanvas?.toDataURL
+            ? signatureCanvas.toDataURL("image/png").replace(/^data:image\/png;base64,/, "")
+            : null;
+          const confirmation = {
+            policyVersion: mode === "borrow" ? borrowPolicy?.version ?? null : null,
+            policyAcknowledged: mode === "borrow" ? policyAcknowledged : false,
+            confirmationMethod: hasSignatureEvidence() && normalizedTypedName() ? "both" : hasSignatureEvidence() ? "signature" : "typed_name",
+            signaturePngBase64,
+            signatureStrokeCount: hasSignatureEvidence() ? signatureStrokeCount : null,
+            signatureInkPresent: hasSignatureEvidence() ? signatureInkPresent : null,
+            typedName: normalizedTypedName() || null,
+            assetCodesSnapshot: assetCodes,
+          };
 
           const res = await authorizedFetch("/api/borrow-requests", {
             method: "POST",
@@ -641,28 +993,39 @@ pub(crate) fn borrow_page_html() -> &'static str {
               requestType: mode,
               requestId: createRequestId(),
               clientSessionId,
+              confirmation,
             }),
           });
 
           const responsePayload = await res.json().catch(() => null);
           if (!res.ok) {
-            setMessage(responsePayload?.error || "Submit failed.");
+            const safeError = sanitizedSubmitError(responsePayload);
+            if (safeError.includes("policy has changed")) {
+              resetEvidence();
+              signatureCanvas = null;
+              await loadBorrowPolicy();
+            }
+            setMessage(safeError);
             return;
           }
 
           selectedAssets.clear();
+          resetEvidence();
+          signatureCanvas = null;
           renderSelected();
           const verb = mode === "return" ? "Return" : "Borrow";
           resultsEl.replaceChildren();
           searchInput.value = "";
           setMessage(`${verb} request ${responsePayload.requestReference} submitted. ${responsePayload.message}`, true);
         } catch (err) {
-          setMessage(err instanceof Error ? err.message : "Submit failed.");
+          setMessage("Submit failed. Please check your connection and try again.");
         } finally {
           isSubmitting = false;
-          submitBtn.disabled = isSubmitting || selectedAssets.size === 0;
+          updateSubmitState();
         }
       });
+
+      loadBorrowPolicy();
 
       // A mobile browser may restore this page from its back-forward cache.
       // Do not carry an old selection into a new visible interaction session.
@@ -743,6 +1106,172 @@ mod tests {
     }
 
     #[test]
+    fn borrow_page_requires_bilingual_confirmation_and_sends_evidence() {
+        let html = borrow_page_html();
+        let script = r###"
+import { JSDOM } from "jsdom";
+import fs from "node:fs";
+
+const page = fs.readFileSync(0, "utf8");
+const calls = [];
+const asset = { assetCode: "VNLAP326", assetType: "Laptop", displayName: "ASWVNLAP326", model: null, serialNumber: null };
+const wait = () => new Promise((resolve) => setTimeout(resolve, 20));
+const dom = new JSDOM(page, {
+  url: "http://192.168.2.1:8787/borrow#t=browser-token",
+  runScripts: "dangerously",
+  beforeParse(window) {
+    window.fetch = async (input, init = {}) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url.includes("/api/borrow-policy")) {
+        return { ok: true, json: async () => ({ version: 7, textEn: "Handle with care.", textVi: "Vui lòng giữ gìn thiết bị." }) };
+      }
+      if (url.includes("/api/borrow-requests")) {
+        return { ok: true, json: async () => ({ requestReference: "BR-PHASE4", message: "Pending IT review." }) };
+      }
+      return { ok: true, json: async () => [asset] };
+    };
+  },
+});
+const document = dom.window.document;
+const submit = document.getElementById("submit-button");
+document.getElementById("asset-search").value = "ASWVNLAP326";
+document.getElementById("search-btn").click();
+await wait();
+if (!document.querySelector("#policy-english")?.textContent.includes("Handle with care") ||
+    !document.querySelector("#policy-vietnamese")?.textContent.includes("Vui lòng") ||
+    !document.querySelector("#acknowledgment-checkbox")) throw new Error("borrow policy was not rendered as separate bilingual blocks");
+if (!submit.disabled) throw new Error("submit enabled before acknowledgment evidence");
+document.getElementById("acknowledgment-checkbox").click();
+document.getElementById("typed-name").value = "Nguyễn Văn A";
+document.getElementById("typed-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+if (submit.disabled) throw new Error("typed-name confirmation did not enable submit");
+submit.click();
+await wait();
+const post = calls.find((call) => call.url.includes("/api/borrow-requests"));
+const payload = JSON.parse(post.init.body);
+if (payload.confirmation.policyVersion !== 7 || payload.confirmation.policyAcknowledged !== true ||
+    payload.confirmation.confirmationMethod !== "typed_name" || payload.confirmation.typedName !== "Nguyễn Văn A" ||
+    JSON.stringify(payload.confirmation.assetCodesSnapshot) !== JSON.stringify(["VNLAP326"]) ||
+    "textEn" in payload.confirmation || "textVi" in payload.confirmation) throw new Error("borrow confirmation payload was incorrect");
+document.getElementById("btn-return").click();
+document.getElementById("asset-search").value = "ASWVNLAP326";
+document.getElementById("search-btn").click();
+await wait();
+if (document.querySelector("#confirmation-section")?.textContent.includes("Handle with care") ||
+    !document.querySelector("#return-confirmation-en")?.textContent.includes("returning")) throw new Error("return confirmation/policy mode was incorrect");
+console.log("phase4-confirmation-ok");
+"###;
+
+        let mut child = Command::new("node")
+            .args(["--input-type=module", "-e", script])
+            .current_dir(std::env::current_dir().expect("workspace directory"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("node and jsdom are required for Phase 4 browser coverage");
+        child
+            .stdin
+            .take()
+            .expect("node stdin")
+            .write_all(html.as_bytes())
+            .expect("write page HTML");
+        let output = child.wait_with_output().expect("wait for Phase 4 browser test");
+        assert!(
+            output.status.success(),
+            "Phase 4 browser flow failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("phase4-confirmation-ok"));
+    }
+
+    #[test]
+    fn borrow_page_supports_signature_only_and_resets_evidence_without_storage() {
+        let html = borrow_page_html();
+        let script = r###"
+import { JSDOM } from "jsdom";
+import fs from "node:fs";
+
+const page = fs.readFileSync(0, "utf8");
+const calls = [];
+const asset = { assetCode: "VNLAP326", assetType: "Laptop", displayName: "ASWVNLAP326", model: null, serialNumber: null };
+const wait = () => new Promise((resolve) => setTimeout(resolve, 20));
+const context = { setTransform() {}, fillRect() {}, clearRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {} };
+const dom = new JSDOM(page, {
+  url: "http://192.168.2.1:8787/borrow#t=browser-token",
+  runScripts: "dangerously",
+  beforeParse(window) {
+    window.HTMLCanvasElement.prototype.getContext = () => context;
+    window.HTMLCanvasElement.prototype.toDataURL = () => "data:image/png;base64,UE5H";
+    window.fetch = async (input, init = {}) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url.includes("/api/borrow-policy")) return { ok: true, json: async () => ({ version: 2, textEn: "Care.", textVi: "Giữ gìn." }) };
+      if (url.includes("/api/borrow-requests")) return { ok: true, json: async () => ({ requestReference: "BR-SIGN", message: "Pending." }) };
+      return { ok: true, json: async () => [asset] };
+    };
+  },
+});
+const document = dom.window.document;
+const pointer = (type, x, y) => {
+  const event = new dom.window.Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperties(event, { clientX: { value: x }, clientY: { value: y } });
+  return event;
+};
+document.getElementById("asset-search").value = "ASWVNLAP326";
+document.getElementById("search-btn").click();
+await wait();
+document.getElementById("acknowledgment-checkbox").click();
+const canvas = document.getElementById("signature-canvas");
+canvas.dispatchEvent(pointer("pointerdown", 2, 2));
+canvas.dispatchEvent(pointer("pointermove", 8, 5));
+canvas.dispatchEvent(pointer("pointerup", 8, 5));
+if (document.getElementById("submit-button").disabled) throw new Error("signature did not enable submit");
+document.querySelector(".clear-signature").click();
+if (!document.getElementById("submit-button").disabled) throw new Error("clear did not invalidate signature evidence");
+canvas.dispatchEvent(pointer("pointerdown", 2, 2));
+canvas.dispatchEvent(pointer("pointermove", 8, 5));
+canvas.dispatchEvent(pointer("pointerup", 8, 5));
+document.getElementById("submit-button").click();
+await wait();
+const post = calls.find((call) => call.url.includes("/api/borrow-requests"));
+const payload = JSON.parse(post.init.body);
+if (payload.confirmation.confirmationMethod !== "signature" || !payload.confirmation.signaturePngBase64 ||
+    payload.confirmation.typedName !== null || payload.confirmation.signatureStrokeCount !== 1 ||
+    dom.window.localStorage.length !== 0 || dom.window.sessionStorage.length !== 0) throw new Error("signature evidence contract failed");
+document.getElementById("btn-return").click();
+document.getElementById("asset-search").value = "ASWVNLAP326";
+document.getElementById("search-btn").click();
+await wait();
+if (document.querySelector("#policy-english") || !document.querySelector("#return-confirmation-vi")) throw new Error("return rendered Borrow policy");
+console.log("signature-reset-ok");
+"###;
+
+        let mut child = Command::new("node")
+            .args(["--input-type=module", "-e", script])
+            .current_dir(std::env::current_dir().expect("workspace directory"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("node and jsdom are required for signature coverage");
+        child
+            .stdin
+            .take()
+            .expect("node stdin")
+            .write_all(html.as_bytes())
+            .expect("write page HTML");
+        let output = child.wait_with_output().expect("wait for signature test");
+        assert!(
+            output.status.success(),
+            "signature flow failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("signature-reset-ok"));
+    }
+
+    #[test]
     fn borrow_page_starts_empty_and_does_not_retain_interaction_state() {
         let html = borrow_page_html();
         assert!(!html.contains("ASWVNLAP326"));
@@ -761,6 +1290,9 @@ const dom = new JSDOM(page, {
   beforeParse(window) {
     Object.defineProperty(window.crypto, "randomUUID", { value: () => "state-test-id" });
     window.fetch = async (input, init = {}) => {
+      if (String(input).includes("/api/borrow-policy")) {
+        return { ok: true, json: async () => ({ version: 1, textEn: "Handle with care.", textVi: "Vui lòng giữ gìn thiết bị." }) };
+      }
       if (init.method === "POST") {
         return { ok: true, json: async () => ({ requestReference: "BR-STATE", message: "Pending IT review." }) };
       }
@@ -781,8 +1313,8 @@ if (selected.textContent || results.childElementCount !== 0 || !submit.disabled 
 search.value = "ASWVNLAP326";
 searchButton.click();
 await wait();
-if (!selected.textContent.includes("VNLAP326") || submit.disabled) {
-  throw new Error("successful search did not select the asset");
+if (!selected.textContent.includes("VNLAP326") || !submit.disabled) {
+  throw new Error("successful search did not select the asset or keep confirmation required");
 }
 
 document.getElementById("btn-return").click();
@@ -796,6 +1328,9 @@ searchButton.click();
 await wait();
 document.getElementById("staff-id").value = "1301";
 document.getElementById("full-name").value = "Test user";
+document.getElementById("acknowledgment-checkbox").click();
+document.getElementById("typed-name").value = "Test user";
+document.getElementById("typed-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 submit.click();
 await wait();
 if (selected.textContent || results.childElementCount !== 0 || !submit.disabled || !document.querySelector("#message .success")) {
@@ -856,7 +1391,7 @@ console.log("state-reset-ok");
         assert!(html.contains("let isSubmitting = false"));
         assert!(html.contains("submitBtn.disabled = true"));
         assert!(html.contains("if (!res.ok)"));
-        assert!(html.contains("responsePayload?.error"));
+        assert!(html.contains("sanitizedSubmitError(responsePayload)"));
     }
 
     #[test]
@@ -878,6 +1413,9 @@ const dom = new JSDOM(page, {
     Object.defineProperty(window.crypto, "randomUUID", { value: () => `id-${++uuid}` });
     window.fetch = async (input, init = {}) => {
       calls.push({ input: String(input), init: { ...init, headers: new Headers(init.headers) } });
+      if (String(input).includes("/api/borrow-policy")) {
+        return { ok: true, json: async () => ({ version: 1, textEn: "Handle with care.", textVi: "Vui lòng giữ gìn thiết bị." }) };
+      }
       if (String(input).includes("/api/borrow-requests")) {
         return { ok: true, json: async () => ({ requestReference: "BR-0001", message: "Pending IT review." }) };
       }
@@ -894,9 +1432,13 @@ const submit = document.getElementById("submit-button");
 search.value = "ASSET-001";
 searchButton.click();
 await wait();
-if (!calls[0].input.includes("/api/assets") || auth(calls[0]) !== "Bearer browser-token") throw new Error("borrow search auth failed");
+const borrowSearchCall = calls.find((call) => call.input.includes("/api/assets"));
+if (!borrowSearchCall || auth(borrowSearchCall) !== "Bearer browser-token") throw new Error("borrow search auth failed");
 document.getElementById("staff-id").value = "EE1001";
 document.getElementById("full-name").value = "Client name is not authoritative";
+document.getElementById("acknowledgment-checkbox").click();
+document.getElementById("typed-name").value = "Client name is not authoritative";
+document.getElementById("typed-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 submit.click();
 submit.click();
 await wait();
@@ -906,9 +1448,12 @@ if (borrowCalls.length !== 1 || borrowPayload.requestType !== "borrow" || borrow
 if (auth(borrowCalls[0]) !== "Bearer browser-token") throw new Error("borrow submit auth failed");
 
 document.getElementById("btn-return").click();
+search.value = "ASSET-001";
 searchButton.click();
 await wait();
 if (!calls.some((call) => call.input.includes("/api/assigned-assets") && auth(call) === "Bearer browser-token")) throw new Error("return search auth failed");
+document.getElementById("typed-name").value = "Return operator";
+document.getElementById("typed-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 submit.click();
 await wait();
 const submitCalls = calls.filter((call) => call.input.includes("/api/borrow-requests"));
@@ -963,6 +1508,9 @@ const dom = new JSDOM(page, {
     window.fetch = async (input, init = {}) => {
       const url = String(input);
       calls.push({ url, init });
+      if (url.includes("/api/borrow-policy")) {
+        return { ok: true, json: async () => ({ version: 1, textEn: "Handle with care.", textVi: "Vui lòng giữ gìn thiết bị." }) };
+      }
       if (url.includes("/api/borrow-requests")) {
         return { ok: true, json: async () => ({ requestReference: "BR-0002", message: "Pending IT review." }) };
       }
@@ -995,12 +1543,15 @@ const selectedIndicator = result.querySelector(".selected-indicator");
 if (!selectedIndicator || selectedIndicator.getAttribute("aria-label") !== "Selected asset" || result.querySelector("[data-add]")) {
   throw new Error("selected asset did not render as a compact accessible indicator");
 }
-if (submit.disabled) throw new Error("submit remained disabled after selection");
+if (!submit.disabled) throw new Error("submit enabled before confirmation evidence");
 if (!document.querySelector(".selected-card")?.textContent.includes("VNLAP326")) {
   throw new Error("selected asset card was not rendered");
 }
 document.getElementById("staff-id").value = "1301";
 document.getElementById("full-name").value = "Test user";
+document.getElementById("acknowledgment-checkbox").click();
+document.getElementById("typed-name").value = "Test user";
+document.getElementById("typed-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 submit.click();
 await wait();
 const submitCall = calls.find((call) => call.url.includes("/api/borrow-requests"));
@@ -1070,7 +1621,11 @@ const dom = new JSDOM(page, {
   beforeParse(window) {
     Object.defineProperty(window.crypto, "randomUUID", { value: undefined, configurable: true });
     window.fetch = async (input, init = {}) => {
-      calls.push({ input: String(input), init });
+      const url = String(input);
+      calls.push({ input: url, init });
+      if (url.includes("/api/borrow-policy")) {
+        return { ok: true, json: async () => ({ version: 1, textEn: "Handle with care.", textVi: "Vui lòng giữ gìn thiết bị." }) };
+      }
       return { ok: true, json: async () => [{
         assetCode: "VNLAP326",
         assetType: "Laptop",
@@ -1085,7 +1640,7 @@ const document = dom.window.document;
 document.getElementById("asset-search").value = "ASWVNLAP326";
 document.getElementById("search-btn").click();
 await wait();
-if (calls.length !== 1 || !document.querySelector(".selected-card")) {
+if (calls.filter((call) => !call.input.includes("/api/borrow-policy")).length !== 1 || !document.querySelector(".selected-card")) {
   throw new Error("insecure-origin search handler did not run");
 }
 console.log("insecure-origin-search-ok");
@@ -1133,6 +1688,9 @@ const dom = new JSDOM(page, {
     window.__xss = 0;
     Object.defineProperty(window.crypto, "randomUUID", { value: () => "test-id" });
     window.fetch = async (input) => {
+      if (String(input).includes("/api/borrow-policy")) {
+        return { ok: true, json: async () => ({ version: 1, textEn: "Handle with care.", textVi: "Vui lòng giữ gìn thiết bị." }) };
+      }
       if (String(input).includes("/api/borrow-requests")) {
         return { ok: false, json: async () => { throw new Error(maliciousError); } };
       }
@@ -1143,10 +1701,13 @@ const dom = new JSDOM(page, {
 const document = dom.window.document;
 document.getElementById("search-btn").click();
 await wait();
+document.getElementById("acknowledgment-checkbox").click();
+document.getElementById("typed-name").value = "Test Employee";
+document.getElementById("typed-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 document.getElementById("submit-button").click();
 await wait();
 const message = document.getElementById("message");
-if (message.textContent !== "Submit failed.") throw new Error("unexpected malformed-response message");
+if (message.textContent !== "Submit failed. Please review the form and try again.") throw new Error("unexpected malformed-response message");
 if (message.textContent.includes(maliciousError) || message.querySelector("script")) throw new Error("raw malformed error leaked");
 if (dom.window.__xss !== 0) throw new Error("malformed error executed");
 console.log("malformed-response-safe");
@@ -1207,9 +1768,14 @@ const dom = new JSDOM(page, {
     if (!window.crypto.randomUUID) {
       Object.defineProperty(window.crypto, "randomUUID", { value: () => "test-session" });
     }
-    window.fetch = async (_input, init = {}) => init.method === "POST"
-      ? { ok: false, json: async () => ({ error: payloads.error }) }
-      : { ok: true, json: async () => [asset] };
+    window.fetch = async (input, init = {}) => {
+      if (String(input).includes("/api/borrow-policy")) {
+        return { ok: true, json: async () => ({ version: 1, textEn: "Handle with care.", textVi: "Vui lòng giữ gìn thiết bị." }) };
+      }
+      return init.method === "POST"
+        ? { ok: false, json: async () => ({ error: payloads.error }) }
+        : { ok: true, json: async () => [asset] };
+    };
   },
 });
 const document = dom.window.document;
@@ -1227,11 +1793,14 @@ if (!selected.textContent.includes(payloads.assetCode) || selected.querySelector
 }
 document.getElementById("staff-id").value = "EE1001";
 document.getElementById("full-name").value = "Test Employee";
+document.getElementById("acknowledgment-checkbox").click();
+document.getElementById("typed-name").value = "Test Employee";
+document.getElementById("typed-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 document.getElementById("submit-button").click();
 await wait();
 const message = document.getElementById("message");
-if (!message.textContent.includes(payloads.error) || message.querySelector("img,script,svg")) {
-  throw new Error("backend error became markup");
+if (!message.textContent.includes("Submit failed") || message.textContent.includes(payloads.error) || message.querySelector("img,script,svg")) {
+  throw new Error("backend error was not sanitized");
 }
 if (dom.window.__xss !== 0) throw new Error("XSS payload executed");
 console.log("safe");
