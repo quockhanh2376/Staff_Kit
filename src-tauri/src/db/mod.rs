@@ -1083,6 +1083,16 @@ fn ensure_handle_with_care_schema(conn: &Connection) -> Result<(), String> {
           ON borrow_handle_with_care_policies(created_at DESC, version DESC);
         CREATE INDEX IF NOT EXISTS idx_borrow_request_confirmations_policy_version
           ON borrow_request_confirmations(policy_version);
+        CREATE TRIGGER IF NOT EXISTS borrow_request_confirmations_no_update
+        BEFORE UPDATE ON borrow_request_confirmations
+        BEGIN
+          SELECT RAISE(ABORT, 'borrow request confirmation evidence is immutable');
+        END;
+        CREATE TRIGGER IF NOT EXISTS borrow_request_confirmations_no_delete
+        BEFORE DELETE ON borrow_request_confirmations
+        BEGIN
+          SELECT RAISE(ABORT, 'borrow request confirmation evidence is immutable');
+        END;
         "#,
     )
     .map_err(|err| format!("failed to ensure Handle with Care schema: {err}"))

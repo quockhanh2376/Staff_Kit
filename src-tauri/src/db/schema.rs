@@ -487,6 +487,18 @@ CREATE INDEX IF NOT EXISTS idx_borrow_handle_with_care_created_at
   ON borrow_handle_with_care_policies(created_at DESC, version DESC);
 CREATE INDEX IF NOT EXISTS idx_borrow_request_confirmations_policy_version
   ON borrow_request_confirmations(policy_version);
+
+CREATE TRIGGER IF NOT EXISTS borrow_request_confirmations_no_update
+BEFORE UPDATE ON borrow_request_confirmations
+BEGIN
+  SELECT RAISE(ABORT, 'borrow request confirmation evidence is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS borrow_request_confirmations_no_delete
+BEFORE DELETE ON borrow_request_confirmations
+BEGIN
+  SELECT RAISE(ABORT, 'borrow request confirmation evidence is immutable');
+END;
 CREATE INDEX IF NOT EXISTS idx_asset_pending_claims_request_id
   ON asset_pending_claims(borrow_request_id);
 CREATE INDEX IF NOT EXISTS idx_asset_loans_employee_active

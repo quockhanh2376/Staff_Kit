@@ -1,12 +1,16 @@
 use std::collections::HashSet;
+use std::io::Cursor;
 use std::net::IpAddr;
 use std::net::UdpSocket;
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use png::Decoder;
 use rand::{distributions::Alphanumeric, Rng};
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::AppHandle;
+use unicode_normalization::UnicodeNormalization;
 
 use super::schema::{
     BORROW_LAN_ENABLED_SETTING_KEY, BORROW_LAN_HOST_SETTING_KEY, BORROW_LAN_PORT_SETTING_KEY,
@@ -39,6 +43,59 @@ pub struct HandleWithCarePolicyRecord {
     pub created_by_account_id: Option<i64>,
     pub created_at: String,
     pub superseded_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfirmationMethod {
+    Signature,
+    TypedName,
+    Both,
+}
+
+#[derive(Debug, Clone)]
+pub struct BorrowRequestConfirmationInput {
+    pub policy_version: Option<i64>,
+    pub policy_acknowledged: bool,
+    pub confirmation_method: ConfirmationMethod,
+    pub signature_png_base64: Option<String>,
+    pub signature_stroke_count: Option<u32>,
+    pub signature_ink_present: Option<bool>,
+    pub typed_name: Option<String>,
+    pub asset_codes_snapshot: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BorrowRequestWithConfirmationInput {
+    pub request: BorrowRequestSubmitInput,
+    pub confirmation: Option<BorrowRequestConfirmationInput>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BorrowerIdentitySnapshot {
+    pub employee_id_fk: Option<i64>,
+    pub staff_id: String,
+    pub full_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubmittedByIdentitySnapshot {
+    pub employee_id_fk: Option<i64>,
+    pub staff_id: String,
+    pub full_name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct BorrowRequestConfirmationRecord {
+    pub borrow_request_id: i64,
+    pub policy_version: Option<i64>,
+    pub policy_text_en_snapshot: Option<String>,
+    pub policy_text_vi_snapshot: Option<String>,
+    pub policy_acknowledged: bool,
+    pub asset_codes_snapshot_json: String,
+    pub confirmation_method: ConfirmationMethod,
+    pub signature_png_blob: Option<Vec<u8>>,
+    pub typed_name: Option<String>,
+    pub confirmed_at: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -373,6 +430,8 @@ struct ValidatedBorrowSubmission {
     manual_employee_team: Option<String>,
     request_type: String,
     assets: Vec<asset::AssetLookupRecord>,
+    borrower_identity: BorrowerIdentitySnapshot,
+    submitted_by_identity: SubmittedByIdentitySnapshot,
 }
 
 fn validate_submission_tx(
@@ -513,6 +572,40 @@ fn validate_submission_tx(
         assets.push(asset_record);
     }
 
+    let submitted_by_identity = SubmittedByIdentitySnapshot {
+        employee_id_fk,
+        staff_id: submitted_employee_id.clone(),
+        full_name: authoritative_full_name.clone(),
+    };
+    let borrower_identity = if request_type == REQUEST_TYPE_BORROW {
+        BorrowerIdentitySnapshot {
+            employee_id_fk,
+            staff_id: submitted_employee_id.clone(),
+            full_name: authoritative_full_name.clone(),
+        }
+    } else {
+        let mut borrower_id: Option<i64> = None;
+        for asset_record in &assets {
+            let current_borrower_id = active_loan_employee_id_tx(&tx, asset_record.id)?
+                .ok_or_else(|| {
+                    format!("asset '{}' has no active borrower", asset_record.asset_code)
+                })?;
+            if borrower_id.is_some_and(|id| id != current_borrower_id) {
+                return Err("all returned assets must belong to the same borrower".to_string());
+            }
+            borrower_id = Some(current_borrower_id);
+        }
+        let borrower_id =
+            borrower_id.ok_or_else(|| "at least one asset is required".to_string())?;
+        let borrower = load_employee_identity_by_id_tx(&tx, borrower_id)?
+            .ok_or_else(|| "the active asset borrower could not be resolved".to_string())?;
+        BorrowerIdentitySnapshot {
+            employee_id_fk: Some(borrower.id),
+            staff_id: borrower.employee_id,
+            full_name: borrower.full_name,
+        }
+    };
+
     Ok(ValidatedBorrowSubmission {
         submitted_employee_id,
         authoritative_full_name,
@@ -525,7 +618,205 @@ fn validate_submission_tx(
         manual_employee_team,
         request_type,
         assets,
+        borrower_identity,
+        submitted_by_identity,
     })
+}
+
+struct ValidatedConfirmation {
+    policy_version: Option<i64>,
+    policy_text_en_snapshot: Option<String>,
+    policy_text_vi_snapshot: Option<String>,
+    policy_acknowledged: bool,
+    asset_codes_snapshot_json: String,
+    confirmation_method: ConfirmationMethod,
+    signature_png_blob: Option<Vec<u8>>,
+    typed_name: Option<String>,
+}
+
+fn validate_confirmation_tx(
+    tx: &Transaction<'_>,
+    validated: &ValidatedBorrowSubmission,
+    input: BorrowRequestConfirmationInput,
+) -> Result<ValidatedConfirmation, String> {
+    let final_asset_codes: Vec<String> = validated
+        .assets
+        .iter()
+        .map(|record| record.asset_code.clone())
+        .collect();
+    let snapshot_codes = normalize_asset_codes(input.asset_codes_snapshot)?;
+    if snapshot_codes != final_asset_codes {
+        return Err("confirmation asset list does not match the selected assets".to_string());
+    }
+
+    let (policy_text_en_snapshot, policy_text_vi_snapshot) =
+        if validated.request_type == REQUEST_TYPE_BORROW {
+            let policy_version = input
+                .policy_version
+                .ok_or_else(|| "Handle with Care policy acknowledgment is required".to_string())?;
+            if !input.policy_acknowledged {
+                return Err("Handle with Care policy acknowledgment is required".to_string());
+            }
+            let current_policy = get_current_handle_with_care_policy_conn(tx)?
+                .ok_or_else(|| "Handle with Care policy is not configured".to_string())?;
+            if current_policy.version != policy_version {
+                return Err(
+                    "Handle with Care policy changed; reload the current policy and try again"
+                        .to_string(),
+                );
+            }
+            (Some(current_policy.text_en), Some(current_policy.text_vi))
+        } else {
+            if input.policy_version.is_some() || input.policy_acknowledged {
+                return Err(
+                    "Return requests do not require Handle with Care acknowledgment".to_string(),
+                );
+            }
+            (None, None)
+        };
+
+    let typed_name = input
+        .typed_name
+        .map(|value| normalize_typed_name(value.as_str()))
+        .transpose()?;
+    let signature_png_blob = match input.signature_png_base64 {
+        Some(value) => Some(validate_signature_png(
+            value.as_str(),
+            input.signature_stroke_count,
+            input.signature_ink_present,
+        )?),
+        None => {
+            if input.signature_stroke_count.is_some() || input.signature_ink_present.is_some() {
+                return Err("signature metadata was supplied without a signature".to_string());
+            }
+            None
+        }
+    };
+
+    match input.confirmation_method {
+        ConfirmationMethod::Signature if signature_png_blob.is_none() => {
+            return Err("a handwritten signature is required".to_string())
+        }
+        ConfirmationMethod::Signature if typed_name.is_some() => {
+            return Err("signature confirmation cannot include a typed name".to_string())
+        }
+        ConfirmationMethod::TypedName if typed_name.is_none() => {
+            return Err("a typed full name is required".to_string())
+        }
+        ConfirmationMethod::TypedName if signature_png_blob.is_some() => {
+            return Err("typed-name confirmation cannot include a signature".to_string())
+        }
+        ConfirmationMethod::Both if typed_name.is_none() || signature_png_blob.is_none() => {
+            return Err("both a handwritten signature and typed full name are required".to_string())
+        }
+        _ => {}
+    }
+
+    if let Some(typed_name) = typed_name.as_deref() {
+        if !typed_names_match(
+            typed_name,
+            validated.submitted_by_identity.full_name.as_str(),
+        ) {
+            return Err("typed full name must match the submitting employee's name".to_string());
+        }
+    }
+
+    Ok(ValidatedConfirmation {
+        policy_version: input.policy_version,
+        policy_text_en_snapshot,
+        policy_text_vi_snapshot,
+        policy_acknowledged: input.policy_acknowledged,
+        asset_codes_snapshot_json: serde_json::to_string(&final_asset_codes)
+            .map_err(|_| "failed to snapshot confirmation asset list".to_string())?,
+        confirmation_method: input.confirmation_method,
+        signature_png_blob,
+        typed_name,
+    })
+}
+
+pub(crate) fn normalize_typed_name(value: &str) -> Result<String, String> {
+    let normalized = value
+        .nfkc()
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    if normalized.is_empty() {
+        return Err("typed full name is required".to_string());
+    }
+    if normalized.len() > 200 {
+        return Err("typed full name is too long (max 200)".to_string());
+    }
+    Ok(normalized)
+}
+
+pub(crate) fn typed_names_match(expected: &str, supplied: &str) -> bool {
+    match (
+        normalize_typed_name(expected),
+        normalize_typed_name(supplied),
+    ) {
+        (Ok(expected), Ok(supplied)) => expected == supplied,
+        _ => false,
+    }
+}
+
+pub(crate) fn validate_signature_png(
+    data_url: &str,
+    stroke_count: Option<u32>,
+    ink_present_hint: Option<bool>,
+) -> Result<Vec<u8>, String> {
+    const MAX_SIGNATURE_BYTES: usize = 256 * 1024;
+    const MAX_SIGNATURE_WIDTH: u32 = 1200;
+    const MAX_SIGNATURE_HEIGHT: u32 = 600;
+    let encoded = data_url
+        .strip_prefix("data:image/png;base64,")
+        .ok_or_else(|| "signature must be a canvas-generated PNG".to_string())?;
+    let decoded = STANDARD
+        .decode(encoded)
+        .map_err(|_| "signature PNG data is invalid".to_string())?;
+    if decoded.is_empty() || decoded.len() > MAX_SIGNATURE_BYTES {
+        return Err("signature PNG is empty or too large".to_string());
+    }
+    let decoder = Decoder::new(Cursor::new(decoded.as_slice()));
+    let mut reader = decoder
+        .read_info()
+        .map_err(|_| "signature must be a valid PNG".to_string())?;
+    let info = reader.info();
+    if info.width == 0
+        || info.height == 0
+        || info.width > MAX_SIGNATURE_WIDTH
+        || info.height > MAX_SIGNATURE_HEIGHT
+    {
+        return Err("signature PNG dimensions are not allowed".to_string());
+    }
+    let output_size = reader.output_buffer_size();
+    let mut pixels = vec![0_u8; output_size];
+    let output = reader
+        .next_frame(&mut pixels)
+        .map_err(|_| "signature must be a valid PNG".to_string())?;
+    let bytes_per_pixel = output
+        .buffer_size()
+        .checked_div((output.width * output.height) as usize)
+        .ok_or_else(|| "signature PNG has no pixel data".to_string())?;
+    let mut ink_pixels = 0_usize;
+    for pixel in pixels[..output.buffer_size()].chunks(bytes_per_pixel) {
+        let alpha = if bytes_per_pixel >= 4 { pixel[3] } else { 255 };
+        let dark = pixel.iter().take(3).any(|channel| *channel < 245);
+        if alpha > 16 && dark {
+            ink_pixels += 1;
+        }
+    }
+    if ink_pixels < 2 {
+        return Err("signature must contain meaningful ink".to_string());
+    }
+    if stroke_count == Some(0) || ink_present_hint == Some(false) {
+        return Err("signature metadata does not match the signature image".to_string());
+    }
+    if ink_present_hint == Some(true) && ink_pixels == 0 {
+        return Err("signature must contain meaningful ink".to_string());
+    }
+    Ok(decoded)
 }
 
 pub(crate) fn validate_borrow_request_conn(
@@ -559,6 +850,8 @@ pub(crate) fn submit_borrow_request_conn(
         manual_employee_team,
         request_type,
         assets,
+        borrower_identity,
+        submitted_by_identity,
     } = validated;
 
     let request_key = generate_request_key_tx(&tx)?;
@@ -577,9 +870,15 @@ pub(crate) fn submit_borrow_request_conn(
           status,
           request_type,
           returned_by_employee_id_fk,
+          borrower_employee_id_fk,
+          borrower_staff_id_snapshot,
+          borrower_name_snapshot,
+          submitted_by_employee_id_fk,
+          submitted_by_staff_id_snapshot,
+          submitted_by_name_snapshot,
           submitted_at
         )
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
         "#,
         params![
             request_key.as_str(),
@@ -598,6 +897,12 @@ pub(crate) fn submit_borrow_request_conn(
             } else {
                 None
             },
+            borrower_identity.employee_id_fk,
+            borrower_identity.staff_id.as_str(),
+            borrower_identity.full_name.as_str(),
+            submitted_by_identity.employee_id_fk,
+            submitted_by_identity.staff_id.as_str(),
+            submitted_by_identity.full_name.as_str(),
         ],
     )
     .map_err(humanize_sqlite_error)?;
@@ -661,6 +966,141 @@ pub(crate) fn submit_borrow_request_conn(
         .map_err(|err| format!("failed to commit borrow submit transaction: {err}"))?;
 
     load_borrow_request_record(conn, request_id)
+}
+
+pub(crate) fn submit_borrow_request_with_confirmation_conn(
+    conn: &mut Connection,
+    input: BorrowRequestWithConfirmationInput,
+) -> Result<BorrowRequestRecord, String> {
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|err| format!("failed to start confirmed borrow submit transaction: {err}"))?;
+    let validated = validate_submission_tx(&tx, input.request)?;
+    let confirmation = validate_confirmation_tx(
+        &tx,
+        &validated,
+        input
+            .confirmation
+            .ok_or_else(|| "borrow or return confirmation is required".to_string())?,
+    )?;
+    let request_key = generate_request_key_tx(&tx)?;
+    let request_type = validated.request_type.as_str();
+
+    tx.execute(
+        r#"
+        INSERT INTO borrow_requests(
+          request_key, employee_id_fk, submitted_employee_id, submitted_full_name,
+          manual_entry, manual_employee_id, manual_employee_name, manual_employee_email,
+          manual_employee_team, status, request_type, returned_by_employee_id_fk,
+          borrower_employee_id_fk, borrower_staff_id_snapshot, borrower_name_snapshot,
+          submitted_by_employee_id_fk, submitted_by_staff_id_snapshot, submitted_by_name_snapshot,
+          submitted_at
+        )
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        "#,
+        params![
+            request_key.as_str(),
+            validated.employee_id_fk,
+            validated.submitted_employee_id.as_str(),
+            validated.authoritative_full_name.as_str(),
+            validated.manual_entry,
+            validated.manual_employee_id.as_deref(),
+            validated.manual_employee_name.as_deref(),
+            validated.manual_employee_email.as_deref(),
+            validated.manual_employee_team.as_deref(),
+            REQUEST_STATUS_PENDING,
+            request_type,
+            if request_type == REQUEST_TYPE_RETURN {
+                validated.submitted_by_identity.employee_id_fk
+            } else {
+                None
+            },
+            validated.borrower_identity.employee_id_fk,
+            validated.borrower_identity.staff_id.as_str(),
+            validated.borrower_identity.full_name.as_str(),
+            validated.submitted_by_identity.employee_id_fk,
+            validated.submitted_by_identity.staff_id.as_str(),
+            validated.submitted_by_identity.full_name.as_str(),
+        ],
+    )
+    .map_err(humanize_sqlite_error)?;
+    let request_id = tx.last_insert_rowid();
+
+    for asset_record in &validated.assets {
+        tx.execute(
+            "INSERT INTO borrow_request_items(borrow_request_id, asset_id, asset_code_snapshot, created_at) VALUES(?, ?, ?, datetime('now'))",
+            params![request_id, asset_record.id, asset_record.asset_code.as_str()],
+        )
+        .map_err(humanize_sqlite_error)?;
+        if request_type == REQUEST_TYPE_BORROW {
+            tx.execute(
+                "INSERT INTO asset_pending_claims(asset_id, borrow_request_id, created_at) VALUES(?, ?, datetime('now'))",
+                params![asset_record.id, request_id],
+            )
+            .map_err(|err| {
+                if err.sqlite_error_code() == Some(rusqlite::ErrorCode::ConstraintViolation) {
+                    "asset has a competing pending borrow claim".to_string()
+                } else {
+                    format!("failed to create pending asset claim: {err}")
+                }
+            })?;
+        }
+    }
+
+    let method = confirmation_method_text(confirmation.confirmation_method);
+    tx.execute(
+        r#"
+        INSERT INTO borrow_request_confirmations(
+          borrow_request_id, policy_version, policy_text_en_snapshot, policy_text_vi_snapshot,
+          policy_acknowledged, asset_codes_snapshot_json, confirmation_method,
+          signature_png_blob, typed_name, confirmed_at
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        "#,
+        params![
+            request_id,
+            confirmation.policy_version,
+            confirmation.policy_text_en_snapshot.as_deref(),
+            confirmation.policy_text_vi_snapshot.as_deref(),
+            confirmation.policy_acknowledged,
+            confirmation.asset_codes_snapshot_json,
+            method,
+            confirmation.signature_png_blob,
+            confirmation.typed_name.as_deref(),
+        ],
+    )
+    .map_err(humanize_sqlite_error)?;
+
+    let audit_payload = json!({
+        "submittedEmployeeId": validated.submitted_employee_id,
+        "requestType": request_type,
+        "assetCodes": validated.assets.iter().map(|asset| asset.asset_code.clone()).collect::<Vec<_>>(),
+        "confirmationMethod": method,
+        "hasSignature": confirmation.signature_png_blob.is_some(),
+        "hasTypedName": confirmation.typed_name.is_some(),
+        "policyVersion": confirmation.policy_version,
+    })
+    .to_string();
+    let request_id_text = request_id.to_string();
+    audit::insert_audit_log_tx(
+        &tx,
+        "borrow_request.submit",
+        "lan_public",
+        None,
+        "borrow_request",
+        request_id_text.as_str(),
+        Some(audit_payload.as_str()),
+    )?;
+    tx.commit()
+        .map_err(|err| format!("failed to commit confirmed borrow submit transaction: {err}"))?;
+    load_borrow_request_record(conn, request_id)
+}
+
+fn confirmation_method_text(method: ConfirmationMethod) -> &'static str {
+    match method {
+        ConfirmationMethod::Signature => "signature",
+        ConfirmationMethod::TypedName => "typed_name",
+        ConfirmationMethod::Both => "both",
+    }
 }
 
 pub(crate) fn approve_borrow_request_conn(
@@ -876,6 +1316,51 @@ pub(crate) fn load_borrow_request_detail_conn(
     load_borrow_request_record(conn, request_id)
 }
 
+pub(crate) fn load_borrow_request_confirmation_conn(
+    conn: &Connection,
+    request_id: i64,
+) -> Result<Option<BorrowRequestConfirmationRecord>, String> {
+    conn.query_row(
+        r#"
+        SELECT borrow_request_id, policy_version, policy_text_en_snapshot,
+          policy_text_vi_snapshot, policy_acknowledged, asset_codes_snapshot_json,
+          confirmation_method, signature_png_blob, typed_name, confirmed_at
+        FROM borrow_request_confirmations
+        WHERE borrow_request_id = ?
+        "#,
+        params![request_id],
+        |row| {
+            let method: String = row.get(6)?;
+            let confirmation_method = match method.as_str() {
+                "signature" => ConfirmationMethod::Signature,
+                "typed_name" => ConfirmationMethod::TypedName,
+                "both" => ConfirmationMethod::Both,
+                _ => {
+                    return Err(rusqlite::Error::InvalidColumnType(
+                        6,
+                        "confirmation_method".to_string(),
+                        rusqlite::types::Type::Text,
+                    ))
+                }
+            };
+            Ok(BorrowRequestConfirmationRecord {
+                borrow_request_id: row.get(0)?,
+                policy_version: row.get(1)?,
+                policy_text_en_snapshot: row.get(2)?,
+                policy_text_vi_snapshot: row.get(3)?,
+                policy_acknowledged: row.get::<_, i64>(4)? != 0,
+                asset_codes_snapshot_json: row.get(5)?,
+                confirmation_method,
+                signature_png_blob: row.get(7)?,
+                typed_name: row.get(8)?,
+                confirmed_at: row.get(9)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(|err| format!("failed to load borrow request confirmation: {err}"))
+}
+
 fn normalize_asset_codes(asset_codes: Vec<String>) -> Result<Vec<String>, String> {
     if asset_codes.is_empty() {
         return Err("at least one asset code is required".to_string());
@@ -968,6 +1453,7 @@ fn format_borrow_lan_url_host(host: &str) -> String {
 
 struct EmployeeIdentity {
     id: i64,
+    employee_id: String,
     full_name: String,
     staff_group: String,
 }
@@ -977,18 +1463,39 @@ fn load_employee_identity_by_business_id_tx(
     submitted_employee_id: &str,
 ) -> Result<Option<EmployeeIdentity>, String> {
     tx.query_row(
-        "SELECT id, full_name, staff_group FROM employees WHERE employee_id = ? COLLATE NOCASE",
+        "SELECT id, employee_id, full_name, staff_group FROM employees WHERE employee_id = ? COLLATE NOCASE",
         params![submitted_employee_id],
         |row| {
             Ok(EmployeeIdentity {
                 id: row.get(0)?,
-                full_name: row.get(1)?,
-                staff_group: row.get(2)?,
+                employee_id: row.get(1)?,
+                full_name: row.get(2)?,
+                staff_group: row.get(3)?,
             })
         },
     )
     .optional()
     .map_err(|err| format!("failed to load employee identity: {err}"))
+}
+
+fn load_employee_identity_by_id_tx(
+    tx: &Transaction<'_>,
+    employee_id: i64,
+) -> Result<Option<EmployeeIdentity>, String> {
+    tx.query_row(
+        "SELECT id, employee_id, full_name, staff_group FROM employees WHERE id = ?",
+        params![employee_id],
+        |row| {
+            Ok(EmployeeIdentity {
+                id: row.get(0)?,
+                employee_id: row.get(1)?,
+                full_name: row.get(2)?,
+                staff_group: row.get(3)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(|err| format!("failed to load borrower identity: {err}"))
 }
 
 fn active_loan_employee_id_tx(tx: &Transaction<'_>, asset_id: i64) -> Result<Option<i64>, String> {
@@ -1167,6 +1674,9 @@ fn load_borrow_request_record(
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
+
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
     use rusqlite::{params, Connection};
 
     use crate::db::{apply_migrations, configure_connection};
@@ -1178,6 +1688,346 @@ mod tests {
         configure_connection(&conn).expect("configure sqlite pragmas");
         apply_migrations(&conn).expect("apply migrations");
         conn
+    }
+
+    fn seed_policy(conn: &mut Connection) -> HandleWithCarePolicyRecord {
+        let account_id: i64 = conn
+            .query_row(
+                "SELECT id FROM app_local_accounts ORDER BY id LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("load seeded account");
+        save_handle_with_care_policy_conn(
+            conn,
+            account_id,
+            "Handle with care: protect the equipment.",
+            "Vui lòng giữ gìn thiết bị.",
+        )
+        .expect("save policy")
+    }
+
+    fn signature_data_url(width: u32, height: u32, ink: bool) -> String {
+        let mut bytes = Vec::new();
+        let mut encoder = png::Encoder::new(Cursor::new(&mut bytes), width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().expect("write png header");
+        let mut pixels = vec![255_u8; (width * height * 4) as usize];
+        if ink {
+            pixels[0..4].copy_from_slice(&[0, 0, 0, 255]);
+            pixels[4..8].copy_from_slice(&[0, 0, 0, 255]);
+        } else {
+            pixels.fill(0);
+        }
+        writer.write_image_data(&pixels).expect("write png pixels");
+        drop(writer);
+        format!("data:image/png;base64,{}", STANDARD.encode(bytes))
+    }
+
+    fn confirmation(
+        policy_version: Option<i64>,
+        method: ConfirmationMethod,
+        typed_name: Option<&str>,
+        signature: Option<String>,
+        asset_codes: &[&str],
+    ) -> BorrowRequestConfirmationInput {
+        let has_signature = signature.is_some();
+        BorrowRequestConfirmationInput {
+            policy_version,
+            policy_acknowledged: policy_version.is_some(),
+            confirmation_method: method,
+            signature_png_base64: signature,
+            signature_stroke_count: has_signature.then_some(3),
+            signature_ink_present: has_signature.then_some(true),
+            typed_name: typed_name.map(str::to_string),
+            asset_codes_snapshot: asset_codes.iter().map(|code| (*code).to_string()).collect(),
+        }
+    }
+
+    fn confirmed_submission(
+        employee_id: &str,
+        full_name: &str,
+        asset_codes: &[&str],
+        request_type: &str,
+        confirmation: BorrowRequestConfirmationInput,
+    ) -> BorrowRequestWithConfirmationInput {
+        BorrowRequestWithConfirmationInput {
+            request: BorrowRequestSubmitInput {
+                submitted_employee_id: employee_id.to_string(),
+                submitted_full_name: full_name.to_string(),
+                asset_codes: asset_codes.iter().map(|code| (*code).to_string()).collect(),
+                request_type: Some(request_type.to_string()),
+                manual_employee_email: None,
+                manual_employee_team: None,
+            },
+            confirmation: Some(confirmation),
+        }
+    }
+
+    #[test]
+    fn confirmation_methods_require_their_declared_evidence() {
+        let mut conn = open_test_connection();
+        let policy = seed_policy(&mut conn);
+        seed_employee(&conn, "EE-CONF", "Nguyễn Văn A");
+
+        for (index, (method, typed_name, signature)) in [
+            (
+                ConfirmationMethod::Signature,
+                None,
+                Some(signature_data_url(4, 4, true)),
+            ),
+            (ConfirmationMethod::TypedName, Some("Nguyễn Văn A"), None),
+            (
+                ConfirmationMethod::Both,
+                Some("Nguyễn Văn A"),
+                Some(signature_data_url(4, 4, true)),
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let asset_code = format!("ASSET-CONF-{index}");
+            seed_asset(&conn, asset_code.as_str(), "Laptop", ASSET_STATUS_IN_STOCK);
+            let request = submit_borrow_request_with_confirmation_conn(
+                &mut conn,
+                confirmed_submission(
+                    "EE-CONF",
+                    "client supplied name is ignored",
+                    &[asset_code.as_str()],
+                    "borrow",
+                    confirmation(
+                        Some(policy.version),
+                        method,
+                        typed_name,
+                        signature,
+                        &[asset_code.as_str()],
+                    ),
+                ),
+            )
+            .expect("valid confirmation should submit");
+            assert_eq!(request.status, REQUEST_STATUS_PENDING);
+        }
+
+        let missing = confirmation(
+            Some(policy.version),
+            ConfirmationMethod::Signature,
+            None,
+            None,
+            &["ASSET-CONF-0"],
+        );
+        assert!(submit_borrow_request_with_confirmation_conn(
+            &mut conn,
+            confirmed_submission("EE-CONF", "ignored", &["ASSET-CONF-0"], "borrow", missing)
+        )
+        .is_err());
+
+        seed_asset(&conn, "ASSET-CONF-NONE", "Laptop", ASSET_STATUS_IN_STOCK);
+        let no_confirmation = BorrowRequestWithConfirmationInput {
+            request: BorrowRequestSubmitInput {
+                submitted_employee_id: "EE-CONF".to_string(),
+                submitted_full_name: "ignored".to_string(),
+                asset_codes: vec!["ASSET-CONF-NONE".to_string()],
+                request_type: Some("borrow".to_string()),
+                manual_employee_email: None,
+                manual_employee_team: None,
+            },
+            confirmation: None,
+        };
+        assert!(submit_borrow_request_with_confirmation_conn(&mut conn, no_confirmation).is_err());
+    }
+
+    #[test]
+    fn policy_is_current_and_server_text_is_snapshotted() {
+        let mut conn = open_test_connection();
+        let policy = seed_policy(&mut conn);
+        seed_employee(&conn, "EE-POLICY", "Policy Employee");
+        seed_asset(&conn, "ASSET-POLICY", "Laptop", ASSET_STATUS_IN_STOCK);
+        let request = submit_borrow_request_with_confirmation_conn(
+            &mut conn,
+            confirmed_submission(
+                "EE-POLICY",
+                "forged client name",
+                &["ASSET-POLICY"],
+                "borrow",
+                confirmation(
+                    Some(policy.version),
+                    ConfirmationMethod::TypedName,
+                    Some("Policy Employee"),
+                    None,
+                    &["ASSET-POLICY"],
+                ),
+            ),
+        )
+        .expect("current policy should submit");
+        let snapshot: (i64, String, String, String) = conn
+            .query_row(
+                "SELECT policy_version, policy_text_en_snapshot, policy_text_vi_snapshot, asset_codes_snapshot_json FROM borrow_request_confirmations WHERE borrow_request_id = ?",
+                params![request.id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("load confirmation snapshot");
+        assert_eq!(snapshot.0, policy.version);
+        assert_eq!(snapshot.1, policy.text_en);
+        assert_eq!(snapshot.2, policy.text_vi);
+        assert_eq!(snapshot.3, "[\"ASSET-POLICY\"]");
+        let evidence = load_borrow_request_confirmation_conn(&conn, request.id)
+            .expect("load confirmation evidence")
+            .expect("confirmation evidence exists");
+        assert_eq!(evidence.confirmation_method, ConfirmationMethod::TypedName);
+        assert!(conn
+            .execute(
+                "UPDATE borrow_request_confirmations SET typed_name = 'changed' WHERE borrow_request_id = ?",
+                params![request.id],
+            )
+            .is_err());
+        assert!(conn
+            .execute(
+                "DELETE FROM borrow_request_confirmations WHERE borrow_request_id = ?",
+                params![request.id],
+            )
+            .is_err());
+        approve_borrow_request_conn(&mut conn, request.id, 1).expect("approve request");
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM borrow_request_confirmations WHERE borrow_request_id = ?",
+                params![request.id],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("count preserved evidence"),
+            1
+        );
+    }
+
+    #[test]
+    fn typed_name_matching_is_unicode_whitespace_and_case_aware_without_ascii_folding() {
+        assert_eq!(
+            normalize_typed_name("  NGUYỄN   văn A ").unwrap(),
+            "nguyễn văn a"
+        );
+        assert!(typed_names_match("Nguyễn Văn A", "  NGUYỄN   VĂN A "));
+        assert!(!typed_names_match("Nguyễn Văn A", "Nguyen Van A"));
+    }
+
+    #[test]
+    fn signature_validation_rejects_blank_malformed_non_png_oversized_and_bad_dimensions() {
+        let valid = signature_data_url(4, 4, true);
+        assert!(validate_signature_png(&valid, Some(3), Some(true)).is_ok());
+        assert!(
+            validate_signature_png("data:image/png;base64:not-base64", Some(3), Some(true))
+                .is_err()
+        );
+        assert!(
+            validate_signature_png("data:text/plain;base64,SGVsbG8=", Some(3), Some(true)).is_err()
+        );
+        assert!(
+            validate_signature_png(&signature_data_url(4, 4, false), Some(3), Some(true)).is_err()
+        );
+        assert!(
+            validate_signature_png(&signature_data_url(1201, 4, true), Some(3), Some(true))
+                .is_err()
+        );
+        assert!(validate_signature_png(&valid, Some(0), Some(true)).is_err());
+        assert!(validate_signature_png(&valid, Some(3), Some(false)).is_err());
+    }
+
+    #[test]
+    fn return_uses_active_loan_borrower_and_submitted_by_operator() {
+        let mut conn = open_test_connection();
+        let policy = seed_policy(&mut conn);
+        let borrower = seed_employee(&conn, "EE-BORROWER-2", "Original Borrower");
+        seed_employee(&conn, "EE-RETURNER-2", "Actual Returner");
+        let asset_id = seed_asset(&conn, "ASSET-RETURN-2", "Laptop", ASSET_STATUS_ASSIGNED);
+        conn.execute(
+            "INSERT INTO borrow_requests(request_key, employee_id_fk, submitted_employee_id, submitted_full_name, status, request_type) VALUES('LOAN-2', ?, 'EE-BORROWER-2', 'Original Borrower', 'approved', 'borrow')",
+            params![borrower],
+        )
+        .expect("insert borrow request");
+        let borrow_request_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO asset_loans(asset_id, employee_id_fk, borrow_request_id) VALUES(?, ?, ?)",
+            params![asset_id, borrower, borrow_request_id],
+        )
+        .expect("insert active loan");
+
+        let return_request = submit_borrow_request_with_confirmation_conn(
+            &mut conn,
+            confirmed_submission(
+                "EE-RETURNER-2",
+                "Actual Returner",
+                &["ASSET-RETURN-2"],
+                "return",
+                confirmation(
+                    None,
+                    ConfirmationMethod::TypedName,
+                    Some("Actual Returner"),
+                    None,
+                    &["ASSET-RETURN-2"],
+                ),
+            ),
+        )
+        .expect("return by another employee should submit");
+        let identities: (Option<i64>, Option<i64>, String, String) = conn
+            .query_row(
+                "SELECT borrower_employee_id_fk, submitted_by_employee_id_fk, borrower_name_snapshot, submitted_by_name_snapshot FROM borrow_requests WHERE id = ?",
+                params![return_request.id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("load return identities");
+        assert_eq!(identities.0, Some(borrower));
+        assert_ne!(identities.0, identities.1);
+        assert_eq!(identities.2, "Original Borrower");
+        assert_eq!(identities.3, "Actual Returner");
+
+        let borrower_two = seed_employee(&conn, "EE-BORROWER-3", "Second Borrower");
+        let asset_two = seed_asset(&conn, "ASSET-RETURN-3", "Laptop", ASSET_STATUS_ASSIGNED);
+        conn.execute(
+            "INSERT INTO borrow_requests(request_key, employee_id_fk, submitted_employee_id, submitted_full_name, status, request_type) VALUES('LOAN-3', ?, 'EE-BORROWER-3', 'Second Borrower', 'approved', 'borrow')",
+            params![borrower_two],
+        )
+        .expect("insert second borrow request");
+        let second_borrow_request_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO asset_loans(asset_id, employee_id_fk, borrow_request_id) VALUES(?, ?, ?)",
+            params![asset_two, borrower_two, second_borrow_request_id],
+        )
+        .expect("insert second active loan");
+        assert!(submit_borrow_request_with_confirmation_conn(
+            &mut conn,
+            confirmed_submission(
+                "EE-RETURNER-2",
+                "Actual Returner",
+                &["ASSET-RETURN-2", "ASSET-RETURN-3"],
+                "return",
+                confirmation(
+                    None,
+                    ConfirmationMethod::TypedName,
+                    Some("Actual Returner"),
+                    None,
+                    &["ASSET-RETURN-2", "ASSET-RETURN-3"],
+                ),
+            ),
+        )
+        .is_err());
+
+        let stale_policy_confirmation = confirmation(
+            Some(policy.version),
+            ConfirmationMethod::TypedName,
+            Some("Actual Returner"),
+            None,
+            &["ASSET-RETURN-2"],
+        );
+        assert!(submit_borrow_request_with_confirmation_conn(
+            &mut conn,
+            confirmed_submission(
+                "EE-RETURNER-2",
+                "Actual Returner",
+                &["ASSET-RETURN-2"],
+                "return",
+                stale_policy_confirmation,
+            )
+        )
+        .is_err());
     }
 
     fn seed_employee(conn: &Connection, employee_id: &str, full_name: &str) -> i64 {
