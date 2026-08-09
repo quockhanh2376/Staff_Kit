@@ -3,7 +3,11 @@ import type { AuthState } from "../auth/useAuthState"
 import type { SettingsState } from "../settings/useSettingsState"
 import { BorrowLanQrCard } from "./BorrowLanQrCard"
 import type { BorrowState } from "./useBorrowState"
-import { buildBorrowReviewHeaderDescription, buildBorrowReviewHeading } from "./borrowReviewCopy"
+import {
+  BORROW_REVIEW_DESCRIPTION_TYPOGRAPHY,
+  buildBorrowReviewHeaderDescription,
+  buildBorrowReviewHeading,
+} from "./borrowReviewCopy"
 import { BorrowPendingQueue } from "./BorrowPendingQueue"
 
 type BorrowAdminViewProps = {
@@ -71,7 +75,7 @@ export function BorrowAdminView({ auth, borrow, settings }: BorrowAdminViewProps
       <div>
         <div>
           <h2 className="text-[30px] font-bold">{buildBorrowReviewHeading()}</h2>
-          <p className="mt-1 text-sm text-[var(--text-secondary)]">
+          <p className={`mt-1 ${BORROW_REVIEW_DESCRIPTION_TYPOGRAPHY} text-[var(--text-secondary)]`}>
             {buildBorrowReviewHeaderDescription()}
           </p>
         </div>

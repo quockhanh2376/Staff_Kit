@@ -10,6 +10,8 @@ export function buildBorrowReviewHeading() {
   return "Borrow / Return Review"
 }
 
+export const BORROW_REVIEW_DESCRIPTION_TYPOGRAPHY = "borrow-review-description-typography"
+
 export function buildBorrowReviewHeaderDescription() {
   return "Employees scan the fixed LAN QR on their phone, submit a pending borrow or return request, then IT reviews the exact asset items here."
 }

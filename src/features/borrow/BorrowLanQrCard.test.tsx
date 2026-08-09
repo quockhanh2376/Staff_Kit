@@ -39,9 +39,8 @@ describe("BorrowLanQrCard operational UX", () => {
     render(<BorrowLanQrCard settings={settings()} isAdmin />)
 
     expect(screen.getByText("Ready at 192.168.1.10:8787")).toBeTruthy()
-    expect(screen.getByText("192.168.1.10:8787")).toBeTruthy()
+    expect(screen.queryByText("LAN Address")).toBeNull()
     expect(screen.getByText("QR Code")).toBeTruthy()
-    expect(screen.getByText("LAN Address")).toBeTruthy()
     for (const label of [
       "Regenerate QR token",
       "Start LAN server",
@@ -123,27 +122,34 @@ describe("BorrowLanQrCard operational UX", () => {
     const lanCard = screen.getByTestId("lan-address-card")
     const policyCard = screen.getByTestId("handle-with-care-card")
 
-    expect(topCards.className).toContain("xl:grid-cols-[minmax(300px,320px)_minmax(340px,380px)_minmax(420px,1fr)]")
+    expect(topCards.className).toContain("xl:grid-cols-[minmax(255px,275px)_minmax(300px,330px)_minmax(460px,1fr)]")
     expect(topCards.className).toContain("items-start")
     expect(qrCard.className).toContain("aspect-square")
+    expect(qrCard.className).toContain("flex-col")
+    expect(qrCard.className).not.toContain("overflow-hidden")
     expect(qrSurface.className).toContain("aspect-square")
     expect(qrSurface.className).toContain("flex")
+    expect(qrSurface.className).toContain("max-h-full")
+    expect(qrSurface.className).toContain("w-auto")
     expect(qrSurface.className).toContain("items-center")
     expect(qrSurface.className).toContain("justify-center")
-    expect(qrSurface.className).toContain("max-w-[250px]")
+    expect(qrSurface.className).toContain("max-w-full")
     expect(lanCard.className).toContain("min-w-0")
     expect(lanCard.className).not.toContain("order-last")
     expect(lanCard.className).not.toContain("xl:aspect-square")
     expect(lanCard.className).not.toContain("xl:h-full")
     expect(policyCard.className).not.toContain("xl:h-full")
+    expect(screen.getByTestId("lan-config-row").className).toContain("items-end")
+    expect(screen.getByTestId("lan-config-row").previousElementSibling).toBe(screen.getByText("Ready at 192.168.1.10:8787"))
   })
 
   it("exposes Wi-Fi guidance as a keyboard-focusable address tooltip", () => {
     render(<BorrowLanQrCard settings={settings()} isAdmin />)
 
-    const address = screen.getByLabelText("LAN address and Wi-Fi guidance")
-    expect(address.getAttribute("title")).toBe("Use the same Wi-Fi/LAN as the Staff Kit machine when scanning this QR.")
-    expect(address.getAttribute("tabindex")).toBe("0")
+    const host = screen.getByLabelText("LAN Host / IP")
+    expect(host.getAttribute("title")).toBe("Use the same Wi-Fi/LAN as the Staff Kit machine when scanning this QR.")
+    expect(screen.queryByLabelText("LAN address and Wi-Fi guidance")).toBeNull()
+    expect(screen.getByText("Ready at 192.168.1.10:8787")).toBeTruthy()
   })
 
   it("keeps LAN editing, detection, and saving inside the LAN Address card", () => {
@@ -160,8 +166,16 @@ describe("BorrowLanQrCard operational UX", () => {
       />,
     )
 
-    expect(screen.getByLabelText("LAN Host / IP")).toBeTruthy()
-    expect(screen.getByLabelText("Port")).toBeTruthy()
+    const host = screen.getByLabelText("LAN Host / IP")
+    const port = screen.getByLabelText("Port")
+    expect(host.className).toContain("text-[11px]")
+    expect(port.className).toContain("text-[11px]")
+    expect(screen.getByText("LAN Host / IP").className).toContain("text-[9px]")
+    expect(screen.getByText("Port").className).toContain("text-[9px]")
+    expect(screen.getByTestId("lan-address-actions").className).toContain("justify-end")
+    expect(screen.getByRole("button", { name: "Detect LAN IP" }).parentElement).toBe(screen.getByTestId("lan-address-actions"))
+    expect(screen.getByTestId("lan-config-row").className).toContain("sm:grid-cols-[minmax(0,1fr)_110px_auto]")
+    expect(screen.getByRole("button", { name: "Save LAN settings" }).parentElement?.className).toContain("items-end")
     fireEvent.click(screen.getByRole("button", { name: "Detect LAN IP" }))
     fireEvent.click(screen.getByRole("button", { name: "Save LAN settings" }))
     expect(detect).toHaveBeenCalledTimes(1)
@@ -189,6 +203,8 @@ describe("BorrowLanQrCard operational UX", () => {
     const card = screen.getByRole("button", { name: "Start Borrow/Return" })
     expect(card.getAttribute("title")).toBe("Start Borrow/Return")
     expect(screen.getByText("Start Borrow/Return")).toBeTruthy()
+    expect(screen.getByText("LAN server inactive.")).toBeTruthy()
+    expect(screen.queryByText("Borrow LAN server stopped. Existing QR tokens no longer work.")).toBeNull()
     expect(screen.queryByRole("img")).toBeNull()
     await act(async () => {
       fireEvent.click(card)

@@ -2,6 +2,7 @@ import { act, render, screen } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { ComponentProps } from "react"
 import { BorrowAdminView } from "./BorrowAdminView"
+import { BORROW_REVIEW_DESCRIPTION_TYPOGRAPHY } from "./borrowReviewCopy"
 
 vi.mock("./BorrowLanQrCard", () => ({ BorrowLanQrCard: (props: { onRefreshQueue?: () => void }) => (
   <button type="button" aria-label="Refresh pending queue" onClick={props.onRefreshQueue} />
@@ -26,6 +27,19 @@ describe("Borrow / Return LAN entry", () => {
     rerender(<BorrowAdminView {...props} />)
 
     expect(ensureBorrowLanReady).not.toHaveBeenCalled()
+  })
+
+  it("shares the page-description typography contract with policy textareas", () => {
+    const props = {
+      auth: { isAdminAccount: true },
+      borrow: { isLoadingQueue: false, refreshQueue: vi.fn(), selectedRequestId: null },
+      settings: { lanServerAlive: false, ensureBorrowLanReady: vi.fn() },
+    } as unknown as ComponentProps<typeof BorrowAdminView>
+
+    render(<BorrowAdminView {...props} />)
+
+    expect(screen.getByText("Employees scan the fixed LAN QR on their phone, submit a pending borrow or return request, then IT reviews the exact asset items here.").className)
+      .toContain(BORROW_REVIEW_DESCRIPTION_TYPOGRAPHY)
   })
 
   it("fetches immediately, polls while mounted, and cleans up on unmount", async () => {

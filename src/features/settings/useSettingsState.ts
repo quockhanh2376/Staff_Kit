@@ -544,7 +544,7 @@ export function useSettingsState({
             setLanServerAlive(status.running)
             setLanToken(null)
             setLanTokenReady(status.tokenReady)
-            setBorrowLanMessage("Borrow LAN server stopped. Existing QR tokens no longer work.")
+            setBorrowLanMessage("")
         } catch (error) {
             setBorrowLanMessage(getUserErrorMessage(error))
         } finally {

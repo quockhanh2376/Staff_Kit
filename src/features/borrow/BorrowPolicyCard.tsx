@@ -1,4 +1,5 @@
 import { LoaderCircle, Save } from "lucide-react"
+import { BORROW_REVIEW_DESCRIPTION_TYPOGRAPHY } from "./borrowReviewCopy"
 
 type BorrowPolicyCardProps = {
   english: string
@@ -30,7 +31,7 @@ export function BorrowPolicyCard({
     : english !== savedEnglish || vietnamese !== savedVietnamese
 
   return (
-    <div data-testid="handle-with-care-card" className="min-w-0 rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/25 p-3">
+    <div data-testid="handle-with-care-card" className="min-w-0 rounded-[10px] border border-[var(--border)] bg-[var(--surface-hover)]/25 p-2.5">
       <div className="flex items-center justify-between gap-2">
         <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
           Handle with Care
@@ -55,13 +56,10 @@ export function BorrowPolicyCard({
       ) : (
         <div className="mt-3 space-y-3">
           <div>
-            <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]" htmlFor="borrow-policy-english">
-              English
-            </label>
             <textarea
               id="borrow-policy-english"
               aria-label="English Handle with Care policy"
-              className="form-input min-h-[96px] resize-y text-sm"
+              className={`form-input min-h-[96px] w-full resize-y ${BORROW_REVIEW_DESCRIPTION_TYPOGRAPHY}`}
               spellCheck={false}
               value={english}
               onChange={(event) => onEnglishChange(event.target.value)}
@@ -69,13 +67,10 @@ export function BorrowPolicyCard({
             />
           </div>
           <div>
-            <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]" htmlFor="borrow-policy-vietnamese">
-              Vietnamese
-            </label>
             <textarea
               id="borrow-policy-vietnamese"
               aria-label="Vietnamese Handle with Care policy"
-              className="form-input min-h-[96px] resize-y text-sm"
+              className={`form-input min-h-[96px] w-full resize-y ${BORROW_REVIEW_DESCRIPTION_TYPOGRAPHY}`}
               spellCheck={false}
               value={vietnamese}
               onChange={(event) => onVietnameseChange(event.target.value)}

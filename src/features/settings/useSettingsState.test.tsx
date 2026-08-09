@@ -396,6 +396,30 @@ describe("Borrow / Return LAN automatic lifecycle", () => {
         expect(invokeMock.mock.calls.some(([command]) => command === "update_borrow_lan_settings")).toBe(false)
     })
 
+    it("clears the persistent stop message and leaves the inactive status visible", async () => {
+        setSession({ sessionToken: "lan-token", expiresAt: "2099-01-01T00:00:00Z" })
+        const { result } = renderHook(() => useSettingsState(baseOptions))
+        await act(async () => {
+            await Promise.resolve()
+            await Promise.resolve()
+        })
+
+        invokeMock.mockImplementation(async (command: string) => {
+            if (command === "stop_borrow_lan_server") {
+                return { running: false, tokenReady: false, bindHost: "127.0.0.1", port: 8787 }
+            }
+            return undefined
+        })
+
+        await act(async () => {
+            await result.current.handleStopBorrowLanServer()
+        })
+
+        expect(result.current.lanServerAlive).toBe(false)
+        expect(result.current.lanTokenReady).toBe(false)
+        expect(result.current.borrowLanMessage).toBe("")
+    })
+
     it("starts a stopped server once and issues one token", async () => {
         setSession({ sessionToken: "lan-token", expiresAt: "2099-01-01T00:00:00Z" })
         const { result, rerender } = renderHook(() => useSettingsState(baseOptions))
@@ -490,5 +514,156 @@ describe("Borrow / Return LAN automatic lifecycle", () => {
         failRetry?.(new Error("second failure"))
         await act(async () => { await retryOne })
         expect(startAttempts).toBe(2)
+    })
+})
+
+describe("Borrow / Return saved Handle with Care policy", () => {
+    const savedPolicy = {
+        version: 7,
+        textEn: "Saved English policy.",
+        textVi: "Chính sách đã lưu.",
+        createdAt: "2026-08-10T00:00:00Z",
+    }
+
+    async function settlePolicyLoad() {
+        await act(async () => {
+            await Promise.resolve()
+            await Promise.resolve()
+        })
+    }
+
+    it("keeps unsaved textarea edits local without changing the saved current policy", async () => {
+        setSession({ sessionToken: "policy-token", expiresAt: "2099-01-01T00:00:00Z" })
+        invokeMock.mockImplementation(async (command: string) => {
+            if (command === "get_borrow_policy") return savedPolicy
+            return undefined
+        })
+
+        const { result } = renderHook(() => useSettingsState(baseOptions))
+        await settlePolicyLoad()
+
+        await act(async () => {
+            result.current.setBorrowPolicyEnglishInput("Unsaved English draft.")
+            result.current.setBorrowPolicyVietnameseInput("Bản nháp chưa lưu.")
+        })
+
+        expect(result.current.borrowPolicy).toEqual(savedPolicy)
+        expect(result.current.borrowPolicy?.textEn).toBe(savedPolicy.textEn)
+        expect(result.current.borrowPolicy?.textVi).toBe(savedPolicy.textVi)
+        expect(result.current.borrowPolicyEnglishInput).toBe("Unsaved English draft.")
+        expect(result.current.borrowPolicyVietnameseInput).toBe("Bản nháp chưa lưu.")
+    })
+
+    it("updates the saved current policy only after a successful save", async () => {
+        setSession({ sessionToken: "policy-token", expiresAt: "2099-01-01T00:00:00Z" })
+        const updatedPolicy = { ...savedPolicy, version: 8, textEn: "Updated English policy.", textVi: "Chính sách mới." }
+        invokeMock.mockImplementation(async (command: string, args?: { payload?: { textEn?: string; textVi?: string } }) => {
+            if (command === "get_borrow_policy") return savedPolicy
+            if (command === "save_borrow_policy") return { ...updatedPolicy, textEn: args?.payload?.textEn, textVi: args?.payload?.textVi }
+            return undefined
+        })
+
+        const { result } = renderHook(() => useSettingsState(baseOptions))
+        await settlePolicyLoad()
+        await act(async () => {
+            result.current.setBorrowPolicyEnglishInput(updatedPolicy.textEn)
+            result.current.setBorrowPolicyVietnameseInput(updatedPolicy.textVi)
+        })
+
+        expect(result.current.borrowPolicy).toEqual(savedPolicy)
+        await act(async () => {
+            await result.current.saveBorrowPolicy()
+        })
+
+        expect(result.current.borrowPolicy?.version).toBe(8)
+        expect(result.current.borrowPolicy?.textEn).toBe(updatedPolicy.textEn)
+        expect(result.current.borrowPolicy?.textVi).toBe(updatedPolicy.textVi)
+        expect(result.current.borrowPolicyEnglishInput).toBe(updatedPolicy.textEn)
+        expect(result.current.borrowPolicyVietnameseInput).toBe(updatedPolicy.textVi)
+    })
+
+    it("keeps the draft and saved policy unchanged when Save fails", async () => {
+        setSession({ sessionToken: "policy-token", expiresAt: "2099-01-01T00:00:00Z" })
+        invokeMock.mockImplementation(async (command: string) => {
+            if (command === "get_borrow_policy") return savedPolicy
+            if (command === "save_borrow_policy") throw new Error("temporary save failure")
+            return undefined
+        })
+
+        const { result } = renderHook(() => useSettingsState(baseOptions))
+        await settlePolicyLoad()
+        await act(async () => {
+            result.current.setBorrowPolicyEnglishInput("Failed English draft.")
+            result.current.setBorrowPolicyVietnameseInput("Bản nháp lỗi.")
+        })
+        await act(async () => {
+            await result.current.saveBorrowPolicy()
+        })
+
+        expect(result.current.borrowPolicy).toEqual(savedPolicy)
+        expect(result.current.borrowPolicyEnglishInput).toBe("Failed English draft.")
+        expect(result.current.borrowPolicyVietnameseInput).toBe("Bản nháp lỗi.")
+        expect(result.current.borrowPolicyMessage).not.toBe("Saved")
+    })
+
+    it("does not invoke Save when the draft is unchanged", async () => {
+        setSession({ sessionToken: "policy-token", expiresAt: "2099-01-01T00:00:00Z" })
+        invokeMock.mockImplementation(async (command: string) => {
+            if (command === "get_borrow_policy") return savedPolicy
+            return undefined
+        })
+
+        const { result } = renderHook(() => useSettingsState(baseOptions))
+        await settlePolicyLoad()
+        await act(async () => {
+            await result.current.saveBorrowPolicy()
+        })
+
+        expect(invokeMock.mock.calls.filter(([command]) => command === "save_borrow_policy")).toHaveLength(0)
+        expect(result.current.borrowPolicy).toEqual(savedPolicy)
+    })
+
+    it("does not overwrite an active draft on a plain rerender", async () => {
+        setSession({ sessionToken: "policy-token", expiresAt: "2099-01-01T00:00:00Z" })
+        invokeMock.mockImplementation(async (command: string) => {
+            if (command === "get_borrow_policy") return savedPolicy
+            return undefined
+        })
+
+        const { result, rerender } = renderHook(({ reloadToken }: { reloadToken: number }) =>
+            useSettingsState({ ...baseOptions, reloadToken }),
+            { initialProps: { reloadToken: 0 } },
+        )
+        await settlePolicyLoad()
+        await act(async () => {
+            result.current.setBorrowPolicyEnglishInput("Active draft.")
+        })
+        rerender({ reloadToken: 0 })
+
+        expect(result.current.borrowPolicyEnglishInput).toBe("Active draft.")
+        expect(result.current.borrowPolicy?.textEn).toBe(savedPolicy.textEn)
+    })
+
+    it("reloads the saved policy over an unsaved draft", async () => {
+        setSession({ sessionToken: "policy-token", expiresAt: "2099-01-01T00:00:00Z" })
+        invokeMock.mockImplementation(async (command: string) => {
+            if (command === "get_borrow_policy") return savedPolicy
+            return undefined
+        })
+
+        const { result } = renderHook(() => useSettingsState(baseOptions))
+        await settlePolicyLoad()
+        await act(async () => {
+            result.current.setBorrowPolicyEnglishInput("Draft that must be discarded.")
+        })
+        expect(result.current.borrowPolicyEnglishInput).toBe("Draft that must be discarded.")
+
+        await act(async () => {
+            await result.current.loadBorrowPolicy()
+        })
+
+        expect(result.current.borrowPolicy).toEqual(savedPolicy)
+        expect(result.current.borrowPolicyEnglishInput).toBe(savedPolicy.textEn)
+        expect(result.current.borrowPolicyVietnameseInput).toBe(savedPolicy.textVi)
     })
 })
