@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::io::Cursor;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr};
+#[cfg(not(target_os = "windows"))]
 use std::net::UdpSocket;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -32,6 +33,7 @@ const ASSET_STATUS_DISPOSED: &str = "disposed";
 const ASSET_STATUS_LOST: &str = "lost";
 const STAFF_GROUP_OFFBOARDING: &str = "offboarding";
 const DEFAULT_BORROW_LAN_PORT: u16 = 8787;
+#[cfg(not(target_os = "windows"))]
 const BORROW_LAN_DETECTION_TARGETS: [&str; 3] = ["1.1.1.1:80", "8.8.8.8:80", "208.67.222.222:80"];
 const HANDLE_WITH_CARE_POLICY_MAX_BYTES: usize = 20_000;
 
@@ -58,6 +60,14 @@ pub struct BorrowPolicyDesktopRecord {
 pub struct BorrowPolicyUpdateInput {
     pub text_en: String,
     pub text_vi: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct BorrowLanInterfaceCandidate {
+    host: Ipv4Addr,
+    has_default_gateway: bool,
+    is_physical: bool,
+    route_metric: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -369,13 +379,59 @@ pub fn update_borrow_lan_settings_with_actor(
 }
 
 pub fn detect_borrow_lan_host() -> Result<Option<String>, String> {
-    for target in BORROW_LAN_DETECTION_TARGETS {
-        if let Some(host) = detect_borrow_lan_host_via_target(target) {
-            return Ok(Some(host));
-        }
+    #[cfg(target_os = "windows")]
+    {
+        let adapters = ipconfig::get_adapters()
+            .map_err(|_| "Could not enumerate active LAN interfaces.".to_string())?;
+        let candidates = adapters
+            .iter()
+            .filter(|adapter| adapter.oper_status() == ipconfig::OperStatus::IfOperStatusUp)
+            .filter(|adapter| {
+                !matches!(
+                    adapter.if_type(),
+                    ipconfig::IfType::SoftwareLoopback | ipconfig::IfType::Tunnel
+                )
+            })
+            .flat_map(|adapter| {
+                let has_default_gateway = adapter.gateways().iter().any(|gateway| {
+                    matches!(gateway, IpAddr::V4(address) if !address.is_unspecified())
+                });
+                let is_physical = matches!(
+                    adapter.if_type(),
+                    ipconfig::IfType::EthernetCsmacd
+                        | ipconfig::IfType::Ieee80211
+                        | ipconfig::IfType::Ieee1394
+                );
+                adapter.ip_addresses().iter().filter_map(move |address| {
+                    let IpAddr::V4(host) = address else {
+                        return None;
+                    };
+                    if !is_valid_private_borrow_lan_host(*host) {
+                        return None;
+                    }
+                    Some(BorrowLanInterfaceCandidate {
+                        host: *host,
+                        has_default_gateway,
+                        is_physical,
+                        route_metric: adapter.ipv4_metric(),
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+
+        return Ok(select_borrow_lan_host_candidate(&candidates));
     }
 
-    Ok(None)
+    #[cfg(not(target_os = "windows"))]
+    {
+        for target in BORROW_LAN_DETECTION_TARGETS {
+            if let Some(host) = detect_borrow_lan_host_via_target(target) {
+                return Ok(Some(host));
+            }
+        }
+
+        Ok(None)
+    }
 }
 
 pub fn get_borrow_policy(app: &AppHandle) -> Result<Option<BorrowPolicyDesktopRecord>, String> {
@@ -1515,6 +1571,7 @@ fn parse_borrow_lan_enabled_setting(value: &str) -> bool {
     )
 }
 
+#[cfg(any(not(target_os = "windows"), test))]
 fn normalize_detected_borrow_lan_host_candidate(candidate: &str) -> Option<String> {
     let trimmed = candidate.trim();
     let parsed = trimmed.parse::<IpAddr>().ok()?;
@@ -1524,6 +1581,26 @@ fn normalize_detected_borrow_lan_host_candidate(candidate: &str) -> Option<Strin
     Some(parsed.to_string())
 }
 
+fn is_valid_private_borrow_lan_host(host: Ipv4Addr) -> bool {
+    !host.is_loopback() && !host.is_unspecified() && !host.is_link_local() && host.is_private()
+}
+
+fn select_borrow_lan_host_candidate(candidates: &[BorrowLanInterfaceCandidate]) -> Option<String> {
+    candidates
+        .iter()
+        .filter(|candidate| is_valid_private_borrow_lan_host(candidate.host))
+        .min_by_key(|candidate| {
+            (
+                !candidate.has_default_gateway,
+                !candidate.is_physical,
+                candidate.route_metric,
+                candidate.host.octets(),
+            )
+        })
+        .map(|candidate| candidate.host.to_string())
+}
+
+#[cfg(not(target_os = "windows"))]
 fn detect_borrow_lan_host_via_target(target: &str) -> Option<String> {
     let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
     socket.connect(target).ok()?;
@@ -3282,6 +3359,119 @@ mod tests {
         assert_eq!(
             normalize_detected_borrow_lan_host_candidate("not-an-ip"),
             None
+        );
+    }
+
+    #[test]
+    fn selects_gateway_backed_physical_interface_before_gatewayless_interface() {
+        let candidates = vec![
+            BorrowLanInterfaceCandidate {
+                host: Ipv4Addr::new(10, 184, 1, 51),
+                has_default_gateway: false,
+                is_physical: true,
+                route_metric: 5,
+            },
+            BorrowLanInterfaceCandidate {
+                host: Ipv4Addr::new(192, 168, 88, 69),
+                has_default_gateway: true,
+                is_physical: true,
+                route_metric: 25,
+            },
+        ];
+
+        assert_eq!(
+            select_borrow_lan_host_candidate(&candidates),
+            Some("192.168.88.69".to_string())
+        );
+    }
+
+    #[test]
+    fn selector_excludes_loopback_and_link_local_addresses() {
+        let candidates = vec![
+            BorrowLanInterfaceCandidate {
+                host: Ipv4Addr::new(127, 0, 0, 1),
+                has_default_gateway: true,
+                is_physical: true,
+                route_metric: 1,
+            },
+            BorrowLanInterfaceCandidate {
+                host: Ipv4Addr::new(169, 254, 20, 10),
+                has_default_gateway: true,
+                is_physical: true,
+                route_metric: 2,
+            },
+            BorrowLanInterfaceCandidate {
+                host: Ipv4Addr::new(10, 24, 8, 9),
+                has_default_gateway: false,
+                is_physical: true,
+                route_metric: 10,
+            },
+        ];
+
+        assert_eq!(
+            select_borrow_lan_host_candidate(&candidates),
+            Some("10.24.8.9".to_string())
+        );
+    }
+
+    #[test]
+    fn selector_falls_back_to_private_interface_without_gateway() {
+        let candidates = vec![
+            BorrowLanInterfaceCandidate {
+                host: Ipv4Addr::new(172, 20, 4, 12),
+                has_default_gateway: false,
+                is_physical: false,
+                route_metric: 50,
+            },
+            BorrowLanInterfaceCandidate {
+                host: Ipv4Addr::new(10, 0, 0, 4),
+                has_default_gateway: false,
+                is_physical: true,
+                route_metric: 100,
+            },
+        ];
+
+        assert_eq!(
+            select_borrow_lan_host_candidate(&candidates),
+            Some("10.0.0.4".to_string())
+        );
+    }
+
+    #[test]
+    fn selector_is_deterministic_for_multiple_equal_priority_adapters() {
+        let candidates = vec![
+            BorrowLanInterfaceCandidate {
+                host: Ipv4Addr::new(192, 168, 50, 8),
+                has_default_gateway: true,
+                is_physical: true,
+                route_metric: 10,
+            },
+            BorrowLanInterfaceCandidate {
+                host: Ipv4Addr::new(192, 168, 50, 7),
+                has_default_gateway: true,
+                is_physical: true,
+                route_metric: 10,
+            },
+        ];
+
+        assert_eq!(
+            select_borrow_lan_host_candidate(&candidates),
+            Some("192.168.50.7".to_string())
+        );
+    }
+
+    #[test]
+    fn selector_has_no_subnet_specific_preference() {
+        let candidates = vec![BorrowLanInterfaceCandidate {
+            host: Ipv4Addr::new(172, 31, 12, 3),
+            has_default_gateway: true,
+            is_physical: true,
+            route_metric: 1,
+        }];
+
+        assert_eq!(
+            select_borrow_lan_host_candidate(&candidates),
+            Some("172.31.12.3".to_string())
         );
     }
 

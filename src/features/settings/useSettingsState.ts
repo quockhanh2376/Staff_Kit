@@ -170,6 +170,7 @@ export function useSettingsState({
                 }
 
                 setBorrowLanDetectedHost(nextHost)
+                setBorrowLanHostInput(nextHost)
                 if (nextHost !== normalizedSavedHost) {
                     setBorrowLanDetectionNote(
                         `Detected LAN IP ${nextHost}; saved host is ${normalizedSavedHost || "not configured"}. Save to use it on the next start.`,
@@ -468,7 +469,16 @@ export function useSettingsState({
             setBorrowLanSettings(updated)
             setBorrowLanHostInput(updated.host)
             setBorrowLanPortInput(String(updated.port))
-            setBorrowLanMessage("Borrow LAN settings saved.")
+            const runningStatus = lanServerStatusRef.current ?? lanServerStatus
+            const restartRequired = runningStatus?.running === true && (
+                runningStatus.bindHost.trim() !== updated.host.trim() ||
+                runningStatus.port !== updated.port
+            )
+            setBorrowLanMessage(
+                restartRequired
+                    ? "LAN settings saved. Restart Borrow / Return to apply."
+                    : "Borrow LAN settings saved.",
+            )
         } catch (error) {
             setBorrowLanMessage(getUserErrorMessage(error))
         } finally {
@@ -545,6 +555,48 @@ export function useSettingsState({
             setLanToken(null)
             setLanTokenReady(status.tokenReady)
             setBorrowLanMessage("")
+        } catch (error) {
+            setBorrowLanMessage(getUserErrorMessage(error))
+        } finally {
+            setManagingLanToken(false)
+        }
+    }
+
+    const handleRestartBorrowLanServer = async () => {
+        if (isManagingLanToken) return
+
+        try {
+            setManagingLanToken(true)
+            setBorrowLanMessage("")
+
+            const stopped = await staffApi.stopBorrowLanServer()
+            lanServerStatusRef.current = stopped
+            lanTokenRef.current = null
+            lanTokenReadyRef.current = stopped.tokenReady
+            setLanServerStatus(stopped)
+            setLanServerAlive(stopped.running)
+            setLanToken(null)
+            setLanTokenReady(stopped.tokenReady)
+
+            const started = await staffApi.startBorrowLanServer()
+            if (!started.running) {
+                throw new Error("LAN server did not become ready")
+            }
+            lanServerStatusRef.current = started
+            setLanServerStatus(started)
+            setLanServerAlive(started.running)
+            lanTokenReadyRef.current = started.tokenReady
+            setLanTokenReady(started.tokenReady)
+
+            const token = await staffApi.issueBorrowLanToken()
+            const readyStatus = { ...started, tokenReady: true }
+            lanServerStatusRef.current = readyStatus
+            lanTokenRef.current = token
+            lanTokenReadyRef.current = true
+            setLanServerStatus(readyStatus)
+            setLanToken(token)
+            setLanTokenReady(true)
+            setBorrowLanMessage("Borrow LAN restarted with the saved settings.")
         } catch (error) {
             setBorrowLanMessage(getUserErrorMessage(error))
         } finally {
@@ -629,20 +681,33 @@ export function useSettingsState({
     const handleRefreshBorrowLanHost = useCallback(() => {
         setBorrowLanMessage("")
         void detectBorrowLanHost({
-            savedHost: borrowLanHostInput,
+            savedHost: borrowLanSettings?.host ?? borrowLanHostInput,
             showMissingMessage: true,
         })
-    }, [borrowLanHostInput, detectBorrowLanHost])
+    }, [borrowLanHostInput, borrowLanSettings?.host, detectBorrowLanHost])
 
     const borrowLanUrlPreview = useMemo(
         () => buildBorrowLanUrlPreview(borrowLanHostInput, borrowLanPortInput),
         [borrowLanHostInput, borrowLanPortInput],
     )
 
+    const borrowLanRestartRequired = useMemo(() => {
+        if (!borrowLanSettings || !lanServerStatus?.running) return false
+        return (
+            lanServerStatus.bindHost.trim() !== borrowLanSettings.host.trim() ||
+            lanServerStatus.port !== borrowLanSettings.port
+        )
+    }, [borrowLanSettings, lanServerStatus])
+
     const borrowLanQrUrl = useMemo(() => {
-        if (!lanToken || !borrowLanUrlPreview.startsWith("http://")) return ""
-        return `${borrowLanUrlPreview}#t=${lanToken}`
-    }, [borrowLanUrlPreview, lanToken])
+        if (!lanToken || !borrowLanSettings || borrowLanRestartRequired) return ""
+        const savedBaseUrl = borrowLanSettings.borrowUrl?.trim() || buildBorrowLanUrlPreview(
+            borrowLanSettings.host,
+            String(borrowLanSettings.port),
+        )
+        if (!savedBaseUrl.startsWith("http://")) return ""
+        return `${savedBaseUrl}#t=${lanToken}`
+    }, [borrowLanRestartRequired, borrowLanSettings, lanToken])
 
     const handleSeedAssets = async () => {
         try {
@@ -708,6 +773,7 @@ export function useSettingsState({
         setBorrowLanPortInput,
         borrowLanUrlPreview,
         borrowLanQrUrl,
+        borrowLanRestartRequired,
         borrowLanMessage,
         borrowLanDetectionNote,
         borrowLanDetectedHost,
@@ -724,6 +790,7 @@ export function useSettingsState({
         refreshBorrowLanStatus,
         handleStartBorrowLanServer,
         handleStopBorrowLanServer,
+        handleRestartBorrowLanServer,
         ensureBorrowLanReady,
         lanAutoStartState,
         lanAutoStartError,

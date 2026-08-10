@@ -134,6 +134,14 @@ describe("BorrowLanQrCard operational UX", () => {
     expect(qrSurface.className).toContain("items-center")
     expect(qrSurface.className).toContain("justify-center")
     expect(qrSurface.className).toContain("max-w-full")
+    expect(qrSurface.className).toContain("p-3")
+    const qrSvg = screen.getByRole("img")
+    expect(qrSvg.tagName.toLowerCase()).toBe("svg")
+    expect(qrSvg.getAttribute("width")).toBe("220")
+    expect(qrSvg.getAttribute("height")).toBe("220")
+    const viewBox = qrSvg.getAttribute("viewBox")?.split(/\s+/).map(Number)
+    expect(viewBox?.[2]).toBe(viewBox?.[3])
+    expect(qrSvg.getAttribute("preserveAspectRatio")).not.toBe("none")
     expect(lanCard.className).toContain("min-w-0")
     expect(lanCard.className).not.toContain("order-last")
     expect(lanCard.className).not.toContain("xl:aspect-square")
@@ -182,6 +190,28 @@ describe("BorrowLanQrCard operational UX", () => {
     expect(save).toHaveBeenCalledTimes(1)
     expect(start).not.toHaveBeenCalled()
     expect(stop).not.toHaveBeenCalled()
+  })
+
+  it("disables stale QR content and offers a direct restart after a running-config change", () => {
+    const restart = vi.fn()
+    render(
+      <BorrowLanQrCard
+        settings={settings({
+          borrowLanSettings: { enabled: true, host: "192.168.88.69", port: 8787, borrowUrl: "http://192.168.88.69:8787/borrow" },
+          borrowLanQrUrl: "http://192.168.88.69:8787/borrow#t=stale-token",
+          borrowLanRestartRequired: true,
+          lanServerStatus: { running: true, tokenReady: true, bindHost: "192.168.2.1", port: 8787 },
+          handleRestartBorrowLanServer: restart,
+        })}
+        isAdmin
+      />,
+    )
+
+    expect(screen.getByText("LAN settings saved. Restart Borrow / Return to apply.")).toBeTruthy()
+    expect(screen.getByText("Restart Borrow/Return to refresh QR")).toBeTruthy()
+    expect(screen.queryByRole("img")).toBeNull()
+    screen.getByRole("button", { name: "Restart Borrow / Return" }).click()
+    expect(restart).toHaveBeenCalledTimes(1)
   })
 
   it("renders a disabled stopped card with a start action", async () => {

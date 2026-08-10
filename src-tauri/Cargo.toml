@@ -34,3 +34,6 @@ tokio-util = { version = "0.7", features = ["compat"] }
 csv = "1.4"
 tiberius = { version = "0.12", features = ["tokio", "native-tls"] }
 futures = "0.3"
+
+[target.'cfg(windows)'.dependencies]
+ipconfig = { version = "0.3.4", default-features = false }

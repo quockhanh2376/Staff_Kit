@@ -48,6 +48,7 @@ export function BorrowLanQrCard({
   const isReady =
     (settings.lanServerStatus?.running ?? settings.lanServerAlive === true) &&
     (settings.lanServerStatus?.tokenReady ?? settings.lanTokenReady) &&
+    !settings.borrowLanRestartRequired &&
     Boolean(settings.borrowLanQrUrl)
   const host = settings.borrowLanSettings?.host || settings.lanServerStatus?.bindHost || "configured LAN host"
   const port = settings.borrowLanSettings?.port || settings.lanServerStatus?.port || "?"
@@ -122,7 +123,13 @@ export function BorrowLanQrCard({
                     </div>
                   ) : (
                     <div className="px-3 py-12 text-center text-xs text-slate-500">
-                      {isLanStarting ? "Starting…" : isLanStopping ? "Stopping…" : "Start Borrow/Return"}
+                      {isLanStarting
+                        ? "Starting…"
+                        : isLanStopping
+                          ? "Stopping…"
+                          : settings.borrowLanRestartRequired
+                            ? "Restart Borrow/Return to refresh QR"
+                            : "Start Borrow/Return"}
                     </div>
                   )}
                 </div>
@@ -163,7 +170,24 @@ export function BorrowLanQrCard({
               Ready at {host}:{port}
             </div>
           )}
-          {!isLanStarting && !isLanStopping && !isReady && (
+          {settings.borrowLanRestartRequired && !isLanStarting && !isLanStopping && (
+            <div className="mt-2 space-y-2 text-xs text-amber-300">
+              <div className="flex items-start gap-2">
+                <XCircle className="mt-0.5 shrink-0" size={13} />
+                <span>LAN settings saved. Restart Borrow / Return to apply.</span>
+              </div>
+              <button
+                aria-label="Restart Borrow / Return"
+                className="rounded-[8px] border border-amber-400/60 px-3 py-1.5 font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={settings.isManagingLanToken}
+                onClick={() => void settings.handleRestartBorrowLanServer()}
+                type="button"
+              >
+                Restart Borrow / Return
+              </button>
+            </div>
+          )}
+          {!isLanStarting && !isLanStopping && !isReady && !settings.borrowLanRestartRequired && (
             <div className="mt-2 flex items-center gap-2 text-xs text-[var(--text-secondary)]">
               LAN server inactive.
             </div>
