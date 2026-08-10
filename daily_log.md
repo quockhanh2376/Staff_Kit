@@ -1767,3 +1767,16 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Result: restored database-file and history restores now apply the canonical migrations before success; Borrow backup coverage includes policy, confirmation metadata, exact signature bytes, identity snapshots, and request items; maintained supplemental scripts now match the current LAN UI contracts.
 - Validation: focused backup tests 4/4; focused Borrow backup test 1/1; supplemental scripts passed; frontend unit tests 22 files/197 tests; full Rust/Tauri tests 263/263; Tauri check, typecheck, lint, build, quality, `git diff --check`, and `tauri:build` passed.
 - Warnings: pre-existing React hook dependency, Vite dynamic-import/chunk-size, Tauri identifier, and Rust dead-code/unused Phase-2 API warnings. No version bump, tag, release, commit, push, generated/local/sensitive files, or unrelated business/security changes.
+
+## 2026-08-10 Staff Kit 2.2.0-rc.1 build — Start
+
+- Objective: prepare a local Windows release-candidate build from clean main at b6a77dc2f29bfe37cdf2877c145664d4ea43a0c1.
+- Version strategy: app/package/Tauri/Cargo use 2.2.0-rc.1; WiX MSI uses the valid numeric product version 2.2.0.1; NSIS retains the SemVer prerelease identity.
+- Scope: version metadata, generated package lock metadata, WiX bundle version override, and release validation only; no Borrow/Restore, schema, mapping, or business-logic changes.
+
+## 2026-08-10 Staff Kit 2.2.0-rc.1 build — End
+
+- Result: local Windows RC artifacts built successfully with app/package/Tauri/Cargo version 2.2.0-rc.1 and WiX MSI ProductVersion 2.2.0.1.
+- Validation: unit tests 197/197; Rust/Tauri tests 263/263; Tauri check, typecheck, lint, build, quality, `git diff --check`, and `tauri:build` passed.
+- Artifacts: `Staff Kit_2.2.0-rc.1_x64_en-US.msi` and `Staff Kit_2.2.0-rc.1_x64-setup.exe`; stale generated 2.1.0 bundle files removed. No commit, push, tag, release, or version beyond the RC preparation.
+- Warnings: existing React hook dependency, Vite dynamic-import/chunk-size, Tauri identifier, and Rust dead-code/unused Phase-2 API warnings.
