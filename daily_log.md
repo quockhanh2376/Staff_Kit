@@ -1756,3 +1756,14 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Result: replaced timing-based Stop → Start proof with test-only listener-ready, shutdown, lifecycle-acquisition, termination, and completion signals plus ordered event assertions. No release lifecycle behavior changed.
 - Validation: focused lifecycle test 1/1; LAN lifecycle tests 32/32; focused Phase C tests 14/14; full Rust/Tauri tests 231/231; frontend unit tests 17 files/143 tests; typecheck, lint, build, quality, Tauri check, changed-file rustfmt, and `git diff --check` passed.
 - Warnings: pre-existing React hook dependency, Vite dynamic-import/chunk-size, and Rust dead-code warnings. No schema/manual-identity changes, dependency/generated/database/secret changes, commit/push, or main/origin-main changes.
+
+## 2026-08-10 release blocker fixes — Start
+
+- Objective: migrate restored databases before reporting restore success, strengthen Borrow backup round-trip coverage, and repair maintained LAN UI supplemental checks.
+- Scope: restore/migration helpers and tests, Borrow backup/restore tests, and supplemental scripts; no version bump, tag, release, UI redesign, or Borrow business-rule changes.
+
+## 2026-08-10 release blocker fixes — End
+
+- Result: restored database-file and history restores now apply the canonical migrations before success; Borrow backup coverage includes policy, confirmation metadata, exact signature bytes, identity snapshots, and request items; maintained supplemental scripts now match the current LAN UI contracts.
+- Validation: focused backup tests 4/4; focused Borrow backup test 1/1; supplemental scripts passed; frontend unit tests 22 files/197 tests; full Rust/Tauri tests 263/263; Tauri check, typecheck, lint, build, quality, `git diff --check`, and `tauri:build` passed.
+- Warnings: pre-existing React hook dependency, Vite dynamic-import/chunk-size, Tauri identifier, and Rust dead-code/unused Phase-2 API warnings. No version bump, tag, release, commit, push, generated/local/sensitive files, or unrelated business/security changes.

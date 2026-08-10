@@ -11,6 +11,7 @@
     "check:frontend": "npm run lint; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; npm run typecheck; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; npm run build",
     "check:tauri": "node ./scripts/run-with-shared-cargo-target.mjs cargo check --manifest-path src-tauri/Cargo.toml",
     "check:quality": "npm run check:frontend; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; npm run check:tauri",
+    "test:supplemental": "node --experimental-strip-types scripts/borrow-lan-autofill.test.ts; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; node --experimental-strip-types scripts/action-icon-ui.test.ts",
     "test:unit": "vitest run",
     "preview": "vite preview",
     "headroom": ".\\.headroom-venv\\Scripts\\headroom.exe",

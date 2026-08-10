@@ -42,7 +42,9 @@ assert.deepEqual(applyDetectedBorrowLanSettings?.(savedSettings, null), savedSet
 
 assert.match(settingsState, /handleRefreshBorrowLanHost/)
 assert.match(settingsState, /detectBorrowLanHost/)
-assert.match(settingsState, /setBorrowLanSettings\(\(current\) => applyDetectedBorrowLanSettings\(current, nextHost\)\)/)
+assert.match(settingsState, /setBorrowLanHostInput\(nextHost\)/)
+assert.match(settingsState, /setBorrowLanDetectedHost\(nextHost\)/)
+assert.doesNotMatch(settingsState, /setBorrowLanSettings\(\(current\).*nextHost/s)
 assert.match(borrowLanQrCard, /RefreshCw/)
 assert.match(borrowLanQrCard, /handleRefreshBorrowLanHost/)
 

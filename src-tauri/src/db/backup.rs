@@ -280,24 +280,18 @@ pub fn restore_history_snapshot(app: &AppHandle, filename: &str) -> Result<(), S
     // Save current state before restore
     let _ = create_history_snapshot(app, "before_restore");
 
-    // Close connections by using raw copy (no WAL needed since VACUUM INTO was used for snapshot)
+    // Close connections by checkpointing WAL before replacing the main file.
     let conn = open_runtime_connection(app)?;
     conn.execute_batch("PRAGMA wal_checkpoint(FULL);")
         .map_err(|err| format!("failed to checkpoint WAL before restore: {err}"))?;
     drop(conn);
 
-    fs::copy(&snapshot_path, &db_path)
-        .map_err(|err| format!("failed to restore snapshot: {err}"))?;
-
-    Ok(())
+    replace_database_from_history_snapshot(&snapshot_path, &db_path)
 }
 
 /// Restores the database from any arbitrary backup file chosen by the user.
 /// Uses SQLite's Online Backup API to safely copy data while connections may be live.
 pub fn restore_database_from_file(app: &AppHandle, source_path: &str) -> Result<(), String> {
-    use rusqlite::backup::Backup;
-    use std::time::Duration;
-
     let source = Path::new(source_path);
 
     // Basic validation
@@ -315,16 +309,42 @@ pub fn restore_database_from_file(app: &AppHandle, source_path: &str) -> Result<
     }
 
     // Open and validate the source backup (confirm it is a valid Staff Kit DB)
-    let src_conn = super::open_encrypted_connection(source)
-        .map_err(|_| {
-            "the selected database file could not be opened. Make sure it is a valid Staff Kit database.".to_string()
-        })?;
+    super::open_encrypted_connection(source).map_err(|_| {
+        "the selected database file could not be opened. Make sure it is a valid Staff Kit database.".to_string()
+    })?;
 
     // Save a snapshot of the current state before restore
     let _ = create_history_snapshot(app, "before_restore");
 
     // Open the active DB and fully checkpoint WAL so all pages are in the main file
-    let mut dst_conn = open_runtime_connection(app)?;
+    let db_path = super::resolve_database_path(app)?;
+    restore_database_file(source, &db_path)
+}
+
+fn migrate_restored_database(path: &Path) -> Result<(), String> {
+    let conn = super::open_encrypted_connection(path)
+        .map_err(|err| format!("restored database could not be reopened: {err}"))?;
+    super::apply_migrations(&conn)
+        .map_err(|err| format!("restored database migration failed: {err}"))
+}
+
+fn replace_database_from_history_snapshot(
+    snapshot_path: &Path,
+    database_path: &Path,
+) -> Result<(), String> {
+    fs::copy(snapshot_path, database_path)
+        .map_err(|err| format!("failed to restore snapshot: {err}"))?;
+    migrate_restored_database(database_path)
+}
+
+fn restore_database_file(source_path: &Path, destination_path: &Path) -> Result<(), String> {
+    use rusqlite::backup::Backup;
+    use std::time::Duration;
+
+    let src_conn = super::open_encrypted_connection(source_path)
+        .map_err(|err| format!("failed to open restore source: {err}"))?;
+    let mut dst_conn = super::open_encrypted_connection(destination_path)
+        .map_err(|err| format!("failed to open restore destination: {err}"))?;
     dst_conn
         .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
         .map_err(|err| format!("failed to checkpoint active database: {err}"))?;
@@ -336,8 +356,13 @@ pub fn restore_database_from_file(app: &AppHandle, source_path: &str) -> Result<
     backup
         .run_to_completion(5, Duration::from_millis(0), None)
         .map_err(|err| format!("failed to restore database from file: {err}"))?;
+    drop(backup);
+    drop(dst_conn);
+    drop(src_conn);
 
-    Ok(())
+    // The source may predate Borrow/Return. Migrate before restore success is
+    // reported or the caller invalidates the current session.
+    migrate_restored_database(destination_path)
 }
 
 // ── Private helpers ───────────────────────────────────────────────────────────
@@ -556,4 +581,257 @@ fn write_db_settings(app: &AppHandle, settings: &DbSettings) -> Result<(), Strin
         .map_err(|err| format!("failed to serialize db_settings: {err}"))?;
     fs::write(&path, contents).map_err(|err| format!("failed to write db_settings.json: {err}"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use rusqlite::params;
+
+    use crate::db::schema::BASE_SCHEMA_SQL;
+    use crate::db::{apply_migrations, open_encrypted_connection};
+
+    use super::{
+        migrate_restored_database, replace_database_from_history_snapshot, restore_database_file,
+    };
+
+    fn temp_path(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "staff-kit-restore-{label}-{}-{}.sqlite3",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock after unix epoch")
+                .as_nanos()
+        ))
+    }
+
+    fn remove_database_files(path: &Path) {
+        for suffix in ["", "-wal", "-shm"] {
+            let candidate = PathBuf::from(format!("{}{suffix}", path.to_string_lossy()));
+            let _ = std::fs::remove_file(candidate);
+        }
+    }
+
+    fn create_legacy_database(path: &Path) {
+        remove_database_files(path);
+        let conn = open_encrypted_connection(path).expect("open legacy encrypted database");
+        conn.execute_batch(BASE_SCHEMA_SQL)
+            .expect("create base schema for legacy fixture");
+        conn.execute_batch(
+            r#"
+            PRAGMA foreign_keys = OFF;
+            DROP TABLE borrow_request_confirmations;
+            DROP TABLE borrow_handle_with_care_policies;
+            DROP TABLE asset_loans;
+            DROP TABLE borrow_request_items;
+            DROP TABLE borrow_requests;
+            CREATE TABLE borrow_requests (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              request_key TEXT NOT NULL UNIQUE,
+              employee_id_fk INTEGER NOT NULL REFERENCES employees(id) ON DELETE RESTRICT,
+              submitted_employee_id TEXT NOT NULL,
+              submitted_full_name TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'pending',
+              request_type TEXT NOT NULL DEFAULT 'borrow',
+              submit_source_ip TEXT,
+              decision_note TEXT,
+              decided_by_account_id INTEGER,
+              submitted_at TEXT NOT NULL DEFAULT (datetime('now')),
+              decided_at TEXT
+            );
+            CREATE TABLE borrow_request_items (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              borrow_request_id INTEGER NOT NULL REFERENCES borrow_requests(id) ON DELETE CASCADE,
+              asset_id INTEGER NOT NULL REFERENCES assets(id) ON DELETE RESTRICT,
+              asset_code_snapshot TEXT NOT NULL,
+              created_at TEXT NOT NULL DEFAULT (datetime('now')),
+              UNIQUE(borrow_request_id, asset_id)
+            );
+            CREATE TABLE asset_loans (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              asset_id INTEGER NOT NULL REFERENCES assets(id) ON DELETE RESTRICT,
+              employee_id_fk INTEGER NOT NULL REFERENCES employees(id) ON DELETE RESTRICT,
+              borrow_request_id INTEGER NOT NULL REFERENCES borrow_requests(id) ON DELETE RESTRICT,
+              approved_by_account_id INTEGER REFERENCES app_local_accounts(id) ON DELETE SET NULL,
+              borrowed_at TEXT NOT NULL DEFAULT (datetime('now')),
+              returned_at TEXT
+            );
+            INSERT INTO employees(employee_id, full_name) VALUES ('EE-LEGACY', 'Legacy Employee');
+            INSERT INTO assets(asset_code, asset_type, display_name, status)
+              VALUES ('LEGACY-LAPTOP', 'Laptop', 'Legacy Laptop', 'in_stock');
+            INSERT INTO borrow_requests(request_key, employee_id_fk, submitted_employee_id, submitted_full_name)
+              VALUES ('LEGACY-REQUEST', 1, 'EE-LEGACY', 'Legacy Employee');
+            INSERT INTO borrow_request_items(borrow_request_id, asset_id, asset_code_snapshot)
+              VALUES (1, 1, 'LEGACY-LAPTOP');
+            "#,
+        )
+        .expect("create legacy database fixture");
+    }
+
+    #[test]
+    fn restore_database_file_migrates_legacy_schema_before_returning() {
+        let source = temp_path("legacy-source");
+        let destination = temp_path("legacy-destination");
+        create_legacy_database(&source);
+        remove_database_files(&destination);
+        {
+            let conn = open_encrypted_connection(&destination).expect("open destination");
+            apply_migrations(&conn).expect("create destination schema");
+        }
+
+        restore_database_file(&source, &destination).expect("restore and migrate legacy database");
+        let restored = open_encrypted_connection(&destination).expect("open restored database");
+        assert!(restored
+            .query_row("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'borrow_handle_with_care_policies'", [], |_| Ok(()))
+            .is_ok());
+        assert!(restored
+            .query_row("SELECT 1 FROM pragma_table_info('borrow_requests') WHERE name = 'borrower_name_snapshot'", [], |_| Ok(()))
+            .is_ok());
+        assert_eq!(
+            restored
+                .query_row(
+                    "SELECT COUNT(*) FROM borrow_requests WHERE request_key = 'LEGACY-REQUEST'",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            restored.query_row("SELECT COUNT(*) FROM borrow_request_items WHERE asset_code_snapshot = 'LEGACY-LAPTOP'", [], |row| row.get::<_, i64>(0)).unwrap(),
+            1
+        );
+        assert_eq!(
+            restored
+                .query_row(
+                    "SELECT COUNT(*) FROM borrow_request_confirmations",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            0
+        );
+
+        remove_database_files(&source);
+        remove_database_files(&destination);
+    }
+
+    #[test]
+    fn history_snapshot_restore_migrates_legacy_schema_before_returning() {
+        let snapshot = temp_path("history-source");
+        let destination = temp_path("history-destination");
+        create_legacy_database(&snapshot);
+        remove_database_files(&destination);
+        {
+            let conn = open_encrypted_connection(&destination).expect("open destination");
+            apply_migrations(&conn).expect("create destination schema");
+        }
+
+        replace_database_from_history_snapshot(&snapshot, &destination)
+            .expect("restore and migrate history snapshot");
+        let restored = open_encrypted_connection(&destination).expect("open restored history");
+        assert!(restored
+            .query_row("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'borrow_request_confirmations'", [], |_| Ok(()))
+            .is_ok());
+        assert_eq!(
+            restored
+                .query_row("SELECT COUNT(*) FROM borrow_request_items", [], |row| row
+                    .get::<_, i64>(
+                    0
+                ))
+                .unwrap(),
+            1
+        );
+
+        remove_database_files(&snapshot);
+        remove_database_files(&destination);
+    }
+
+    #[test]
+    fn restored_migration_failure_is_returned_as_error() {
+        let path = temp_path("migration-failure");
+        remove_database_files(&path);
+        let conn = open_encrypted_connection(&path).expect("open invalid fixture");
+        conn.execute_batch("CREATE VIEW assets AS SELECT 1 AS id;")
+            .expect("create invalid migration fixture");
+        drop(conn);
+
+        assert!(migrate_restored_database(&path).is_err());
+        remove_database_files(&path);
+    }
+
+    #[test]
+    fn restore_current_database_preserves_borrow_evidence_and_is_idempotent() {
+        let source = temp_path("current-source");
+        let destination = temp_path("current-destination");
+        remove_database_files(&source);
+        remove_database_files(&destination);
+
+        {
+            let conn = open_encrypted_connection(&source).expect("open current source");
+            apply_migrations(&conn).expect("create current source schema");
+            conn.execute(
+                "INSERT INTO employees(employee_id, full_name) VALUES('EE-SNAPSHOT', 'Snapshot Employee')",
+                [],
+            )
+            .expect("insert snapshot employee");
+            conn.execute(
+                "INSERT INTO assets(asset_code, asset_type, display_name, status) VALUES('SNAPSHOT-LAPTOP', 'Laptop', 'Snapshot Laptop', 'in_stock')",
+                [],
+            )
+            .expect("insert snapshot asset");
+            conn.execute(
+                "INSERT INTO borrow_requests(request_key, employee_id_fk, submitted_employee_id, submitted_full_name, borrower_employee_id_fk, borrower_staff_id_snapshot, borrower_name_snapshot, submitted_by_employee_id_fk, submitted_by_staff_id_snapshot, submitted_by_name_snapshot, status) VALUES('SNAPSHOT-REQUEST', 1, 'EE-SNAPSHOT', 'Snapshot Employee', 1, 'EE-BORROWER', 'Borrower Snapshot', 1, 'EE-RETURNER', 'Returner Snapshot', 'approved')",
+                [],
+            )
+            .expect("insert snapshot request");
+            let request_id = conn.last_insert_rowid();
+            conn.execute(
+                "INSERT INTO borrow_request_items(borrow_request_id, asset_id, asset_code_snapshot) VALUES(?, 1, 'SNAPSHOT-LAPTOP')",
+                params![request_id],
+            )
+            .expect("insert snapshot item");
+            conn.execute(
+                "INSERT INTO borrow_handle_with_care_policies(version, text_en, text_vi, created_at) VALUES(7, 'Care policy EN', 'Care policy VI', datetime('now'))",
+                [],
+            )
+            .expect("insert snapshot policy");
+            conn.execute(
+                "INSERT INTO borrow_request_confirmations(borrow_request_id, policy_version, policy_text_en_snapshot, policy_text_vi_snapshot, policy_acknowledged, asset_codes_snapshot_json, confirmation_method, signature_png_blob, typed_name, confirmed_at) VALUES(?, 7, 'Care policy EN', 'Care policy VI', 1, '[\"SNAPSHOT-LAPTOP\"]', 'both', ?, 'Snapshot Employee', datetime('now'))",
+                params![request_id, vec![137_u8, 80, 78, 71, 0, 255]],
+            )
+            .expect("insert snapshot confirmation");
+        }
+        {
+            let conn = open_encrypted_connection(&destination).expect("open current destination");
+            apply_migrations(&conn).expect("create current destination schema");
+        }
+
+        restore_database_file(&source, &destination).expect("restore current database");
+        restore_database_file(&source, &destination).expect("repeat current database restore");
+
+        let restored =
+            open_encrypted_connection(&destination).expect("open restored current database");
+        assert_eq!(
+            restored.query_row("SELECT text_en, text_vi FROM borrow_handle_with_care_policies WHERE version = 7", [], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))).unwrap(),
+            ("Care policy EN".to_string(), "Care policy VI".to_string())
+        );
+        assert_eq!(
+            restored.query_row("SELECT borrower_staff_id_snapshot, borrower_name_snapshot, submitted_by_staff_id_snapshot, submitted_by_name_snapshot FROM borrow_requests WHERE request_key = 'SNAPSHOT-REQUEST'", [], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?))).unwrap(),
+            ("EE-BORROWER".to_string(), "Borrower Snapshot".to_string(), "EE-RETURNER".to_string(), "Returner Snapshot".to_string())
+        );
+        assert_eq!(
+            restored.query_row("SELECT asset_code_snapshot FROM borrow_request_items WHERE borrow_request_id = (SELECT id FROM borrow_requests WHERE request_key = 'SNAPSHOT-REQUEST')", [], |row| row.get::<_, String>(0)).unwrap(),
+            "SNAPSHOT-LAPTOP"
+        );
+        assert_eq!(
+            restored.query_row("SELECT signature_png_blob FROM borrow_request_confirmations WHERE borrow_request_id = (SELECT id FROM borrow_requests WHERE request_key = 'SNAPSHOT-REQUEST')", [], |row| row.get::<_, Vec<u8>>(0)).unwrap(),
+            vec![137_u8, 80, 78, 71, 0, 255]
+        );
+
+        remove_database_files(&source);
+        remove_database_files(&destination);
+    }
 }

@@ -2382,14 +2382,19 @@ mod tests {
             save_handle_with_care_policy_conn(&mut conn, account_id, "English", "Vietnamese")
                 .expect("save policy");
 
+        let asset_id = seed_asset(&conn, "CONFIRMATION-ASSET", "Laptop", "in_stock");
         conn.execute(
-            "INSERT INTO borrow_requests(request_key, submitted_employee_id, submitted_full_name) VALUES('CONFIRMATION-1', 'EE-1', 'Employee')",
+            "INSERT INTO borrow_requests(request_key, submitted_employee_id, submitted_full_name, borrower_staff_id_snapshot, borrower_name_snapshot, submitted_by_staff_id_snapshot, submitted_by_name_snapshot, status) VALUES('CONFIRMATION-1', 'EE-1', 'Employee', 'EE-BORROWER', 'Borrower Snapshot', 'EE-RETURNER', 'Returner Snapshot', 'approved')",
             [],
         ).expect("insert request");
         let request_id = conn.last_insert_rowid();
         conn.execute(
-            "INSERT INTO borrow_request_confirmations(borrow_request_id, policy_version, policy_text_en_snapshot, policy_text_vi_snapshot, policy_acknowledged, asset_codes_snapshot_json, confirmation_method, confirmed_at) VALUES(?, ?, ?, ?, 1, '[]', 'typed_name', datetime('now'))",
-            params![request_id, policy.version, policy.text_en, policy.text_vi],
+            "INSERT INTO borrow_request_items(borrow_request_id, asset_id, asset_code_snapshot) VALUES(?, ?, 'CONFIRMATION-ASSET')",
+            params![request_id, asset_id],
+        ).expect("insert request item");
+        conn.execute(
+            "INSERT INTO borrow_request_confirmations(borrow_request_id, policy_version, policy_text_en_snapshot, policy_text_vi_snapshot, policy_acknowledged, asset_codes_snapshot_json, confirmation_method, signature_png_blob, typed_name, confirmed_at) VALUES(?, ?, ?, ?, 1, '[\"CONFIRMATION-ASSET\"]', 'both', ?, 'Borrower Snapshot', datetime('now'))",
+            params![request_id, policy.version, policy.text_en, policy.text_vi, vec![0_u8, 1, 2, 255]],
         ).expect("insert confirmation");
 
         let delete_result = conn.execute(
@@ -2419,6 +2424,36 @@ mod tests {
                 .unwrap()
                 .version,
             policy.version
+        );
+        assert_eq!(
+            restored
+                .query_row(
+                    "SELECT signature_png_blob FROM borrow_request_confirmations WHERE borrow_request_id = ?",
+                    params![request_id],
+                    |row| row.get::<_, Vec<u8>>(0)
+                )
+                .unwrap(),
+            vec![0_u8, 1, 2, 255]
+        );
+        assert_eq!(
+            restored
+                .query_row(
+                    "SELECT borrower_staff_id_snapshot, borrower_name_snapshot, submitted_by_staff_id_snapshot, submitted_by_name_snapshot FROM borrow_requests WHERE id = ?",
+                    params![request_id],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?))
+                )
+                .unwrap(),
+            ("EE-BORROWER".to_string(), "Borrower Snapshot".to_string(), "EE-RETURNER".to_string(), "Returner Snapshot".to_string())
+        );
+        assert_eq!(
+            restored
+                .query_row(
+                    "SELECT asset_code_snapshot FROM borrow_request_items WHERE borrow_request_id = ?",
+                    params![request_id],
+                    |row| row.get::<_, String>(0)
+                )
+                .unwrap(),
+            "CONFIRMATION-ASSET"
         );
         assert_eq!(
             restored
