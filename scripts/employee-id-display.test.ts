@@ -4,8 +4,12 @@ import { formatEmployeeIdForDisplay } from "../src/features/employees/employeeId
 
 assert.equal(formatEmployeeIdForDisplay("ASWVN1253"), "1253")
 assert.equal(formatEmployeeIdForDisplay("ASWVN0007"), "0007")
+assert.equal(formatEmployeeIdForDisplay("ASWVN001"), "001")
+assert.equal(formatEmployeeIdForDisplay("ASWVN999"), "999")
+assert.equal(formatEmployeeIdForDisplay("ASWVN1004"), "1004")
 assert.equal(formatEmployeeIdForDisplay("1253"), "1253")
 assert.equal(formatEmployeeIdForDisplay("ASWVN"), "ASWVN")
+assert.equal(formatEmployeeIdForDisplay("ASWCVN01"), "ASWCVN01")
 assert.equal(formatEmployeeIdForDisplay("abc123xyz"), "abc123xyz")
 assert.equal(formatEmployeeIdForDisplay("  ASWVN9988  "), "9988")
 

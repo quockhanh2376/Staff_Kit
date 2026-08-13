@@ -2260,6 +2260,16 @@ fn extract_numeric_suffix(value: &str) -> Option<String> {
     }
 }
 
+fn is_legacy_staff_id_alias(value: &str) -> bool {
+    let normalized = value.trim().to_ascii_uppercase();
+    let digits = normalized
+        .strip_prefix("ASWVN")
+        .or_else(|| normalized.strip_prefix("ASW"))
+        .unwrap_or(normalized.as_str());
+
+    !digits.is_empty() && digits.chars().all(|ch| ch.is_ascii_digit())
+}
+
 fn derive_asset_code_from_display_name(
     asset_type: Option<&str>,
     display_name: Option<&str>,
@@ -2498,10 +2508,14 @@ fn load_employee_owner_lookup_tx(
     let mut items: HashMap<String, Vec<EmployeeOwnerLookup>> = HashMap::new();
     for row in rows {
         let item = row.map_err(|err| format!("failed to read employee owner lookup row: {err}"))?;
-        let Some(suffix) = extract_numeric_suffix(item.employee_id.as_str()) else {
-            continue;
-        };
-        items.entry(suffix).or_default().push(item);
+        let suffix = extract_numeric_suffix(item.employee_id.as_str());
+        items
+            .entry(item.employee_id.to_ascii_uppercase())
+            .or_default()
+            .push(item.clone());
+        if let Some(suffix) = suffix {
+            items.entry(suffix).or_default().push(item);
+        }
     }
     Ok(items)
 }
@@ -2540,19 +2554,19 @@ fn resolve_owner_state(
         };
     };
 
-    let Some(staff_suffix) = extract_numeric_suffix(submitted_staff_id) else {
-        return OwnerResolutionState {
-            resolved_employee_id: None,
-            resolved_employee_row_id: None,
-            resolved_full_name: None,
-            resolved_team_name: None,
-            owner_match_status: OWNER_MATCH_UNRESOLVED.to_string(),
-            owner_warnings: Vec::new(),
-            blocking_error: Some("employee owner could not be resolved from StaffID".to_string()),
-        };
-    };
+    let normalized_staff_id = submitted_staff_id.to_ascii_uppercase();
+    let candidates = employee_lookup
+        .get(normalized_staff_id.as_str())
+        .or_else(|| {
+            if is_legacy_staff_id_alias(normalized_staff_id.as_str()) {
+                extract_numeric_suffix(normalized_staff_id.as_str())
+                    .and_then(|suffix| employee_lookup.get(suffix.as_str()))
+            } else {
+                None
+            }
+        });
 
-    let Some(candidates) = employee_lookup.get(staff_suffix.as_str()) else {
+    let Some(candidates) = candidates else {
         return OwnerResolutionState {
             resolved_employee_id: None,
             resolved_employee_row_id: None,
@@ -4348,6 +4362,62 @@ mod tests {
                 .iter()
                 .any(|item| item.contains("employee")),
             "unresolved owner rows should be blocked from import"
+        );
+    }
+
+    #[test]
+    fn owner_resolution_uses_full_staff_id_and_rejects_unrelated_prefixes() {
+        let mut conn = open_test_connection();
+        seed_employee(
+            &conn,
+            "ASWVN001",
+            "Leading Zero Employee",
+            "IT",
+            "employee_list",
+        );
+
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            sample_batch(
+                AssetImportMode::Serialized,
+                vec![owner_row(
+                    2,
+                    "ASWCVN001",
+                    "Leading Zero Employee",
+                    "IT",
+                    "VNLAP001",
+                )],
+            ),
+        )
+        .expect("create unrelated-prefix owner batch");
+
+        assert_eq!(batch.summary.valid_rows, 0);
+        assert_eq!(batch.summary.error_rows, 1);
+        assert!(batch.rows[0].resolved_employee_id.is_none());
+        assert!(batch.rows[0]
+            .validation_errors
+            .iter()
+            .any(|item| item.contains("employee")));
+
+        let exact_batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            sample_batch(
+                AssetImportMode::Serialized,
+                vec![owner_row(
+                    2,
+                    "ASWVN001",
+                    "Leading Zero Employee",
+                    "IT",
+                    "VNLAP002",
+                )],
+            ),
+        )
+        .expect("create exact owner batch");
+
+        assert_eq!(exact_batch.summary.valid_rows, 1);
+        assert_eq!(
+            exact_batch.rows[0].resolved_employee_id.as_deref(),
+            Some("ASWVN001")
         );
     }
 
