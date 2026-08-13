@@ -4,6 +4,8 @@ import {
   buildDerivedComputerName,
   detectAssetImportWizardMapping,
   formatDerivedComputerNames,
+  getRequiredAssetImportMappingKeys,
+  hasRequiredAssetImportMapping,
   normalizeAssetDashboardUsageLocation,
   resolveAssetDashboardDisplayNameShort,
 } from "../src/features/assets/assetImportModeConfig.ts"
@@ -38,6 +40,32 @@ const serializedMapping = detectAssetImportWizardMapping(serializedHeaders, "ser
 assert.equal(serializedMapping.assetCode, "Assetcode ")
 assert.equal(serializedMapping.serialNumber, "Serrial Number ")
 assert.equal(serializedMapping.usageLocation, "Usuage Location ")
+
+const canonicalSerializedMapping = detectAssetImportWizardMapping(
+  ["Asset Tag", "Asset Name", "Category", "Serial Number"],
+  "serialized",
+)
+assert.equal(canonicalSerializedMapping.assetCode, "Asset Tag")
+assert.deepEqual(getRequiredAssetImportMappingKeys("serialized"), [
+  "assetCode",
+  "category",
+  "assetName",
+])
+assert.equal(hasRequiredAssetImportMapping(canonicalSerializedMapping, "serialized"), true)
+
+const legacyInternalIdMapping = detectAssetImportWizardMapping(
+  ["Asset ID", "Asset Name", "Category"],
+  "serialized",
+)
+assert.equal(legacyInternalIdMapping.assetCode, undefined)
+assert.equal(hasRequiredAssetImportMapping(legacyInternalIdMapping, "serialized"), false)
+
+const legacyCompatibleMapping = detectAssetImportWizardMapping(
+  ["Asset ID", "Asset Name", "Category", "Computer Name"],
+  "serialized",
+)
+assert.equal(legacyCompatibleMapping.assetCode, undefined)
+assert.equal(legacyCompatibleMapping.computerName, "Computer Name")
 
 const quantityMapping = detectAssetImportWizardMapping(quantityHeaders, "quantity")
 assert.equal(quantityMapping.assetCode, "Asset code")

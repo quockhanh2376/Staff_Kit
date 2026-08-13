@@ -56,6 +56,7 @@ const QUANTITY_MAPPING_KEYS = [
 ] as const satisfies readonly AssetImportWizardFieldKey[]
 
 const SERIALIZED_REQUIRED_KEYS = [
+    "assetCode",
     "category",
     "assetName",
 ] as const satisfies readonly AssetImportWizardFieldKey[]
@@ -118,7 +119,7 @@ const MODE_LABELS: Record<AssetImportMode, string> = {
 }
 
 const FIELD_ALIASES: Record<AssetImportWizardFieldKey, string[]> = {
-    assetCode: ["assetcode", "asset code", "asset_code", "asset-code", "assetid", "asset id"],
+    assetCode: ["assetcode", "asset tag", "asset code", "asset_code", "asset-code"],
     category: ["category", "asset category", "asset_type", "asset type", "type", "loai tai san", "loaitaisan"],
     computerName: ["computer name", "computer_name", "computername", "computer", "pc name", "pc_name", "hostname"],
     assetName: ["asset_name", "asset name", "display name", "display_name", "name", "assetname", "ten tai san", "tentaisan"],

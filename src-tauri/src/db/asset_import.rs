@@ -56,7 +56,6 @@ impl AssetImportMode {
 const ASSET_CODE_ALIASES: &[&str] = &[
     "assetcode",
     "code",
-    "assetid",
     "assettag",
     "assetnumber",
     "mataisan",
@@ -395,6 +394,7 @@ struct AssetImportRowState {
     asset_type: Option<String>,
     display_name: Option<String>,
     quantity: Option<String>,
+    serial_number: Option<String>,
     submitted_staff_id: Option<String>,
     submitted_full_name: Option<String>,
     submitted_team: Option<String>,
@@ -1841,20 +1841,59 @@ fn build_row_seed_from_raw_values(
 ) -> AssetImportRowSeedInput {
     let asset_type = mapped_value(&raw_values, mapping.asset_type_index);
     let display_name = mapped_value(&raw_values, mapping.display_name_index);
-    let asset_code = mapping
+    let computer_name = mapping
+        .computer_name_index
+        .and_then(|index| mapped_value(&raw_values, index));
+    let has_legacy_asset_id = raw_values.iter().any(|item| {
+        normalize_header_key(item.header.as_str()) == "assetid" && !item.value.trim().is_empty()
+    });
+    let mapped_asset_code = mapping
         .asset_code_index
         .and_then(|index| mapped_value(&raw_values, index))
         .or_else(|| {
-            derive_asset_code_from_display_name(asset_type.as_deref(), display_name.as_deref())
+            if has_legacy_asset_id {
+                derive_asset_code_from_legacy_fields(
+                    asset_type.as_deref(),
+                    display_name.as_deref(),
+                    computer_name.as_deref(),
+                )
+            } else {
+                derive_asset_code_from_display_name(asset_type.as_deref(), display_name.as_deref())
+            }
         });
+    let asset_code = mapped_asset_code.and_then(|value| {
+        let source_header = mapping
+            .asset_code_index
+            .and_then(|index| raw_values.get(index))
+            .map(|item| normalize_header_key(item.header.as_str()));
+        if source_header.as_deref() == Some("assetid")
+            && value.chars().all(|ch| ch.is_ascii_digit())
+        {
+            derive_asset_code_from_legacy_fields(
+                asset_type.as_deref(),
+                display_name.as_deref(),
+                mapping
+                    .computer_name_index
+                    .and_then(|index| mapped_value(&raw_values, index))
+                    .as_deref(),
+            )
+        } else {
+            Some(value)
+        }
+    });
+    let asset_code = asset_code.or_else(|| {
+        if has_legacy_asset_id {
+            None
+        } else {
+            derive_asset_code_from_display_name(asset_type.as_deref(), display_name.as_deref())
+        }
+    });
     let display_name_short = derive_display_name_short(
         asset_type.as_deref(),
         display_name.as_deref(),
         asset_code.as_deref(),
     );
-    let computer_name = mapping
-        .computer_name_index
-        .and_then(|index| mapped_value(&raw_values, index))
+    let computer_name = computer_name
         .or_else(|| {
             asset_code
                 .as_ref()
@@ -2275,10 +2314,6 @@ fn derive_asset_code_from_display_name(
     display_name: Option<&str>,
 ) -> Option<String> {
     let normalized_type = asset_type.map(normalize_compare_text).unwrap_or_default();
-    if normalized_type != "monitor" {
-        return None;
-    }
-
     let display_name = normalize_optional_asset_text(display_name.map(str::to_string))?;
     let compact = display_name
         .chars()
@@ -2286,19 +2321,61 @@ fn derive_asset_code_from_display_name(
         .collect::<String>()
         .to_ascii_uppercase();
 
-    if let Some(suffix) = compact.strip_prefix("VNMON") {
-        if !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()) {
-            return Some(format!("VNMON{suffix}"));
+    if normalized_type == "laptop" {
+        if let Some(suffix) = compact.strip_prefix("VNLAP") {
+            if !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()) {
+                return Some(format!("VNLAP{suffix}"));
+            }
         }
     }
 
-    if let Some(suffix) = compact.strip_prefix("MON") {
-        if !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()) {
-            return Some(format!("VNMON{suffix}"));
+    if normalized_type == "monitor" {
+        if let Some(suffix) = compact.strip_prefix("VNMON") {
+            if !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()) {
+                return Some(format!("VNMON{suffix}"));
+            }
+        }
+
+        if let Some(suffix) = compact.strip_prefix("MON") {
+            if !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()) {
+                return Some(format!("VNMON{suffix}"));
+            }
         }
     }
 
     None
+}
+
+fn derive_asset_code_from_legacy_fields(
+    asset_type: Option<&str>,
+    display_name: Option<&str>,
+    computer_name: Option<&str>,
+) -> Option<String> {
+    let display_name = normalize_optional_asset_text(display_name.map(str::to_string))?;
+    let candidate = display_name.trim().to_ascii_uppercase();
+    let computer_name = computer_name
+        .map(str::trim)
+        .map(|value| value.to_ascii_uppercase());
+    let derived_from_computer_name = computer_name
+        .as_deref()
+        .and_then(|value| value.strip_prefix("ASW"))
+        .filter(|value| *value == candidate);
+
+    let normalized_type = asset_type.map(normalize_compare_text).unwrap_or_default();
+    let recognized_prefix = match normalized_type.as_str() {
+        "laptop" => candidate.starts_with("VNLAP"),
+        "monitor" => candidate.starts_with("VNMON"),
+        value if value.contains("mac") => {
+            candidate.starts_with("VNM") || candidate.starts_with("VNMAC")
+        }
+        _ => candidate.starts_with("VN"),
+    };
+
+    if recognized_prefix && derived_from_computer_name.is_some() {
+        Some(candidate)
+    } else {
+        None
+    }
 }
 
 fn normalize_compare_text(value: &str) -> String {
@@ -2634,6 +2711,7 @@ fn revalidate_batch_tx(tx: &Transaction<'_>, batch_id: i64) -> Result<(), String
     let employee_lookup = load_employee_owner_lookup_tx(tx)?;
 
     let mut duplicate_counts: HashMap<String, usize> = HashMap::new();
+    let mut duplicate_serial_counts: HashMap<String, usize> = HashMap::new();
     for row in rows
         .iter()
         .filter(|item| item.status != ROW_STATUS_IMPORTED && item.status != ROW_STATUS_SKIPPED)
@@ -2641,12 +2719,22 @@ fn revalidate_batch_tx(tx: &Transaction<'_>, batch_id: i64) -> Result<(), String
         if let Some(asset_code) = row.asset_code.as_deref() {
             *duplicate_counts.entry(asset_code.to_string()).or_default() += 1;
         }
+        if let Some(serial_number) = row.serial_number.as_deref() {
+            *duplicate_serial_counts
+                .entry(serial_number.to_ascii_uppercase())
+                .or_default() += 1;
+        }
     }
 
     let duplicate_asset_codes = duplicate_counts
         .into_iter()
         .filter_map(|(asset_code, count)| if count > 1 { Some(asset_code) } else { None })
         .collect::<HashSet<_>>();
+    let duplicate_serial_numbers = duplicate_serial_counts
+        .into_iter()
+        .filter_map(|(serial_number, count)| if count > 1 { Some(serial_number) } else { None })
+        .collect::<HashSet<_>>();
+    let existing_serial_numbers = load_existing_serial_numbers_tx(tx)?;
 
     for row in &rows {
         if row.status == ROW_STATUS_IMPORTED {
@@ -2659,8 +2747,13 @@ fn revalidate_batch_tx(tx: &Transaction<'_>, batch_id: i64) -> Result<(), String
         }
 
         let owner_state = resolve_owner_state(row, &employee_lookup);
-        let mut validation_errors =
-            validate_staged_row(row, &duplicate_asset_codes, &existing_asset_codes);
+        let mut validation_errors = validate_staged_row(
+            row,
+            &duplicate_asset_codes,
+            &existing_asset_codes,
+            &duplicate_serial_numbers,
+            &existing_serial_numbers,
+        );
         if let Some(blocking_error) = owner_state.blocking_error.as_ref() {
             validation_errors.push(blocking_error.clone());
         }
@@ -2709,8 +2802,13 @@ fn validate_staged_row(
     row: &AssetImportRowState,
     duplicate_asset_codes: &HashSet<String>,
     existing_asset_codes: &HashSet<String>,
+    duplicate_serial_numbers: &HashSet<String>,
+    existing_serial_numbers: &HashSet<String>,
 ) -> Vec<String> {
     let mut errors = Vec::new();
+    if row.import_type == AssetImportMode::Serialized && row.asset_code.is_none() {
+        errors.push("assetCode is required for serialized assets".to_string());
+    }
     if row.asset_type.is_none() {
         errors.push("assetType is required".to_string());
     }
@@ -2734,6 +2832,15 @@ fn validate_staged_row(
             errors.push("assetCode already exists in assets".to_string());
         }
     }
+    if let Some(serial_number) = row.serial_number.as_deref() {
+        let normalized = serial_number.to_ascii_uppercase();
+        if duplicate_serial_numbers.contains(&normalized) {
+            errors.push("serialNumber is duplicated in this batch".to_string());
+        }
+        if existing_serial_numbers.contains(&normalized) {
+            errors.push("serialNumber already exists in assets".to_string());
+        }
+    }
     errors
 }
 
@@ -2748,6 +2855,26 @@ fn load_existing_asset_codes_tx(tx: &Transaction<'_>) -> Result<HashSet<String>,
     let mut items = HashSet::new();
     for row in rows {
         items.insert(row.map_err(|err| format!("failed to read existing asset code row: {err}"))?);
+    }
+    Ok(items)
+}
+
+fn load_existing_serial_numbers_tx(tx: &Transaction<'_>) -> Result<HashSet<String>, String> {
+    let mut stmt = tx
+        .prepare(
+            "SELECT serial_number FROM assets WHERE NULLIF(trim(serial_number), '') IS NOT NULL",
+        )
+        .map_err(|err| format!("failed to prepare serial number lookup query: {err}"))?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|err| format!("failed to query existing serial numbers: {err}"))?;
+    let mut items = HashSet::new();
+    for row in rows {
+        items.insert(
+            row.map_err(|err| format!("failed to read existing serial number row: {err}"))?
+                .trim()
+                .to_ascii_uppercase(),
+        );
     }
     Ok(items)
 }
@@ -2767,6 +2894,7 @@ fn load_batch_row_states_tx(
               r.asset_type,
               r.display_name,
               r.quantity,
+              r.serial_number,
               r.submitted_staff_id,
               r.submitted_full_name,
               r.submitted_team
@@ -2787,9 +2915,10 @@ fn load_batch_row_states_tx(
                 asset_type: row.get(4)?,
                 display_name: row.get(5)?,
                 quantity: row.get(6)?,
-                submitted_staff_id: row.get(7)?,
-                submitted_full_name: row.get(8)?,
-                submitted_team: row.get(9)?,
+                serial_number: row.get(7)?,
+                submitted_staff_id: row.get(8)?,
+                submitted_full_name: row.get(9)?,
+                submitted_team: row.get(10)?,
             })
         })
         .map_err(|err| format!("failed to query staged asset rows: {err}"))?;
@@ -3668,6 +3797,15 @@ mod tests {
         assert_eq!(dashboard_row.computer_name.as_deref(), Some("ASWVNLAP235"));
         assert_eq!(dashboard_row.adapter_number.as_deref(), Some("7900LG3"));
 
+        let status: String = conn
+            .query_row(
+                "SELECT status FROM assets WHERE asset_code = ?",
+                params!["VNLAP235"],
+                |row| row.get(0),
+            )
+            .expect("load imported asset status");
+        assert_eq!(status, "in_stock");
+
         let _ = fs::remove_file(csv_path);
     }
 
@@ -3825,6 +3963,155 @@ mod tests {
     }
 
     #[test]
+    fn parse_legacy_asset_id_uses_high_confidence_asset_name_tag_instead_of_numeric_id() {
+        let csv_path = write_temp_csv(
+            "legacy-asset-id-tag",
+            &[
+                "Asset ID,Asset Name,Category,Computer Name,Model",
+                "504,VNLAP504,Laptop,ASWVNLAP504,ThinkPad E16",
+            ],
+        );
+
+        let parsed =
+            parse_asset_import_source(csv_path.as_path(), AssetImportMode::Serialized, None, None)
+                .expect("parse legacy asset row");
+
+        assert_eq!(parsed.rows[0].asset_code.as_deref(), Some("VNLAP504"));
+        assert_ne!(parsed.rows[0].asset_code.as_deref(), Some("504"));
+
+        let _ = fs::remove_file(csv_path);
+    }
+
+    #[test]
+    fn canonical_asset_tag_header_is_the_serialized_business_key() {
+        let csv_path = write_temp_csv(
+            "canonical-asset-tag",
+            &[
+                "Asset Tag,Asset Name,Category,Serial Number",
+                "VNLAP504,Lenovo ThinkPad E16,Laptop,",
+            ],
+        );
+
+        let parsed =
+            parse_asset_import_source(csv_path.as_path(), AssetImportMode::Serialized, None, None)
+                .expect("parse canonical asset tag row");
+
+        assert_eq!(parsed.auto_mapping.asset_code.as_deref(), Some("Asset Tag"));
+        assert_eq!(parsed.rows[0].asset_code.as_deref(), Some("VNLAP504"));
+        assert_eq!(parsed.rows[0].serial_number, None);
+
+        let _ = fs::remove_file(csv_path);
+    }
+
+    #[test]
+    fn asset_id_without_legacy_computer_name_is_rejected_during_staging() {
+        let csv_path = write_temp_csv(
+            "asset-id-without-legacy-proof",
+            &["Asset ID,Asset Name,Category", "504,VNLAP504,Laptop"],
+        );
+
+        let parsed =
+            parse_asset_import_source(csv_path.as_path(), AssetImportMode::Serialized, None, None)
+                .expect("parse ambiguous legacy row");
+        let mut conn = open_test_connection();
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            AssetImportBatchSeedInput {
+                import_type: AssetImportMode::Serialized,
+                source_file_name: parsed.source_file_name,
+                source_file_path: parsed.source_file_path,
+                source_file_type: parsed.source_file_type,
+                sheet_name: parsed.sheet_name,
+                header_row: parsed.header_row,
+                headers: parsed.headers,
+                mapping: parsed.auto_mapping,
+                rows: parsed.rows,
+            },
+        )
+        .expect("stage ambiguous legacy row");
+
+        assert_eq!(batch.rows[0].asset_code, None);
+        assert!(batch.rows[0]
+            .validation_errors
+            .iter()
+            .any(|item| item.contains("assetCode")));
+        let _ = fs::remove_file(csv_path);
+    }
+
+    #[test]
+    fn legacy_asset_id_row_derives_tag_only_from_matching_computer_name() {
+        let csv_path = write_temp_csv(
+            "legacy-asset-id-with-computer-name",
+            &[
+                "Asset ID,Asset Name,Category,Computer Name",
+                "504,VNLAP504,Laptop,ASWVNLAP504",
+            ],
+        );
+
+        let parsed =
+            parse_asset_import_source(csv_path.as_path(), AssetImportMode::Serialized, None, None)
+                .expect("parse compatible legacy asset row");
+
+        assert_eq!(parsed.rows[0].asset_code.as_deref(), Some("VNLAP504"));
+        assert_eq!(parsed.rows[0].computer_name.as_deref(), Some("ASWVNLAP504"));
+
+        let _ = fs::remove_file(csv_path);
+    }
+
+    #[test]
+    fn empty_serial_number_is_allowed_for_serialized_assets() {
+        let mut conn = open_test_connection();
+        let mut asset = row(2, "VNLAP504", "Laptop", "Lenovo ThinkPad E16");
+        asset.serial_number = None;
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            sample_batch(AssetImportMode::Serialized, vec![asset]),
+        )
+        .expect("create serialized batch without a serial number");
+
+        assert_eq!(batch.rows[0].serial_number, None);
+        assert_eq!(batch.rows[0].status, "valid");
+    }
+
+    #[test]
+    fn duplicate_serial_numbers_are_rejected_in_batch_and_against_assets() {
+        let mut conn = open_test_connection();
+        conn.execute(
+            "INSERT INTO assets(asset_code, asset_type, display_name, serial_number, status) VALUES('VNLAP-EXISTING', 'Laptop', 'Existing', 'SN-EXISTING', 'in_stock')",
+            [],
+        )
+        .expect("seed existing serial number");
+
+        let mut first = row(2, "VNLAP504", "Laptop", "Laptop A");
+        first.serial_number = Some("SN-DUP".to_string());
+        let mut second = row(3, "VNLAP505", "Laptop", "Laptop B");
+        second.serial_number = Some("sn-dup".to_string());
+        let mut existing = row(4, "VNLAP506", "Laptop", "Laptop C");
+        existing.serial_number = Some("sn-existing".to_string());
+
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            sample_batch(AssetImportMode::Serialized, vec![first, second, existing]),
+        )
+        .expect("create serialized batch with duplicate serial numbers");
+
+        assert_eq!(batch.summary.valid_rows, 0);
+        assert_eq!(batch.summary.error_rows, 3);
+        assert!(batch.rows[0]
+            .validation_errors
+            .iter()
+            .any(|item| item.contains("duplicated")));
+        assert!(batch.rows[1]
+            .validation_errors
+            .iter()
+            .any(|item| item.contains("duplicated")));
+        assert!(batch.rows[2]
+            .validation_errors
+            .iter()
+            .any(|item| item.contains("already exists")));
+    }
+
+    #[test]
     fn parse_csv_source_stages_quantity_rows_from_quantity_header_with_trailing_space() {
         let csv_path = write_temp_csv(
             "mouse-key-quantity",
@@ -3895,7 +4182,7 @@ mod tests {
     }
 
     #[test]
-    fn create_batch_allows_serialized_rows_without_asset_code_during_staging() {
+    fn create_batch_rejects_serialized_rows_without_asset_code_during_staging() {
         let mut conn = open_test_connection();
 
         let batch = create_asset_import_batch_seed_conn(
@@ -3908,10 +4195,14 @@ mod tests {
         .expect("create serialized asset import batch without asset code");
 
         assert_eq!(batch.summary.total_rows, 1);
-        assert_eq!(batch.summary.valid_rows, 1);
-        assert_eq!(batch.summary.error_rows, 0);
-        assert_eq!(batch.rows[0].status, "valid");
+        assert_eq!(batch.summary.valid_rows, 0);
+        assert_eq!(batch.summary.error_rows, 1);
+        assert_eq!(batch.rows[0].status, "error");
         assert_eq!(batch.rows[0].asset_code, None);
+        assert!(batch.rows[0]
+            .validation_errors
+            .iter()
+            .any(|item| item.contains("assetCode is required")));
     }
 
     #[test]
@@ -4229,7 +4520,7 @@ mod tests {
     }
 
     #[test]
-    fn import_valid_rows_rejects_serialized_batches_without_asset_codes_until_generation_slice() {
+    fn import_valid_rows_does_not_import_serialized_batches_without_asset_codes() {
         let mut conn = open_test_connection();
 
         let batch = create_asset_import_batch_seed_conn(
@@ -4241,10 +4532,11 @@ mod tests {
         )
         .expect("create serialized batch without asset code");
 
-        let error = import_asset_import_batch_valid_rows_conn(&mut conn, batch.summary.id)
-            .expect_err("serialized batch import should stay blocked until codes exist");
+        let result = import_asset_import_batch_valid_rows_conn(&mut conn, batch.summary.id)
+            .expect("invalid rows remain pending review without import");
 
-        assert!(error.contains("serialized asset rows require assetCode before import"));
+        assert_eq!(result.imported_count, 0);
+        assert_eq!(result.remaining_error_rows, 1);
     }
 
     #[test]
