@@ -32,6 +32,14 @@ const BUSINESS_ERROR_PREFIXES = [
   "No valid",
 ] as const
 
+const ASSET_IMPORT_HEADER_ERROR_MARKERS = [
+  "failed to detect an asset import header row",
+  "failed to detect asset import headers",
+] as const
+
+const ASSET_IMPORT_HEADER_USER_MESSAGE =
+  "This file does not contain recognizable asset import columns. Choose an asset workbook containing Asset Tag, Asset Name and Category."
+
 /**
  * Classified error result with both the raw message (for logging)
  * and a user-friendly message (for display).
@@ -79,10 +87,17 @@ export function classifyError(error: unknown): ClassifiedError {
 
   // Technical error — log the original error (preserves stack), show generic to user
   console.error("[Staff Kit] Unexpected error:", error instanceof Error ? error : rawMessage)
+  const normalizedRawMessage = rawMessage.toLowerCase()
+  const userMessage = ASSET_IMPORT_HEADER_ERROR_MARKERS.some((marker) =>
+    normalizedRawMessage.includes(marker),
+  )
+    ? ASSET_IMPORT_HEADER_USER_MESSAGE
+    : "An unexpected error occurred. Please try again or contact support."
+
   return {
     isBusiness: false,
     rawMessage,
-    userMessage: "An unexpected error occurred. Please try again or contact support.",
+    userMessage,
   }
 }
 
