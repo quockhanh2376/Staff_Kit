@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useMemo, useState } from "react"
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog"
 import { staffApi } from "../../services/staff-api"
 import type {
@@ -49,7 +49,6 @@ export type AssetImportState = ReturnType<typeof useAssetDirectImportState>
 export function useAssetDirectImportState({
     dbReady,
     isAuthenticated,
-    reloadToken,
     setGlobalError,
     triggerReload,
 }: UseAssetDirectImportStateOptions) {
@@ -87,10 +86,6 @@ export function useAssetDirectImportState({
         }
     }, [dbReady, isAuthenticated, setGlobalError])
 
-    useEffect(() => {
-        void loadAssetCategories()
-    }, [loadAssetCategories, reloadToken])
-
     const resetImportFlow = useCallback(() => {
         setSelectedImportMode(DEFAULT_ASSET_IMPORT_MODE)
         setSelectedFilePath(null)
@@ -111,7 +106,8 @@ export function useAssetDirectImportState({
         setWizardOpen(true)
         setManualAssetMessage("")
         setManualAssetResult(null)
-    }, [])
+        void loadAssetCategories()
+    }, [loadAssetCategories])
 
     const closeWizard = useCallback(() => {
         setWizardOpen(false)
