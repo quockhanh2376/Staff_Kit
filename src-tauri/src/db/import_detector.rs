@@ -35,6 +35,7 @@ pub struct ImportDetectionResult {
     pub confidence: f32,
     pub sheet_name: Option<String>,
     pub header_row: Option<u32>,
+    pub row_count: u32,
     pub evidence_headers: Vec<String>,
     pub reason: String,
     pub warnings: Vec<String>,
@@ -123,6 +124,7 @@ pub(crate) fn detect_import_ranges(
             confidence: 0.0,
             sheet_name: evidence.result.sheet_name.clone(),
             header_row: evidence.result.header_row,
+            row_count: evidence.result.row_count,
             evidence_headers: evidence.result.evidence_headers.clone(),
             reason: "The workbook contains evidence for more than one import type; choose the destination explicitly after review.".to_string(),
             warnings: vec!["No import route was selected automatically.".to_string()],
@@ -192,6 +194,7 @@ fn detect_sheet(
                 confidence: 0.95,
                 sheet_name: Some(sheet_name.to_string()),
                 header_row: Some((evidence.header_row + 1) as u32),
+                row_count: data_row_count(range, evidence.header_row),
                 evidence_headers,
                 reason: "Employee match-key and name headers were detected.".to_string(),
                 warnings: Vec::new(),
@@ -230,6 +233,7 @@ fn detect_sheet(
                 confidence: 0.98,
                 sheet_name: Some(sheet_name.to_string()),
                 header_row: Some((asset.header_row + 1) as u32),
+                row_count: data_row_count(range, asset.header_row),
                 evidence_headers,
                 reason: "Canonical serialized asset headers Asset Tag, Asset Name and Category were detected.".to_string(),
                 warnings: Vec::new(),
@@ -250,6 +254,7 @@ fn detect_sheet(
                 confidence: 0.95,
                 sheet_name: Some(sheet_name.to_string()),
                 header_row: Some((asset.header_row + 1) as u32),
+                row_count: data_row_count(range, asset.header_row),
                 evidence_headers,
                 reason: "Quantity asset headers Category, Item Name/Asset Name and Quantity were detected.".to_string(),
                 warnings: Vec::new(),
@@ -273,6 +278,7 @@ fn detect_sheet(
                 confidence: 0.45,
                 sheet_name: Some(sheet_name.to_string()),
                 header_row: Some((asset.header_row + 1) as u32),
+                row_count: data_row_count(range, asset.header_row),
                 evidence_headers,
                 reason: "Legacy asset columns were detected, but canonical Asset Tag evidence is missing.".to_string(),
                 warnings: vec!["Legacy serialized asset candidate requires manual confirmation; it will not be auto-routed.".to_string()],
@@ -286,6 +292,14 @@ fn detect_sheet(
     }
 
     None
+}
+
+fn data_row_count(range: &Range<Data>, header_row: usize) -> u32 {
+    range
+        .rows()
+        .skip(header_row + 1)
+        .filter(|row| row.iter().any(|cell| !cell.to_string().trim().is_empty()))
+        .count() as u32
 }
 
 fn infer_employee_subtype(sheet_name: &str, source_name: &str) -> ImportDetectionSubtype {
@@ -306,6 +320,7 @@ fn unknown_result(sheet_name: Option<String>, reason: &str) -> ImportDetectionRe
         confidence: 0.0,
         sheet_name,
         header_row: None,
+        row_count: 0,
         evidence_headers: Vec::new(),
         reason: reason.to_string(),
         warnings: Vec::new(),

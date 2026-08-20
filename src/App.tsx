@@ -14,6 +14,7 @@ import {
 } from "./lib/constants"
 
 // Feature hooks
+import { useDataImportState } from './features/import/useDataImportState'
 import { useAuthState } from "./features/auth/useAuthState"
 import { useColumnState } from "./features/columns/useColumnState"
 import { useEmployeeState } from "./features/employees/useEmployeeState"
@@ -26,6 +27,7 @@ import { useAssetDashboardState } from "./features/assets/useAssetDashboardState
 import { useSettingsState } from "./features/settings/useSettingsState"
 
 // Feature views
+import { DataImportPanel } from './features/import/DataImportPanel'
 import { ForcedPasswordReset } from "./features/auth/ForcedPasswordReset"
 import { LoginPage } from "./features/auth/LoginPage"
 import { EmployeeView } from "./features/employees/EmployeeView"
@@ -209,6 +211,13 @@ function App() {
     dbReady,
     isAuthenticated,
     reloadToken,
+    setGlobalError,
+  })
+
+  const dataImport = useDataImportState({
+    canImportData: auth.canImportData,
+    employeeImport: imp,
+    assetImport,
     setGlobalError,
   })
 
@@ -495,6 +504,7 @@ function App() {
               assetImport={assetImport}
               assetDashboard={assetDashboard}
               importState={imp}
+              dataImport={dataImport}
               employeeGroupCounts={emp.employeeGroupCounts}
               dbStatus={dbStatus}
               setGlobalError={setGlobalError}
@@ -554,6 +564,7 @@ function App() {
 
       <ImportDrawer importState={imp} />
       <AssetImportWizard assetImport={assetImport} />
+      <DataImportPanel canImportData={auth.canImportData} dataImport={dataImport} />
     </div>
   )
 }

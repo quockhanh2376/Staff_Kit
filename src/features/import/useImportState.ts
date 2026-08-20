@@ -48,6 +48,37 @@ export function useImportState({
         ...importSelectedColumnKeys,
     ])
 
+    const prepareSelectedFile = useCallback(async (input: {
+        filePath: string
+        sheetName: string | null
+        targetStaffGroup: StaffGroupKey
+    }) => {
+        const { filePath, targetStaffGroup } = input
+        try {
+            setImporting(true)
+            setImportReport(null)
+            const result: ImportColumnsPreview = await staffApi.inspectImportColumns({
+                filePaths: [filePath],
+            })
+            setImportSelectedFiles(result.sourceFiles.length > 0 ? result.sourceFiles : [filePath])
+            setImportColumnOptions(
+                result.detectedColumns.map((column) => ({
+                    ...column,
+                    required: column.source === 'core',
+                })),
+            )
+            setImportSelectedColumnKeys(
+                result.detectedColumns.filter((column) => column.source !== 'core').map((column) => column.key),
+            )
+            setImportTargetGroup(targetStaffGroup)
+            setImportDrawerOpen(true)
+        } catch (error) {
+            setGlobalError(getUserErrorMessage(error))
+        } finally {
+            setImporting(false)
+        }
+    }, [setGlobalError])
+
     const handlePickImportFiles = async () => {
         try {
             // Step 1: open native Tauri file picker
@@ -172,6 +203,7 @@ export function useImportState({
         importPreviewResult,
         showImportPreviewModal,
         handlePickImportFiles,
+        prepareSelectedFile,
         toggleImportColumn,
         selectAllOptionalImportColumns,
         clearOptionalImportColumns,

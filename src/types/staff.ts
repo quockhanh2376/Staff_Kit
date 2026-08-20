@@ -658,6 +658,28 @@ export type ImportExcelInput = {
   targetStaffGroup?: string | null
 }
 
+export type ImportDetectionKind = 'employee' | 'asset' | 'unknown' | 'ambiguous'
+
+export type ImportDetectionSubtype =
+  | 'employee_list'
+  | 'onboarding'
+  | 'offboarding'
+  | 'internal_movement'
+  | 'serialized'
+  | 'quantity'
+
+export type ImportDetectionResult = {
+  kind: ImportDetectionKind
+  subtype: ImportDetectionSubtype | null
+  confidence: number
+  sheetName: string | null
+  headerRow: number | null
+  rowCount: number
+  evidenceHeaders: string[]
+  reason: string
+  warnings: string[]
+  candidateTypes: string[]
+}
 export type ImportColumnOption = {
   key: string
   label: string

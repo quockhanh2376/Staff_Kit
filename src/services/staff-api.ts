@@ -62,6 +62,7 @@ import type {
   LocalPasswordResetInput,
   LocalAccountUpdateInput,
   ImportColumnsPreview,
+  ImportDetectionResult,
   ImportExcelInput,
   ImportReport,
   ImportPreviewResult,
@@ -223,6 +224,9 @@ export const staffApi = {
 
   getBorrowLanStatus: () =>
     call<BorrowLanServerStatus>("get_borrow_lan_status"),
+
+  detectImportFile: (filePath: string) =>
+    call<ImportDetectionResult>('detect_import_file', { filePath }),
 
   inspectAssetImportFile: (payload: AssetImportInspectInput) =>
     call<AssetImportFileInspection>("inspect_asset_import_file", {

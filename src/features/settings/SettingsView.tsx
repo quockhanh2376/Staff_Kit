@@ -27,11 +27,14 @@ import { getGroupCount } from "../../lib/utils"
 import { AssetDashboard } from "../assets/AssetDashboard"
 import { useIdleCollapse } from "./useIdleCollapse"
 
+import type { DataImportState } from '../import/useDataImportState'
+
 type SettingsViewProps = {
     auth: AuthState
     activeUserScope: string
     settings: SettingsState
     importState: ImportState
+    dataImport: DataImportState
     assetImport: AssetImportState
     assetDashboard: AssetDashboardState
     employeeGroupCounts: {
@@ -73,6 +76,7 @@ export function SettingsView({
     activeUserScope,
     settings,
     importState,
+    dataImport,
     assetImport,
     assetDashboard,
     employeeGroupCounts,
@@ -114,6 +118,15 @@ export function SettingsView({
                         <div className="space-y-4 p-4">
                             <div className="border-b border-[var(--border)] pb-4">
                                 <div className="inline-flex max-w-full flex-wrap overflow-hidden rounded-[10px] border border-emerald-500/45 bg-[var(--bg)] shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+                                    <button
+                                        className='inline-flex items-center gap-2 rounded-[8px] border border-emerald-500/45 px-3 py-2 text-sm font-semibold text-emerald-200 transition hover:bg-emerald-500/10 disabled:cursor-not-allowed disabled:opacity-60'
+                                        onClick={() => dataImport.open()}
+                                        type='button'
+                                        disabled={!auth.canImportData}
+                                    >
+                                        <Upload size={14} />
+                                        Data Import
+                                    </button>
                                     <button
                                         className="inline-flex items-center gap-2 border-r border-emerald-500/35 bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-[#03130d] transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
                                         onClick={() => void imp.handlePickImportFiles()}

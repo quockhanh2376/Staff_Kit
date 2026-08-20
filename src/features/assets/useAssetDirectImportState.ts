@@ -160,6 +160,21 @@ export function useAssetDirectImportState({
         }
     }, [inspectFile, setGlobalError])
 
+    const prepareSelectedFile = useCallback(
+        async (input: {
+            filePath: string
+            sheetName: string | null
+            importType: AssetImportMode
+        }) => {
+            resetImportFlow()
+            setSelectedImportMode(input.importType)
+            await inspectFile(input.filePath, input.sheetName)
+            setWizardOpen(true)
+            setPanelMode('import')
+        },
+        [inspectFile, resetImportFlow],
+    )
+
     const handleChangeSelectedSheet = useCallback(
         async (sheetName: string) => {
             if (!selectedFilePath) return
@@ -297,6 +312,7 @@ export function useAssetDirectImportState({
         openManualAssetPanel,
         closeWizard,
         handlePickImportFile,
+        prepareSelectedFile,
         handleChangeSelectedSheet,
         handlePreviewImport,
         handleApproveImport,
