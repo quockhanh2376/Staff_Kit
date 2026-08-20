@@ -475,6 +475,16 @@ fn inspect_import_columns(
     db::inspect_import_columns(&app, payload)
 }
 
+#[tauri::command]
+fn detect_import_file(
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    session_token: String,
+    file_path: String,
+) -> Result<db::ImportDetectionResult, String> {
+    let _ctx = auth_session::require_authenticated(&session_store, &session_token)?;
+    db::detect_import_file(std::path::Path::new(&file_path))
+}
+
 // ── History snapshots (admin read, super_admin restore) ──────────────────────
 
 #[tauri::command]
@@ -1099,6 +1109,7 @@ pub fn run() {
             delete_team,
             reset_all_data,
             inspect_import_columns,
+            detect_import_file,
             import_excel,
             preview_import_excel,
             get_mssql_connection_defaults,
@@ -1236,6 +1247,7 @@ mod tests {
         "get_asset_dashboard_summary",
         "list_asset_dashboard_serialized",
         "list_asset_dashboard_quantity",
+        "detect_import_file",
     ];
 
     /// Commands that must NOT be registered for IPC (internal-only or removed).

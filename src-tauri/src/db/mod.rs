@@ -33,6 +33,7 @@ pub mod column;
 pub mod employee;
 pub(crate) mod employee_asset_seed;
 pub mod import;
+pub mod import_detector;
 pub mod mssql_import;
 mod schema;
 pub mod team;
@@ -47,6 +48,7 @@ pub use column::*;
 pub use employee::*;
 pub use employee_asset_seed::*;
 pub use import::*;
+pub use import_detector::*;
 pub use team::*;
 
 // ── One-time init guard ───────────────────────────────────────────────────────

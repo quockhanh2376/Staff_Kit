@@ -71,7 +71,7 @@ const ASSET_TYPE_ALIASES: &[&str] = &[
 ];
 const DISPLAY_NAME_PRIMARY_ALIASES: &[&str] =
     &["displayname", "assetname", "tentaisan", "description"];
-const DISPLAY_NAME_FALLBACK_ALIASES: &[&str] = &["name"];
+const DISPLAY_NAME_FALLBACK_ALIASES: &[&str] = &["name", "itemname"];
 const COMPUTER_NAME_ALIASES: &[&str] = &["computername", "computer", "pcname", "hostname"];
 const MODEL_ALIASES: &[&str] = &["model", "modelnumber", "modelno"];
 const SERIAL_NUMBER_ALIASES: &[&str] = &[
@@ -130,6 +130,13 @@ pub struct AssetImportFieldMapping {
     pub quantity: Option<String>,
     pub warehouse: Option<String>,
     pub notes: Option<String>,
+}
+
+pub(crate) struct AssetHeaderEvidence {
+    pub header_row: usize,
+    pub mapping: AssetImportFieldMapping,
+    pub explicit_display_name: bool,
+    pub legacy_asset_id_header: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1796,6 +1803,42 @@ fn detect_excel_header_row(
     }
 
     best_match.ok_or_else(|| "failed to detect asset import headers".to_string())
+}
+
+pub(crate) fn detect_asset_header_evidence(
+    range: &calamine::Range<Data>,
+) -> Option<AssetHeaderEvidence> {
+    let mut best_match: Option<AssetHeaderEvidence> = None;
+    let mut best_score = i64::MIN;
+
+    for (row_index, row) in range.rows().enumerate().take(30) {
+        let headers = row.iter().map(cell_to_string).collect::<Vec<_>>();
+        if headers.iter().all(|value| value.trim().is_empty()) {
+            continue;
+        }
+
+        let mapping = detect_field_mapping(&headers);
+        let score = mapping_score(&mapping);
+        if score <= 0 || score <= best_score {
+            continue;
+        }
+
+        let legacy_asset_id_header = headers
+            .iter()
+            .find(|header| normalize_header_key(header) == "assetid")
+            .cloned();
+        best_score = score;
+        best_match = Some(AssetHeaderEvidence {
+            header_row: row_index,
+            mapping,
+            explicit_display_name: find_header_by_alias(&headers, DISPLAY_NAME_PRIMARY_ALIASES)
+                .or_else(|| find_header_by_alias(&headers, DISPLAY_NAME_FALLBACK_ALIASES))
+                .is_some(),
+            legacy_asset_id_header,
+        });
+    }
+
+    best_match
 }
 
 fn build_row_seed_from_csv_record(

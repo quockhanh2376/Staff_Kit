@@ -132,6 +132,12 @@ struct ImportColumns {
     pub dynamic_columns: Vec<DynamicImportColumn>,
 }
 
+pub(crate) struct EmployeeHeaderEvidence {
+    pub header_row: usize,
+    pub match_key_headers: Vec<String>,
+    pub full_name_headers: Vec<String>,
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 pub fn inspect_import_columns(
@@ -1251,6 +1257,59 @@ fn detect_import_columns(range: &calamine::Range<Data>) -> Result<(usize, Import
     }
 
     Err("failed to detect import header row: need EE.ID or Working Email column".to_string())
+}
+
+pub(crate) fn detect_employee_header_evidence(
+    range: &calamine::Range<Data>,
+) -> Option<EmployeeHeaderEvidence> {
+    let (header_row, columns) = detect_import_columns(range).ok()?;
+    let headers = range
+        .rows()
+        .nth(header_row)
+        .map(|row| row.iter().map(cell_to_string).collect::<Vec<_>>())?;
+
+    let match_key_indexes = [columns.employee_id, columns.email];
+    let match_key_headers = match_key_indexes
+        .into_iter()
+        .flatten()
+        .filter_map(|index| headers.get(index).cloned())
+        .collect::<Vec<_>>();
+    let full_name_headers = columns
+        .full_name
+        .and_then(|index| headers.get(index).cloned())
+        .into_iter()
+        .collect::<Vec<_>>();
+
+    if match_key_headers.is_empty() || full_name_headers.is_empty() {
+        return None;
+    }
+
+    Some(EmployeeHeaderEvidence {
+        header_row,
+        match_key_headers,
+        full_name_headers,
+    })
+}
+
+pub(crate) fn infer_employee_staff_group(sheet_name: &str, source_name: &str) -> &'static str {
+    let normalized_sheet = normalize_header_key(sheet_name);
+    if normalized_sheet.contains("onboarding") {
+        return STAFF_GROUP_ONBOARDING;
+    }
+    if normalized_sheet.contains("offboarding") {
+        return STAFF_GROUP_OFFBOARDING;
+    }
+    if normalized_sheet.contains("internalmovement")
+        || normalized_sheet.contains("internalmovent")
+        || normalized_sheet.contains("internalmove")
+    {
+        return STAFF_GROUP_INTERNAL_MOVEMENT;
+    }
+    if normalized_sheet.contains("employeelist") || normalized_sheet.contains("eelist") {
+        return STAFF_GROUP_EMPLOYEE_LIST;
+    }
+
+    infer_staff_group_from_source(source_name, "")
 }
 
 fn should_skip_dynamic_import_column(header_key: &str) -> bool {
