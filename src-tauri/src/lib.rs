@@ -481,7 +481,7 @@ fn detect_import_file(
     session_token: String,
     file_path: String,
 ) -> Result<db::ImportDetectionResult, String> {
-    let _ctx = auth_session::require_authenticated(&session_store, &session_token)?;
+    let _ctx = auth_session::require_admin(&session_store, &session_token)?;
     db::detect_import_file(std::path::Path::new(&file_path))
 }
 
@@ -1219,6 +1219,7 @@ mod tests {
         "inspect_import_columns",
         "import_excel",
         "preview_import_excel",
+        "detect_import_file",
         "get_mssql_connection_defaults",
         "test_mssql_connection",
         "preview_mssql_staff",
@@ -1247,7 +1248,6 @@ mod tests {
         "get_asset_dashboard_summary",
         "list_asset_dashboard_serialized",
         "list_asset_dashboard_quantity",
-        "detect_import_file",
     ];
 
     /// Commands that must NOT be registered for IPC (internal-only or removed).
@@ -1306,6 +1306,31 @@ mod tests {
                 "command '{cmd}' appears in multiple classification sets"
             );
         }
+    }
+
+    #[test]
+    fn detect_import_file_requires_an_admin_session() {
+        assert!(ADMIN_COMMANDS.contains(&"detect_import_file"));
+        assert!(!AUTHENTICATED_COMMANDS.contains(&"detect_import_file"));
+
+        let store = auth_session::SessionStore::new();
+        assert_eq!(
+            auth_session::require_admin(&store, "")
+                .unwrap_err()
+                .code(),
+            auth_session::AUTH_REQUIRED
+        );
+
+        let user_token = store.issue_session(1, "user", auth_session::Role::User);
+        assert_eq!(
+            auth_session::require_admin(&store, &user_token)
+                .unwrap_err()
+                .code(),
+            auth_session::AUTH_FORBIDDEN
+        );
+
+        let admin_token = store.issue_session(2, "admin", auth_session::Role::Admin);
+        auth_session::require_admin(&store, &admin_token).expect("admin may detect imports");
     }
 
     // ── Guard-before-side-effect proof ────────────────────────────────────────
