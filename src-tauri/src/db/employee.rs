@@ -318,6 +318,21 @@ pub fn update_employee(
         .transaction()
         .map_err(|err| format!("failed to start update transaction: {err}"))?;
 
+    let row_id = update_employee_tx(&tx, id, payload)?;
+
+    tx.commit()
+        .map_err(|err| format!("failed to commit update transaction: {err}"))?;
+
+    let conn2 = open_runtime_connection(app)?;
+    load_employee_by_id(&conn2, row_id)
+}
+
+fn update_employee_tx(
+    tx: &Transaction<'_>,
+    id: i64,
+    payload: EmployeePayload,
+) -> Result<i64, String> {
+
     let requested_staff_group = payload.staff_group.clone();
     let normalized = NormalizedEmployeePayload::try_from(payload)?;
     let team_id = resolve_team_id_tx(&tx, normalized.team_name.as_deref())?;
@@ -390,90 +405,13 @@ pub fn update_employee(
         upsert_dynamic_field_definitions_for_map(&tx, &normalized.dynamic_fields)?;
         upsert_dynamic_fields_tx(&tx, row_id, &normalized.dynamic_fields)?;
     }
-    reconcile_employee_laptop_loans_tx(&tx, row_id, &normalized)?;
     normalize_eml_security_tool_values_for_employee_tx(
         &tx,
         row_id,
         normalized.team_name.as_deref(),
     )?;
 
-    tx.commit()
-        .map_err(|err| format!("failed to commit update transaction: {err}"))?;
-
-    let conn2 = open_runtime_connection(app)?;
-    load_employee_by_id(&conn2, row_id)
-}
-
-fn reconcile_employee_laptop_loans_tx(
-    tx: &Transaction<'_>,
-    employee_id: i64,
-    payload: &NormalizedEmployeePayload,
-) -> Result<(), String> {
-    let Some(primary) = payload.computer_name.as_deref() else {
-        return Ok(());
-    };
-
-    let mut desired_names = split_computer_name_tokens(Some(primary));
-    for key in [COMPUTER_NAME_2_FIELD_KEY, "computer_name_2"] {
-        if let Some(value) = payload.dynamic_fields.get(key) {
-            for token in split_computer_name_tokens(Some(value.as_str())) {
-                if !desired_names
-                    .iter()
-                    .any(|existing| same_computer_name(Some(existing.as_str()), &token))
-                {
-                    desired_names.push(token);
-                }
-            }
-        }
-    }
-
-    let mut stmt = tx
-        .prepare(
-            r#"
-            SELECT al.id, al.asset_id, 'ASW' || a.asset_code
-            FROM asset_loans al
-            INNER JOIN assets a ON a.id = al.asset_id
-            INNER JOIN asset_categories c ON c.id = a.category_id
-            WHERE al.employee_id_fk = ?
-              AND al.returned_at IS NULL
-              AND COALESCE(c.has_computer_name, 0) = 1
-            "#,
-        )
-        .map_err(|err| format!("failed to prepare employee laptop reconciliation: {err}"))?;
-    let active_loans = stmt
-        .query_map(params![employee_id], |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, String>(2)?,
-            ))
-        })
-        .map_err(|err| format!("failed to query employee laptop loans: {err}"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|err| format!("failed to read employee laptop loans: {err}"))?;
-    drop(stmt);
-
-    for (loan_id, asset_id, active_name) in active_loans {
-        if desired_names
-            .iter()
-            .any(|desired| same_computer_name(Some(desired.as_str()), &active_name))
-        {
-            continue;
-        }
-
-        tx.execute(
-            "UPDATE assets SET status = 'in_stock', updated_at = datetime('now') WHERE id = ?",
-            params![asset_id],
-        )
-        .map_err(humanize_sqlite_error)?;
-        tx.execute(
-            "UPDATE asset_loans SET returned_at = datetime('now') WHERE id = ? AND returned_at IS NULL",
-            params![loan_id],
-        )
-        .map_err(humanize_sqlite_error)?;
-    }
-
-    Ok(())
+    Ok(row_id)
 }
 
 pub fn move_employees_group(
@@ -1312,8 +1250,8 @@ mod tests {
 
     use super::{
         build_employee_from_clause, delete_employee_conn, query_employees,
-        reconcile_employee_laptop_loans_tx, upsert_employee_from_payload, EmployeePayload,
-        EmployeeQuery, NormalizedEmployeePayload, EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL,
+        update_employee_tx, upsert_employee_from_payload, EmployeePayload, EmployeeQuery,
+        EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL,
     };
 
     fn open_test_connection() -> Connection {
@@ -1764,7 +1702,105 @@ mod tests {
     }
 
     #[test]
-    fn clearing_secondary_device_returns_removed_active_laptop() {
+    fn employee_import_legacy_name_change_does_not_mutate_asset_loans() {
+        let mut conn = open_test_connection();
+        let employee_row_id = seed_employee(&conn, "ASWVN1311", "Import Boundary Employee");
+        let laptop_id = seed_asset(&conn, "VNLAP317", "Laptop", "laptop");
+        seed_active_loan(&conn, employee_row_id, laptop_id);
+
+        let tx = conn.transaction().expect("start transaction");
+        upsert_employee_from_payload(
+            &tx,
+            EmployeePayload {
+                employee_id: "ASWVN1311".to_string(),
+                full_name: "Import Boundary Employee".to_string(),
+                nick_name: None,
+                team_name: Some("Examworks".to_string()),
+                project: None,
+                job_title: None,
+                email: None,
+                cellphone: None,
+                date_of_birth: None,
+                gender: None,
+                asw_start_date: None,
+                client_start_date: None,
+                contract_end_date: None,
+                client_year_of_services: None,
+                computer_name: Some("ASWVNLAP999".to_string()),
+                notes: None,
+                staff_group: Some("employee_list".to_string()),
+                dynamic_fields: None,
+            },
+            "employee_list",
+        )
+        .expect("import employee payload");
+        tx.commit().expect("commit employee import");
+
+        let active_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM asset_loans WHERE asset_id = ? AND returned_at IS NULL",
+                params![laptop_id],
+                |row| row.get(0),
+            )
+            .expect("count active imported employee loan");
+        let loan_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM asset_loans WHERE employee_id_fk = ?",
+                params![employee_row_id],
+                |row| row.get(0),
+            )
+            .expect("count employee asset loans");
+        assert_eq!(active_count, 1);
+        assert_eq!(loan_count, 1);
+    }
+
+    #[test]
+    fn changing_legacy_computer_name_does_not_close_active_laptop_loan() {
+        let mut conn = open_test_connection();
+        let employee_row_id = seed_employee(&conn, "ASWVN1310", "Boundary Test Employee");
+        let laptop_id = seed_asset(&conn, "VNLAP326", "Laptop", "laptop");
+        seed_active_loan(&conn, employee_row_id, laptop_id);
+
+        let tx = conn.transaction().expect("start transaction");
+        update_employee_tx(
+            &tx,
+            employee_row_id,
+            EmployeePayload {
+                employee_id: "ASWVN1310".to_string(),
+                full_name: "Boundary Test Employee".to_string(),
+                nick_name: None,
+                team_name: Some("Examworks".to_string()),
+                project: None,
+                job_title: None,
+                email: None,
+                cellphone: None,
+                date_of_birth: None,
+                gender: None,
+                asw_start_date: None,
+                client_start_date: None,
+                contract_end_date: None,
+                client_year_of_services: None,
+                computer_name: Some("ASWVNLAP999".to_string()),
+                notes: None,
+                staff_group: Some("employee_list".to_string()),
+                dynamic_fields: None,
+            },
+        )
+        .expect("update employee legacy field");
+        tx.commit().expect("commit transaction");
+
+        let active_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM asset_loans WHERE asset_id = ? AND returned_at IS NULL",
+                params![laptop_id],
+                |row| row.get(0),
+            )
+            .expect("count active laptop loan");
+        assert_eq!(active_count, 1);
+    }
+
+    #[test]
+    fn clearing_secondary_device_does_not_return_active_laptop() {
         let mut conn = open_test_connection();
         let employee_row_id = seed_employee(&conn, "ASWVN1308", "Nguyen Pham Phuong Uyen");
         let first_laptop_id = seed_asset(&conn, "VNLAP326", "Laptop", "laptop");
@@ -1772,34 +1808,35 @@ mod tests {
         seed_active_loan(&conn, employee_row_id, first_laptop_id);
         seed_active_loan(&conn, employee_row_id, second_laptop_id);
 
-        let normalized = NormalizedEmployeePayload::try_from(EmployeePayload {
-            employee_id: "ASWVN1308".to_string(),
-            full_name: "Nguyen Pham Phuong Uyen".to_string(),
-            nick_name: None,
-            team_name: Some("ASW Consulting".to_string()),
-            project: None,
-            job_title: None,
-            email: None,
-            cellphone: None,
-            date_of_birth: None,
-            gender: None,
-            asw_start_date: None,
-            client_start_date: None,
-            contract_end_date: None,
-            client_year_of_services: None,
-            computer_name: Some("ASWVNLAP326".to_string()),
-            notes: None,
-            staff_group: Some("employee_list".to_string()),
-            dynamic_fields: Some(HashMap::from([(
-                COMPUTER_NAME_2_FIELD_KEY.to_string(),
-                String::new(),
-            )])),
-        })
-        .expect("normalize employee device payload");
-
         let tx = conn.transaction().expect("start transaction");
-        reconcile_employee_laptop_loans_tx(&tx, employee_row_id, &normalized)
-            .expect("reconcile removed secondary laptop");
+        update_employee_tx(
+            &tx,
+            employee_row_id,
+            EmployeePayload {
+                employee_id: "ASWVN1308".to_string(),
+                full_name: "Nguyen Pham Phuong Uyen".to_string(),
+                nick_name: None,
+                team_name: Some("ASW Consulting".to_string()),
+                project: None,
+                job_title: None,
+                email: None,
+                cellphone: None,
+                date_of_birth: None,
+                gender: None,
+                asw_start_date: None,
+                client_start_date: None,
+                contract_end_date: None,
+                client_year_of_services: None,
+                computer_name: Some("ASWVNLAP326".to_string()),
+                notes: None,
+                staff_group: Some("employee_list".to_string()),
+                dynamic_fields: Some(HashMap::from([(
+                    COMPUTER_NAME_2_FIELD_KEY.to_string(),
+                    String::new(),
+                )])),
+            },
+        )
+        .expect("update employee secondary device field");
         tx.commit().expect("commit transaction");
 
         let first_active: i64 = conn
@@ -1832,9 +1869,9 @@ mod tests {
             .expect("load second laptop status");
 
         assert_eq!(first_active, 1);
-        assert_eq!(second_active, 0);
+        assert_eq!(second_active, 1);
         assert_eq!(first_status, "assigned");
-        assert_eq!(second_status, "in_stock");
+        assert_eq!(second_status, "assigned");
     }
 
     #[test]
