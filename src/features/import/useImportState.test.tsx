@@ -5,16 +5,24 @@ import { useImportState } from './useImportState'
 
 const mocks = vi.hoisted(() => ({
     inspectImportColumns: vi.fn(),
+    previewImportExcel: vi.fn(),
+    importExcel: vi.fn(),
 }))
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }))
 vi.mock('../../services/staff-api', () => ({
-    staffApi: { inspectImportColumns: mocks.inspectImportColumns },
+    staffApi: {
+        inspectImportColumns: mocks.inspectImportColumns,
+        previewImportExcel: mocks.previewImportExcel,
+        importExcel: mocks.importExcel,
+    },
 }))
 
 describe('useImportState selected-file bridge', () => {
     beforeEach(() => {
         mocks.inspectImportColumns.mockReset()
+        mocks.previewImportExcel.mockReset()
+        mocks.importExcel.mockReset()
         vi.mocked(openFileDialog).mockReset()
         mocks.inspectImportColumns.mockResolvedValue({
             sourceFiles: ['C:\\imports\\employees.xlsx'],
@@ -22,6 +30,21 @@ describe('useImportState selected-file bridge', () => {
                 { key: 'email', label: 'Email', source: 'core', required: true },
                 { key: 'team', label: 'Team', source: 'dynamic', required: false },
             ],
+        })
+        mocks.previewImportExcel.mockResolvedValue({
+            sourceFiles: ['C:\\imports\\employees.xlsx'],
+            sheetName: 'Onboarding',
+            previewRows: [{
+                rowNumber: 2,
+                employeeId: 'ASWVN001',
+                fullName: 'A',
+                isUpdate: false,
+                changes: [],
+            }],
+            totalChanges: 0,
+            totalNew: 1,
+            totalUpdates: 0,
+            errors: [],
         })
     })
 
@@ -40,10 +63,29 @@ describe('useImportState selected-file bridge', () => {
 
         expect(mocks.inspectImportColumns).toHaveBeenCalledWith({
             filePaths: ['C:\\imports\\employees.xlsx'],
+            sheetName: 'Onboarding',
         })
         expect(result.current.isImportDrawerOpen).toBe(true)
         expect(result.current.importSelectedFiles).toEqual(['C:\\imports\\employees.xlsx'])
         expect(result.current.importTargetGroup).toBe('onboarding')
+
+        await act(async () => result.current.handleImportSelectedColumns())
+
+        expect(mocks.previewImportExcel).toHaveBeenCalledWith({
+            filePaths: ['C:\\imports\\employees.xlsx'],
+            selectedColumnKeys: ['email', 'team'],
+            targetStaffGroup: 'onboarding',
+            sheetName: 'Onboarding',
+        })
+        expect(mocks.importExcel).not.toHaveBeenCalled()
+
+        await act(async () => result.current.handleApprovePreviewRows())
+        expect(mocks.importExcel).toHaveBeenCalledWith({
+            filePaths: ['C:\\imports\\employees.xlsx'],
+            selectedColumnKeys: ['email', 'team'],
+            targetStaffGroup: 'onboarding',
+            sheetName: 'Onboarding',
+        })
     })
 
     it('keeps the existing Employee launcher using its native file picker', async () => {

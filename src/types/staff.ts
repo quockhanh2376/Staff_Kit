@@ -654,6 +654,7 @@ export type TeamUpsertInput = {
 export type ImportExcelInput = {
   filePath?: string | null
   filePaths?: string[] | null
+  sheetName?: string | null
   selectedColumnKeys?: string[] | null
   targetStaffGroup?: string | null
 }

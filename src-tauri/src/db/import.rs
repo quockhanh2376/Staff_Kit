@@ -29,6 +29,7 @@ use super::{
 pub struct ImportExcelInput {
     pub file_path: Option<String>,
     pub file_paths: Option<Vec<String>>,
+    pub sheet_name: Option<String>,
     pub selected_column_keys: Option<Vec<String>>,
     pub target_staff_group: Option<String>,
 }
@@ -145,7 +146,14 @@ pub fn inspect_import_columns(
     payload: ImportExcelInput,
 ) -> Result<ImportColumnsPreview, String> {
     ensure_database_ready(app)?;
-    let source_paths = resolve_import_source_paths(payload.file_path, payload.file_paths)?;
+    let ImportExcelInput {
+        file_path,
+        file_paths,
+        sheet_name,
+        ..
+    } = payload;
+    let source_paths = resolve_import_source_paths(file_path, file_paths)?;
+    let requested_sheet_name = sheet_name.as_deref();
 
     let mut detected_map: HashMap<String, ImportColumnOption> = HashMap::new();
     let mut source_files = Vec::new();
@@ -155,19 +163,46 @@ pub fn inspect_import_columns(
 
         let mut workbook = match open_workbook_auto(&source_path) {
             Ok(workbook) => workbook,
-            Err(_) => continue,
+            Err(err) => {
+                if sheet_name.is_some() {
+                    return Err(format!(
+                        "failed to open selected Employee workbook '{}': {err}",
+                        source_path.display()
+                    ));
+                }
+                continue;
+            }
         };
 
-        let sheet_names = workbook.sheet_names().to_vec();
+        let sheet_names = select_import_sheet_names(
+            &workbook.sheet_names(),
+            requested_sheet_name,
+            &source_path,
+        )?;
         for sheet_name in sheet_names {
             let range = match workbook.worksheet_range(&sheet_name) {
                 Ok(range) => range,
-                Err(_) => continue,
+                Err(err) => {
+                    if let Some(requested) = requested_sheet_name {
+                        return Err(format!(
+                            "failed to read selected Employee worksheet '{requested}' in workbook '{}': {err}",
+                            source_path.display()
+                        ));
+                    }
+                    continue;
+                }
             };
 
             let (_, columns) = match detect_import_columns(&range) {
                 Ok(value) => value,
-                Err(_) => continue,
+                Err(err) => {
+                    if let Some(requested) = requested_sheet_name {
+                        return Err(format!(
+                            "selected Employee worksheet '{requested}' is not a valid Employee import sheet: {err}"
+                        ));
+                    }
+                    continue;
+                }
             };
 
             for option in collect_import_column_options(&columns) {
@@ -177,6 +212,11 @@ pub fn inspect_import_columns(
     }
 
     if !detected_map.contains_key("employeeId") && !detected_map.contains_key("email") {
+        if let Some(sheet_name) = sheet_name {
+            return Err(format!(
+                "selected Employee worksheet '{sheet_name}' does not contain a required match column: need EE.ID or Working Email"
+            ));
+        }
         return Err(
             "failed to detect required match column: need EE.ID or Working Email".to_string(),
         );
@@ -201,11 +241,13 @@ pub fn import_excel(app: &AppHandle, payload: ImportExcelInput) -> Result<Import
     let ImportExcelInput {
         file_path,
         file_paths,
+        sheet_name,
         selected_column_keys,
         target_staff_group,
     } = payload;
 
     let source_paths = resolve_import_source_paths(file_path, file_paths)?;
+    let requested_sheet_name = sheet_name.as_deref();
     let selected_column_keys = normalize_selected_column_keys(selected_column_keys);
     let forced_staff_group = match normalize_optional_text(target_staff_group) {
         Some(raw_group) => Some(
@@ -250,19 +292,38 @@ pub fn import_excel(app: &AppHandle, payload: ImportExcelInput) -> Result<Import
         let mut workbook = open_workbook_auto(&source_path)
             .map_err(|err| format!("failed to open workbook '{}': {err}", source_path.display()))?;
 
-        let sheet_names = workbook.sheet_names().to_vec();
+        let sheet_names = select_import_sheet_names(
+            &workbook.sheet_names(),
+            requested_sheet_name,
+            &source_path,
+        )?;
         for sheet_name in sheet_names {
             let sheet_staff_group =
                 infer_staff_group_from_source(source_name.as_str(), sheet_name.as_str());
 
             let range = match workbook.worksheet_range(&sheet_name) {
                 Ok(range) => range,
-                Err(_) => continue,
+                Err(err) => {
+                    if let Some(requested) = requested_sheet_name {
+                        return Err(format!(
+                            "failed to read selected Employee worksheet '{requested}' in workbook '{}': {err}",
+                            source_path.display()
+                        ));
+                    }
+                    continue;
+                }
             };
 
             let (header_row_index, columns) = match detect_import_columns(&range) {
                 Ok(value) => value,
-                Err(_) => continue,
+                Err(err) => {
+                    if let Some(requested) = requested_sheet_name {
+                        return Err(format!(
+                            "selected Employee worksheet '{requested}' is not a valid Employee import sheet: {err}"
+                        ));
+                    }
+                    continue;
+                }
             };
 
             if report.sheet_name.is_empty() {
@@ -614,11 +675,13 @@ pub fn preview_import_excel(
     let ImportExcelInput {
         file_path,
         file_paths,
+        sheet_name,
         selected_column_keys,
         target_staff_group,
     } = payload;
 
     let source_paths = resolve_import_source_paths(file_path, file_paths)?;
+    let requested_sheet_name = sheet_name.as_deref();
     let selected_column_keys = normalize_selected_column_keys(selected_column_keys);
     let forced_staff_group = match normalize_optional_text(target_staff_group) {
         Some(raw_group) => Some(
@@ -652,19 +715,38 @@ pub fn preview_import_excel(
         let mut workbook = open_workbook_auto(&source_path)
             .map_err(|err| format!("failed to open workbook '{}': {err}", source_path.display()))?;
 
-        let sheet_names = workbook.sheet_names().to_vec();
+        let sheet_names = select_import_sheet_names(
+            &workbook.sheet_names(),
+            requested_sheet_name,
+            &source_path,
+        )?;
         for sheet_name in sheet_names {
             let sheet_staff_group =
                 infer_staff_group_from_source(source_name.as_str(), sheet_name.as_str());
 
             let range = match workbook.worksheet_range(&sheet_name) {
                 Ok(range) => range,
-                Err(_) => continue,
+                Err(err) => {
+                    if let Some(requested) = requested_sheet_name {
+                        return Err(format!(
+                            "failed to read selected Employee worksheet '{requested}' in workbook '{}': {err}",
+                            source_path.display()
+                        ));
+                    }
+                    continue;
+                }
             };
 
             let (header_row_index, columns) = match detect_import_columns(&range) {
                 Ok(value) => value,
-                Err(_) => continue,
+                Err(err) => {
+                    if let Some(requested) = requested_sheet_name {
+                        return Err(format!(
+                            "selected Employee worksheet '{requested}' is not a valid Employee import sheet: {err}"
+                        ));
+                    }
+                    continue;
+                }
             };
 
             let selected_dynamic_columns = columns
@@ -1352,6 +1434,25 @@ fn normalize_header_key(value: &str) -> String {
         .collect::<String>()
 }
 
+fn select_import_sheet_names(
+    available: &[String],
+    requested: Option<&str>,
+    source_path: &Path,
+) -> Result<Vec<String>, String> {
+    if let Some(requested) = requested {
+        if available.iter().any(|sheet_name| sheet_name == requested) {
+            return Ok(vec![requested.to_string()]);
+        }
+
+        return Err(format!(
+            "selected Employee worksheet '{requested}' was not found in workbook '{}'",
+            source_path.display()
+        ));
+    }
+
+    Ok(available.to_vec())
+}
+
 fn resolve_import_source_paths(
     requested: Option<String>,
     requested_many: Option<Vec<String>>,
@@ -1600,4 +1701,40 @@ fn format_numeric(value: f64) -> String {
     }
 
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::select_import_sheet_names;
+
+    #[test]
+    fn selected_employee_sheet_is_the_only_sheet_returned() {
+        let available = vec!["Notes".to_string(), "Onboarding".to_string()];
+
+        let selected = select_import_sheet_names(
+            &available,
+            Some("Onboarding"),
+            Path::new("employees.xlsx"),
+        )
+        .expect("selected sheet should exist");
+
+        assert_eq!(selected, vec!["Onboarding"]);
+    }
+
+    #[test]
+    fn missing_selected_employee_sheet_is_a_clear_error() {
+        let available = vec!["Notes".to_string(), "Employee List".to_string()];
+
+        let error = select_import_sheet_names(
+            &available,
+            Some("Onboarding"),
+            Path::new("employees.xlsx"),
+        )
+        .expect_err("missing selected sheet must not fall back");
+
+        assert!(error.contains("selected Employee worksheet 'Onboarding'"));
+        assert!(error.contains("employees.xlsx"));
+    }
 }

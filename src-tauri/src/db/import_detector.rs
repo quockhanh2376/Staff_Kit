@@ -374,6 +374,25 @@ mod tests {
     }
 
     #[test]
+    fn selects_the_valid_employee_sheet_from_a_multi_sheet_workbook() {
+        let result = detect_import_ranges(
+            "employees.xlsx",
+            vec![
+                sheet("Notes", &[&["Comment"], &["ignore this sheet"]]),
+                sheet(
+                    "Onboarding",
+                    &[&["EE.ID", "Full Name"], &["ASWVN001", "A"]],
+                ),
+            ],
+        )
+        .expect("detect multi-sheet workbook");
+
+        assert_eq!(result.kind, ImportDetectionType::Employee);
+        assert_eq!(result.sheet_name.as_deref(), Some("Onboarding"));
+        assert_eq!(result.row_count, 1);
+    }
+
+    #[test]
     fn sheet_name_takes_precedence_over_filename_hint() {
         let workbook = vec![sheet(
             "EE List",

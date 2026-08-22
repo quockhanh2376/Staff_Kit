@@ -28,6 +28,7 @@ export function useImportState({
     const [isImporting, setImporting] = useState(false)
     const [importReport, setImportReport] = useState<ImportReport | null>(null)
     const [importSelectedFiles, setImportSelectedFiles] = useState<string[]>([])
+    const [importSelectedSheetName, setImportSelectedSheetName] = useState<string | null>(null)
     const [importColumnOptions, setImportColumnOptions] = useState<ImportColumnOption[]>([])
     const [importSelectedColumnKeys, setImportSelectedColumnKeys] = useState<string[]>([])
     const [importTargetGroup, setImportTargetGroup] = useState<StaffGroupKey>("employee_list")
@@ -53,14 +54,16 @@ export function useImportState({
         sheetName: string | null
         targetStaffGroup: StaffGroupKey
     }) => {
-        const { filePath, targetStaffGroup } = input
+        const { filePath, sheetName, targetStaffGroup } = input
         try {
             setImporting(true)
             setImportReport(null)
             const result: ImportColumnsPreview = await staffApi.inspectImportColumns({
                 filePaths: [filePath],
+                sheetName,
             })
             setImportSelectedFiles(result.sourceFiles.length > 0 ? result.sourceFiles : [filePath])
+            setImportSelectedSheetName(sheetName)
             setImportColumnOptions(
                 result.detectedColumns.map((column) => ({
                     ...column,
@@ -97,6 +100,7 @@ export function useImportState({
             // Step 2: inspect columns from selected files
             const result: ImportColumnsPreview = await staffApi.inspectImportColumns({ filePaths })
             setImportSelectedFiles(result.sourceFiles)
+            setImportSelectedSheetName(null)
             setImportColumnOptions(
                 result.detectedColumns.map((column) => ({
                     ...column,
@@ -142,6 +146,7 @@ export function useImportState({
             setImporting(true)
             const preview = await staffApi.previewImportExcel({
                 filePaths: importSelectedFiles,
+                sheetName: importSelectedSheetName,
                 selectedColumnKeys: [...effectiveImportColumnKeySet],
                 targetStaffGroup: importTargetGroup,
             })
@@ -161,6 +166,7 @@ export function useImportState({
             setImporting(true)
             const report = await staffApi.importExcel({
                 filePaths: importSelectedFiles,
+                sheetName: importSelectedSheetName,
                 selectedColumnKeys: [...effectiveImportColumnKeySet],
                 targetStaffGroup: importTargetGroup,
             })
@@ -194,6 +200,7 @@ export function useImportState({
         isImporting,
         importReport,
         importSelectedFiles,
+        importSelectedSheetName,
         importColumnOptions,
         importSelectedColumnKeys,
         importTargetGroup,

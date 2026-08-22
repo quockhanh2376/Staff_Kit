@@ -1780,3 +1780,37 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Validation: unit tests 197/197; Rust/Tauri tests 263/263; Tauri check, typecheck, lint, build, quality, `git diff --check`, and `tauri:build` passed.
 - Artifacts: `Staff Kit_2.2.0-rc.1_x64_en-US.msi` and `Staff Kit_2.2.0-rc.1_x64-setup.exe`; stale generated 2.1.0 bundle files removed. No commit, push, tag, release, or version beyond the RC preparation.
 - Warnings: existing React hook dependency, Vite dynamic-import/chunk-size, Tauri identifier, and Rust dead-code/unused Phase-2 API warnings.
+
+## 2026-08-18 new-machine environment bootstrap — Start
+
+- Objective: prepare and verify the Zonnguyen510 Windows development environment for continued Staff Kit work from E:\Staff_Kit, preserving local repository state and making no business-logic changes.
+- Scope: repository synchronization, required tool/dependency checks, baseline validation, Tauri runtime and database-path verification, and initial adman credential-rule inspection. No commit, push, reset, production-data changes, or credential changes.
+
+## 2026-08-18 new-machine environment bootstrap — End
+
+- Result: repository remains on main at 7881cf7296e6f3fe231a1db3833a7f0b30c5c92b, synchronized with origin/main at 0/0. Existing tracked and untracked local work was preserved; no reset, commit, push, import, restore, or credential change was performed.
+- Environment: Node/npm, Rust/Cargo MSVC, Visual Studio Build Tools C++, WebView2, Perl, Codex, RTK, Python 3.13, and Headroom were prepared. Codex static tooling audit reported STATIC READY.
+- Validation: frontend unit tests 24 files/200 tests, typecheck, lint, build, supplemental checks, Rust/Tauri tests 283/283, check:tauri, check:quality, and git diff --check passed. Tauri dev Vite reached port 5173 and the direct dev executable opened a responding Staff Kit window against the existing database path.
+- Blockers: GitHub CLI remains unauthenticated after the browser-login attempt; complete gh auth login interactively for quockhanh2376. Source inspection found adman is currently seeded as admin, not super_admin; its initial password is defined in source and first-login forced reset is enabled. No product logic was changed.
+
+## 2026-08-22 Employee unified-import sheet routing fix - Start
+
+- Objective: propagate the detector-selected Employee worksheet through inspection, preview, validation, and approval preparation without changing Asset routing or schema.
+- Scope: Employee import state/API/backend sheet selection, focused regression coverage, and validation only. No commit, push, runtime DB, archive, audit-folder, or worktree changes.
+
+## 2026-08-22 Employee unified-import sheet routing fix - End
+
+- Result: detector-selected Employee sheet names now flow through inspection, preview, and explicit approval payloads; missing or invalid selected sheets fail clearly without fallback. Asset routing, schema, dependencies, and existing launchers were unchanged.
+- Validation: focused frontend 2/2; frontend unit 28 files/215 tests; detector 14/14; selected-sheet import guards 2/2; full Rust/Tauri 286/286; typecheck, lint, build, quality, and git diff --check passed.
+- Safety: no runtime DB, production data, archive/audit folder, linked worktree, commit, or push was touched. Existing warnings remain unchanged.
+
+## 2026-08-22 Employee multi-sheet fix finalization - Start
+
+- Objective: final scope review, validation, focused commit, and push of the completed Employee selected-sheet fix on main.
+- Scope: reviewed seven tracked files only; preserved audit docs, plan, help, archive/audit folders, and linked worktrees. No runtime or production DB writes.
+
+## 2026-08-22 Employee multi-sheet fix finalization - End
+
+- Result: final diff review and all required validation gates passed; commit and push remain the only integration actions in this finalization step.
+- Validation: focused frontend 2/2; frontend unit 28 files/215 tests; import guards 2/2; detector 14/14; full Rust/Tauri 286/286; typecheck, lint, build, quality, and git diff --check passed.
+- Safety: no production/runtime DB write, no force-push, no archive/audit/worktree modification, and no unrelated file staged.

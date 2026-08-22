@@ -594,6 +594,7 @@ export const staffApi = {
       payload: {
         filePath: payload.filePath ?? null,
         filePaths: payload.filePaths ?? null,
+        sheetName: payload.sheetName ?? null,
         selectedColumnKeys: payload.selectedColumnKeys ?? null,
         targetStaffGroup: payload.targetStaffGroup ?? null,
       },
@@ -604,6 +605,7 @@ export const staffApi = {
       payload: {
         filePath: payload.filePath ?? null,
         filePaths: payload.filePaths ?? null,
+        sheetName: payload.sheetName ?? null,
         selectedColumnKeys: payload.selectedColumnKeys ?? null,
         targetStaffGroup: payload.targetStaffGroup ?? null,
       },
@@ -614,6 +616,7 @@ export const staffApi = {
       payload: {
         filePath: payload.filePath ?? null,
         filePaths: payload.filePaths ?? null,
+        sheetName: payload.sheetName ?? null,
       },
     }),
 
