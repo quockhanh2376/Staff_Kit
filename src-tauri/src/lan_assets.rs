@@ -517,11 +517,13 @@ pub(crate) fn borrow_page_html() -> &'static str {
         }
       };
 
-      const resetEvidence = () => {
+      const resetEvidence = (preserveTypedName = false) => {
         policyAcknowledged = false;
-        typedName = "";
-        typedNameEmployeeId = "";
-        typedNameDirty = false;
+        if (!preserveTypedName) {
+          typedName = "";
+          typedNameEmployeeId = "";
+          typedNameDirty = false;
+        }
         clearSignature();
       };
 
@@ -729,13 +731,17 @@ pub(crate) fn borrow_page_html() -> &'static str {
         if (!employeeId) return;
         if (employeeId === identifiedEmployeeId && typedNameEmployeeId === employeeId && (typedNameDirty || typedName.trim())) return;
         identifiedEmployeeId = employeeId;
-        resetEvidence();
+        resetEvidence(typedNameDirty);
         if (selectedAssets.size > 0) renderConfirmation();
         try {
           const response = await authorizedFetch(`/api/employee?staffId=${encodeURIComponent(employeeId)}`);
           const payload = await response.json().catch(() => null);
           if (!response.ok || !payload || typeof payload.fullName !== "string" || !payload.fullName.trim()) return;
           if (currentStaffId() !== employeeId) return;
+          if (typedNameDirty) {
+            typedNameEmployeeId = employeeId;
+            return;
+          }
           typedName = payload.fullName.trim();
           typedNameEmployeeId = employeeId;
           typedNameDirty = false;
@@ -842,7 +848,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
           remove.textContent = "×";
           remove.addEventListener("click", () => {
             selectedAssets.delete(asset.assetCode);
-            resetEvidence();
+            resetEvidence(true);
             signatureCanvas = null;
             renderSelected();
           });
@@ -925,7 +931,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
             add.textContent = MODES[mode].addLabel;
             add.addEventListener("click", () => {
               selectedAssets.set(asset.assetCode, { ...asset, matchedIdentifier: searchTerm });
-              resetEvidence();
+              resetEvidence(true);
               renderSelected();
               void resolveEmployeeName();
               setMessage(`\u2713 ${asset.assetCode} selected and eligible for ${mode}.`, true);
@@ -965,12 +971,13 @@ pub(crate) fn borrow_page_html() -> &'static str {
           }
           const autoSelected = items.length === 1;
           if (autoSelected) {
-            resetEvidence();
+            resetEvidence(true);
             selectedAssets.set(items[0].assetCode, {
               ...items[0],
               matchedIdentifier: searchTerm,
             });
             renderSelected();
+            void resolveEmployeeName();
           }
           renderResults(items, searchTerm);
           if (items.length > 0) {
@@ -1251,6 +1258,7 @@ const dom = new JSDOM(page, {
       calls.push({ url, init });
       if (url.includes("/api/employee")) {
         const staffId = new URL(url, "http://192.168.2.1").searchParams.get("staffId");
+        await wait();
         return { ok: Boolean(employees[staffId]), json: async () => employees[staffId] ?? { error: "not found" } };
       }
       if (url.includes("/api/borrow-policy")) {
@@ -1264,23 +1272,22 @@ const dom = new JSDOM(page, {
   },
 });
 const document = dom.window.document;
-const waitForEmployee = async (staffId, fullName) => {
-  const staffInput = document.getElementById("staff-id");
-  staffInput.value = staffId;
-  staffInput.dispatchEvent(new dom.window.Event("blur", { bubbles: true }));
-  await wait();
-  if (document.getElementById("typed-name")?.value !== fullName) throw new Error(`employee ${staffId} did not prefill confirmation name`);
-};
+const staffInput = document.getElementById("staff-id");
 const search = document.getElementById("asset-search");
+staffInput.value = "EE1001";
+staffInput.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 search.value = "VNLAP504";
 document.getElementById("search-btn").click();
 await wait();
-await waitForEmployee("EE1001", "Nguyen Van A");
+await wait();
+if (document.getElementById("typed-name")?.value !== "Nguyen Van A") throw new Error("employee EE1001 did not prefill after asset auto-selection");
 document.getElementById("full-name").value = "Nguyen Van A";
 document.getElementById("acknowledgment-checkbox").click();
 document.getElementById("typed-name").value = "Borrow Confirmation Edit";
 document.getElementById("typed-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
-await waitForEmployee("EE1001", "Borrow Confirmation Edit");
+staffInput.dispatchEvent(new dom.window.Event("blur", { bubbles: true }));
+await wait();
+if (document.getElementById("typed-name")?.value !== "Borrow Confirmation Edit") throw new Error("borrow edit was overwritten by employee lookup");
 document.getElementById("submit-button").click();
 await wait();
 const borrowPost = calls.find((call) => call.url.includes("/api/borrow-requests"));
@@ -1288,10 +1295,13 @@ const borrowPayload = JSON.parse(borrowPost.init.body);
 if (borrowPayload.confirmation.typedName !== "Borrow Confirmation Edit") throw new Error("borrow edit was not submitted");
 
 document.getElementById("btn-return").click();
+staffInput.value = "EE1002";
+staffInput.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+staffInput.dispatchEvent(new dom.window.Event("blur", { bubbles: true }));
 search.value = "VNLAP504";
 document.getElementById("search-btn").click();
 await wait();
-await waitForEmployee("EE1002", "Tran Thi B");
+await wait();
 if (document.getElementById("typed-name").value !== "Tran Thi B") throw new Error("return confirmation did not refresh for the new employee");
 document.getElementById("typed-name").value = "Return Confirmation Edit";
 document.getElementById("typed-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
