@@ -381,6 +381,13 @@ pub fn import_excel(app: &AppHandle, payload: ImportExcelInput) -> Result<Import
                         continue;
                     }
                     matched_employees.into_iter().next()
+                } else if has_employee_import_identity(
+                    parsed_employee_id.as_deref(),
+                    import_email.as_deref(),
+                ) {
+                    // A new employee can be staged by canonical Staff ID alone. Email is
+                    // optional metadata for Employee imports, including Onboarding.
+                    None
                 } else {
                     report.skipped += 1;
                     report.errors.push(ImportErrorItem {
@@ -1426,6 +1433,10 @@ fn find_column_index(headers: &HashMap<String, usize>, aliases: &[&str]) -> Opti
         .find_map(|alias| headers.get(*alias).copied())
 }
 
+fn has_employee_import_identity(employee_id: Option<&str>, email: Option<&str>) -> bool {
+    employee_id.is_some() || email.is_some()
+}
+
 fn normalize_header_key(value: &str) -> String {
     value
         .chars()
@@ -1707,7 +1718,12 @@ fn format_numeric(value: f64) -> String {
 mod tests {
     use std::path::Path;
 
-    use super::select_import_sheet_names;
+    use calamine::{Cell, Data, Range};
+
+    use super::{
+        detect_import_columns, extract_optional_value, has_employee_import_identity,
+        normalize_employee_id, select_import_sheet_names,
+    };
 
     #[test]
     fn selected_employee_sheet_is_the_only_sheet_returned() {
@@ -1736,5 +1752,71 @@ mod tests {
 
         assert!(error.contains("selected Employee worksheet 'Onboarding'"));
         assert!(error.contains("employees.xlsx"));
+    }
+
+    #[test]
+    fn real_onboarding_headers_stage_all_staff_ids_without_working_email() {
+        let headers = [
+            "",
+            "EE. ID",
+            "Offer",
+            "Vietnamese Name",
+            "Nick Name",
+            "CLIENT (PMD)",
+            "Offered Job Title",
+            "Gender",
+            "Recruiter",
+        ];
+        let ids = ["ASWVN1325", "ASWVN1326", "ASWVN1330", "ASWVN1329", "ASWVN1328"];
+        let names = [
+            "Cao Tran Quang Duc",
+            "Tran Anh Quan",
+            "Nguyen Ngoc Quynh Chi",
+            "Vy Huyen Thuong",
+            "Le Minh Duy",
+        ];
+        let cells = headers
+            .iter()
+            .enumerate()
+            .map(|(column, value)| {
+                Cell::new((0, column as u32), Data::String((*value).to_string()))
+            })
+            .chain(ids.iter().zip(names.iter()).enumerate().flat_map(
+                |(row, (employee_id, full_name))| {
+                    [
+                        (1, *employee_id),
+                        (2, "Accepted"),
+                        (3, *full_name),
+                    ]
+                    .into_iter()
+                    .map(move |(column, value)| {
+                        Cell::new(
+                            ((row + 1) as u32, column as u32),
+                            Data::String(value.to_string()),
+                        )
+                    })
+                },
+            ))
+            .collect();
+        let range = Range::from_sparse(cells);
+        let (_, columns) = detect_import_columns(&range).expect("real onboarding headers");
+
+        let parsed_ids = range
+            .rows()
+            .skip(1)
+            .map(|row| {
+                extract_optional_value(row, columns.employee_id)
+                    .and_then(|value| normalize_employee_id(value).ok())
+                    .expect("Staff ID should parse")
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(columns.employee_id, Some(1));
+        assert_eq!(parsed_ids, ids);
+        assert_eq!(range.rows().count() - 1, 5);
+        assert!(parsed_ids
+            .iter()
+            .all(|employee_id| has_employee_import_identity(Some(employee_id), None)));
+        assert!(!has_employee_import_identity(None, None));
     }
 }
