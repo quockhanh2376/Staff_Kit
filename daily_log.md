@@ -1814,3 +1814,74 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Result: final diff review and all required validation gates passed; commit and push remain the only integration actions in this finalization step.
 - Validation: focused frontend 2/2; frontend unit 28 files/215 tests; import guards 2/2; detector 14/14; full Rust/Tauri 286/286; typecheck, lint, build, quality, and git diff --check passed.
 - Safety: no production/runtime DB write, no force-push, no archive/audit/worktree modification, and no unrelated file staged.
+
+## 2026-08-23 Asset unified-import detector contract fix - Start
+
+- Objective: align the frontend unified-import detector contract with the backend 	ype field so valid Asset detection can continue to preview.
+- Scope: shared TypeScript detector type, unified-import routing consumers/tests, and validation only. No runtime DB, production data, archive/audit folder, or preserved untracked file changes.
+
+
+## 2026-08-23 Asset unified-import detector contract fix - End
+
+- Result: frontend now consumes the backend 	ype detector field consistently; valid Asset detection enables preview routing and preserves subtype/sheet selection.
+- Validation: focused frontend 14/14; frontend unit 217/217; Rust/Tauri 290/290; quality gate, typecheck, lint, build, and git diff --check passed. Existing warnings remain unchanged.
+- Delivery: commit 38f2fc16c6cb7bc61984692fb1bdba75f48089b9 pushed to origin/main. Runtime/production DB was not accessed or modified.
+
+## 2026-08-23 real-data Borrow/Return acceptance + LAN host audit - Start
+
+- Objective: record the completed Unified Employee Import -> Onboarding -> Unified Asset Import -> Borrow -> duplicate protection -> Return milestone and audit stale LAN host behavior.
+- Scope: canonical session log update and read-only LAN/IP implementation review only. No LAN configuration, business data, auth, import, or code changes.
+
+## 2026-08-23 real-data Borrow/Return acceptance + LAN host audit - End
+
+- Result: acceptance PASS for ASWVN1325 with VNLAP504; borrow BR-ZXVYZGSYDN and return BR-RVODA3JT4B completed. Final counts: employees 431, onboarding 7, assets 37, active loans 30, returned loans 2; integrity OK and FK violations 0. Canonical assignment required no legacy Employee computer field.
+- LAN audit: host is persisted in runtime settings and discovery updates the UI/input only; explicit admin save is required. Server binds 0.0.0.0 while QR generation uses the saved host, so stale values can break remote QR/browser access but do not change the auth/token boundary. Classification: MEDIUM - BORROW/LAN RELIABILITY. No code or runtime-data changes.
+
+## 2026-08-23 LAN host refresh reliability fix - Start
+
+- Objective: persist a valid freshly detected LAN host before QR/Borrow URL use while preserving token security, port settings, and failure behavior.
+- Scope: focused settings-state regression coverage and minimal LAN host persistence fix. No business-data, auth, import, schema, dependency, archive, audit-folder, or worktree changes.
+
+## 2026-08-23 LAN host refresh reliability fix - End
+
+- Result: valid detected LAN hosts now persist through the existing settings API before QR construction; failed detection preserves the saved host.
+- Validation: focused LAN 44/44; frontend 218/218; Rust/Tauri 290/290; supplemental LAN checks PASS; quality gate PASS; no business DB writes.
+- Commit/push: 71010318abcab84ac2787a32c3724484706b910e pushed to origin/main.
+
+## 2026-08-23 Borrow/Return signer-name autofill - Start
+
+- Scope: initialize the shared LAN Borrow/Return confirmation typed-name field from the canonical employee full name after Staff ID lookup; preserve confirmation-only edits and leave Employee, loan, auth, LAN security, and schema behavior unchanged.
+
+## 2026-08-23 Borrow/Return signer-name autofill - End
+
+- Result: shared LAN Borrow/Return confirmation now looks up the canonical Employee full name by Staff ID and initializes the confirmation typed-name field; edits remain confirmation-local and employee changes refresh the default.
+- Validation: focused LAN lookup/autofill tests PASS; LAN server 41/41; LAN page 14/14; Borrow frontend 44/44; full frontend 218/218; Rust/Tauri 292/292; quality gate PASS; no business DB writes.
+- Commit/push: dbd9fb71820fd0e177da38d8c9915080f6d1fa6f pushed to origin/main.
+
+## 2026-08-24 LAN signer autofill runtime-ordering investigation - Start
+
+- Finding: the prior browser test set Staff ID and blurred only after asset auto-selection, bypassing the real mobile order. The auto-selected asset branch did not invoke employee lookup; scope is limited to invoking the existing read-only lookup there and preserving confirmation-local edits across re-renders.
+
+## 2026-08-24 LAN signer autofill runtime-ordering investigation - End
+
+- Root cause: the auto-selected single-asset path reset confirmation state but did not invoke the existing employee lookup; the prior test populated Staff ID only after that path and therefore missed the defect.
+- Fix: auto-selected and manually selected assets now trigger lookup; confirmation-local typed-name edits survive asset re-renders and delayed lookup completion. No business DB writes.
+- Validation: focused mobile-order Borrow/Return test PASS; Rust/Tauri 292/292; frontend 218/218; quality gate PASS; commit 102b371cdf35037d87fe41329a8b42b34594fab9 pushed and synchronized.
+- Manual phone verification: unavailable in this environment; no LAN listener was running.
+
+## 2026-08-24 compact signature clear action - Start
+
+- Scope: replace the shared LAN Borrow/Return signature-area button with an inline touch-friendly icon that clears only signature evidence and preserves typed-name/agreement state.
+
+## 2026-08-24 compact signature clear action - End
+
+- Result: shared Borrow/Return LAN confirmation now uses an inline top-right trash icon inside the signature box, hidden until signature evidence exists. It clears only signature evidence; typed-name and Borrow agreement state remain unchanged.
+- Validation: focused Borrow/Return signature test PASS; LAN page 15/15; Rust/Tauri 293/293; frontend 218/218; quality gate PASS; no business DB writes.
+- Commit/push: 93f8a43fc3c610bdab03228bc2a4ace9bab6c8e5 pushed and synchronized with origin/main.
+
+## 2026-08-24 Staff_Kit session close summary
+
+- Unified Data Import completed and hardened: Employee selected-sheet propagation fixed; detector restricted to admins.
+- Canonical Asset assignment boundary enforced: active `asset_loans` is authoritative. Real acceptance passed for `Onboarding.xlsx` (5 employees processed; employees 431; onboarding 7) and `AssetList.xlsx` (6 serialized assets; assets 37).
+- Real Borrow/Return acceptance passed for `ASWVN1325` with `VNLAP504`; canonical lifecycle verified. LAN stale-host reliability fixed; signer typed-name autofill was added and real-phone verified; single-asset mobile ordering was fixed; the Clear Signature button became an inline trash action.
+- Final automated baseline: frontend 218/218; Rust/Tauri 293/293; quality gates PASS.
