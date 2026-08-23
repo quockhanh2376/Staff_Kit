@@ -343,6 +343,19 @@ struct AssetSearchQuery {
     limit: Option<usize>,
 }
 
+#[derive(Debug, Deserialize)]
+struct EmployeeLookupQuery {
+    #[serde(rename = "staffId")]
+    staff_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LanEmployeeIdentity {
+    employee_id: String,
+    full_name: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LanBorrowPolicyResponse {
@@ -524,6 +537,7 @@ fn build_router(db_factory: DbFactory, token_store: Arc<lan_auth::LanTokenStore>
     let api_routes = Router::new()
         .route("/api/assets", get(search_assets))
         .route("/api/assigned-assets", get(search_assigned_assets))
+        .route("/api/employee", get(lookup_employee))
         .route("/api/borrow-policy", get(get_borrow_policy))
         .route(
             "/api/borrow-requests",
@@ -598,6 +612,40 @@ async fn search_assigned_assets(
 
     let summaries: Vec<LanAssetSummary> = items.iter().map(LanAssetSummary::from).collect();
     Ok(Json(summaries))
+}
+
+async fn lookup_employee(
+    State(state): State<LanServerState>,
+    ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
+    Query(query): Query<EmployeeLookupQuery>,
+) -> Result<Json<LanEmployeeIdentity>, (StatusCode, Json<ApiErrorPayload>)> {
+    let rl_key = format!("{}:employee", peer_addr.ip());
+    state
+        .token_store
+        .check_rate_limit(&rl_key, SEARCH_RATE_LIMIT)
+        .map_err(|e| auth_error(&e))?;
+
+    let employee_id = query
+        .staff_id
+        .unwrap_or_default()
+        .trim()
+        .to_uppercase();
+    if employee_id.is_empty() {
+        return Err(bad_request_error("staffId is required"));
+    }
+    if employee_id.len() > 50 {
+        return Err(bad_request_error("staffId is too long (max 50)"));
+    }
+
+    let conn = (state.db_factory)().map_err(|_| internal_error())?;
+    let employee = db::employee::load_employee_by_employee_id(&conn, &employee_id)
+        .map_err(|_| internal_error())?
+        .ok_or_else(|| bad_request_error("Employee was not found."))?;
+
+    Ok(Json(LanEmployeeIdentity {
+        employee_id: employee.employee_id,
+        full_name: employee.full_name,
+    }))
 }
 
 async fn get_borrow_policy(
@@ -1283,6 +1331,38 @@ mod tests {
         assert_eq!(payload["textVi"], "Vui lòng giữ gìn thiết bị.");
         assert!(payload.get("createdByAccountId").is_none());
         assert!(payload.get("supersededAt").is_none());
+    }
+
+    #[tokio::test]
+    async fn employee_lookup_requires_bearer_and_returns_canonical_full_name() {
+        let (router, _h) = build_router_for_tests_no_token().await;
+        let unauthorized = send(
+            router,
+            Request::builder()
+                .uri("/api/employee?staffId=EE1001")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+        let (router, _h, token) = build_router_for_tests_with_token().await;
+        let response = send(
+            router,
+            Request::builder()
+                .uri("/api/employee?staffId=ee1001")
+                .header("authorization", bearer(&token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), LAN_BODY_LIMIT)
+            .await
+            .expect("read employee body");
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("parse employee");
+        assert_eq!(payload["employeeId"], "EE1001");
+        assert_eq!(payload["fullName"], "Nguyen Van A");
     }
 
     #[tokio::test]

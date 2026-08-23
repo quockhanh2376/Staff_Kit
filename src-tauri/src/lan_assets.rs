@@ -439,6 +439,9 @@ pub(crate) fn borrow_page_html() -> &'static str {
       let policyError = "";
       let policyAcknowledged = false;
       let typedName = "";
+      let typedNameEmployeeId = "";
+      let identifiedEmployeeId = "";
+      let typedNameDirty = false;
       let signatureStrokeCount = 0;
       let signatureInkPresent = false;
       let signatureCanvas = null;
@@ -517,6 +520,8 @@ pub(crate) fn borrow_page_html() -> &'static str {
       const resetEvidence = () => {
         policyAcknowledged = false;
         typedName = "";
+        typedNameEmployeeId = "";
+        typedNameDirty = false;
         clearSignature();
       };
 
@@ -674,7 +679,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
         typedInput.id = "typed-name";
         typedInput.autocomplete = "name";
         typedInput.value = typedName;
-        typedInput.addEventListener("input", () => { typedName = typedInput.value; updateSubmitState(); });
+        typedInput.addEventListener("input", () => { typedName = typedInput.value; typedNameDirty = true; updateSubmitState(); });
         section.append(typedInput);
         const hint = document.createElement("p");
         hint.className = "helper confirmation-hint";
@@ -716,6 +721,39 @@ pub(crate) fn borrow_page_html() -> &'static str {
         headers.set("Authorization", `Bearer ${lanToken}`);
         return fetch(input, { ...init, headers });
       };
+
+      const currentStaffId = () => document.getElementById("staff-id").value.trim().toUpperCase();
+
+      const resolveEmployeeName = async () => {
+        const employeeId = currentStaffId();
+        if (!employeeId) return;
+        if (employeeId === identifiedEmployeeId && typedNameEmployeeId === employeeId && (typedNameDirty || typedName.trim())) return;
+        identifiedEmployeeId = employeeId;
+        resetEvidence();
+        if (selectedAssets.size > 0) renderConfirmation();
+        try {
+          const response = await authorizedFetch(`/api/employee?staffId=${encodeURIComponent(employeeId)}`);
+          const payload = await response.json().catch(() => null);
+          if (!response.ok || !payload || typeof payload.fullName !== "string" || !payload.fullName.trim()) return;
+          if (currentStaffId() !== employeeId) return;
+          typedName = payload.fullName.trim();
+          typedNameEmployeeId = employeeId;
+          typedNameDirty = false;
+          if (selectedAssets.size > 0) renderConfirmation();
+        } catch (_error) {
+          // Preserve the existing manual-entry fallback when lookup fails.
+        }
+      };
+
+      const staffIdInput = document.getElementById("staff-id");
+      staffIdInput.addEventListener("input", () => {
+        const employeeId = currentStaffId();
+        if (employeeId === identifiedEmployeeId) return;
+        identifiedEmployeeId = "";
+        resetEvidence();
+        if (selectedAssets.size > 0) renderConfirmation();
+      });
+      staffIdInput.addEventListener("blur", () => { void resolveEmployeeName(); });
 
       // Mode switch
       const MODES = {
@@ -889,6 +927,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
               selectedAssets.set(asset.assetCode, { ...asset, matchedIdentifier: searchTerm });
               resetEvidence();
               renderSelected();
+              void resolveEmployeeName();
               setMessage(`\u2713 ${asset.assetCode} selected and eligible for ${mode}.`, true);
             });
             item.append(add);
@@ -1184,6 +1223,110 @@ console.log("phase4-confirmation-ok");
             String::from_utf8_lossy(&output.stderr)
         );
         assert!(String::from_utf8_lossy(&output.stdout).contains("phase4-confirmation-ok"));
+    }
+
+    #[test]
+    fn borrow_and_return_confirmation_prefill_canonical_employee_name_without_overwriting_edits() {
+        let html = borrow_page_html();
+        let script = r###"
+import { JSDOM } from "jsdom";
+import fs from "node:fs";
+
+const page = fs.readFileSync(0, "utf8");
+const calls = [];
+const asset = { assetCode: "VNLAP504", assetType: "Laptop", displayName: "Demo Laptop", model: null, serialNumber: null };
+const employees = {
+  EE1001: { employeeId: "EE1001", fullName: "Nguyen Van A" },
+  EE1002: { employeeId: "EE1002", fullName: "Tran Thi B" },
+};
+const wait = () => new Promise((resolve) => setTimeout(resolve, 20));
+const context = { setTransform() {}, fillRect() {}, clearRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {} };
+const dom = new JSDOM(page, {
+  url: "http://192.168.2.1:8787/borrow#t=browser-token",
+  runScripts: "dangerously",
+  beforeParse(window) {
+    window.HTMLCanvasElement.prototype.getContext = () => context;
+    window.fetch = async (input, init = {}) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url.includes("/api/employee")) {
+        const staffId = new URL(url, "http://192.168.2.1").searchParams.get("staffId");
+        return { ok: Boolean(employees[staffId]), json: async () => employees[staffId] ?? { error: "not found" } };
+      }
+      if (url.includes("/api/borrow-policy")) {
+        return { ok: true, json: async () => ({ version: 7, textEn: "Handle with care.", textVi: "Vui long giu gin." }) };
+      }
+      if (url.includes("/api/borrow-requests")) {
+        return { ok: true, json: async () => ({ requestReference: "BR-AUTOFILL", message: "Pending IT review." }) };
+      }
+      return { ok: true, json: async () => [asset] };
+    };
+  },
+});
+const document = dom.window.document;
+const waitForEmployee = async (staffId, fullName) => {
+  const staffInput = document.getElementById("staff-id");
+  staffInput.value = staffId;
+  staffInput.dispatchEvent(new dom.window.Event("blur", { bubbles: true }));
+  await wait();
+  if (document.getElementById("typed-name")?.value !== fullName) throw new Error(`employee ${staffId} did not prefill confirmation name`);
+};
+const search = document.getElementById("asset-search");
+search.value = "VNLAP504";
+document.getElementById("search-btn").click();
+await wait();
+await waitForEmployee("EE1001", "Nguyen Van A");
+document.getElementById("full-name").value = "Nguyen Van A";
+document.getElementById("acknowledgment-checkbox").click();
+document.getElementById("typed-name").value = "Borrow Confirmation Edit";
+document.getElementById("typed-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+await waitForEmployee("EE1001", "Borrow Confirmation Edit");
+document.getElementById("submit-button").click();
+await wait();
+const borrowPost = calls.find((call) => call.url.includes("/api/borrow-requests"));
+const borrowPayload = JSON.parse(borrowPost.init.body);
+if (borrowPayload.confirmation.typedName !== "Borrow Confirmation Edit") throw new Error("borrow edit was not submitted");
+
+document.getElementById("btn-return").click();
+search.value = "VNLAP504";
+document.getElementById("search-btn").click();
+await wait();
+await waitForEmployee("EE1002", "Tran Thi B");
+if (document.getElementById("typed-name").value !== "Tran Thi B") throw new Error("return confirmation did not refresh for the new employee");
+document.getElementById("typed-name").value = "Return Confirmation Edit";
+document.getElementById("typed-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+document.getElementById("submit-button").click();
+await wait();
+const posts = calls.filter((call) => call.url.includes("/api/borrow-requests"));
+const returnPayload = JSON.parse(posts[1].init.body);
+if (returnPayload.confirmation.typedName !== "Return Confirmation Edit" || returnPayload.requestType !== "return") throw new Error("return edit was not submitted");
+if (calls.some((call) => call.url.includes("/api/employee") && call.init.method === "POST")) throw new Error("employee lookup attempted a write");
+console.log("signer-name-autofill-ok");
+"###;
+
+        let mut child = Command::new("node")
+            .args(["--input-type=module", "-e", script])
+            .current_dir(std::env::current_dir().expect("workspace directory"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("node and jsdom are required for signer-name coverage");
+        child
+            .stdin
+            .take()
+            .expect("node stdin")
+            .write_all(html.as_bytes())
+            .expect("write page HTML");
+        let output = child
+            .wait_with_output()
+            .expect("wait for signer-name test");
+        assert!(
+            output.status.success(),
+            "signer-name flow failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("signer-name-autofill-ok"));
     }
 
     #[test]
