@@ -97,13 +97,13 @@ export function useDataImportState({
     }, [canImportData, setGlobalError])
 
     const candidateRoutes = useMemo(
-        () => (detection?.kind === 'ambiguous' ? getCandidateRoutes(detection) : []),
+        () => (detection?.type === 'ambiguous' ? getCandidateRoutes(detection) : []),
         [detection],
     )
 
     const selectRoute = useCallback(
         (route: DataImportRoute) => {
-            if (!detection || detection.kind !== 'ambiguous') return
+            if (!detection || detection.type !== 'ambiguous') return
             if (getCandidateRoutes(detection).includes(route)) setRouteChoice(route)
         },
         [detection],
@@ -132,7 +132,7 @@ export function useDataImportState({
         setOpen(false)
     }, [assetImport, detection, employeeImport, routeChoice, selectedFilePath])
 
-    const actionableMessage = detection?.kind === 'unknown' ? detection.reason : null
+    const actionableMessage = detection?.type === 'unknown' ? detection.reason : null
 
     return {
         isOpen,
@@ -153,10 +153,10 @@ export function useDataImportState({
 }
 
 function getAutomaticRoute(result: ImportDetectionResult): DataImportRoute | null {
-    if (result.kind === 'employee' && result.subtype && EMPLOYEE_ROUTES.includes(result.subtype as StaffGroupKey)) {
+    if (result.type === 'employee' && result.subtype && EMPLOYEE_ROUTES.includes(result.subtype as StaffGroupKey)) {
         return result.subtype as StaffGroupKey
     }
-    if (result.kind === 'asset' && (result.subtype === 'serialized' || result.subtype === 'quantity')) {
+    if (result.type === 'asset' && (result.subtype === 'serialized' || result.subtype === 'quantity')) {
         return 'asset:' + result.subtype as DataImportRoute
     }
     return null

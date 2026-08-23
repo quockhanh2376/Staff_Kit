@@ -670,7 +670,7 @@ export type ImportDetectionSubtype =
   | 'quantity'
 
 export type ImportDetectionResult = {
-  kind: ImportDetectionKind
+  type: ImportDetectionKind
   subtype: ImportDetectionSubtype | null
   confidence: number
   sheetName: string | null

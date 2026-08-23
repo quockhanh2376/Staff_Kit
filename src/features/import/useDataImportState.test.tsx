@@ -29,7 +29,7 @@ const assetImport = () => ({
 })
 
 const detection = (overrides: Partial<ImportDetectionResult> = {}): ImportDetectionResult => ({
-    kind: 'employee',
+    type: 'employee',
     subtype: 'onboarding',
     confidence: 0.95,
     sheetName: 'Onboarding',
@@ -93,7 +93,7 @@ describe('useDataImportState', () => {
     ])('routes %s to the Asset preview entry point', async (_label, subtype) => {
         detector.mockResolvedValue(
             detection({
-                kind: 'asset',
+                type: 'asset',
                 subtype: subtype as ImportDetectionResult['subtype'],
                 sheetName: 'Assets',
                 evidenceHeaders: ['Asset Tag', 'Asset Name', 'Category'],
@@ -115,10 +115,39 @@ describe('useDataImportState', () => {
         expect(asset.commit).not.toHaveBeenCalled()
     })
 
+    it('routes the backend type field for serialized assets and preserves the selected sheet', async () => {
+        detector.mockResolvedValue({
+            type: 'asset',
+            subtype: 'serialized',
+            confidence: 0.98,
+            sheetName: 'Asset',
+            headerRow: 1,
+            rowCount: 6,
+            evidenceHeaders: ['Asset Tag', 'Asset Name', 'Category', 'Computer Name'],
+            reason: 'Canonical serialized asset headers were detected.',
+            warnings: [],
+            candidateTypes: ['asset:serialized'],
+        })
+        const { result, employee, asset } = renderDataImport()
+
+        act(() => result.current.open())
+        await act(async () => result.current.chooseFile())
+
+        expect(result.current.canContinue).toBe(true)
+        await act(async () => result.current.continueToPreview())
+
+        expect(asset.prepareSelectedFile).toHaveBeenCalledWith({
+            filePath: 'C:\\imports\\source.xlsx',
+            sheetName: 'Asset',
+            importType: 'serialized',
+        })
+        expect(employee.prepareSelectedFile).not.toHaveBeenCalled()
+    })
+
     it('requires a manual route for ambiguous detection', async () => {
         detector.mockResolvedValue(
             detection({
-                kind: 'ambiguous',
+                type: 'ambiguous',
                 subtype: null,
                 confidence: 0,
                 candidateTypes: ['employee', 'asset:serialized'],
@@ -143,7 +172,7 @@ describe('useDataImportState', () => {
     it('keeps unknown workbooks actionable and unrouted', async () => {
         detector.mockResolvedValue(
             detection({
-                kind: 'unknown',
+                type: 'unknown',
                 subtype: null,
                 confidence: 0,
                 reason: 'No recognizable Employee or Asset import columns were found.',

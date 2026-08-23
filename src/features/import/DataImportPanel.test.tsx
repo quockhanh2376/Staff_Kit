@@ -25,7 +25,7 @@ function state(overrides: Partial<DataImportState> = {}): DataImportState {
 }
 
 const onboarding: ImportDetectionResult = {
-    kind: 'employee',
+    type: 'employee',
     subtype: 'onboarding',
     confidence: 0.95,
     sheetName: 'Onboarding',
@@ -52,11 +52,34 @@ describe('DataImportPanel', () => {
         expect(dataImport.continueToPreview).toHaveBeenCalledTimes(1)
     })
 
+    it('enables preview for a serialized Asset detector result using the backend type field', () => {
+        const dataImport = state({
+            selectedFileName: 'AssetList.xlsx',
+            detection: {
+                ...onboarding,
+                type: 'asset',
+                subtype: 'serialized',
+                sheetName: 'Asset',
+                rowCount: 6,
+                confidence: 0.98,
+                evidenceHeaders: ['Asset Tag', 'Asset Name', 'Category', 'Computer Name'],
+            },
+            routeChoice: 'asset:serialized',
+            canContinue: true,
+        })
+        render(<DataImportPanel canImportData={true} dataImport={dataImport} />)
+
+        expect(screen.getByText('Serialized Assets')).toBeTruthy()
+        expect(screen.getByText('Asset')).toBeTruthy()
+        expect(screen.getByText('98%')).toBeTruthy()
+        expect(screen.getByRole('button', { name: 'Continue to Preview' }).hasAttribute('disabled')).toBe(false)
+    })
+
     it('requires a manual route for ambiguous results', () => {
         const dataImport = state({
             detection: {
                 ...onboarding,
-                kind: 'ambiguous',
+                type: 'ambiguous',
                 subtype: null,
                 confidence: 0,
                 reason: 'Choose the destination explicitly.',
@@ -79,7 +102,7 @@ describe('DataImportPanel', () => {
         const dataImport = state({
             detection: {
                 ...onboarding,
-                kind: 'unknown',
+                type: 'unknown',
                 subtype: null,
                 confidence: 0,
                 reason: 'Add Staff ID and Full Name, or Asset Tag and Asset Name headers.',

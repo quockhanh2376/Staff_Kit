@@ -54,8 +54,8 @@ function DetectionSummary({
     dataImport: DataImportState
     detection: ImportDetectionResult
 }) {
-    const isUnknown = detection.kind === 'unknown'
-    const isAmbiguous = detection.kind === 'ambiguous'
+    const isUnknown = detection.type === 'unknown'
+    const isAmbiguous = detection.type === 'ambiguous'
 
     return (
         <div className='space-y-4'>
@@ -134,8 +134,8 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 }
 
 function getDetectionLabel(detection: ImportDetectionResult): string {
-    if (detection.kind === 'ambiguous') return 'Ambiguous Import'
-    if (detection.kind === 'unknown') return 'Unknown Workbook'
+    if (detection.type === 'ambiguous') return 'Ambiguous Import'
+    if (detection.type === 'unknown') return 'Unknown Workbook'
     return detection.subtype ? getRouteLabel(detection.subtype) : 'Import'
 }
 
