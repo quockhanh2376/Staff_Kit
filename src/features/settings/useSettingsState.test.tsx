@@ -355,28 +355,56 @@ describe("standard-user startup avoids admin commands (Regression B)", () => {
 })
 
 describe("Borrow / Return LAN automatic lifecycle", () => {
-    it("detects a different LAN IP into the draft without changing saved settings", async () => {
+    it("persists a newly detected LAN IP before building the QR URL", async () => {
         setSession({ sessionToken: "lan-token", expiresAt: "2099-01-01T00:00:00Z" })
+        invokeMock.mockImplementation(async (command: string) =>
+            command === "get_borrow_lan_settings"
+                ? { enabled: true, host: "127.0.0.1", port: 8787, borrowUrl: "http://127.0.0.1:8787/borrow" }
+                : command === "get_borrow_lan_status"
+                    ? { running: false, tokenReady: false, bindHost: "127.0.0.1", port: 8787 }
+                    : command === "detect_borrow_lan_host"
+                        ? "192.168.2.1"
+                        : command === "update_borrow_lan_settings"
+                            ? { enabled: true, host: "192.168.2.1", port: 8787, borrowUrl: "http://192.168.2.1:8787/borrow" }
+                            : command === "start_borrow_lan_server"
+                                ? { running: true, tokenReady: false, bindHost: "192.168.2.1", port: 8787 }
+                                : command === "issue_borrow_lan_token"
+                                    ? "session-token"
+                                    : undefined,
+        )
+        const { result } = renderHook(() => useSettingsState(baseOptions))
+        await act(async () => {
+            await Promise.resolve()
+            await Promise.resolve()
+            await result.current.ensureBorrowLanReady()
+        })
+
+        expect(result.current.borrowLanHostInput).toBe("192.168.2.1")
+        expect(result.current.borrowLanDetectedHost).toBe("192.168.2.1")
+        expect(result.current.borrowLanSettings?.host).toBe("192.168.2.1")
+        expect(result.current.borrowLanQrUrl).toBe("http://192.168.2.1:8787/borrow#t=session-token")
+        expect(invokeMock.mock.calls.filter(([command]) => command === "update_borrow_lan_settings")).toHaveLength(1)
+    })
+
+    it("keeps the saved LAN host when detection returns no address", async () => {
+        setSession({ sessionToken: "lan-token", expiresAt: "2099-01-01T00:00:00Z" })
+        invokeMock.mockImplementation(async (command: string) =>
+            command === "get_borrow_lan_settings"
+                ? { enabled: true, host: "192.168.2.1", port: 8787, borrowUrl: "http://192.168.2.1:8787/borrow" }
+                : command === "detect_borrow_lan_host"
+                    ? null
+                    : undefined,
+        )
+
         const { result } = renderHook(() => useSettingsState(baseOptions))
         await act(async () => {
             await Promise.resolve()
             await Promise.resolve()
         })
 
-        invokeMock.mockImplementation(async (command: string) =>
-            command === "detect_borrow_lan_host" ? "192.168.2.1" : undefined,
-        )
-        await act(async () => {
-            result.current.handleRefreshBorrowLanHost()
-            await Promise.resolve()
-            await Promise.resolve()
-        })
-
+        expect(result.current.borrowLanSettings?.host).toBe("192.168.2.1")
         expect(result.current.borrowLanHostInput).toBe("192.168.2.1")
-        expect(result.current.borrowLanDetectedHost).toBe("192.168.2.1")
-        expect(result.current.borrowLanSettings?.host).toBe("127.0.0.1")
-        expect(result.current.lanServerStatus?.bindHost).toBe("127.0.0.1")
-        expect(result.current.borrowLanDetectionNote).toContain("saved host is 127.0.0.1")
+        expect(invokeMock.mock.calls.some(([command]) => command === "update_borrow_lan_settings")).toBe(false)
     })
 
     it("validates the port before saving LAN settings", async () => {
