@@ -372,17 +372,32 @@ pub(crate) fn borrow_page_html() -> &'static str {
         touch-action: none;
       }
 
-      .confirmation-actions {
-        display: flex;
-        justify-content: flex-end;
-        margin-top: 6px;
+      .signature-box {
+        position: relative;
       }
 
       .clear-signature {
-        width: auto;
-        padding: 6px 10px;
-        background: transparent;
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        z-index: 1;
+        display: grid;
+        width: 44px;
+        height: 44px;
+        padding: 0;
+        place-items: center;
+        border: 1px solid rgba(17, 24, 39, 0.18);
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.88);
         color: var(--muted);
+        font-size: 18px;
+        line-height: 1;
+        cursor: pointer;
+      }
+
+      .clear-signature:focus-visible {
+        outline: 3px solid var(--accent);
+        outline-offset: 2px;
       }
 
       .confirmation-hint {
@@ -445,6 +460,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
       let signatureStrokeCount = 0;
       let signatureInkPresent = false;
       let signatureCanvas = null;
+      let clearSignatureButton = null;
       let isDrawing = false;
       let currentStrokeHasInk = false;
       let strokeStartPoint = null;
@@ -498,6 +514,9 @@ pub(crate) fn borrow_page_html() -> &'static str {
       const normalizedTypedName = () => typedName.trim().replace(/\\s+/g, " ");
       const hasSignatureEvidence = () => signatureStrokeCount > 0 && signatureInkPresent;
       const hasConfirmationEvidence = () => Boolean(normalizedTypedName()) || hasSignatureEvidence();
+      const updateSignatureClearButton = () => {
+        if (clearSignatureButton) clearSignatureButton.hidden = !hasSignatureEvidence();
+      };
       const getCanvasContext = (canvas) => {
         try { return canvas?.getContext?.("2d") || null; } catch (_error) { return null; }
       };
@@ -530,6 +549,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
       const updateSubmitState = () => {
         const policyReady = mode === "return" || Boolean(borrowPolicy);
         const acknowledged = mode === "return" || policyAcknowledged;
+        updateSignatureClearButton();
         submitBtn.disabled = isSubmitting || selectedAssets.size === 0 || !policyReady || !acknowledged || !hasConfirmationEvidence();
       };
 
@@ -589,6 +609,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
 
       const renderConfirmation = () => {
         confirmationEl.replaceChildren();
+        clearSignatureButton = null;
         if (selectedAssets.size === 0) {
           updateSubmitState();
           return;
@@ -662,16 +683,20 @@ pub(crate) fn borrow_page_html() -> &'static str {
         canvas.id = "signature-canvas";
         canvas.setAttribute("aria-label", "Handwritten signature");
         signatureCanvas = canvas;
-        section.append(canvas);
-        const signatureActions = document.createElement("div");
-        signatureActions.className = "confirmation-actions";
+        const signatureBox = document.createElement("div");
+        signatureBox.className = "signature-box";
+        signatureBox.append(canvas);
         const clearButton = document.createElement("button");
         clearButton.type = "button";
         clearButton.className = "clear-signature";
-        clearButton.textContent = "Clear signature";
+        clearButton.setAttribute("aria-label", "Clear signature");
+        clearButton.title = "Clear signature";
+        clearButton.textContent = "🗑️";
+        clearButton.hidden = !hasSignatureEvidence();
         clearButton.addEventListener("click", () => { clearSignature(); updateSubmitState(); });
-        signatureActions.append(clearButton);
-        section.append(signatureActions);
+        clearSignatureButton = clearButton;
+        signatureBox.append(clearButton);
+        section.append(signatureBox);
         const typedLabel = document.createElement("label");
         typedLabel.className = "signature-label";
         typedLabel.setAttribute("for", "typed-name");
@@ -1337,6 +1362,120 @@ console.log("signer-name-autofill-ok");
             String::from_utf8_lossy(&output.stderr)
         );
         assert!(String::from_utf8_lossy(&output.stdout).contains("signer-name-autofill-ok"));
+    }
+
+    #[test]
+    fn signature_clear_icon_is_inline_and_preserves_typed_name_in_borrow_and_return() {
+        let html = borrow_page_html();
+        let script = r###"
+import { JSDOM } from "jsdom";
+import fs from "node:fs";
+
+const page = fs.readFileSync(0, "utf8");
+const calls = [];
+const asset = { assetCode: "VNLAP505", assetType: "Laptop", displayName: "Demo Laptop", model: null, serialNumber: null };
+const wait = () => new Promise((resolve) => setTimeout(resolve, 20));
+const context = { setTransform() {}, fillRect() {}, clearRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {} };
+const dom = new JSDOM(page, {
+  url: "http://192.168.2.1:8787/borrow#t=browser-token",
+  runScripts: "dangerously",
+  beforeParse(window) {
+    window.HTMLCanvasElement.prototype.getContext = () => context;
+    window.HTMLCanvasElement.prototype.toDataURL = () => "data:image/png;base64,UE5H";
+    window.fetch = async (input, init = {}) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url.includes("/api/employee")) return { ok: true, json: async () => ({ employeeId: "EE1001", fullName: "Nguyen Van A" }) };
+      if (url.includes("/api/borrow-policy")) return { ok: true, json: async () => ({ version: 7, textEn: "Handle with care.", textVi: "Vui long giu gin." }) };
+      if (url.includes("/api/borrow-requests")) return { ok: true, json: async () => ({ requestReference: "BR-SIGN-CLEAR", message: "Pending IT review." }) };
+      return { ok: true, json: async () => [asset] };
+    };
+  },
+});
+const document = dom.window.document;
+const pointer = (type, x, y) => {
+  const event = new dom.window.Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperties(event, { clientX: { value: x }, clientY: { value: y } });
+  return event;
+};
+const sign = () => {
+  const canvas = document.getElementById("signature-canvas");
+  canvas.dispatchEvent(pointer("pointerdown", 2, 2));
+  canvas.dispatchEvent(pointer("pointermove", 8, 5));
+  canvas.dispatchEvent(pointer("pointerup", 8, 5));
+};
+const submit = document.getElementById("submit-button");
+document.getElementById("staff-id").value = "EE1001";
+document.getElementById("staff-id").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+document.getElementById("asset-search").value = "VNLAP505";
+document.getElementById("search-btn").click();
+await wait();
+await wait();
+if (document.getElementById("typed-name").value !== "Nguyen Van A") throw new Error("Borrow signer autofill missing");
+let clear = document.querySelector(".clear-signature");
+if (!clear?.hidden || !clear.parentElement?.classList.contains("signature-box")) throw new Error("Borrow clear icon was not hidden inline");
+document.getElementById("full-name").value = "Nguyen Van A";
+document.getElementById("acknowledgment-checkbox").click();
+sign();
+clear = document.querySelector(".clear-signature");
+if (clear.hidden || clear.getAttribute("aria-label") !== "Clear signature") throw new Error("Borrow clear icon did not appear accessibly");
+document.getElementById("typed-name").value = "Borrow Edited Name";
+document.getElementById("typed-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+clear.click();
+if (!clear.hidden || document.getElementById("typed-name").value !== "Borrow Edited Name" || !document.getElementById("acknowledgment-checkbox").checked) throw new Error("Borrow clear changed non-signature state");
+submit.click();
+await wait();
+let posts = calls.filter((call) => call.url.includes("/api/borrow-requests"));
+let borrowPayload = JSON.parse(posts[0].init.body);
+if (borrowPayload.confirmation.typedName !== "Borrow Edited Name" || borrowPayload.confirmation.signaturePngBase64 !== null) throw new Error("Borrow clear payload was incorrect");
+
+document.getElementById("btn-return").click();
+document.getElementById("asset-search").value = "VNLAP505";
+document.getElementById("search-btn").click();
+await wait();
+await wait();
+if (document.getElementById("typed-name").value !== "Nguyen Van A") throw new Error("Return signer autofill missing");
+clear = document.querySelector(".clear-signature");
+if (!clear.hidden) throw new Error("Return clear icon was visible before signing");
+sign();
+clear = document.querySelector(".clear-signature");
+if (clear.hidden) throw new Error("Return clear icon did not appear");
+document.getElementById("typed-name").value = "Return Edited Name";
+document.getElementById("typed-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+clear.click();
+if (!clear.hidden || document.getElementById("typed-name").value !== "Return Edited Name") throw new Error("Return clear changed typed name");
+submit.click();
+await wait();
+posts = calls.filter((call) => call.url.includes("/api/borrow-requests"));
+const returnPayload = JSON.parse(posts[1].init.body);
+if (returnPayload.requestType !== "return" || returnPayload.confirmation.typedName !== "Return Edited Name" || returnPayload.confirmation.signaturePngBase64 !== null) throw new Error("Return clear payload was incorrect");
+if (calls.some((call) => call.url.includes("/api/employee") && call.init.method === "POST")) throw new Error("employee master write was attempted");
+console.log("signature-clear-icon-ok");
+"###;
+
+        let mut child = Command::new("node")
+            .args(["--input-type=module", "-e", script])
+            .current_dir(std::env::current_dir().expect("workspace directory"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("node and jsdom are required for signature clear coverage");
+        child
+            .stdin
+            .take()
+            .expect("node stdin")
+            .write_all(html.as_bytes())
+            .expect("write page HTML");
+        let output = child
+            .wait_with_output()
+            .expect("wait for signature clear test");
+        assert!(
+            output.status.success(),
+            "signature clear flow failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("signature-clear-icon-ok"));
     }
 
     #[test]
