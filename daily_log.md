@@ -1885,3 +1885,18 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Canonical Asset assignment boundary enforced: active `asset_loans` is authoritative. Real acceptance passed for `Onboarding.xlsx` (5 employees processed; employees 431; onboarding 7) and `AssetList.xlsx` (6 serialized assets; assets 37).
 - Real Borrow/Return acceptance passed for `ASWVN1325` with `VNLAP504`; canonical lifecycle verified. LAN stale-host reliability fixed; signer typed-name autofill was added and real-phone verified; single-asset mobile ordering was fixed; the Clear Signature button became an inline trash action.
 - Final automated baseline: frontend 218/218; Rust/Tauri 293/293; quality gates PASS.
+## 2026-08-25 Staff Kit 2.2.0-rc.2 release candidate - Start
+
+- Objective: prepare the Windows release candidate from synchronized `main` at `d3df2a45db9e98e150e54d4d9bccc691033eed2c` for controlled real-world testing.
+- Scope: authoritative version metadata, release validation/build, copy-based data-safety checks, concise release notes, and release commit/tag delivery. Preserved untracked audit docs, plan, and `help` remain untouched; no production-data transaction is planned.
+## 2026-08-25 Staff Kit 2.2.0-rc.2 release candidate - End (Blocked)
+
+- RC metadata and Windows bundles were prepared locally as `2.2.0-rc.2`; artifacts: `Staff Kit_2.2.0-rc.2_x64_en-US.msi`, `Staff Kit_2.2.0-rc.2_x64-setup.exe`, and `staff-kit.exe`.
+- Validation: frontend 218/218; Rust/Tauri 293/293; typecheck, lint, build, `check:tauri`, `check:quality`, and `git diff --check` passed. Existing warnings remain unchanged.
+- Data safety: a cold prelaunch copy remained readable and intact with employees 431, assets 37, active loans 30, returned loans 2, integrity OK, and zero FK violations. Packaged startup changed only live SQLite `schema_version` 364 to 372; `user_version` remained 0 and business counts stayed unchanged.
+- Blocker: Windows Tauri path resolution ignored the temporary `LOCALAPPDATA` redirect, so the packaged smoke launch touched the live DB. No import, Borrow/Return transaction, or other business workflow was executed. Commit/tag/push deferred; next step is an approved isolated packaged-build smoke procedure.
+
+## 2026-08-25 Staff Kit 2.2.0-rc.2 release candidate - Final
+
+- RC.2 prepared; Zon manual packaged UI smoke PASS using the isolated `db_settings.json` custom-folder procedure. Live DB remained untouched and the isolation sidecar was removed afterward.
+- Release commit: `chore(release): prepare 2.2.0-rc.2`; tag: `v2.2.0-rc.2`. Next step: Zon controlled real-world RC.2 testing. No credentials recorded.
