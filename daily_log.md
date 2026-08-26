@@ -1900,3 +1900,9 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 
 - RC.2 prepared; Zon manual packaged UI smoke PASS using the isolated `db_settings.json` custom-folder procedure. Live DB remained untouched and the isolation sidecar was removed afterward.
 - Release commit: `chore(release): prepare 2.2.0-rc.2`; tag: `v2.2.0-rc.2`. Next step: Zon controlled real-world RC.2 testing. No credentials recorded.
+
+## 2026-08-26 idempotent Asset re-import - Start
+
+- Objective: classify exact existing Assets as Existing/Skip, preserve true code/serial conflicts as Error/Conflict, and approve only genuinely new Assets.
+- Acceptance source: local `00_ExSource/AssetList.xlsx` with six existing Lenovo rows and four new Samsung rows; no production DB writes during automated validation.
+- Scope: Asset import preview/commit and regression coverage only; preserve Employee import, canonical Asset identity, uniqueness constraints, active loan/status state, and existing uncommitted changes in the main checkout.
