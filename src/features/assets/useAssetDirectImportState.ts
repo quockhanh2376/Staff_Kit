@@ -281,7 +281,8 @@ export function useAssetDirectImportState({
 
     const canPreviewCurrentFile = Boolean(selectedFilePath) && !isInspectingFile
     const previewApproveDisabled =
-        (preview?.validRows ?? 0) === 0 || (preview?.errorRows ?? 0) > 0
+        (preview?.validRows ?? 0) === 0 ||
+        (preview?.importType === "serialized" && (preview?.errorRows ?? 0) > 0)
     const selectedFiles = useMemo(
         () => (selectedFilePath ? [selectedFilePath] : []),
         [selectedFilePath],

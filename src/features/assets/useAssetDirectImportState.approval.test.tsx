@@ -26,7 +26,10 @@ const inspection = {
     requiresManualMapping: false,
 }
 
-function previewForStatuses(statuses: string[]): AssetDirectImportPreview {
+function previewForStatuses(
+    statuses: string[],
+    importType: AssetDirectImportPreview["importType"] = "serialized",
+): AssetDirectImportPreview {
     const rows: AssetDirectImportPreviewRow[] = statuses.map((status, index) => ({
         rowNumber: index + 2,
         assetCode: `ASSET-${index + 1}`,
@@ -47,7 +50,7 @@ function previewForStatuses(statuses: string[]): AssetDirectImportPreview {
     return {
         fileName: "assets.xlsx",
         sheetName: "Assets",
-        importType: "serialized",
+        importType,
         totalRows: rows.length,
         validRows: rows.filter((row) => row.status === "valid").length,
         errorRows: rows.filter((row) => row.status === "error").length,
@@ -57,9 +60,12 @@ function previewForStatuses(statuses: string[]): AssetDirectImportPreview {
     }
 }
 
-async function previewAssetRows(statuses: string[]) {
+async function previewAssetRows(
+    statuses: string[],
+    importType: AssetDirectImportPreview["importType"] = "serialized",
+) {
     mocks.inspectAssetImportFile.mockResolvedValue(inspection)
-    mocks.previewAssetImportFile.mockResolvedValue(previewForStatuses(statuses))
+    mocks.previewAssetImportFile.mockResolvedValue(previewForStatuses(statuses, importType))
 
     const hook = renderHook(() =>
         useAssetDirectImportState({
@@ -75,7 +81,7 @@ async function previewAssetRows(statuses: string[]) {
         hook.result.current.prepareSelectedFile({
             filePath: "C:\\imports\\assets.xlsx",
             sheetName: "Assets",
-            importType: "serialized",
+            importType,
         }),
     )
     await act(async () => {
@@ -100,5 +106,11 @@ describe("useAssetDirectImportState approval gating", () => {
         const hook = await previewAssetRows(statuses as string[])
 
         expect(hook.result.current.previewApproveDisabled).toBe(expectedDisabled)
+    })
+
+    it("keeps quantity approval enabled when invalid rows are skippable", async () => {
+        const hook = await previewAssetRows(["valid", "error"], "quantity")
+
+        expect(hook.result.current.previewApproveDisabled).toBe(false)
     })
 })

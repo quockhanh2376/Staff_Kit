@@ -1925,3 +1925,15 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Validation: focused approval 4/4; focused Asset import 39/39; full frontend 224/224; full Rust/Tauri 298/298; quality gate PASS; `git diff --check` PASS.
 - Real workbook acceptance: `AssetList.xlsx` read-only with `H Phone` setup in isolated SQLite; preview 10 total / 6 Existing-Skip / 4 New / 0 Error-Conflict; first import inserted 4 with zero existing writes and preserved active state; second import 10 Existing-Skip / 0 New / 0 writes.
 - No production DB writes; no merge or push.
+## 2026-08-26 Asset re-import approval gating review fix - Start
+
+- Objective: preserve quantity-import partial approval while keeping serialized approval blocked by any Error/Conflict rows, per independent review.
+- Scope: add a mixed quantity frontend regression, scope the approval gate by import mode, rerun all required checks, and request re-review; do not merge or push.
+- Safety: preserve the two pre-existing modified generated schema files in this worktree; no production database writes.
+
+## 2026-08-26 Asset re-import approval gating review fix - End
+
+- Result: serialized previews block approval when any Error/Conflict row remains; quantity previews still allow approval when valid rows coexist with skippable invalid rows.
+- Review: initial Important finding resolved; independent re-review returned no findings and marked the slice ready for QEEN revalidation.
+- Validation: approval regression 5/5; frontend unit 225/225; Rust/Tauri 298/298; quality gate PASS; git diff --check PASS.
+- No production DB writes; no merge or push.
