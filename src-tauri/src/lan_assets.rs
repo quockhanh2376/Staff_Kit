@@ -425,14 +425,14 @@ pub(crate) fn borrow_page_html() -> &'static str {
         </div>
 
         <label for="staff-id">Staff ID</label>
-        <input id="staff-id" autocomplete="off" placeholder="EE1001" />
+        <input id="staff-id" autocomplete="off" placeholder="ASWVN1325" />
 
         <label for="full-name">Full Name</label>
         <input id="full-name" autocomplete="name" placeholder="Nguyen Van A" />
 
         <label for="asset-search">Search Asset</label>
         <div class="search-row">
-          <input id="asset-search" autocomplete="off" placeholder="ASSET-001 or Dell Latitude" />
+          <input id="asset-search" autocomplete="off" placeholder="VNLAP369" />
           <button id="search-btn" type="button">Search</button>
         </div>
         <div class="helper" id="search-helper">Only in-stock assets are searchable.</div>
