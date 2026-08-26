@@ -1781,12 +1781,12 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Artifacts: `Staff Kit_2.2.0-rc.1_x64_en-US.msi` and `Staff Kit_2.2.0-rc.1_x64-setup.exe`; stale generated 2.1.0 bundle files removed. No commit, push, tag, release, or version beyond the RC preparation.
 - Warnings: existing React hook dependency, Vite dynamic-import/chunk-size, Tauri identifier, and Rust dead-code/unused Phase-2 API warnings.
 
-## 2026-08-18 new-machine environment bootstrap — Start
+## 2026-08-18 new-machine environment bootstrap ï¿½ Start
 
 - Objective: prepare and verify the Zonnguyen510 Windows development environment for continued Staff Kit work from E:\Staff_Kit, preserving local repository state and making no business-logic changes.
 - Scope: repository synchronization, required tool/dependency checks, baseline validation, Tauri runtime and database-path verification, and initial adman credential-rule inspection. No commit, push, reset, production-data changes, or credential changes.
 
-## 2026-08-18 new-machine environment bootstrap — End
+## 2026-08-18 new-machine environment bootstrap ï¿½ End
 
 - Result: repository remains on main at 7881cf7296e6f3fe231a1db3833a7f0b30c5c92b, synchronized with origin/main at 0/0. Existing tracked and untracked local work was preserved; no reset, commit, push, import, restore, or credential change was performed.
 - Environment: Node/npm, Rust/Cargo MSVC, Visual Studio Build Tools C++, WebView2, Perl, Codex, RTK, Python 3.13, and Headroom were prepared. Codex static tooling audit reported STATIC READY.
@@ -1937,3 +1937,29 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Review: initial Important finding resolved; independent re-review returned no findings and marked the slice ready for QEEN revalidation.
 - Validation: approval regression 5/5; frontend unit 225/225; Rust/Tauri 298/298; quality gate PASS; git diff --check PASS.
 - No production DB writes; no merge or push.
+## 2026-08-26 â€” Session Summary
+
+### Completed
+- Asset re-import idempotency implemented, Qeen-approved, merged, and pushed.
+- Real workbook acceptance: 10 total, 6 Existing/Skip, 4 New H Phone, 0 Error.
+- Repeat Asset import verified zero-write.
+- Post-merge validation PASS.
+- LAN input placeholder polish committed/pushed.
+
+### Current Baseline
+- HEAD: 8066f899f8186dbac813b47fc6a9d2a457eb7142
+- Frontend tests: 225/225
+- Rust/Tauri tests: 298/298
+- main == origin/main
+- ahead/behind: 0/0
+
+### Product / Business Rules Confirmed
+- Existing Asset rows are non-blocking Existing/Skip.
+- True Asset identity conflicts remain blocking errors.
+- Serialized Approve requires New rows > 0 and zero Error/Conflict rows.
+- Repeat Asset import must be idempotent and zero-write.
+- daily_log.md is the canonical handoff file for the next session.
+
+### Open Items / Next Step
+- Preserve existing untracked audit/docs/plan/help files.
+- Next product task: TBD by Zon/Cheki.
