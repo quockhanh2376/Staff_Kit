@@ -344,6 +344,7 @@ pub struct AssetDirectImportPreview {
     pub total_rows: i64,
     pub valid_rows: i64,
     pub error_rows: i64,
+    pub skipped_rows: i64,
     pub rows: Vec<AssetDirectImportPreviewRow>,
     pub errors: Vec<AssetDirectImportErrorItem>,
 }
@@ -405,6 +406,25 @@ struct AssetImportRowState {
     submitted_staff_id: Option<String>,
     submitted_full_name: Option<String>,
     submitted_team: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ExistingAssetIdentity {
+    id: i64,
+    serial_number: Option<String>,
+}
+
+#[derive(Debug, Default)]
+struct ExistingAssetIdentities {
+    by_code: HashMap<String, ExistingAssetIdentity>,
+    by_serial: HashMap<String, ExistingAssetIdentity>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum SerializedAssetImportClassification {
+    New,
+    Existing { asset_id: i64 },
+    Conflict(String),
 }
 
 #[derive(Debug, Clone)]
@@ -1458,6 +1478,7 @@ fn asset_direct_preview_from_batch_detail(
         total_rows: batch.summary.total_rows,
         valid_rows: batch.summary.valid_rows,
         error_rows: batch.summary.error_rows,
+        skipped_rows: batch.summary.skipped_rows,
         rows: batch
             .rows
             .iter()
@@ -1471,14 +1492,19 @@ fn asset_direct_report_from_batch_detail(
     batch: &AssetImportBatchDetail,
     result: &AssetImportCommitResult,
 ) -> AssetDirectImportReport {
+    let legacy_quantity_skipped = if batch.summary.import_type == AssetImportMode::Quantity {
+        batch.summary.error_rows
+    } else {
+        0
+    };
     AssetDirectImportReport {
         file_name: batch.summary.source_file_name.clone(),
         sheet_name: batch.summary.sheet_name.clone(),
         import_type: batch.summary.import_type,
         total_rows: batch.summary.total_rows,
         imported: result.imported_count,
-        skipped: batch.summary.error_rows,
-        failed: 0,
+        skipped: batch.summary.skipped_rows + legacy_quantity_skipped,
+        failed: batch.summary.error_rows - legacy_quantity_skipped,
         imported_asset_codes: result.imported_asset_codes.clone(),
         errors: asset_direct_error_items_from_rows(&batch.rows),
     }
@@ -2288,6 +2314,10 @@ fn normalize_asset_code(value: Option<String>) -> Option<String> {
     normalize_optional_text(value).map(|item| item.to_uppercase())
 }
 
+fn normalize_identity_key(value: &str) -> String {
+    value.trim().to_ascii_uppercase()
+}
+
 fn normalize_submitted_staff_id(value: Option<String>) -> Option<String> {
     normalize_optional_text(value).map(|item| item.to_uppercase())
 }
@@ -2750,7 +2780,7 @@ fn resolve_owner_state(
 
 fn revalidate_batch_tx(tx: &Transaction<'_>, batch_id: i64) -> Result<(), String> {
     let rows = load_batch_row_states_tx(tx, batch_id)?;
-    let existing_asset_codes = load_existing_asset_codes_tx(tx)?;
+    let existing_assets = load_existing_asset_identities_tx(tx)?;
     let employee_lookup = load_employee_owner_lookup_tx(tx)?;
 
     let mut duplicate_counts: HashMap<String, usize> = HashMap::new();
@@ -2777,7 +2807,6 @@ fn revalidate_batch_tx(tx: &Transaction<'_>, batch_id: i64) -> Result<(), String
         .into_iter()
         .filter_map(|(serial_number, count)| if count > 1 { Some(serial_number) } else { None })
         .collect::<HashSet<_>>();
-    let existing_serial_numbers = load_existing_serial_numbers_tx(tx)?;
 
     for row in &rows {
         if row.status == ROW_STATUS_IMPORTED {
@@ -2790,22 +2819,58 @@ fn revalidate_batch_tx(tx: &Transaction<'_>, batch_id: i64) -> Result<(), String
         }
 
         let owner_state = resolve_owner_state(row, &employee_lookup);
-        let mut validation_errors = validate_staged_row(
-            row,
-            &duplicate_asset_codes,
-            &existing_asset_codes,
-            &duplicate_serial_numbers,
-            &existing_serial_numbers,
-        );
-        if let Some(blocking_error) = owner_state.blocking_error.as_ref() {
-            validation_errors.push(blocking_error.clone());
-        }
-        let next_status = if row.status == ROW_STATUS_SKIPPED {
-            ROW_STATUS_SKIPPED
-        } else if validation_errors.is_empty() {
-            ROW_STATUS_VALID
+        let (validation_errors, next_status) = if row.import_type == AssetImportMode::Serialized {
+            match classify_serialized_asset_row(
+                row,
+                &existing_assets,
+                &duplicate_asset_codes,
+                &duplicate_serial_numbers,
+            ) {
+                SerializedAssetImportClassification::Existing { .. } => {
+                    (Vec::new(), ROW_STATUS_SKIPPED)
+                }
+                SerializedAssetImportClassification::Conflict(conflict) => {
+                    let mut errors = vec![conflict];
+                    if let Some(blocking_error) = owner_state.blocking_error.as_ref() {
+                        errors.push(blocking_error.clone());
+                    }
+                    (
+                        errors,
+                        if row.status == ROW_STATUS_SKIPPED {
+                            ROW_STATUS_SKIPPED
+                        } else {
+                            ROW_STATUS_ERROR
+                        },
+                    )
+                }
+                SerializedAssetImportClassification::New => {
+                    let mut errors = validate_staged_row(row);
+                    if let Some(blocking_error) = owner_state.blocking_error.as_ref() {
+                        errors.push(blocking_error.clone());
+                    }
+                    let next_status = if row.status == ROW_STATUS_SKIPPED {
+                        ROW_STATUS_SKIPPED
+                    } else if errors.is_empty() {
+                        ROW_STATUS_VALID
+                    } else {
+                        ROW_STATUS_ERROR
+                    };
+                    (errors, next_status)
+                }
+            }
         } else {
-            ROW_STATUS_ERROR
+            let mut errors = validate_staged_row(row);
+            if let Some(blocking_error) = owner_state.blocking_error.as_ref() {
+                errors.push(blocking_error.clone());
+            }
+            let next_status = if row.status == ROW_STATUS_SKIPPED {
+                ROW_STATUS_SKIPPED
+            } else if errors.is_empty() {
+                ROW_STATUS_VALID
+            } else {
+                ROW_STATUS_ERROR
+            };
+            (errors, next_status)
         };
 
         tx.execute(
@@ -2841,13 +2906,7 @@ fn revalidate_batch_tx(tx: &Transaction<'_>, batch_id: i64) -> Result<(), String
     refresh_batch_summary_tx(tx, batch_id)
 }
 
-fn validate_staged_row(
-    row: &AssetImportRowState,
-    duplicate_asset_codes: &HashSet<String>,
-    existing_asset_codes: &HashSet<String>,
-    duplicate_serial_numbers: &HashSet<String>,
-    existing_serial_numbers: &HashSet<String>,
-) -> Vec<String> {
+fn validate_staged_row(row: &AssetImportRowState) -> Vec<String> {
     let mut errors = Vec::new();
     if row.import_type == AssetImportMode::Serialized && row.asset_code.is_none() {
         errors.push("assetCode is required for serialized assets".to_string());
@@ -2867,59 +2926,132 @@ fn validate_staged_row(
             },
         }
     }
-    if let Some(asset_code) = row.asset_code.as_deref() {
-        if duplicate_asset_codes.contains(asset_code) {
-            errors.push("assetCode is duplicated in this batch".to_string());
-        }
-        if existing_asset_codes.contains(asset_code) {
-            errors.push("assetCode already exists in assets".to_string());
-        }
-    }
-    if let Some(serial_number) = row.serial_number.as_deref() {
-        let normalized = serial_number.to_ascii_uppercase();
-        if duplicate_serial_numbers.contains(&normalized) {
-            errors.push("serialNumber is duplicated in this batch".to_string());
-        }
-        if existing_serial_numbers.contains(&normalized) {
-            errors.push("serialNumber already exists in assets".to_string());
-        }
-    }
     errors
 }
 
-fn load_existing_asset_codes_tx(tx: &Transaction<'_>) -> Result<HashSet<String>, String> {
+fn load_existing_asset_identities_tx(
+    tx: &Transaction<'_>,
+) -> Result<ExistingAssetIdentities, String> {
     let mut stmt = tx
-        .prepare("SELECT asset_code FROM assets")
-        .map_err(|err| format!("failed to prepare asset code lookup query: {err}"))?;
+        .prepare("SELECT id, asset_code, serial_number FROM assets")
+        .map_err(|err| format!("failed to prepare asset identity lookup query: {err}"))?;
     let rows = stmt
-        .query_map([], |row| row.get::<_, String>(0))
-        .map_err(|err| format!("failed to query existing asset codes: {err}"))?;
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
+        })
+        .map_err(|err| format!("failed to query existing asset identities: {err}"))?;
 
-    let mut items = HashSet::new();
+    let mut items = ExistingAssetIdentities::default();
     for row in rows {
-        items.insert(row.map_err(|err| format!("failed to read existing asset code row: {err}"))?);
+        let (id, asset_code, serial_number) =
+            row.map_err(|err| format!("failed to read existing asset identity row: {err}"))?;
+        let identity = ExistingAssetIdentity {
+            id,
+            serial_number: serial_number.and_then(|value| normalize_optional_text(Some(value))),
+        };
+        items.by_code.insert(
+            normalize_identity_key(asset_code.as_str()),
+            identity.clone(),
+        );
+        if let Some(serial_number) = identity.serial_number.as_deref() {
+            items
+                .by_serial
+                .insert(normalize_identity_key(serial_number), identity);
+        }
     }
     Ok(items)
 }
 
-fn load_existing_serial_numbers_tx(tx: &Transaction<'_>) -> Result<HashSet<String>, String> {
-    let mut stmt = tx
-        .prepare(
-            "SELECT serial_number FROM assets WHERE NULLIF(trim(serial_number), '') IS NOT NULL",
-        )
-        .map_err(|err| format!("failed to prepare serial number lookup query: {err}"))?;
-    let rows = stmt
-        .query_map([], |row| row.get::<_, String>(0))
-        .map_err(|err| format!("failed to query existing serial numbers: {err}"))?;
-    let mut items = HashSet::new();
-    for row in rows {
-        items.insert(
-            row.map_err(|err| format!("failed to read existing serial number row: {err}"))?
-                .trim()
-                .to_ascii_uppercase(),
-        );
+fn classify_serialized_asset_row(
+    row: &AssetImportRowState,
+    existing_assets: &ExistingAssetIdentities,
+    duplicate_asset_codes: &HashSet<String>,
+    duplicate_serial_numbers: &HashSet<String>,
+) -> SerializedAssetImportClassification {
+    let Some(asset_code) = row.asset_code.as_deref() else {
+        return SerializedAssetImportClassification::New;
+    };
+
+    let code_key = normalize_identity_key(asset_code);
+    let serial_key = row.serial_number.as_deref().map(normalize_identity_key);
+    let code_asset = existing_assets.by_code.get(&code_key);
+    let serial_asset = serial_key
+        .as_deref()
+        .and_then(|key| existing_assets.by_serial.get(key));
+
+    match (code_asset, serial_asset) {
+        (Some(code_asset), Some(serial_asset)) if code_asset.id != serial_asset.id => {
+            SerializedAssetImportClassification::Conflict(format!(
+                "Conflict: assetCode '{}' and serialNumber '{}' identify different existing assets",
+                asset_code,
+                row.serial_number.as_deref().unwrap_or_default()
+            ))
+        }
+        (Some(code_asset), Some(_)) => {
+            if serial_matches_existing(code_asset, serial_key.as_deref()) {
+                SerializedAssetImportClassification::Existing {
+                    asset_id: code_asset.id,
+                }
+            } else {
+                SerializedAssetImportClassification::Conflict(format!(
+                    "Conflict: serialNumber '{}' does not match existing assetCode '{}'",
+                    row.serial_number.as_deref().unwrap_or_default(),
+                    asset_code
+                ))
+            }
+        }
+        (Some(code_asset), None) => {
+            if serial_key.is_none() || code_asset.serial_number.is_none() {
+                SerializedAssetImportClassification::Existing {
+                    asset_id: code_asset.id,
+                }
+            } else {
+                SerializedAssetImportClassification::Conflict(format!(
+                    "Conflict: serialNumber '{}' does not match existing assetCode '{}'",
+                    row.serial_number.as_deref().unwrap_or_default(),
+                    asset_code
+                ))
+            }
+        }
+        (None, Some(serial_asset)) => SerializedAssetImportClassification::Conflict(format!(
+            "Conflict: serialNumber '{}' belongs to existing asset '{}' but assetCode '{}' does not match",
+            row.serial_number.as_deref().unwrap_or_default(),
+            serial_asset.id,
+            asset_code
+        )),
+        (None, None) => {
+            if duplicate_asset_codes.contains(&code_key) {
+                SerializedAssetImportClassification::Conflict(format!(
+                    "Conflict: assetCode '{}' is duplicated in this batch",
+                    asset_code
+                ))
+            } else if serial_key
+                .as_deref()
+                .is_some_and(|key| duplicate_serial_numbers.contains(key))
+            {
+                SerializedAssetImportClassification::Conflict(format!(
+                    "Conflict: serialNumber '{}' is duplicated in this batch",
+                    row.serial_number.as_deref().unwrap_or_default()
+                ))
+            } else {
+                SerializedAssetImportClassification::New
+            }
+        }
     }
-    Ok(items)
+}
+
+fn serial_matches_existing(
+    existing_asset: &ExistingAssetIdentity,
+    incoming_serial_key: Option<&str>,
+) -> bool {
+    match (existing_asset.serial_number.as_deref(), incoming_serial_key) {
+        (None, _) | (_, None) => true,
+        (Some(existing), Some(incoming)) => normalize_identity_key(existing) == incoming,
+    }
 }
 
 fn load_batch_row_states_tx(
@@ -3336,14 +3468,25 @@ mod tests {
     }
 
     fn seed_asset(conn: &Connection, asset_code: &str) {
+        seed_asset_with_identity(conn, asset_code, None, "in_stock");
+    }
+
+    fn seed_asset_with_identity(
+        conn: &Connection,
+        asset_code: &str,
+        serial_number: Option<&str>,
+        status: &str,
+    ) -> i64 {
         conn.execute(
             r#"
-            INSERT INTO assets(asset_code, asset_type, display_name, status, created_at, updated_at)
-            VALUES(?, 'Laptop', ?, 'in_stock', datetime('now'), datetime('now'))
+            INSERT INTO assets(asset_code, asset_type, display_name, serial_number, status, created_at, updated_at)
+            VALUES(?, 'Laptop', ?, ?, ?, datetime('now'), datetime('now'))
             "#,
-            params![asset_code, asset_code],
+            params![asset_code, asset_code, serial_number, status],
         )
         .expect("insert asset");
+
+        conn.last_insert_rowid()
     }
 
     fn sample_mapping() -> AssetImportFieldMapping {
@@ -4139,6 +4282,7 @@ mod tests {
         .expect("create serialized batch with duplicate serial numbers");
 
         assert_eq!(batch.summary.valid_rows, 0);
+        assert_eq!(batch.summary.skipped_rows, 0);
         assert_eq!(batch.summary.error_rows, 3);
         assert!(batch.rows[0]
             .validation_errors
@@ -4151,7 +4295,265 @@ mod tests {
         assert!(batch.rows[2]
             .validation_errors
             .iter()
-            .any(|item| item.contains("already exists")));
+            .any(|item| item.contains("Conflict")));
+    }
+
+    #[test]
+    fn exact_existing_asset_is_classified_as_skipped_without_validation_error() {
+        let mut conn = open_test_connection();
+        seed_asset_with_identity(&conn, "VNLAP504", Some("SN-504"), "in_stock");
+        let mut existing = row(504, "VNLAP504", "Laptop", "Lenovo ThinkPad E16");
+        existing.serial_number = Some("SN-504".to_string());
+
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            sample_batch(AssetImportMode::Serialized, vec![existing]),
+        )
+        .expect("create exact existing asset batch");
+
+        assert_eq!(batch.summary.total_rows, 1);
+        assert_eq!(batch.summary.valid_rows, 0);
+        assert_eq!(batch.summary.skipped_rows, 1);
+        assert_eq!(batch.summary.error_rows, 0);
+        assert_eq!(batch.rows[0].status, "skipped");
+        assert!(batch.rows[0].validation_errors.is_empty());
+    }
+
+    #[test]
+    fn existing_asset_with_compatible_serial_data_is_skipped() {
+        let mut conn = open_test_connection();
+        seed_asset_with_identity(&conn, "VNLAP504", Some("SN-504"), "in_stock");
+        seed_asset_with_identity(&conn, "VNLAP505", None, "in_stock");
+
+        let mut code_only = row(504, "VNLAP504", "Laptop", "Lenovo ThinkPad E16");
+        code_only.serial_number = None;
+        let mut incoming_serial = row(505, "VNLAP505", "Laptop", "Lenovo ThinkPad E16");
+        incoming_serial.serial_number = Some("SN-505".to_string());
+
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            sample_batch(
+                AssetImportMode::Serialized,
+                vec![code_only, incoming_serial],
+            ),
+        )
+        .expect("create compatible existing asset batch");
+
+        assert_eq!(batch.summary.valid_rows, 0);
+        assert_eq!(batch.summary.skipped_rows, 2);
+        assert_eq!(batch.summary.error_rows, 0);
+        assert!(batch
+            .rows
+            .iter()
+            .all(|item| item.status == "skipped" && item.validation_errors.is_empty()));
+    }
+
+    #[test]
+    fn asset_code_and_serial_cross_identity_conflict_is_an_error() {
+        let mut conn = open_test_connection();
+        seed_asset_with_identity(&conn, "ASSET-A", Some("SN-A"), "in_stock");
+        seed_asset_with_identity(&conn, "ASSET-B", Some("SN-B"), "in_stock");
+
+        let mut conflict = row(2, "ASSET-A", "Laptop", "Conflicting Laptop");
+        conflict.serial_number = Some("SN-B".to_string());
+
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            sample_batch(AssetImportMode::Serialized, vec![conflict]),
+        )
+        .expect("create conflicting asset batch");
+
+        assert_eq!(batch.summary.valid_rows, 0);
+        assert_eq!(batch.summary.skipped_rows, 0);
+        assert_eq!(batch.summary.error_rows, 1);
+        assert_eq!(batch.rows[0].status, "error");
+        assert!(batch.rows[0]
+            .validation_errors
+            .iter()
+            .any(|item| item.contains("Conflict") || item.contains("conflict")));
+    }
+
+    #[test]
+    fn mixed_six_existing_and_four_new_assets_has_six_skips_and_four_new_rows() {
+        let mut conn = open_test_connection();
+        let existing_codes = [
+            "VNLAP504", "VNLAP505", "VNLAP506", "VNLAP523", "VNLAP526", "VNLAP536",
+        ];
+        let new_codes = ["VNHPH001", "VNHPH002", "VNHPH003", "VNHPH004"];
+        let mut rows = Vec::new();
+
+        for (index, asset_code) in existing_codes.iter().enumerate() {
+            let row_number = (index + 2) as i64;
+            let serial_number = format!("SN-{row_number:03}");
+            seed_asset_with_identity(&conn, asset_code, Some(serial_number.as_str()), "in_stock");
+            rows.push(row(row_number, asset_code, "Laptop", "Lenovo Laptop"));
+        }
+        for (index, asset_code) in new_codes.iter().enumerate() {
+            let row_number = (index + 8) as i64;
+            rows.push(row(row_number, asset_code, "Laptop", "Samsung Laptop"));
+        }
+
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            sample_batch(AssetImportMode::Serialized, rows),
+        )
+        .expect("create mixed asset batch");
+
+        assert_eq!(batch.summary.total_rows, 10);
+        assert_eq!(batch.summary.valid_rows, 4);
+        assert_eq!(batch.summary.skipped_rows, 6);
+        assert_eq!(batch.summary.error_rows, 0);
+        assert_eq!(
+            batch
+                .rows
+                .iter()
+                .filter(|item| item.status == "skipped")
+                .count(),
+            6
+        );
+        assert_eq!(
+            batch
+                .rows
+                .iter()
+                .filter(|item| item.status == "valid")
+                .count(),
+            4
+        );
+    }
+
+    #[test]
+    fn mixed_asset_import_commits_only_new_rows_and_reimport_is_zero_write() {
+        let mut conn = open_test_connection();
+        let existing_codes = [
+            "VNLAP504", "VNLAP505", "VNLAP506", "VNLAP523", "VNLAP526", "VNLAP536",
+        ];
+        let new_codes = ["VNHPH001", "VNHPH002", "VNHPH003", "VNHPH004"];
+        let mut rows = Vec::new();
+        let mut existing_asset_id = 0_i64;
+
+        for (index, asset_code) in existing_codes.iter().enumerate() {
+            let row_number = (index + 2) as i64;
+            let serial_number = format!("SN-{row_number:03}");
+            let status = if *asset_code == "VNLAP504" {
+                "assigned"
+            } else {
+                "in_stock"
+            };
+            let asset_id =
+                seed_asset_with_identity(&conn, asset_code, Some(serial_number.as_str()), status);
+            if *asset_code == "VNLAP504" {
+                existing_asset_id = asset_id;
+            }
+            rows.push(row(row_number, asset_code, "Laptop", "Lenovo Laptop"));
+        }
+        for (index, asset_code) in new_codes.iter().enumerate() {
+            let row_number = (index + 8) as i64;
+            rows.push(row(row_number, asset_code, "Laptop", "Samsung Laptop"));
+        }
+
+        let employee_row_id = seed_employee(
+            &conn,
+            "EE-REIMPORT",
+            "Reimport Holder",
+            "Reimport Team",
+            "employee_list",
+        );
+        conn.execute(
+            r#"
+            INSERT INTO borrow_requests(
+              request_key, employee_id_fk, submitted_employee_id, submitted_full_name,
+              status, request_type
+            )
+            VALUES('REIMPORT-ACTIVE', ?, 'EE-REIMPORT', 'Reimport Holder', 'approved', 'borrow')
+            "#,
+            params![employee_row_id],
+        )
+        .expect("insert active loan request");
+        let request_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO borrow_request_items(borrow_request_id, asset_id, asset_code_snapshot) VALUES(?, ?, 'VNLAP504')",
+            params![request_id, existing_asset_id],
+        )
+        .expect("insert active loan request item");
+        conn.execute(
+            "INSERT INTO asset_loans(asset_id, employee_id_fk, borrow_request_id) VALUES(?, ?, ?)",
+            params![existing_asset_id, employee_row_id, request_id],
+        )
+        .expect("insert active loan");
+
+        let input = sample_batch(AssetImportMode::Serialized, rows);
+        let preview = preview_asset_import_seed_conn(&mut conn, input.clone())
+            .expect("preview mixed reimport batch");
+        assert_eq!(preview.total_rows, 10);
+        assert_eq!(preview.valid_rows, 4);
+        assert_eq!(preview.skipped_rows, 6);
+        assert_eq!(preview.error_rows, 0);
+
+        let batch = create_asset_import_batch_seed_conn(&mut conn, input)
+            .expect("create mixed reimport batch");
+        let result = import_asset_import_batch_valid_rows_conn(&mut conn, batch.summary.id)
+            .expect("commit only new reimport rows");
+        assert_eq!(result.imported_count, 4);
+        assert_eq!(
+            result.imported_asset_codes,
+            new_codes
+                .iter()
+                .map(|code| code.to_string())
+                .collect::<Vec<_>>()
+        );
+
+        let asset_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM assets", [], |row| row.get(0))
+            .expect("count assets after mixed import");
+        assert_eq!(asset_count, 10);
+        let existing_state: (String, String, String, i64) = conn
+            .query_row(
+                r#"
+                SELECT a.status, a.display_name, a.serial_number,
+                       (SELECT COUNT(*) FROM asset_loans l WHERE l.asset_id = a.id AND l.returned_at IS NULL)
+                FROM assets a WHERE a.asset_code = 'VNLAP504'
+                "#,
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("load existing asset after mixed import");
+        assert_eq!(
+            existing_state,
+            (
+                "assigned".to_string(),
+                "VNLAP504".to_string(),
+                "SN-002".to_string(),
+                1
+            )
+        );
+
+        let second_batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            sample_batch(
+                AssetImportMode::Serialized,
+                existing_codes
+                    .iter()
+                    .enumerate()
+                    .map(|(index, code)| row((index + 2) as i64, code, "Laptop", "Lenovo Laptop"))
+                    .chain(new_codes.iter().enumerate().map(|(index, code)| {
+                        row((index + 8) as i64, code, "Laptop", "Samsung Laptop")
+                    }))
+                    .collect(),
+            ),
+        )
+        .expect("create second exact reimport batch");
+        assert_eq!(second_batch.summary.valid_rows, 0);
+        assert_eq!(second_batch.summary.skipped_rows, 10);
+        assert_eq!(second_batch.summary.error_rows, 0);
+
+        let second_result =
+            import_asset_import_batch_valid_rows_conn(&mut conn, second_batch.summary.id)
+                .expect("approve existing-only reimport batch");
+        assert_eq!(second_result.imported_count, 0);
+        let final_asset_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM assets", [], |row| row.get(0))
+            .expect("count assets after zero-write reimport");
+        assert_eq!(final_asset_count, 10);
     }
 
     #[test]
@@ -4205,7 +4607,7 @@ mod tests {
     }
 
     #[test]
-    fn create_batch_marks_duplicate_asset_codes_against_main_assets_table_as_errors() {
+    fn create_batch_marks_existing_asset_codes_against_main_assets_table_as_skipped() {
         let mut conn = open_test_connection();
         seed_asset(&conn, "ASSET-EXISTING");
 
@@ -4220,8 +4622,10 @@ mod tests {
 
         assert_eq!(batch.summary.total_rows, 1);
         assert_eq!(batch.summary.valid_rows, 0);
-        assert_eq!(batch.summary.error_rows, 1);
-        assert_eq!(batch.rows[0].status, "error");
+        assert_eq!(batch.summary.skipped_rows, 1);
+        assert_eq!(batch.summary.error_rows, 0);
+        assert_eq!(batch.rows[0].status, "skipped");
+        assert!(batch.rows[0].validation_errors.is_empty());
     }
 
     #[test]
@@ -4619,7 +5023,8 @@ mod tests {
         let batch_after = load_asset_import_batch_detail_conn(&conn, batch.summary.id)
             .expect("reload asset import batch");
         assert_eq!(batch_after.summary.imported_rows, 1);
-        assert_eq!(batch_after.summary.error_rows, 1);
+        assert_eq!(batch_after.summary.skipped_rows, 1);
+        assert_eq!(batch_after.summary.error_rows, 0);
         assert_eq!(
             batch_after
                 .rows

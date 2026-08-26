@@ -360,6 +360,7 @@ export type AssetDirectImportPreview = {
   totalRows: number
   validRows: number
   errorRows: number
+  skippedRows: number
   rows: AssetDirectImportPreviewRow[]
   errors: AssetDirectImportErrorItem[]
 }

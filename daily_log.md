@@ -1906,3 +1906,11 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Objective: classify exact existing Assets as Existing/Skip, preserve true code/serial conflicts as Error/Conflict, and approve only genuinely new Assets.
 - Acceptance source: local `00_ExSource/AssetList.xlsx` with six existing Lenovo rows and four new Samsung rows; no production DB writes during automated validation.
 - Scope: Asset import preview/commit and regression coverage only; preserve Employee import, canonical Asset identity, uniqueness constraints, active loan/status state, and existing uncommitted changes in the main checkout.
+
+## 2026-08-26 idempotent Asset re-import - End
+
+- Implemented canonical asset-code/serial classification: exact compatible existing rows are Existing/Skip, genuine rows are New, and cross-identity or duplicate conflicts remain Error/Conflict.
+- Approve revalidates inside the transaction and inserts only New rows; existing Asset metadata and active loan/status state are not updated.
+- Validation: Asset import focused 39/39; frontend unit 29 files / 220 tests; Tauri full 298/298; quality gate passed (lint, typecheck, build, cargo check).
+- Acceptance workbook was read-only parsed and exercised against SQLite in-memory: 10 total, 6 Existing/Skip, 4 New, 0 Error, 4 inserts, repeat 0 inserts.
+- No production DB writes were performed.

@@ -14,6 +14,7 @@ import {
     getAssetImportSerializedModeDescription,
 } from "./assetImportCopy"
 import { getAssetImportModeLabel } from "./assetImportModeConfig"
+import { getAssetImportStatusMeta } from "./assetImportStatusMeta"
 import type { AssetImportState } from "./useAssetDirectImportState"
 
 type AssetImportWizardProps = {
@@ -64,7 +65,8 @@ function ImportPanel({ assetImport }: AssetImportWizardProps) {
                           title: `Approve ${getAssetImportModeLabel(preview.importType)}`,
                           summaryItems: [
                               { label: "Total Rows", value: preview.totalRows },
-                              { label: "Valid Rows", value: preview.validRows },
+                              { label: "New Rows", value: preview.validRows },
+                              { label: "Existing / Skipped", value: preview.skippedRows },
                               { label: "Error Rows", value: preview.errorRows },
                           ],
                           rows: preview.rows,
@@ -89,7 +91,13 @@ function ImportPanel({ assetImport }: AssetImportWizardProps) {
                           title: "Import Complete",
                           summaryItems: [
                               { label: "Imported", value: report.imported },
-                              { label: "Skipped", value: report.skipped },
+                              {
+                                  label:
+                                      report.importType === "serialized"
+                                          ? "Existing / Skipped"
+                                          : "Skipped",
+                                  value: report.skipped,
+                              },
                               { label: "Failed", value: report.failed },
                           ],
                           errors: report.errors,
@@ -236,6 +244,8 @@ function PreviewRowCard({
                   { label: "Note", value: row.notes ?? "—" },
               ]
 
+    const statusMeta = getAssetImportStatusMeta(row.status)
+
     return (
         <div className="rounded-[10px] border border-[var(--border)] bg-[var(--surface)] p-4">
             <div className="flex items-start justify-between gap-3">
@@ -252,10 +262,12 @@ function PreviewRowCard({
                     className={`rounded-[999px] border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] ${
                         row.status === "error"
                             ? "border-red-500/40 bg-red-500/10 text-red-200"
-                            : "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+                            : row.status === "skipped"
+                                ? "border-slate-500/40 bg-slate-500/10 text-slate-200"
+                                : "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
                     }`}
                 >
-                    {row.status}
+                    {statusMeta.label}
                 </span>
             </div>
 

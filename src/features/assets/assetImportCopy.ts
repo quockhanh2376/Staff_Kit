@@ -11,7 +11,7 @@ export function getAssetImportSettingsEntryActionLabel(): string {
 }
 
 export function getAssetImportSettingsEntryDescription(): string {
-  return "Import CSV or Excel files into serialized assets or quantity stock with automatic preview and approval. Valid rows import into the database; invalid rows stay in the report."
+  return "Import CSV or Excel files into serialized assets or quantity stock with automatic preview and approval. New rows import into the database; existing and conflict rows stay visible in the report."
 }
 
 export function getAssetImportSettingsManualActionLabel(): string {
@@ -35,7 +35,7 @@ export function getAssetImportActiveBatchTitle(): string {
 }
 
 export function getAssetImportSerializedModeDescription(): string {
-  return "One serialized asset per row. The app auto-detects known columns and previews valid/error rows before approval."
+  return "One serialized asset per row. The app auto-detects known columns and previews new/existing/conflict rows before approval."
 }
 
 export function getAssetImportManualPanelTitle(): string {

@@ -13,20 +13,20 @@ type AssetImportStatusMeta = {
 
 const ASSET_IMPORT_STATUS_META: Record<AssetImportRowStatus, AssetImportStatusMeta> = {
   valid: {
-    label: "Ready",
-    emptyValidationMessage: "This row is ready to import.",
+    label: "New",
+    emptyValidationMessage: "This row is new and ready to import.",
   },
   error: {
-    label: "Needs Fix",
-    emptyValidationMessage: "Fix the validation issues on this row before importing it.",
+    label: "Error / Conflict",
+    emptyValidationMessage: "Fix the validation or identity conflict on this row before importing it.",
   },
   imported: {
     label: "Imported",
     emptyValidationMessage: "This row has already been imported and is now read-only.",
   },
   skipped: {
-    label: "Skipped",
-    emptyValidationMessage: "This row is skipped and will stay out of the next import.",
+    label: "Existing / Skipped",
+    emptyValidationMessage: "This existing row is skipped and will stay out of the next import.",
   },
 }
 
@@ -37,10 +37,10 @@ const ASSET_IMPORT_REVIEW_FILTER_LABELS: Record<AssetImportReviewFilter, string>
 }
 
 const ASSET_IMPORT_SUMMARY_LABELS: Record<AssetImportSummaryKey, string> = {
-  valid: "Ready",
-  errors: "Needs Fix",
+  valid: "New Rows",
+  errors: "Error Rows",
   imported: "Imported",
-  skipped: "Skipped",
+  skipped: "Existing / Skipped",
 }
 
 export function getAssetImportStatusMeta(status: string): AssetImportStatusMeta {

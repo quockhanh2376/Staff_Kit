@@ -219,7 +219,7 @@ export function useAssetDirectImportState({
             setPreview(null)
             setReport(nextReport)
             setStatusMessage(
-                `Imported ${nextReport.imported} valid row(s). Skipped ${nextReport.skipped} invalid row(s).`,
+                `Imported ${nextReport.imported} new row(s). Skipped ${nextReport.skipped} existing/invalid row(s). Failed ${nextReport.failed} row(s).`,
             )
             triggerReload()
         } catch (error) {
