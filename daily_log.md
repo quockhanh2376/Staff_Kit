@@ -1914,3 +1914,14 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Validation: Asset import focused 39/39; frontend unit 29 files / 220 tests; Tauri full 298/298; quality gate passed (lint, typecheck, build, cargo check).
 - Acceptance workbook was read-only parsed and exercised against SQLite in-memory: 10 total, 6 Existing/Skip, 4 New, 0 Error, 4 inserts, repeat 0 inserts.
 - No production DB writes were performed.
+## 2026-08-26 Asset re-import approval gating follow-up - Start
+
+- Objective: block serialized Asset approval whenever any blocking Error/Conflict row remains, while preserving Existing/Skip and New behavior.
+- Scope: focused frontend approval-gating regression coverage, smallest state fix, and isolated real-workbook acceptance using `H Phone`; do not merge or push.
+- Safety: preserve the two pre-existing modified generated schema files in this worktree; read `E:\Staff_Kit\00_ExSource\AssetList.xlsx` only and never write the live DB.
+## 2026-08-26 Asset re-import approval gating follow-up - End
+
+- Result: serialized approval now requires at least one New row and zero blocking Error/Conflict rows; Existing/Skip rows remain non-blocking.
+- Validation: focused approval 4/4; focused Asset import 39/39; full frontend 224/224; full Rust/Tauri 298/298; quality gate PASS; `git diff --check` PASS.
+- Real workbook acceptance: `AssetList.xlsx` read-only with `H Phone` setup in isolated SQLite; preview 10 total / 6 Existing-Skip / 4 New / 0 Error-Conflict; first import inserted 4 with zero existing writes and preserved active state; second import 10 Existing-Skip / 0 New / 0 writes.
+- No production DB writes; no merge or push.

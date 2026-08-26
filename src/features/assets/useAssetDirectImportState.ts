@@ -280,7 +280,8 @@ export function useAssetDirectImportState({
     }, [manualAssetForm, triggerReload])
 
     const canPreviewCurrentFile = Boolean(selectedFilePath) && !isInspectingFile
-    const previewApproveDisabled = (preview?.validRows ?? 0) === 0
+    const previewApproveDisabled =
+        (preview?.validRows ?? 0) === 0 || (preview?.errorRows ?? 0) > 0
     const selectedFiles = useMemo(
         () => (selectedFilePath ? [selectedFilePath] : []),
         [selectedFilePath],
