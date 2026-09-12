@@ -11,4 +11,4 @@ createRoot(document.getElementById('root')!).render(
   </StrictMode>,
 )
 
-scheduleMainWindowShow(staffApi.showMainWindow, requestAnimationFrame, console.error)
+scheduleMainWindowShow(staffApi.showMainWindow, window.setTimeout, console.error)

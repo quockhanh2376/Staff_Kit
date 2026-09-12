@@ -1975,3 +1975,13 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Result: the main window remains hidden at native setup. React schedules one public `show_main_window` IPC call on its next animation frame; the backend resolves and shows only the `main` window.
 - Validation: focused frontend tests 20/20 passed; `npm run check:tauri` passed; `npm run check:quality` passed; manual `npm run tauri:dev` opened and visibly rendered the Login page without DevTools or a black client area.
 - Existing warnings unchanged: React hook dependency, Vite dynamic-import/chunk size, Rust dead-code, and bundled OpenSSL PDB linker warnings. No production DB, auth data, imports, or LAN state was modified.
+
+## 2026-09-12 Tauri startup visibility follow-up — Start
+
+- Root cause follow-up: the first implementation used `requestAnimationFrame` while the native WebView remained hidden. On Windows WebView2, a hidden document can pause animation frames, leaving the window hidden indefinitely.
+- Objective: use an execution mechanism that runs while hidden, retain a short first-paint delay, and verify the actual `E:\Staff_Kit` launch path.
+
+## 2026-09-12 Tauri startup visibility follow-up — End
+
+- Result: replaced the hidden-WebView `requestAnimationFrame` callback with a 50 ms timer before invoking `show_main_window`; timers continue while the WebView is hidden, so the native window can leave its hidden state.
+- Validation before root-launch smoke test: focused frontend tests 20/20 and `npm run typecheck` passed.
