@@ -154,8 +154,6 @@ export const staffApi = {
   // ── Public / session-exempt (pre-login + diagnostics) ──────────────────────
   ping: () => callPublic<string>("ping"),
 
-  showMainWindow: () => callPublic<void>("show_main_window"),
-
   initDatabase: () => callPublic<DatabaseStatus>("init_database"),
 
   getDatabaseStatus: () => callPublic<DatabaseStatus>("get_database_status"),

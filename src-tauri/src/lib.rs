@@ -13,16 +13,6 @@ fn ping() -> &'static str {
 }
 
 #[tauri::command]
-fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
-    let window = app
-        .get_webview_window("main")
-        .ok_or_else(|| "main window is unavailable".to_string())?;
-    window
-        .show()
-        .map_err(|error| format!("failed to show main window: {error}"))
-}
-
-#[tauri::command]
 fn write_export_file(
     session_store: tauri::State<'_, auth_session::SessionStore>,
     session_token: String,
@@ -1028,13 +1018,24 @@ pub fn run() {
                 app.manage(lan_server.clone());
                 // LAN is intentionally manual-only. The QR card owns the
                 // serialized start/stop lifecycle after the app is ready.
+                let app_handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    match app_handle.get_webview_window("main") {
+                        Some(window) => {
+                            if let Err(error) = window.show() {
+                                eprintln!("[Staff Kit] failed to show main window: {error}");
+                            }
+                        }
+                        None => eprintln!("[Staff Kit] main window is unavailable"),
+                    }
+                });
                 Ok(())
             }
         })
         .invoke_handler(tauri::generate_handler![
             // ── Public (bootstrap/login/diagnostics) ───────────────────────────
             ping,
-            show_main_window,
             init_database,
             get_database_status,
             login_local_account,
