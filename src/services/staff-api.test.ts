@@ -60,6 +60,14 @@ describe("staffApi session injection", () => {
         expect(args).toBeUndefined()
     })
 
+    it("showMainWindow is public and invokes the startup window command", async () => {
+        invokeMock.mockResolvedValue(undefined)
+
+        await staffApi.showMainWindow()
+
+        expect(invokeMock).toHaveBeenCalledWith("show_main_window", undefined)
+    })
+
     it("initDatabase is public (no token required)", async () => {
         invokeMock.mockResolvedValue({ initialized: true })
         await staffApi.initDatabase()
