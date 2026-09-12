@@ -1985,3 +1985,8 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 
 - Result: replaced the hidden-WebView `requestAnimationFrame` callback with a 50 ms timer before invoking `show_main_window`; timers continue while the WebView is hidden, so the native window can leave its hidden state.
 - Validation before root-launch smoke test: focused frontend tests 20/20 and `npm run typecheck` passed.
+
+## 2026-09-12 Tauri startup visibility follow-up — End
+
+- Final root-launch smoke test: `npm run tauri:dev` from `E:\Staff_Kit` built `E:\Staff_Kit\src-tauri` and started `staff-kit.exe`; the main window reported title `Staff Kit`, `Visible: True`, responded to Windows, and had the configured full-size rectangle.
+- The visibility handoff now runs natively 500 ms after setup, avoiding both the too-early first paint and hidden-WebView scheduler deadlock. The frontend IPC startup bridge was removed.
