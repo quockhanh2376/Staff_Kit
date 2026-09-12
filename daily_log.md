@@ -1963,3 +1963,8 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 ### Open Items / Next Step
 - Preserve existing untracked audit/docs/plan/help files.
 - Next product task: TBD by Zon/Cheki.
+
+## 2026-09-12 Tauri startup black-screen fix — Start
+
+- Objective: eliminate the persistent black main window observed in `npm run tauri:dev` after React has rendered successfully in the WebView DOM.
+- Scope: delay main-window visibility until the frontend signals its first rendered frame; add focused regression coverage and verify Tauri startup. No database, import, auth, LAN, or release changes.
