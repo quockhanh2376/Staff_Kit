@@ -1968,3 +1968,10 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 
 - Objective: eliminate the persistent black main window observed in `npm run tauri:dev` after React has rendered successfully in the WebView DOM.
 - Scope: delay main-window visibility until the frontend signals its first rendered frame; add focused regression coverage and verify Tauri startup. No database, import, auth, LAN, or release changes.
+
+## 2026-09-12 Tauri startup black-screen fix — End
+
+- Root cause: the WebView contained a fully rendered React Login DOM without JavaScript errors, but the native main window had been shown from Rust `setup` before the first WebView frame; affected Windows WebView2 rendering remained black.
+- Result: the main window remains hidden at native setup. React schedules one public `show_main_window` IPC call on its next animation frame; the backend resolves and shows only the `main` window.
+- Validation: focused frontend tests 20/20 passed; `npm run check:tauri` passed; `npm run check:quality` passed; manual `npm run tauri:dev` opened and visibly rendered the Login page without DevTools or a black client area.
+- Existing warnings unchanged: React hook dependency, Vite dynamic-import/chunk size, Rust dead-code, and bundled OpenSSL PDB linker warnings. No production DB, auth data, imports, or LAN state was modified.
