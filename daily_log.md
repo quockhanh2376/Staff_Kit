@@ -2011,3 +2011,13 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 
 - Fix: added independent `fullNameDirty` tracking. Canonical lookup provides the editable default; lookup completion and asset-triggered re-resolution preserve dirty top-name edits, while a different Staff ID clears and refreshes the default. Signer state remains independent.
 - Validation: focused Borrow/Return regression 1/1; frontend unit 225/225; full Rust/Tauri 298/298; quality gate passed. No live DB writes.
+# 2026-09-20 LAN signature-area UI refinement — Start
+
+- Objective: compact the Borrow/Return signature area while preserving the approved canonical employee-name and editable signer behavior.
+- Scope: inline editable signer name, compact clear action, updated heading, larger signature canvas; no database writes.
+- Approval: Qeen-approved logic baseline confirmed by the user.
+
+## 2026-09-20 LAN signature-area UI refinement — End
+
+- Implemented inline editable signer name, `Sign here !` heading, taller canvas, compact red X clear action, and removed the lower typed-name section.
+- Validation: focused LAN asset tests, all 299 Rust/Tauri tests, 225 frontend unit tests, and `npm run check:quality` passed; no live business DB writes.

@@ -358,14 +358,16 @@ pub(crate) fn borrow_page_html() -> &'static str {
       .signature-label {
         margin-top: 12px;
         margin-bottom: 6px;
+        font-size: 14.4px;
+        font-weight: 600;
       }
 
       #signature-canvas {
         display: block;
         width: 100%;
-        aspect-ratio: 2 / 1;
-        min-height: 120px;
-        max-height: 240px;
+        aspect-ratio: 1.75 / 1;
+        min-height: 138px;
+        max-height: 276px;
         border: 1px solid var(--border);
         border-radius: 10px;
         background: white;
@@ -382,15 +384,16 @@ pub(crate) fn borrow_page_html() -> &'static str {
         right: 8px;
         z-index: 1;
         display: grid;
-        width: 44px;
-        height: 44px;
+        width: 40px;
+        height: 40px;
         padding: 0;
         place-items: center;
-        border: 1px solid rgba(17, 24, 39, 0.18);
-        border-radius: 10px;
+        border: 0;
+        border-radius: 8px;
         background: rgba(255, 255, 255, 0.88);
-        color: var(--muted);
-        font-size: 18px;
+        color: #dc2626;
+        font-size: 14px;
+        font-weight: 700;
         line-height: 1;
         cursor: pointer;
       }
@@ -398,6 +401,29 @@ pub(crate) fn borrow_page_html() -> &'static str {
       .clear-signature:focus-visible {
         outline: 3px solid var(--accent);
         outline-offset: 2px;
+      }
+
+      .signature-name-input {
+        position: absolute;
+        left: 12px;
+        right: 12px;
+        bottom: 8px;
+        z-index: 2;
+        width: calc(100% - 24px);
+        padding: 4px 8px;
+        border: 0;
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.7);
+        color: #4b5563;
+        font-size: 13px;
+        line-height: 1.2;
+        text-align: center;
+        touch-action: manipulation;
+      }
+
+      .signature-name-input:focus {
+        outline: 2px solid var(--accent);
+        outline-offset: 1px;
       }
 
       .confirmation-hint {
@@ -562,7 +588,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
         const resize = () => {
           const ratio = globalThis.devicePixelRatio || 1;
           const width = Math.max(signatureCanvas.clientWidth || 480, 240);
-          const height = Math.round(width / 2);
+          const height = Math.round(width / 1.75);
           signatureCanvas.width = Math.round(width * ratio);
           signatureCanvas.height = Math.round(height * ratio);
           if (context) {
@@ -679,7 +705,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
 
         const signatureLabel = document.createElement("div");
         signatureLabel.className = "signature-label";
-        signatureLabel.textContent = "Signature (optional if typing your full name)";
+        signatureLabel.textContent = "Sign here !";
         section.append(signatureLabel);
         const canvas = document.createElement("canvas");
         canvas.id = "signature-canvas";
@@ -693,27 +719,19 @@ pub(crate) fn borrow_page_html() -> &'static str {
         clearButton.className = "clear-signature";
         clearButton.setAttribute("aria-label", "Clear signature");
         clearButton.title = "Clear signature";
-        clearButton.textContent = "🗑️";
+        clearButton.textContent = "×";
         clearButton.hidden = !hasSignatureEvidence();
         clearButton.addEventListener("click", () => { clearSignature(); updateSubmitState(); });
         clearSignatureButton = clearButton;
         signatureBox.append(clearButton);
-        section.append(signatureBox);
-        const typedLabel = document.createElement("label");
-        typedLabel.className = "signature-label";
-        typedLabel.setAttribute("for", "typed-name");
-        typedLabel.textContent = "Type your full name (optional if signing)";
-        section.append(typedLabel);
         const typedInput = document.createElement("input");
         typedInput.id = "typed-name";
+        typedInput.className = "signature-name-input";
         typedInput.autocomplete = "name";
         typedInput.value = typedName;
         typedInput.addEventListener("input", () => { typedName = typedInput.value; typedNameDirty = true; updateSubmitState(); });
-        section.append(typedInput);
-        const hint = document.createElement("p");
-        hint.className = "helper confirmation-hint";
-        hint.textContent = "Use a handwritten signature, your typed full name, or both.";
-        section.append(hint);
+        signatureBox.append(typedInput);
+        section.append(signatureBox);
         confirmationEl.append(section);
         initializeSignatureCanvas();
         updateSubmitState();
@@ -1347,6 +1365,11 @@ await wait();
 await wait();
 if (document.getElementById("typed-name")?.value !== "Trần Văn Thành") throw new Error("employee ASWVN1325 did not prefill after asset auto-selection");
 if (fullName.value !== "Trần Văn Thành" || fullName.readOnly) throw new Error("employee ASWVN1325 did not populate an editable canonical top default");
+const typedNameInput = document.getElementById("typed-name");
+const signatureBox = document.querySelector(".signature-box");
+if (document.querySelector('label[for="typed-name"]') || !signatureBox?.contains(typedNameInput)) throw new Error("typed signer name was not moved inside the signature box");
+if (document.querySelector(".signature-label")?.textContent !== "Sign here !") throw new Error("signature heading was not updated");
+if (document.querySelector(".clear-signature")?.textContent !== "×") throw new Error("clear action was not changed to compact red X");
 fullName.value = "Top Manual Edit";
 fullName.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 search.value = "VNLAP504";
@@ -1410,6 +1433,18 @@ console.log("signer-name-autofill-ok");
             String::from_utf8_lossy(&output.stderr)
         );
         assert!(String::from_utf8_lossy(&output.stdout).contains("signer-name-autofill-ok"));
+    }
+
+    #[test]
+    fn signature_box_uses_compact_inline_name_ui() {
+        let html = borrow_page_html();
+
+        assert!(html.contains("Sign here !"));
+        assert!(html.contains("aspect-ratio: 1.75 / 1"));
+        assert!(html.contains("min-height: 138px"));
+        assert!(html.contains("className = \"signature-name-input\""));
+        assert!(html.contains("textContent = \"×\""));
+        assert!(html.contains("color: #dc2626"));
     }
 
     #[test]
