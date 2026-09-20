@@ -2033,3 +2033,15 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Root cause fixed: independent `typedName` signer state was removed; the read-only inline signature name now mirrors `#full-name` immediately, including lookup defaults, edits, clears, Staff ID changes, and Borrow/Return mode changes.
 - Red X remains signature-only, with 15px glyph and 4px top/right inset; Employee master, loan identity, auth, and backend validation were not changed.
 - Validation: focused LAN assets 17/17; Full Name mirror and compact UI tests passed; frontend unit 225/225; full Rust/Tauri 300/300; quality gate passed; `git diff --check` passed; no live DB writes.
+
+## 2026-09-20 LAN Full Name placeholder and signature X refinement — Start
+
+- Objective: use the exact Full Name guidance placeholder and refine the compact signature clear control without changing Full Name mirroring.
+- Scope: placeholder-only guidance, read-only in-box mirror, uppercase green circular X about 10% larger and closer to the top-right; Borrow and Return remain consistent.
+- Safety: feature branch only; no live DB writes, Employee master/loan/auth changes, merge, or push.
+
+## 2026-09-20 LAN Full Name placeholder and signature X refinement — End
+
+- Result: Full Name now uses `Your name here ...` as guidance only; the read-only signature-box mirror remains driven by the current Full Name value for Borrow and Return.
+- Result: clear control is uppercase `X`, 44px circular green bordered, positioned 2px from the top/right; its existing handler still clears signature evidence only.
+- Validation: focused LAN assets 17/17; frontend unit 225/225; full Rust/Tauri 300/300; `npm run check:quality` passed; `git diff --check` passed; no live DB writes.

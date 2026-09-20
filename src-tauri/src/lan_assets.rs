@@ -380,19 +380,19 @@ pub(crate) fn borrow_page_html() -> &'static str {
 
       .clear-signature {
         position: absolute;
-        top: 4px;
-        right: 4px;
+        top: 2px;
+        right: 2px;
         z-index: 1;
         display: grid;
-        width: 40px;
-        height: 40px;
+        width: 44px;
+        height: 44px;
         padding: 0;
         place-items: center;
-        border: 0;
-        border-radius: 8px;
+        border: 2px solid #16a34a;
+        border-radius: 50%;
         background: rgba(255, 255, 255, 0.88);
-        color: #dc2626;
-        font-size: 15px;
+        color: #16a34a;
+        font-size: 16.5px;
         font-weight: 700;
         line-height: 1;
         cursor: pointer;
@@ -449,7 +449,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
         <input id="staff-id" autocomplete="off" placeholder="ASWVN1325" />
 
         <label for="full-name">Full Name</label>
-        <input id="full-name" autocomplete="name" placeholder="Nguyen Van A" />
+        <input id="full-name" autocomplete="name" placeholder="Your name here ..." />
 
         <label for="asset-search">Search Asset</label>
         <div class="search-row">
@@ -712,7 +712,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
         clearButton.className = "clear-signature";
         clearButton.setAttribute("aria-label", "Clear signature");
         clearButton.title = "Clear signature";
-        clearButton.textContent = "×";
+        clearButton.textContent = "X";
         clearButton.hidden = !hasSignatureEvidence();
         clearButton.addEventListener("click", () => { clearSignature(); updateSubmitState(); });
         clearSignatureButton = clearButton;
@@ -1345,7 +1345,7 @@ staffInput.value = "aswvn1326";
 staffInput.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 staffInput.dispatchEvent(new dom.window.Event("blur", { bubbles: true }));
 await wait(60);
-if (fullName.value !== "Cao Tran Quang Duc" || document.getElementById("typed-name")?.value) throw new Error("delayed employee lookup mixed Staff ID identity");
+if (fullName.value !== "Cao Tran Quang Duc" || (document.getElementById("typed-name") && document.getElementById("typed-name").value !== "Cao Tran Quang Duc")) throw new Error("delayed employee lookup mixed Staff ID identity");
 staffInput.value = "aswvn1325";
 staffInput.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 staffInput.dispatchEvent(new dom.window.Event("blur", { bubbles: true }));
@@ -1369,7 +1369,7 @@ const typedNameInput = document.getElementById("typed-name");
 const signatureBox = document.querySelector(".signature-box");
 if (document.querySelector('label[for="typed-name"]') || !signatureBox?.contains(typedNameInput) || !typedNameInput.readOnly) throw new Error("signature name was not an inline read-only Full Name mirror");
 if (document.querySelector(".signature-label")?.textContent !== "Sign here !") throw new Error("signature heading was not updated");
-if (document.querySelector(".clear-signature")?.textContent !== "×") throw new Error("clear action was not changed to compact red X");
+if (document.querySelector(".clear-signature")?.textContent !== "X") throw new Error("clear action was not changed to uppercase green X");
 fullName.value = "Top Manual Edit";
 fullName.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 search.value = "VNLAP504";
@@ -1438,11 +1438,16 @@ console.log("signer-name-autofill-ok");
         assert!(html.contains("aspect-ratio: 1.75 / 1"));
         assert!(html.contains("min-height: 138px"));
         assert!(html.contains("className = \"signature-name-input\""));
-        assert!(html.contains("textContent = \"×\""));
-        assert!(html.contains("color: #dc2626"));
-        assert!(html.contains("top: 4px;"));
-        assert!(html.contains("right: 4px;"));
-        assert!(html.contains("font-size: 15px;"));
+        assert!(html.contains("placeholder=\"Your name here ...\""));
+        assert!(html.contains("textContent = \"X\""));
+        assert!(html.contains("color: #16a34a"));
+        assert!(html.contains("border: 2px solid #16a34a"));
+        assert!(html.contains("border-radius: 50%;"));
+        assert!(html.contains("top: 2px;"));
+        assert!(html.contains("right: 2px;"));
+        assert!(html.contains("width: 44px;"));
+        assert!(html.contains("height: 44px;"));
+        assert!(html.contains("font-size: 16.5px;"));
         assert!(html.contains("typedInput.readOnly = true;"));
         assert!(html.contains("normalizedFullName()"));
         assert!(!html.contains("let typedName ="));
