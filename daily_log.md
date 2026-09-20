@@ -1990,3 +1990,14 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 
 - Final root-launch smoke test: `npm run tauri:dev` from `E:\Staff_Kit` built `E:\Staff_Kit\src-tauri` and started `staff-kit.exe`; the main window reported title `Staff Kit`, `Visible: True`, responded to Windows, and had the configured full-size rectangle.
 - The visibility handoff now runs natively 500 ms after setup, avoiding both the too-early first paint and hidden-WebView scheduler deadlock. The frontend IPC startup bridge was removed.
+
+## 2026-09-20 Borrow/LAN canonical identity display mismatch — Start
+
+- Objective: make known Staff ID lookups populate the same canonical employee name in the top form and Borrow/Return confirmation signer, while preserving manual signer edits locally and preventing stale delayed lookup results.
+- Confirmed root cause: the LAN page resolved `/api/employee` only into signer state; `#full-name` was never updated after Staff ID changes and could retain stale/manual text. No database writes are part of this change.
+
+## 2026-09-20 Borrow/LAN canonical identity display mismatch — End
+
+- Fix: known employee lookup now clears stale top-name state on Staff ID changes, populates `#full-name` from the accepted canonical lookup response, and makes that field read-only for known employees. Unknown/manual IDs remain editable; signer edits remain confirmation-local.
+- Focused regression: LAN Borrow/Return identity flow passed, including `aswvn1325` normalization, delayed A→B lookup, asset auto-selection, signer-only edit, and canonical top/signer refresh.
+- Validation: LAN-focused Rust tests 15/15; frontend unit tests 225/225; full Rust/Tauri tests 298/298; build, typecheck, lint, and cargo check passed with existing warnings. No production DB writes.

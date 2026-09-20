@@ -478,6 +478,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
       const btnBorrow   = document.getElementById("btn-borrow");
       const btnReturn   = document.getElementById("btn-return");
       const searchBtn   = document.getElementById("search-btn");
+      const fullNameInput = document.getElementById("full-name");
 
       // The QR token is carried in the fragment so it is never sent to the
       // LAN server in the page request, access logs, or referrer headers.
@@ -753,9 +754,15 @@ pub(crate) fn borrow_page_html() -> &'static str {
 
       const resolveEmployeeName = async () => {
         const employeeId = currentStaffId();
-        if (!employeeId) return;
+        if (!employeeId) {
+          fullNameInput.value = "";
+          fullNameInput.readOnly = false;
+          return;
+        }
         if (employeeId === identifiedEmployeeId && typedNameEmployeeId === employeeId && (typedNameDirty || typedName.trim())) return;
         identifiedEmployeeId = employeeId;
+        fullNameInput.value = "";
+        fullNameInput.readOnly = false;
         resetEvidence(typedNameDirty);
         if (selectedAssets.size > 0) renderConfirmation();
         try {
@@ -763,6 +770,8 @@ pub(crate) fn borrow_page_html() -> &'static str {
           const payload = await response.json().catch(() => null);
           if (!response.ok || !payload || typeof payload.fullName !== "string" || !payload.fullName.trim()) return;
           if (currentStaffId() !== employeeId) return;
+          fullNameInput.value = payload.fullName.trim();
+          fullNameInput.readOnly = true;
           if (typedNameDirty) {
             typedNameEmployeeId = employeeId;
             return;
@@ -781,6 +790,8 @@ pub(crate) fn borrow_page_html() -> &'static str {
         const employeeId = currentStaffId();
         if (employeeId === identifiedEmployeeId) return;
         identifiedEmployeeId = "";
+        fullNameInput.value = "";
+        fullNameInput.readOnly = false;
         resetEvidence();
         if (selectedAssets.size > 0) renderConfirmation();
       });
@@ -1186,7 +1197,7 @@ import fs from "node:fs";
 const page = fs.readFileSync(0, "utf8");
 const calls = [];
 const asset = { assetCode: "VNLAP326", assetType: "Laptop", displayName: "ASWVNLAP326", model: null, serialNumber: null };
-const wait = () => new Promise((resolve) => setTimeout(resolve, 20));
+const wait = (duration = 20) => new Promise((resolve) => setTimeout(resolve, duration));
 const dom = new JSDOM(page, {
   url: "http://192.168.2.1:8787/borrow#t=browser-token",
   runScripts: "dangerously",
@@ -1268,8 +1279,8 @@ const page = fs.readFileSync(0, "utf8");
 const calls = [];
 const asset = { assetCode: "VNLAP504", assetType: "Laptop", displayName: "Demo Laptop", model: null, serialNumber: null };
 const employees = {
-  EE1001: { employeeId: "EE1001", fullName: "Nguyen Van A" },
-  EE1002: { employeeId: "EE1002", fullName: "Tran Thi B" },
+  ASWVN1325: { employeeId: "ASWVN1325", fullName: "Trần Văn Thành" },
+  ASWVN1326: { employeeId: "ASWVN1326", fullName: "Cao Tran Quang Duc" },
 };
 const wait = () => new Promise((resolve) => setTimeout(resolve, 20));
 const context = { setTransform() {}, fillRect() {}, clearRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {} };
@@ -1283,7 +1294,7 @@ const dom = new JSDOM(page, {
       calls.push({ url, init });
       if (url.includes("/api/employee")) {
         const staffId = new URL(url, "http://192.168.2.1").searchParams.get("staffId");
-        await wait();
+        await wait(staffId === "ASWVN1325" ? 40 : 5);
         return { ok: Boolean(employees[staffId]), json: async () => employees[staffId] ?? { error: "not found" } };
       }
       if (url.includes("/api/borrow-policy")) {
@@ -1299,20 +1310,32 @@ const dom = new JSDOM(page, {
 const document = dom.window.document;
 const staffInput = document.getElementById("staff-id");
 const search = document.getElementById("asset-search");
-staffInput.value = "EE1001";
+const fullName = document.getElementById("full-name");
+staffInput.value = "aswvn1325";
 staffInput.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+staffInput.dispatchEvent(new dom.window.Event("blur", { bubbles: true }));
+await wait(1);
+staffInput.value = "aswvn1326";
+staffInput.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+staffInput.dispatchEvent(new dom.window.Event("blur", { bubbles: true }));
+await wait(60);
+if (fullName.value !== "Cao Tran Quang Duc" || document.getElementById("typed-name")?.value) throw new Error("delayed employee lookup mixed Staff ID identity");
+staffInput.value = "aswvn1325";
+staffInput.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+staffInput.dispatchEvent(new dom.window.Event("blur", { bubbles: true }));
 search.value = "VNLAP504";
 document.getElementById("search-btn").click();
 await wait();
 await wait();
-if (document.getElementById("typed-name")?.value !== "Nguyen Van A") throw new Error("employee EE1001 did not prefill after asset auto-selection");
-document.getElementById("full-name").value = "Nguyen Van A";
+if (document.getElementById("typed-name")?.value !== "Trần Văn Thành") throw new Error("employee ASWVN1325 did not prefill after asset auto-selection");
+if (fullName.value !== "Trần Văn Thành" || !fullName.readOnly) throw new Error("employee ASWVN1325 did not populate canonical top full name");
 document.getElementById("acknowledgment-checkbox").click();
 document.getElementById("typed-name").value = "Borrow Confirmation Edit";
 document.getElementById("typed-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 staffInput.dispatchEvent(new dom.window.Event("blur", { bubbles: true }));
 await wait();
 if (document.getElementById("typed-name")?.value !== "Borrow Confirmation Edit") throw new Error("borrow edit was overwritten by employee lookup");
+if (fullName.value !== "Trần Văn Thành") throw new Error("manual signer edit changed canonical top full name");
 document.getElementById("submit-button").click();
 await wait();
 const borrowPost = calls.find((call) => call.url.includes("/api/borrow-requests"));
@@ -1320,14 +1343,14 @@ const borrowPayload = JSON.parse(borrowPost.init.body);
 if (borrowPayload.confirmation.typedName !== "Borrow Confirmation Edit") throw new Error("borrow edit was not submitted");
 
 document.getElementById("btn-return").click();
-staffInput.value = "EE1002";
+staffInput.value = "aswvn1326";
 staffInput.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 staffInput.dispatchEvent(new dom.window.Event("blur", { bubbles: true }));
 search.value = "VNLAP504";
 document.getElementById("search-btn").click();
 await wait();
 await wait();
-if (document.getElementById("typed-name").value !== "Tran Thi B") throw new Error("return confirmation did not refresh for the new employee");
+if (fullName.value !== "Cao Tran Quang Duc" || document.getElementById("typed-name").value !== "Cao Tran Quang Duc") throw new Error("return identity did not refresh canonical top and confirmation names");
 document.getElementById("typed-name").value = "Return Confirmation Edit";
 document.getElementById("typed-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 document.getElementById("submit-button").click();
