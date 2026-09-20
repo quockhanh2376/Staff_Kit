@@ -2021,3 +2021,15 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 
 - Implemented inline editable signer name, `Sign here !` heading, taller canvas, compact red X clear action, and removed the lower typed-name section.
 - Validation: focused LAN asset tests, all 299 Rust/Tauri tests, 225 frontend unit tests, and `npm run check:quality` passed; no live business DB writes.
+
+## 2026-09-20 LAN signature Full Name mirroring — Start
+
+- Objective: make the signature-box name mirror the current editable Full Name field exactly for Borrow and Return.
+- Scope: remove independent signer display state, preserve canonical Staff ID defaults and submit behavior, retain compact signature UI and signature-only red X clearing.
+- Safety: work isolated on `fix/borrow-fullname-mirror`; no live DB writes, no Employee master/loan/auth changes, and no merge or push.
+
+## 2026-09-20 LAN signature Full Name mirroring — End
+
+- Root cause fixed: independent `typedName` signer state was removed; the read-only inline signature name now mirrors `#full-name` immediately, including lookup defaults, edits, clears, Staff ID changes, and Borrow/Return mode changes.
+- Red X remains signature-only, with 15px glyph and 4px top/right inset; Employee master, loan identity, auth, and backend validation were not changed.
+- Validation: focused LAN assets 17/17; Full Name mirror and compact UI tests passed; frontend unit 225/225; full Rust/Tauri 300/300; quality gate passed; `git diff --check` passed; no live DB writes.

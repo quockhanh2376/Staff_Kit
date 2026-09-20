@@ -380,8 +380,8 @@ pub(crate) fn borrow_page_html() -> &'static str {
 
       .clear-signature {
         position: absolute;
-        top: 8px;
-        right: 8px;
+        top: 4px;
+        right: 4px;
         z-index: 1;
         display: grid;
         width: 40px;
@@ -392,7 +392,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
         border-radius: 8px;
         background: rgba(255, 255, 255, 0.88);
         color: #dc2626;
-        font-size: 14px;
+        font-size: 15px;
         font-weight: 700;
         line-height: 1;
         cursor: pointer;
@@ -424,11 +424,6 @@ pub(crate) fn borrow_page_html() -> &'static str {
       .signature-name-input:focus {
         outline: 2px solid var(--accent);
         outline-offset: 1px;
-      }
-
-      .confirmation-hint {
-        margin: 8px 0 0;
-        font-size: 12px;
       }
 
       @media (max-width: 480px) {
@@ -479,10 +474,8 @@ pub(crate) fn borrow_page_html() -> &'static str {
       let policyLoading = false;
       let policyError = "";
       let policyAcknowledged = false;
-      let typedName = "";
-      let typedNameEmployeeId = "";
       let identifiedEmployeeId = "";
-      let typedNameDirty = false;
+      let resolvedEmployeeId = "";
       let fullNameDirty = false;
       let signatureStrokeCount = 0;
       let signatureInkPresent = false;
@@ -539,9 +532,9 @@ pub(crate) fn borrow_page_html() -> &'static str {
       let isSearching = false;
       let isSubmitting = false;
 
-      const normalizedTypedName = () => typedName.trim().replace(/\\s+/g, " ");
+      const normalizedFullName = () => fullNameInput.value.trim().replace(/\\s+/g, " ");
       const hasSignatureEvidence = () => signatureStrokeCount > 0 && signatureInkPresent;
-      const hasConfirmationEvidence = () => Boolean(normalizedTypedName()) || hasSignatureEvidence();
+      const hasConfirmationEvidence = () => Boolean(normalizedFullName()) || hasSignatureEvidence();
       const updateSignatureClearButton = () => {
         if (clearSignatureButton) clearSignatureButton.hidden = !hasSignatureEvidence();
       };
@@ -564,13 +557,8 @@ pub(crate) fn borrow_page_html() -> &'static str {
         }
       };
 
-      const resetEvidence = (preserveTypedName = false) => {
+      const resetEvidence = () => {
         policyAcknowledged = false;
-        if (!preserveTypedName) {
-          typedName = "";
-          typedNameEmployeeId = "";
-          typedNameDirty = false;
-        }
         clearSignature();
       };
 
@@ -579,6 +567,11 @@ pub(crate) fn borrow_page_html() -> &'static str {
         const acknowledged = mode === "return" || policyAcknowledged;
         updateSignatureClearButton();
         submitBtn.disabled = isSubmitting || selectedAssets.size === 0 || !policyReady || !acknowledged || !hasConfirmationEvidence();
+      };
+
+      const syncSignatureName = () => {
+        const signatureNameInput = document.getElementById("typed-name");
+        if (signatureNameInput) signatureNameInput.value = fullNameInput.value;
       };
 
       const initializeSignatureCanvas = () => {
@@ -728,8 +721,9 @@ pub(crate) fn borrow_page_html() -> &'static str {
         typedInput.id = "typed-name";
         typedInput.className = "signature-name-input";
         typedInput.autocomplete = "name";
-        typedInput.value = typedName;
-        typedInput.addEventListener("input", () => { typedName = typedInput.value; typedNameDirty = true; updateSubmitState(); });
+        typedInput.value = fullNameInput.value;
+        typedInput.readOnly = true;
+        typedInput.setAttribute("aria-label", "Full Name confirmation");
         signatureBox.append(typedInput);
         section.append(signatureBox);
         confirmationEl.append(section);
@@ -776,16 +770,21 @@ pub(crate) fn borrow_page_html() -> &'static str {
         if (!employeeId) {
           fullNameInput.value = "";
           fullNameDirty = false;
+          resolvedEmployeeId = "";
           fullNameInput.readOnly = false;
+          syncSignatureName();
+          updateSubmitState();
           return;
         }
         const employeeChanged = employeeId !== identifiedEmployeeId;
-        if (!employeeChanged && typedNameEmployeeId === employeeId && (typedNameDirty || typedName.trim())) return;
+        if (!employeeChanged && resolvedEmployeeId === employeeId) return;
         if (employeeChanged) {
           identifiedEmployeeId = employeeId;
           fullNameInput.value = "";
           fullNameDirty = false;
-          resetEvidence(typedNameDirty);
+          resolvedEmployeeId = "";
+          resetEvidence();
+          syncSignatureName();
           if (selectedAssets.size > 0) renderConfirmation();
         }
         fullNameInput.readOnly = false;
@@ -796,13 +795,8 @@ pub(crate) fn borrow_page_html() -> &'static str {
           if (currentStaffId() !== employeeId) return;
           if (!fullNameDirty) fullNameInput.value = payload.fullName.trim();
           fullNameInput.readOnly = false;
-          if (typedNameDirty) {
-            typedNameEmployeeId = employeeId;
-            return;
-          }
-          typedName = payload.fullName.trim();
-          typedNameEmployeeId = employeeId;
-          typedNameDirty = false;
+          resolvedEmployeeId = employeeId;
+          syncSignatureName();
           if (selectedAssets.size > 0) renderConfirmation();
         } catch (_error) {
           // Preserve the existing manual-entry fallback when lookup fails.
@@ -810,15 +804,21 @@ pub(crate) fn borrow_page_html() -> &'static str {
       };
 
       const staffIdInput = document.getElementById("staff-id");
-      fullNameInput.addEventListener("input", () => { fullNameDirty = true; });
+      fullNameInput.addEventListener("input", () => {
+        fullNameDirty = true;
+        syncSignatureName();
+        updateSubmitState();
+      });
       staffIdInput.addEventListener("input", () => {
         const employeeId = currentStaffId();
         if (employeeId === identifiedEmployeeId) return;
         identifiedEmployeeId = "";
+        resolvedEmployeeId = "";
         fullNameInput.value = "";
         fullNameDirty = false;
         fullNameInput.readOnly = false;
         resetEvidence();
+        syncSignatureName();
         if (selectedAssets.size > 0) renderConfirmation();
       });
       staffIdInput.addEventListener("blur", () => { void resolveEmployeeName(); });
@@ -910,7 +910,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
           remove.textContent = "×";
           remove.addEventListener("click", () => {
             selectedAssets.delete(asset.assetCode);
-            resetEvidence(true);
+            resetEvidence();
             signatureCanvas = null;
             renderSelected();
           });
@@ -993,7 +993,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
             add.textContent = MODES[mode].addLabel;
             add.addEventListener("click", () => {
               selectedAssets.set(asset.assetCode, { ...asset, matchedIdentifier: searchTerm });
-              resetEvidence(true);
+              resetEvidence();
               renderSelected();
               void resolveEmployeeName();
               setMessage(`\u2713 ${asset.assetCode} selected and eligible for ${mode}.`, true);
@@ -1033,7 +1033,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
           }
           const autoSelected = items.length === 1;
           if (autoSelected) {
-            resetEvidence(true);
+            resetEvidence();
             selectedAssets.set(items[0].assetCode, {
               ...items[0],
               matchedIdentifier: searchTerm,
@@ -1083,11 +1083,11 @@ pub(crate) fn borrow_page_html() -> &'static str {
           const confirmation = {
             policyVersion: mode === "borrow" ? borrowPolicy?.version ?? null : null,
             policyAcknowledged: mode === "borrow" ? policyAcknowledged : false,
-            confirmationMethod: hasSignatureEvidence() && normalizedTypedName() ? "both" : hasSignatureEvidence() ? "signature" : "typed_name",
+            confirmationMethod: hasSignatureEvidence() && normalizedFullName() ? "both" : hasSignatureEvidence() ? "signature" : "typed_name",
             signaturePngBase64,
             signatureStrokeCount: hasSignatureEvidence() ? signatureStrokeCount : null,
             signatureInkPresent: hasSignatureEvidence() ? signatureInkPresent : null,
-            typedName: normalizedTypedName() || null,
+            typedName: normalizedFullName() || null,
             assetCodesSnapshot: assetCodes,
           };
 
@@ -1251,9 +1251,9 @@ if (!document.querySelector("#policy-english")?.textContent.includes("Handle wit
     !document.querySelector("#acknowledgment-checkbox")) throw new Error("borrow policy was not rendered as separate bilingual blocks");
 if (!submit.disabled) throw new Error("submit enabled before acknowledgment evidence");
 document.getElementById("acknowledgment-checkbox").click();
-document.getElementById("typed-name").value = "Nguyễn Văn A";
-document.getElementById("typed-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
-if (submit.disabled) throw new Error("typed-name confirmation did not enable submit");
+document.getElementById("full-name").value = "Nguyễn Văn A";
+document.getElementById("full-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+if (submit.disabled || document.getElementById("typed-name").value !== "Nguyễn Văn A") throw new Error("Full Name confirmation did not enable submit");
 submit.click();
 await wait();
 const post = calls.find((call) => call.url.includes("/api/borrow-requests"));
@@ -1367,7 +1367,7 @@ if (document.getElementById("typed-name")?.value !== "Trần Văn Thành") throw
 if (fullName.value !== "Trần Văn Thành" || fullName.readOnly) throw new Error("employee ASWVN1325 did not populate an editable canonical top default");
 const typedNameInput = document.getElementById("typed-name");
 const signatureBox = document.querySelector(".signature-box");
-if (document.querySelector('label[for="typed-name"]') || !signatureBox?.contains(typedNameInput)) throw new Error("typed signer name was not moved inside the signature box");
+if (document.querySelector('label[for="typed-name"]') || !signatureBox?.contains(typedNameInput) || !typedNameInput.readOnly) throw new Error("signature name was not an inline read-only Full Name mirror");
 if (document.querySelector(".signature-label")?.textContent !== "Sign here !") throw new Error("signature heading was not updated");
 if (document.querySelector(".clear-signature")?.textContent !== "×") throw new Error("clear action was not changed to compact red X");
 fullName.value = "Top Manual Edit";
@@ -1378,17 +1378,14 @@ await wait();
 await wait();
 if (fullName.value !== "Top Manual Edit") throw new Error("asset selection overwrote dirty top full name");
 document.getElementById("acknowledgment-checkbox").click();
-document.getElementById("typed-name").value = "Borrow Confirmation Edit";
-document.getElementById("typed-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 staffInput.dispatchEvent(new dom.window.Event("blur", { bubbles: true }));
 await wait();
-if (document.getElementById("typed-name")?.value !== "Borrow Confirmation Edit") throw new Error("borrow edit was overwritten by employee lookup");
-if (fullName.value !== "Top Manual Edit") throw new Error("manual signer edit changed top full name");
+if (document.getElementById("typed-name")?.value !== "Top Manual Edit") throw new Error("signature name did not mirror manual Full Name");
 document.getElementById("submit-button").click();
 await wait();
 const borrowPost = calls.find((call) => call.url.includes("/api/borrow-requests"));
 const borrowPayload = JSON.parse(borrowPost.init.body);
-if (borrowPayload.submittedFullName !== "Top Manual Edit" || borrowPayload.confirmation.typedName !== "Borrow Confirmation Edit") throw new Error("manual top or signer name was not submitted independently");
+if (borrowPayload.submittedFullName !== "Top Manual Edit" || borrowPayload.confirmation.typedName !== "Top Manual Edit") throw new Error("manual top name was not mirrored into confirmation");
 
 document.getElementById("btn-return").click();
 staffInput.value = "aswvn1326";
@@ -1399,13 +1396,11 @@ document.getElementById("search-btn").click();
 await wait();
 await wait();
 if (fullName.value !== "Cao Tran Quang Duc" || document.getElementById("typed-name").value !== "Cao Tran Quang Duc") throw new Error("return identity did not refresh canonical top and confirmation names");
-document.getElementById("typed-name").value = "Return Confirmation Edit";
-document.getElementById("typed-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 document.getElementById("submit-button").click();
 await wait();
 const posts = calls.filter((call) => call.url.includes("/api/borrow-requests"));
 const returnPayload = JSON.parse(posts[1].init.body);
-if (returnPayload.confirmation.typedName !== "Return Confirmation Edit" || returnPayload.requestType !== "return") throw new Error("return edit was not submitted");
+if (returnPayload.confirmation.typedName !== "Cao Tran Quang Duc" || returnPayload.requestType !== "return") throw new Error("return Full Name was not mirrored into confirmation");
 if (calls.some((call) => call.url.includes("/api/employee") && call.init.method === "POST")) throw new Error("employee lookup attempted a write");
 console.log("signer-name-autofill-ok");
 "###;
@@ -1445,10 +1440,110 @@ console.log("signer-name-autofill-ok");
         assert!(html.contains("className = \"signature-name-input\""));
         assert!(html.contains("textContent = \"×\""));
         assert!(html.contains("color: #dc2626"));
+        assert!(html.contains("top: 4px;"));
+        assert!(html.contains("right: 4px;"));
+        assert!(html.contains("font-size: 15px;"));
+        assert!(html.contains("typedInput.readOnly = true;"));
+        assert!(html.contains("normalizedFullName()"));
+        assert!(!html.contains("let typedName ="));
+        assert!(!html.contains("typedNameDirty"));
     }
 
     #[test]
-    fn signature_clear_icon_is_inline_and_preserves_typed_name_in_borrow_and_return() {
+    fn signature_box_mirrors_current_full_name_for_borrow_and_return() {
+        let html = borrow_page_html();
+        let script = r###"
+import { JSDOM } from "jsdom";
+import fs from "node:fs";
+
+const page = fs.readFileSync(0, "utf8");
+const calls = [];
+const asset = { assetCode: "VNLAP506", assetType: "Laptop", displayName: "Demo Laptop", model: null, serialNumber: null };
+const wait = (duration = 20) => new Promise((resolve) => setTimeout(resolve, duration));
+const context = { setTransform() {}, fillRect() {}, clearRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {} };
+const dom = new JSDOM(page, {
+  url: "http://192.168.2.1:8787/borrow#t=browser-token",
+  runScripts: "dangerously",
+  beforeParse(window) {
+    window.HTMLCanvasElement.prototype.getContext = () => context;
+    window.fetch = async (input, init = {}) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url.includes("/api/employee")) return { ok: true, json: async () => ({ employeeId: "ASWVN1325", fullName: "Canonical A" }) };
+      if (url.includes("/api/borrow-policy")) return { ok: true, json: async () => ({ version: 7, textEn: "Handle with care.", textVi: "Vui long giu gin." }) };
+      if (url.includes("/api/borrow-requests")) return { ok: true, json: async () => ({ requestReference: "BR-MIRROR", message: "Pending IT review." }) };
+      return { ok: true, json: async () => [asset] };
+    };
+  },
+});
+const document = dom.window.document;
+const staff = document.getElementById("staff-id");
+const fullName = document.getElementById("full-name");
+staff.value = "ASWVN1325";
+staff.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+staff.dispatchEvent(new dom.window.Event("blur", { bubbles: true }));
+await wait();
+document.getElementById("asset-search").value = "VNLAP506";
+document.getElementById("search-btn").click();
+await wait();
+const signer = document.getElementById("typed-name");
+if (!signer || !signer.readOnly || signer.value !== "Canonical A") throw new Error("Borrow signer did not mirror canonical Full Name");
+fullName.value = "Manual B";
+fullName.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+if (signer.value !== "Manual B") throw new Error("Borrow signer did not mirror Full Name edit");
+fullName.value = "";
+fullName.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+if (signer.value !== "") throw new Error("Borrow signer did not clear with Full Name");
+fullName.value = "Borrow Name";
+fullName.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+document.getElementById("acknowledgment-checkbox").click();
+document.getElementById("submit-button").click();
+await wait();
+const borrowPost = calls.find((call) => call.url.includes("/api/borrow-requests"));
+const borrowPayload = JSON.parse(borrowPost.init.body);
+if (borrowPayload.submittedFullName !== "Borrow Name" || borrowPayload.confirmation.typedName !== "Borrow Name") throw new Error("Borrow payload diverged from Full Name");
+
+document.getElementById("btn-return").click();
+document.getElementById("asset-search").value = "VNLAP506";
+document.getElementById("search-btn").click();
+await wait();
+const returnSigner = document.getElementById("typed-name");
+if (!returnSigner?.readOnly || returnSigner.value !== fullName.value) throw new Error("Return signer did not mirror Full Name");
+fullName.value = "Return Name";
+fullName.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+if (returnSigner.value !== "Return Name") throw new Error("Return signer did not update immediately");
+const clear = document.querySelector(".clear-signature");
+if (!clear || !clear.hidden) throw new Error("empty signature clear action state was incorrect");
+console.log("full-name-signature-mirror-ok");
+"###;
+
+        let mut child = Command::new("node")
+            .args(["--input-type=module", "-e", script])
+            .current_dir(std::env::current_dir().expect("workspace directory"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("node and jsdom are required for Full Name mirror coverage");
+        child
+            .stdin
+            .take()
+            .expect("node stdin")
+            .write_all(html.as_bytes())
+            .expect("write page HTML");
+        let output = child
+            .wait_with_output()
+            .expect("wait for Full Name mirror test");
+        assert!(
+            output.status.success(),
+            "Full Name mirror flow failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("full-name-signature-mirror-ok"));
+    }
+
+    #[test]
+    fn signature_clear_icon_is_inline_and_preserves_full_name_mirror_in_borrow_and_return() {
         let html = borrow_page_html();
         let script = r###"
 import { JSDOM } from "jsdom";
@@ -1498,19 +1593,18 @@ if (document.getElementById("typed-name").value !== "Nguyen Van A") throw new Er
 let clear = document.querySelector(".clear-signature");
 if (!clear?.hidden || !clear.parentElement?.classList.contains("signature-box")) throw new Error("Borrow clear icon was not hidden inline");
 document.getElementById("full-name").value = "Nguyen Van A";
+document.getElementById("full-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 document.getElementById("acknowledgment-checkbox").click();
 sign();
 clear = document.querySelector(".clear-signature");
 if (clear.hidden || clear.getAttribute("aria-label") !== "Clear signature") throw new Error("Borrow clear icon did not appear accessibly");
-document.getElementById("typed-name").value = "Borrow Edited Name";
-document.getElementById("typed-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 clear.click();
-if (!clear.hidden || document.getElementById("typed-name").value !== "Borrow Edited Name" || !document.getElementById("acknowledgment-checkbox").checked) throw new Error("Borrow clear changed non-signature state");
+if (!clear.hidden || document.getElementById("typed-name").value !== "Nguyen Van A" || !document.getElementById("acknowledgment-checkbox").checked) throw new Error("Borrow clear changed non-signature state");
 submit.click();
 await wait();
 let posts = calls.filter((call) => call.url.includes("/api/borrow-requests"));
 let borrowPayload = JSON.parse(posts[0].init.body);
-if (borrowPayload.confirmation.typedName !== "Borrow Edited Name" || borrowPayload.confirmation.signaturePngBase64 !== null) throw new Error("Borrow clear payload was incorrect");
+if (borrowPayload.confirmation.typedName !== "Nguyen Van A" || borrowPayload.confirmation.signaturePngBase64 !== null) throw new Error("Borrow clear payload was incorrect");
 
 document.getElementById("btn-return").click();
 document.getElementById("asset-search").value = "VNLAP505";
@@ -1523,15 +1617,13 @@ if (!clear.hidden) throw new Error("Return clear icon was visible before signing
 sign();
 clear = document.querySelector(".clear-signature");
 if (clear.hidden) throw new Error("Return clear icon did not appear");
-document.getElementById("typed-name").value = "Return Edited Name";
-document.getElementById("typed-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 clear.click();
-if (!clear.hidden || document.getElementById("typed-name").value !== "Return Edited Name") throw new Error("Return clear changed typed name");
+if (!clear.hidden || document.getElementById("typed-name").value !== "Nguyen Van A") throw new Error("Return clear changed mirrored Full Name");
 submit.click();
 await wait();
 posts = calls.filter((call) => call.url.includes("/api/borrow-requests"));
 const returnPayload = JSON.parse(posts[1].init.body);
-if (returnPayload.requestType !== "return" || returnPayload.confirmation.typedName !== "Return Edited Name" || returnPayload.confirmation.signaturePngBase64 !== null) throw new Error("Return clear payload was incorrect");
+if (returnPayload.requestType !== "return" || returnPayload.confirmation.typedName !== "Nguyen Van A" || returnPayload.confirmation.signaturePngBase64 !== null) throw new Error("Return clear payload was incorrect");
 if (calls.some((call) => call.url.includes("/api/employee") && call.init.method === "POST")) throw new Error("employee master write was attempted");
 console.log("signature-clear-icon-ok");
 "###;
@@ -1704,9 +1796,8 @@ searchButton.click();
 await wait();
 document.getElementById("staff-id").value = "1301";
 document.getElementById("full-name").value = "Test user";
+document.getElementById("full-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 document.getElementById("acknowledgment-checkbox").click();
-document.getElementById("typed-name").value = "Test user";
-document.getElementById("typed-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 submit.click();
 await wait();
 if (selected.textContent || results.childElementCount !== 0 || !submit.disabled || !document.querySelector("#message .success")) {
@@ -1812,9 +1903,8 @@ const borrowSearchCall = calls.find((call) => call.input.includes("/api/assets")
 if (!borrowSearchCall || auth(borrowSearchCall) !== "Bearer browser-token") throw new Error("borrow search auth failed");
 document.getElementById("staff-id").value = "EE1001";
 document.getElementById("full-name").value = "Client name is not authoritative";
+document.getElementById("full-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 document.getElementById("acknowledgment-checkbox").click();
-document.getElementById("typed-name").value = "Client name is not authoritative";
-document.getElementById("typed-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 submit.click();
 submit.click();
 await wait();
@@ -1828,8 +1918,8 @@ search.value = "ASSET-001";
 searchButton.click();
 await wait();
 if (!calls.some((call) => call.input.includes("/api/assigned-assets") && auth(call) === "Bearer browser-token")) throw new Error("return search auth failed");
-document.getElementById("typed-name").value = "Return operator";
-document.getElementById("typed-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+document.getElementById("full-name").value = "Return operator";
+document.getElementById("full-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 submit.click();
 await wait();
 const submitCalls = calls.filter((call) => call.input.includes("/api/borrow-requests"));
@@ -1925,9 +2015,8 @@ if (!document.querySelector(".selected-card")?.textContent.includes("VNLAP326"))
 }
 document.getElementById("staff-id").value = "1301";
 document.getElementById("full-name").value = "Test user";
+document.getElementById("full-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 document.getElementById("acknowledgment-checkbox").click();
-document.getElementById("typed-name").value = "Test user";
-document.getElementById("typed-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 submit.click();
 await wait();
 const submitCall = calls.find((call) => call.url.includes("/api/borrow-requests"));
@@ -2078,8 +2167,8 @@ const document = dom.window.document;
 document.getElementById("search-btn").click();
 await wait();
 document.getElementById("acknowledgment-checkbox").click();
-document.getElementById("typed-name").value = "Test Employee";
-document.getElementById("typed-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+document.getElementById("full-name").value = "Test Employee";
+document.getElementById("full-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 document.getElementById("submit-button").click();
 await wait();
 const message = document.getElementById("message");
@@ -2169,9 +2258,8 @@ if (!selected.textContent.includes(payloads.assetCode) || selected.querySelector
 }
 document.getElementById("staff-id").value = "EE1001";
 document.getElementById("full-name").value = "Test Employee";
+document.getElementById("full-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 document.getElementById("acknowledgment-checkbox").click();
-document.getElementById("typed-name").value = "Test Employee";
-document.getElementById("typed-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 document.getElementById("submit-button").click();
 await wait();
 const message = document.getElementById("message");
