@@ -457,6 +457,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
       let typedNameEmployeeId = "";
       let identifiedEmployeeId = "";
       let typedNameDirty = false;
+      let fullNameDirty = false;
       let signatureStrokeCount = 0;
       let signatureInkPresent = false;
       let signatureCanvas = null;
@@ -756,22 +757,27 @@ pub(crate) fn borrow_page_html() -> &'static str {
         const employeeId = currentStaffId();
         if (!employeeId) {
           fullNameInput.value = "";
+          fullNameDirty = false;
           fullNameInput.readOnly = false;
           return;
         }
-        if (employeeId === identifiedEmployeeId && typedNameEmployeeId === employeeId && (typedNameDirty || typedName.trim())) return;
-        identifiedEmployeeId = employeeId;
-        fullNameInput.value = "";
+        const employeeChanged = employeeId !== identifiedEmployeeId;
+        if (!employeeChanged && typedNameEmployeeId === employeeId && (typedNameDirty || typedName.trim())) return;
+        if (employeeChanged) {
+          identifiedEmployeeId = employeeId;
+          fullNameInput.value = "";
+          fullNameDirty = false;
+          resetEvidence(typedNameDirty);
+          if (selectedAssets.size > 0) renderConfirmation();
+        }
         fullNameInput.readOnly = false;
-        resetEvidence(typedNameDirty);
-        if (selectedAssets.size > 0) renderConfirmation();
         try {
           const response = await authorizedFetch(`/api/employee?staffId=${encodeURIComponent(employeeId)}`);
           const payload = await response.json().catch(() => null);
           if (!response.ok || !payload || typeof payload.fullName !== "string" || !payload.fullName.trim()) return;
           if (currentStaffId() !== employeeId) return;
-          fullNameInput.value = payload.fullName.trim();
-          fullNameInput.readOnly = true;
+          if (!fullNameDirty) fullNameInput.value = payload.fullName.trim();
+          fullNameInput.readOnly = false;
           if (typedNameDirty) {
             typedNameEmployeeId = employeeId;
             return;
@@ -786,11 +792,13 @@ pub(crate) fn borrow_page_html() -> &'static str {
       };
 
       const staffIdInput = document.getElementById("staff-id");
+      fullNameInput.addEventListener("input", () => { fullNameDirty = true; });
       staffIdInput.addEventListener("input", () => {
         const employeeId = currentStaffId();
         if (employeeId === identifiedEmployeeId) return;
         identifiedEmployeeId = "";
         fullNameInput.value = "";
+        fullNameDirty = false;
         fullNameInput.readOnly = false;
         resetEvidence();
         if (selectedAssets.size > 0) renderConfirmation();
@@ -1282,7 +1290,7 @@ const employees = {
   ASWVN1325: { employeeId: "ASWVN1325", fullName: "Trần Văn Thành" },
   ASWVN1326: { employeeId: "ASWVN1326", fullName: "Cao Tran Quang Duc" },
 };
-const wait = () => new Promise((resolve) => setTimeout(resolve, 20));
+const wait = (duration = 20) => new Promise((resolve) => setTimeout(resolve, duration));
 const context = { setTransform() {}, fillRect() {}, clearRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {} };
 const dom = new JSDOM(page, {
   url: "http://192.168.2.1:8787/borrow#t=browser-token",
@@ -1323,24 +1331,41 @@ if (fullName.value !== "Cao Tran Quang Duc" || document.getElementById("typed-na
 staffInput.value = "aswvn1325";
 staffInput.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 staffInput.dispatchEvent(new dom.window.Event("blur", { bubbles: true }));
+fullName.value = "Top Manual Before Lookup";
+fullName.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+await wait(60);
+if (fullName.value !== "Top Manual Before Lookup") throw new Error("delayed lookup overwrote dirty top full name");
+staffInput.value = "aswvn1326";
+staffInput.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+staffInput.value = "aswvn1325";
+staffInput.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+staffInput.dispatchEvent(new dom.window.Event("blur", { bubbles: true }));
+await wait(60);
 search.value = "VNLAP504";
 document.getElementById("search-btn").click();
 await wait();
 await wait();
 if (document.getElementById("typed-name")?.value !== "Trần Văn Thành") throw new Error("employee ASWVN1325 did not prefill after asset auto-selection");
-if (fullName.value !== "Trần Văn Thành" || !fullName.readOnly) throw new Error("employee ASWVN1325 did not populate canonical top full name");
+if (fullName.value !== "Trần Văn Thành" || fullName.readOnly) throw new Error("employee ASWVN1325 did not populate an editable canonical top default");
+fullName.value = "Top Manual Edit";
+fullName.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+search.value = "VNLAP504";
+document.getElementById("search-btn").click();
+await wait();
+await wait();
+if (fullName.value !== "Top Manual Edit") throw new Error("asset selection overwrote dirty top full name");
 document.getElementById("acknowledgment-checkbox").click();
 document.getElementById("typed-name").value = "Borrow Confirmation Edit";
 document.getElementById("typed-name").dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 staffInput.dispatchEvent(new dom.window.Event("blur", { bubbles: true }));
 await wait();
 if (document.getElementById("typed-name")?.value !== "Borrow Confirmation Edit") throw new Error("borrow edit was overwritten by employee lookup");
-if (fullName.value !== "Trần Văn Thành") throw new Error("manual signer edit changed canonical top full name");
+if (fullName.value !== "Top Manual Edit") throw new Error("manual signer edit changed top full name");
 document.getElementById("submit-button").click();
 await wait();
 const borrowPost = calls.find((call) => call.url.includes("/api/borrow-requests"));
 const borrowPayload = JSON.parse(borrowPost.init.body);
-if (borrowPayload.confirmation.typedName !== "Borrow Confirmation Edit") throw new Error("borrow edit was not submitted");
+if (borrowPayload.submittedFullName !== "Top Manual Edit" || borrowPayload.confirmation.typedName !== "Borrow Confirmation Edit") throw new Error("manual top or signer name was not submitted independently");
 
 document.getElementById("btn-return").click();
 staffInput.value = "aswvn1326";

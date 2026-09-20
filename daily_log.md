@@ -2001,3 +2001,13 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Fix: known employee lookup now clears stale top-name state on Staff ID changes, populates `#full-name` from the accepted canonical lookup response, and makes that field read-only for known employees. Unknown/manual IDs remain editable; signer edits remain confirmation-local.
 - Focused regression: LAN Borrow/Return identity flow passed, including `aswvn1325` normalization, delayed A→B lookup, asset auto-selection, signer-only edit, and canonical top/signer refresh.
 - Validation: LAN-focused Rust tests 15/15; frontend unit tests 225/225; full Rust/Tauri tests 298/298; build, typecheck, lint, and cargo check passed with existing warnings. No production DB writes.
+
+## 2026-09-20 LAN top-name editability regression — Start
+
+- Objective: retain canonical employee lookup as the initial Full Name default while preserving user edits through lookup completion, asset selection, signer interaction, and unrelated renders; reset only when Staff ID changes.
+- Root cause: the prior canonical-display fix set `#full-name.readOnly = true` and had no separate dirty flag for top-name edits.
+
+## 2026-09-20 LAN top-name editability regression — End
+
+- Fix: added independent `fullNameDirty` tracking. Canonical lookup provides the editable default; lookup completion and asset-triggered re-resolution preserve dirty top-name edits, while a different Staff ID clears and refreshes the default. Signer state remains independent.
+- Validation: focused Borrow/Return regression 1/1; frontend unit 225/225; full Rust/Tauri 298/298; quality gate passed. No live DB writes.
