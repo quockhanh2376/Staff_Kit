@@ -2034,6 +2034,18 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Red X remains signature-only, with 15px glyph and 4px top/right inset; Employee master, loan identity, auth, and backend validation were not changed.
 - Validation: focused LAN assets 17/17; Full Name mirror and compact UI tests passed; frontend unit 225/225; full Rust/Tauri 300/300; quality gate passed; `git diff --check` passed; no live DB writes.
 
+## 2026-09-21 LAN runtime identity and VNLAP369 audit — Start
+
+- Objective: remove the reported employee-name fixture from runtime/test paths, preserve direct Full Name mirroring, and audit the missing VNLAP369 search result without touching the live database.
+- Read-only audit: SQLCipher query against the local app database found no `assets.asset_code = 'VNLAP369'`; search code preserves case-insensitive partial matching and Borrow/Return status eligibility.
+- Scope: update only stale fixture assertions and add focused VNLAP369 eligible-search coverage; no Employee master, loan, auth, or signature-X behavior changes.
+
+## 2026-09-21 LAN runtime identity and VNLAP369 audit — End
+
+- Root cause: the old employee string existed only in LAN/import test fixtures; no production LAN page hard-coded it. It was replaced, and the signature mirror remains sourced only from the current Full Name field.
+- Read-only DB result: encrypted local database query found no `VNLAP369` asset row. The search path itself remains correct for exact/partial/case-insensitive matching and Borrow/Return status eligibility; no production search workaround was added.
+- Validation: focused LAN assets 17/17, VNLAP369 asset search 1/1, import fixture 1/1, frontend 225/225, full Rust/Tauri 300/300, `npm run check:quality` passed, `git diff --check` passed; no live DB writes.
+
 ## 2026-09-20 LAN Full Name placeholder and signature X refinement — Start
 
 - Objective: use the exact Full Name guidance placeholder and refine the compact signature clear control without changing Full Name mirroring.

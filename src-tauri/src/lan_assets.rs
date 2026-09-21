@@ -1306,7 +1306,7 @@ const calls = [];
 const asset = { assetCode: "VNLAP504", assetType: "Laptop", displayName: "Demo Laptop", model: null, serialNumber: null };
 const employees = {
   ASWVN1325: { employeeId: "ASWVN1325", fullName: "Trần Văn Thành" },
-  ASWVN1326: { employeeId: "ASWVN1326", fullName: "Cao Tran Quang Duc" },
+  ASWVN1326: { employeeId: "ASWVN1326", fullName: "Nguyen Thi B" },
 };
 const wait = (duration = 20) => new Promise((resolve) => setTimeout(resolve, duration));
 const context = { setTransform() {}, fillRect() {}, clearRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {} };
@@ -1345,7 +1345,7 @@ staffInput.value = "aswvn1326";
 staffInput.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 staffInput.dispatchEvent(new dom.window.Event("blur", { bubbles: true }));
 await wait(60);
-if (fullName.value !== "Cao Tran Quang Duc" || (document.getElementById("typed-name") && document.getElementById("typed-name").value !== "Cao Tran Quang Duc")) throw new Error("delayed employee lookup mixed Staff ID identity");
+if (fullName.value !== "Nguyen Thi B" || (document.getElementById("typed-name") && document.getElementById("typed-name").value !== "Nguyen Thi B")) throw new Error("delayed employee lookup mixed Staff ID identity");
 staffInput.value = "aswvn1325";
 staffInput.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 staffInput.dispatchEvent(new dom.window.Event("blur", { bubbles: true }));
@@ -1395,12 +1395,12 @@ search.value = "VNLAP504";
 document.getElementById("search-btn").click();
 await wait();
 await wait();
-if (fullName.value !== "Cao Tran Quang Duc" || document.getElementById("typed-name").value !== "Cao Tran Quang Duc") throw new Error("return identity did not refresh canonical top and confirmation names");
+if (fullName.value !== "Nguyen Thi B" || document.getElementById("typed-name").value !== "Nguyen Thi B") throw new Error("return identity did not refresh canonical top and confirmation names");
 document.getElementById("submit-button").click();
 await wait();
 const posts = calls.filter((call) => call.url.includes("/api/borrow-requests"));
 const returnPayload = JSON.parse(posts[1].init.body);
-if (returnPayload.confirmation.typedName !== "Cao Tran Quang Duc" || returnPayload.requestType !== "return") throw new Error("return Full Name was not mirrored into confirmation");
+if (returnPayload.confirmation.typedName !== "Nguyen Thi B" || returnPayload.requestType !== "return") throw new Error("return Full Name was not mirrored into confirmation");
 if (calls.some((call) => call.url.includes("/api/employee") && call.init.method === "POST")) throw new Error("employee lookup attempted a write");
 console.log("signer-name-autofill-ok");
 "###;
@@ -1450,6 +1450,7 @@ console.log("signer-name-autofill-ok");
         assert!(html.contains("font-size: 16.5px;"));
         assert!(html.contains("typedInput.readOnly = true;"));
         assert!(html.contains("normalizedFullName()"));
+        assert!(!html.contains("fullName: \""));
         assert!(!html.contains("let typedName ="));
         assert!(!html.contains("typedNameDirty"));
     }

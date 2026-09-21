@@ -1735,6 +1735,20 @@ mod tests {
                     notes: None,
                 },
                 AssetUpsertInput {
+                    asset_code: "VNLAP369".to_string(),
+                    category_id: Some(laptop_category_id),
+                    asset_type: "Laptop".to_string(),
+                    display_name: "Dell Latitude 5560".to_string(),
+                    display_name_short: None,
+                    brand: None,
+                    model: None,
+                    serial_number: None,
+                    usage_location: None,
+                    adapter_number: None,
+                    warehouse: None,
+                    notes: None,
+                },
+                AssetUpsertInput {
                     asset_code: "VNLAP900".to_string(),
                     category_id: Some(monitor_category_id),
                     asset_type: "Monitor".to_string(),
@@ -1767,6 +1781,11 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["VNLAP326"]
         );
+
+        let eligible_vnlap369 = search_in_stock_assets_conn(&conn, Some("VNLAP369"), 12)
+            .expect("search eligible VNLAP369 asset code");
+        assert_eq!(eligible_vnlap369.len(), 1);
+        assert_eq!(eligible_vnlap369[0].asset_code, "VNLAP369");
 
         let derived = search_in_stock_assets_conn(&conn, Some("ASWVNLAP326"), 12)
             .expect("search derived computer name");

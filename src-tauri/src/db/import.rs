@@ -1769,7 +1769,7 @@ mod tests {
         ];
         let ids = ["ASWVN1325", "ASWVN1326", "ASWVN1330", "ASWVN1329", "ASWVN1328"];
         let names = [
-            "Cao Tran Quang Duc",
+            "Nguyen Van Binh",
             "Tran Anh Quan",
             "Nguyen Ngoc Quynh Chi",
             "Vy Huyen Thuong",
