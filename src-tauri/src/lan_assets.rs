@@ -1508,6 +1508,23 @@ console.log("empty-full-name-focus-safe");
     }
 
     #[test]
+    fn runtime_page_has_no_legacy_employee_name_literals() {
+        let html = borrow_page_html();
+        let legacy_names = [
+            ["Cao", "Tran", "Van", "Duc"],
+            ["Cao", "Tran", "Quang", "Duc"],
+        ];
+
+        for parts in legacy_names {
+            let legacy_name = parts.join(" ");
+            assert!(
+                !html.contains(&legacy_name),
+                "runtime page still contains a legacy employee-name literal: {legacy_name}"
+            );
+        }
+    }
+
+    #[test]
     fn signature_box_mirrors_current_full_name_for_borrow_and_return() {
         let html = borrow_page_html();
         let script = r###"

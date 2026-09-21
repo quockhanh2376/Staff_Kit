@@ -2069,3 +2069,17 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Result: Full Name now uses `Your name here ...` as guidance only; the read-only signature-box mirror remains driven by the current Full Name value for Borrow and Return.
 - Result: clear control is uppercase `X`, 44px circular green bordered, positioned 2px from the top/right; its existing handler still clears signature evidence only.
 - Validation: focused LAN assets 17/17; frontend unit 225/225; full Rust/Tauri 300/300; `npm run check:quality` passed; `git diff --check` passed; no live DB writes.
+
+## 2026-09-21 LAN legacy-name source/cache audit — Start
+
+- Objective: trace why legacy employee names can still appear after the approved empty-name/autofill fix, scanning tracked/untracked source, generated frontend/dev artifacts, fixtures, and caches from `0dda589`.
+- Scope: remove only confirmed runtime/default/test/cache injectors; preserve Employee master semantics, user docs/help, and all untracked files outside safe project caches; add regression scans for both legacy variants plus Borrow/Return mirror and signature-X behavior.
+- Safety: dedicated feature branch/worktree; no live DB writes, merge, or push.
+
+## 2026-09-21 LAN legacy-name source/cache audit — End
+
+- Root cause: `E:\Staff_Kit` was launching `main`/older worktrees instead of approved `0dda589`; those stale fixtures still contained the `Cao Tran [Quang] Duc` variant in `src-tauri/src/lan_assets.rs` and `src-tauri/src/db/import.rs`. The approved runtime branch contained neither legacy variant and no Employee/DB lookup injected them.
+- Regression: added `runtime_page_has_no_legacy_employee_name_literals`; the existing empty-Full-Name focus, Borrow/Return mirror, and signature-only X tests remain green.
+- Exact scan: both legacy variants (`Cao Tran [Van|Quang] Duc`) = 0 in the feature worktree after the change. No matching strings were found in `dist` or `node_modules/.vite` before cleanup.
+- Cache cleanup: removed only `E:\Staff_Kit\dist` and `E:\Staff_Kit\node_modules\.vite`; preserved `help` and untracked docs; restored generated Tauri schemas after checks.
+- Validation: focused LAN tests 19/19; frontend unit tests 225/225; `npm run check:quality` passed with existing warnings; no live DB writes, merge, or push.
