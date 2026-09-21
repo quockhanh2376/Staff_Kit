@@ -365,9 +365,9 @@ pub(crate) fn borrow_page_html() -> &'static str {
       #signature-canvas {
         display: block;
         width: 100%;
-        aspect-ratio: 1.75 / 1;
-        min-height: 138px;
-        max-height: 276px;
+        aspect-ratio: 1.45 / 1;
+        min-height: 166px;
+        max-height: 331px;
         border: 1px solid var(--border);
         border-radius: 10px;
         background: white;
@@ -376,23 +376,24 @@ pub(crate) fn borrow_page_html() -> &'static str {
 
       .signature-box {
         position: relative;
+        margin-inline: -14px;
       }
 
       .clear-signature {
         position: absolute;
-        top: 2px;
-        right: 2px;
+        top: 1px;
+        right: 1px;
         z-index: 1;
         display: grid;
-        width: 44px;
-        height: 44px;
+        width: 36px;
+        height: 36px;
         padding: 0;
         place-items: center;
         border: 2px solid #16a34a;
         border-radius: 50%;
         background: rgba(255, 255, 255, 0.88);
-        color: #16a34a;
-        font-size: 16.5px;
+        color: #dc2626;
+        font-size: 15px;
         font-weight: 700;
         line-height: 1;
         cursor: pointer;
@@ -449,7 +450,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
         <input id="staff-id" autocomplete="off" placeholder="ASWVN1325" />
 
         <label for="full-name">Full Name</label>
-        <input id="full-name" autocomplete="name" placeholder="Your name here ..." />
+        <input id="full-name" autocomplete="off" placeholder="Your name here ..." />
 
         <label for="asset-search">Search Asset</label>
         <div class="search-row">
@@ -581,7 +582,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
         const resize = () => {
           const ratio = globalThis.devicePixelRatio || 1;
           const width = Math.max(signatureCanvas.clientWidth || 480, 240);
-          const height = Math.round(width / 1.75);
+          const height = Math.round(width / 1.45);
           signatureCanvas.width = Math.round(width * ratio);
           signatureCanvas.height = Math.round(height * ratio);
           if (context) {
@@ -720,7 +721,7 @@ pub(crate) fn borrow_page_html() -> &'static str {
         const typedInput = document.createElement("input");
         typedInput.id = "typed-name";
         typedInput.className = "signature-name-input";
-        typedInput.autocomplete = "name";
+        typedInput.autocomplete = "off";
         typedInput.value = fullNameInput.value;
         typedInput.readOnly = true;
         typedInput.setAttribute("aria-label", "Full Name confirmation");
@@ -1435,24 +1436,75 @@ console.log("signer-name-autofill-ok");
         let html = borrow_page_html();
 
         assert!(html.contains("Sign here !"));
-        assert!(html.contains("aspect-ratio: 1.75 / 1"));
-        assert!(html.contains("min-height: 138px"));
+        assert!(html.contains("aspect-ratio: 1.45 / 1"));
+        assert!(html.contains("min-height: 166px"));
         assert!(html.contains("className = \"signature-name-input\""));
         assert!(html.contains("placeholder=\"Your name here ...\""));
         assert!(html.contains("textContent = \"X\""));
-        assert!(html.contains("color: #16a34a"));
+        assert!(html.contains("color: #dc2626"));
         assert!(html.contains("border: 2px solid #16a34a"));
         assert!(html.contains("border-radius: 50%;"));
-        assert!(html.contains("top: 2px;"));
-        assert!(html.contains("right: 2px;"));
-        assert!(html.contains("width: 44px;"));
-        assert!(html.contains("height: 44px;"));
-        assert!(html.contains("font-size: 16.5px;"));
+        assert!(html.contains("top: 1px;"));
+        assert!(html.contains("right: 1px;"));
+        assert!(html.contains("width: 36px;"));
+        assert!(html.contains("height: 36px;"));
+        assert!(html.contains("font-size: 15px;"));
+        assert!(html.contains("autocomplete=\"off\""));
+        assert!(html.contains("typedInput.autocomplete = \"off\";"));
+        assert!(html.contains("margin-inline: -14px;"));
+        assert!(html.contains("height = Math.round(width / 1.45);"));
         assert!(html.contains("typedInput.readOnly = true;"));
         assert!(html.contains("normalizedFullName()"));
         assert!(!html.contains("fullName: \""));
         assert!(!html.contains("let typedName ="));
         assert!(!html.contains("typedNameDirty"));
+    }
+
+    #[test]
+    fn focusing_empty_full_name_does_not_inject_employee_name() {
+        let html = borrow_page_html();
+        let script = r###"
+import { JSDOM } from "jsdom";
+import fs from "node:fs";
+
+const page = fs.readFileSync(0, "utf8");
+const dom = new JSDOM(page, {
+  url: "http://192.168.2.1:8787/borrow#t=browser-token",
+  runScripts: "dangerously",
+  beforeParse(window) {
+    window.fetch = async () => ({ ok: true, json: async () => ({ version: 1, textEn: "Care.", textVi: "Giữ gìn." }) });
+  },
+});
+const fullName = dom.window.document.getElementById("full-name");
+fullName.focus();
+fullName.dispatchEvent(new dom.window.Event("focus", { bubbles: true }));
+if (fullName.value !== "" || fullName.getAttribute("placeholder") !== "Your name here ...") {
+  throw new Error("focusing an empty Full Name injected a default employee name");
+}
+console.log("empty-full-name-focus-safe");
+"###;
+
+        let mut child = Command::new("node")
+            .args(["--input-type=module", "-e", script])
+            .current_dir(std::env::current_dir().expect("workspace directory"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("node and jsdom are required for empty Full Name focus coverage");
+        child
+            .stdin
+            .take()
+            .expect("node stdin")
+            .write_all(html.as_bytes())
+            .expect("write page HTML");
+        let output = child.wait_with_output().expect("wait for focus test");
+        assert!(
+            output.status.success(),
+            "empty Full Name focus flow failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("empty-full-name-focus-safe"));
     }
 
     #[test]

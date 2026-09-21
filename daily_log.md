@@ -2046,6 +2046,18 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Read-only DB result: encrypted local database query found no `VNLAP369` asset row. The search path itself remains correct for exact/partial/case-insensitive matching and Borrow/Return status eligibility; no production search workaround was added.
 - Validation: focused LAN assets 17/17, VNLAP369 asset search 1/1, import fixture 1/1, frontend 225/225, full Rust/Tauri 300/300, `npm run check:quality` passed, `git diff --check` passed; no live DB writes.
 
+## 2026-09-21 LAN empty Full Name autofill and signature sizing — Start
+
+- Objective: prevent focus-time browser autofill from injecting a stale employee name, preserve direct Full Name mirroring, and refine the signature box/X without changing Borrow/Return identity rules.
+- Root cause: Full Name and read-only signature inputs still advertised `autocomplete="name"`; the old employee string was absent from the e9a5 runtime but could be supplied by browser autofill state.
+- Scope: set both inputs to `autocomplete="off"`, add empty-focus regression, make the signature canvas ~20% taller and wider toward its container edges, and use a tighter red X in a green circle.
+
+## 2026-09-21 LAN empty Full Name autofill and signature sizing — End
+
+- Result: Full Name and read-only signature mirror no longer advertise browser name autofill; empty focus remains empty and the placeholder stays guidance-only. Borrow/Return mirroring remains direct and independent of any signer source.
+- Result: signature canvas uses a 1.45:1 aspect ratio with 166px minimum height and a -14px inline margin; the clear action is a 36px uppercase red X inside a green circular border at 1px top/right and still clears signature evidence only.
+- Validation: focused LAN UI/focus/mirror/clear tests 4/4; frontend 225/225; full Rust/Tauri 301/301; `npm run check:quality` passed; `git diff --check` passed; no live DB writes.
+
 ## 2026-09-20 LAN Full Name placeholder and signature X refinement — Start
 
 - Objective: use the exact Full Name guidance placeholder and refine the compact signature clear control without changing Full Name mirroring.
