@@ -2087,7 +2087,8 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 ## 2026-10-13 EE List MSSQL preview sync — Start
 
 - Objective: replace immediate Employee List Update writes with a read-only remote preview, Staff Code diff, explicit approval, and local EE List-only apply.
-- Approved Query B direction: fixed SELECT; no TOP row cap; keep all non-resigned Staff; LEFT JOIN optional AzureAD; dedupe by Code. Missing-from-source is report-only; non-EE-List employees remain untouched.
+- User-approved Query B: fixed SELECT; `INNER JOIN AspNetUsers`; `Resigned = 0`; no TOP row cap; dedupe by Code; fields Code, Name, NickName, COALESCE(WorkEmail, WorkEmail2), AzureAD. Staff without AspNetUsers are intentionally excluded. Missing-from-source is report-only; non-EE-List employees remain untouched.
 - Audit findings: current Update calls test connection then `import_mssql_staff`, which queries then immediately upserts SQLite; SQL A uses INNER JOIN AspNetUsers and TOP (1000); update upsert matches employee IDs across every group.
 - Evidence limit: no MSSQL host/user/password configured in Process/User/Machine environment; no source DB connection or count comparison performed. No DB writes.
 - Safety: dedicated feature worktree `feat/employee-mssql-preview-sync`; preserve root untracked files; no merge or push before Qeen approval.
+- Design decision update (2026-10-13): user explicitly selected Query B with INNER JOIN; staff without AspNetUsers are intentionally excluded. The earlier proposal to LEFT JOIN was replaced before implementation. User requested spec correction followed by implementation.
