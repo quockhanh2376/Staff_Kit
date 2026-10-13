@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -397,6 +398,7 @@ fn resolve_connection_config_from(
         {
             return Err("MSSQL environment configuration is incomplete; saved settings are not used as fallback.".into());
         }
+        validate_mssql_server(&server)?;
         return Ok(MssqlConnectionConfig {
             server,
             database,
@@ -417,7 +419,61 @@ fn resolve_connection_config_from(
     {
         return Err("Remote EE Sync settings are incomplete.".into());
     }
+    validate_mssql_server(&config.server)?;
     Ok(config)
+}
+
+fn validate_mssql_server(server: &str) -> Result<(), String> {
+    let invalid = || {
+        "Server must be a valid IPv4 address, IPv6 address, or DNS hostname; URL schemes are not supported.".to_string()
+    };
+
+    if server.is_empty()
+        || server.trim() != server
+        || server.chars().any(char::is_whitespace)
+        || server.contains("://")
+        || server.contains(['/', '\\', '?', '#', '@'])
+    {
+        return Err(invalid());
+    }
+
+    if server.parse::<IpAddr>().is_ok() {
+        return Ok(());
+    }
+
+    // A four-part all-numeric host is intended as IPv4, so don't let a malformed
+    // address silently fall through and be treated as a DNS name.
+    let ipv4_parts: Vec<_> = server.split('.').collect();
+    if ipv4_parts.len() == 4
+        && ipv4_parts
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+    {
+        return Err(invalid());
+    }
+
+    if server.contains(':') || server.starts_with('[') || server.ends_with(']') {
+        return Err(invalid());
+    }
+
+    let hostname = server.strip_suffix('.').unwrap_or(server);
+    if hostname.is_empty() || hostname.len() > 253 || !hostname.is_ascii() {
+        return Err(invalid());
+    }
+    for label in hostname.split('.') {
+        if label.is_empty()
+            || label.len() > 63
+            || label.starts_with('-')
+            || label.ends_with('-')
+            || !label
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        {
+            return Err(invalid());
+        }
+    }
+
+    Ok(())
 }
 
 fn process_mssql_environment() -> HashMap<String, String> {
@@ -486,7 +542,7 @@ fn write_remote_profile_settings(
     settings: &RemoteEeSyncSettings,
 ) -> Result<(), String> {
     for (key, value) in [
-        ("server", settings.server.trim().to_string()),
+        ("server", settings.server.clone()),
         ("database", settings.database.trim().to_string()),
         ("port", settings.port.to_string()),
         (
@@ -520,6 +576,7 @@ fn validate_remote_settings(settings: &RemoteEeSyncSettings) -> Result<(), Strin
     {
         return Err("Server, database, and a valid port are required.".into());
     }
+    validate_mssql_server(&settings.server)?;
     if settings.auth_type == MssqlAuthType::SqlServer && settings.username.trim().is_empty() {
         return Err("Username is required for SQL Server authentication.".into());
     }
@@ -973,6 +1030,10 @@ fn sanitize_connection_reason(error: &str) -> String {
         || normalized.contains("credential manager")
     {
         "Windows secure credential storage is unavailable; no SQL connection was attempted.".into()
+    } else if normalized
+        .starts_with("server must be a valid ipv4 address, ipv6 address, or dns hostname")
+    {
+        "Server must be a valid IPv4 address, IPv6 address, or DNS hostname; URL schemes are not supported.".into()
     } else if normalized.contains("tls certificate hostname mismatch") {
         "TLS certificate hostname mismatch. Configure the SQL Server using the DNS hostname in the certificate SAN; use an IP only when the certificate includes that IP.".into()
     } else if normalized.contains("tls certificate chain is not trusted") {
@@ -1283,6 +1344,113 @@ fn upsert_sync_azure_ad(
 mod tests {
     use super::*;
     use rusqlite::Connection;
+
+    #[test]
+    fn sql_server_endpoint_accepts_ip_literals_and_dns_names_verbatim() {
+        for server in ["10.184.0.19", "2001:db8::1", "ASWPLUSV2.aswigsvd.int"] {
+            assert_eq!(validate_mssql_server(server), Ok(()), "{server}");
+            let resolved = resolve_connection_config_from(
+                &HashMap::new(),
+                Some(MssqlConnectionConfig {
+                    server: server.into(),
+                    database: "AssetManagement".into(),
+                    port: 1433,
+                    auth_type: MssqlAuthType::WindowsIntegrated,
+                    username: String::new(),
+                    password: None,
+                    environment_override: false,
+                }),
+            )
+            .expect("valid host should reach connection configuration");
+            assert_eq!(resolved.server, server);
+        }
+    }
+
+    #[test]
+    fn sql_server_endpoint_rejects_urls_and_malformed_addresses() {
+        for server in [
+            "https://10.184.0.19",
+            "tcp://ASWPLUSV2.aswigsvd.int",
+            "10.184.0.999",
+            "10.184..19",
+            "bad host.int",
+            "bad-.host.int",
+            "2001:db8:::1",
+            "[2001:db8::1]",
+        ] {
+            assert!(validate_mssql_server(server).is_err(), "{server}");
+            assert!(
+                validate_remote_settings(&RemoteEeSyncSettings {
+                    server: server.into(),
+                    database: "AssetManagement".into(),
+                    port: 1433,
+                    auth_type: MssqlAuthType::WindowsIntegrated,
+                    username: String::new(),
+                    has_saved_password: false,
+                    environment_override: false,
+                })
+                .is_err(),
+                "save should reject {server}"
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_server_test_connection_reason_is_actionable_and_safe() {
+        let reason = sanitize_connection_reason(
+            "Server must be a valid IPv4 address, IPv6 address, or DNS hostname; URL schemes are not supported.",
+        );
+
+        assert!(reason.contains("valid IPv4 address"));
+        assert!(reason.contains("URL schemes are not supported"));
+    }
+
+    #[test]
+    fn saved_server_value_is_preserved_for_connection_and_profile_storage() {
+        let server = "ASWPLUSV2.aswigsvd.int";
+        let config = MssqlConnectionConfig {
+            server: server.into(),
+            database: "AssetManagement".into(),
+            port: 1433,
+            auth_type: MssqlAuthType::WindowsIntegrated,
+            username: String::new(),
+            password: None,
+            environment_override: false,
+        };
+        let resolved = resolve_connection_config_from(&HashMap::new(), Some(config))
+            .expect("resolve saved endpoint");
+        assert_eq!(resolved.server, server);
+
+        let conn = Connection::open_in_memory().expect("in-memory settings DB");
+        conn.execute_batch("CREATE TABLE app_settings(setting_key TEXT PRIMARY KEY, setting_value TEXT, updated_at TEXT);")
+            .expect("create settings table");
+        write_remote_profile_settings(
+            &conn,
+            &RemoteEeSyncSettings {
+                server: server.into(),
+                database: "AssetManagement".into(),
+                port: 1433,
+                auth_type: MssqlAuthType::WindowsIntegrated,
+                username: String::new(),
+                has_saved_password: false,
+                environment_override: false,
+            },
+        )
+        .expect("persist endpoint");
+        let stored: String = conn
+            .query_row(
+                "SELECT setting_value FROM app_settings WHERE setting_key = ?1",
+                [format!("{REMOTE_EE_SYNC_SETTING_PREFIX}server")],
+                |row| row.get(0),
+            )
+            .expect("read persisted endpoint");
+        assert_eq!(stored, server);
+
+        let mut tiberius_config = Config::new();
+        tiberius_config.host(&resolved.server);
+        tiberius_config.port(resolved.port);
+        assert_eq!(tiberius_config.get_addr(), "ASWPLUSV2.aswigsvd.int:1433");
+    }
 
     #[test]
     fn remote_ee_sync_settings_dto_never_contains_password_material() {

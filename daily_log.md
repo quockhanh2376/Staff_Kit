@@ -2148,3 +2148,18 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Verification: focused TLS tests 4/4; all MSSQL Rust tests 15/15; full Rust/Tauri tests 315/315; `npm run check:quality` passed with pre-existing warnings; `git diff --check` passed after log formatting.
 - DB safety: no remote or live local DB connection/writes; no credentials accessed. Direct Test Connection and Query B comparison pending a securely configured profile; no merge or push.
 
+
+## 2026-10-13 Remote EE Sync server input — Start
+
+- Objective: accept valid IPv4, IPv6, or DNS hostnames exactly as entered; reject malformed endpoints/URL schemes; preserve the host for persistence and SQL TLS verification.
+- TLS status: previous network evidence shows ASWPLUSV2.aswigsyd.int resolves to 10.184.0.19 and the requested ASWPLUSV2.aswigsvd.int does not resolve here. Actual certificate SAN, chain, and expiry remain unavailable; no source DB connection will be attempted without a profile/test result.
+- Safety: feature branch only; no live DB writes, merge, or push.
+
+## 2026-10-13 Remote EE Sync server input — End
+
+- Root cause: server validation accepted any non-empty string and profile persistence trimmed it, allowing unsupported URL strings and altering the entered host. Connection code already uses the persisted host for TCP and Tiberius TLS verification.
+- Fix: validate IPv4, IPv6, and DNS hostname syntax without canonicalizing; reject URL/malformed values; persist accepted Server verbatim; surface safe validation detail. TLS validation remains enabled and unchanged.
+- Evidence: ASWPLUSV2.aswigsyd.int resolves to 10.184.0.19 and its TCP/1433 responds; ASWPLUSV2.aswigsvd.int does not resolve on this client. Actual SAN/issuer/expiry and exact saved-profile TLS error remain unverified; no live connection.
+- Verification: focused MSSQL tests 19/19; full Rust/Tauri tests 319/319; `npm run check:quality` passed; target file rustfmt check passed. Repo-wide cargo fmt check reports unrelated pre-existing formatting diffs.
+- Safety: tests use in-memory DB fixtures only. No live DB writes, merge, or push.
+
