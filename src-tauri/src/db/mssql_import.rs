@@ -1308,6 +1308,8 @@ fn sanitize_connection_reason(error: &str) -> String {
     let normalized = error.to_ascii_lowercase();
     if normalized.starts_with("read-only permission diagnostic:") {
         error.to_string()
+    } else if normalized.starts_with("mssql source login has write-level permissions") {
+        "Read-only verification found effective write-level permissions for this SQL login; syncing is blocked.".into()
     } else if normalized.contains("only the approved staff kit sql login is allowed") {
         "Remote EE Sync is restricted to the approved Staff Kit SQL login.".into()
     } else if normalized.contains("read-only")
@@ -2233,6 +2235,15 @@ mod tests {
     fn read_only_sql_server_diagnostic_is_preserved_for_test_connection() {
         let diagnostic = "Read-only permission diagnostic: SQL Server error 916: SELECT permission denied on database metadata.";
         assert_eq!(sanitize_connection_reason(diagnostic), diagnostic);
+    }
+
+    #[test]
+    fn verified_write_access_is_distinguished_from_unverifiable_permissions() {
+        let write_access = "MSSQL source login has write-level permissions. Configure a read-only login before syncing.";
+        assert_eq!(
+            sanitize_connection_reason(write_access),
+            "Read-only verification found effective write-level permissions for this SQL login; syncing is blocked."
+        );
     }
 
     #[test]

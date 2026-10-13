@@ -2235,3 +2235,14 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Confirmed the current generic Test Connection response originates from `ensure_mssql_login_is_read_only` discarding Tiberius errors for both query execution and result streaming; the UI sanitizer then collapses the remaining permission diagnostic to a generic message. This confirms where the failure occurs, but not its exact SQL permission/scope.
 - Added bounded, control-character-stripped SQL Server error number/message display for server errors, and explicit fail-closed diagnostics for driver/no-result cases. Permission result logic, SQL query, Query B, and connection checks are unchanged.
 - Focused diagnostics tests 2/2 and full Tauri tests 329/329 passed; `npm run check:quality` passed (existing warnings). Target file rustfmt and `git diff --check` passed. No credential was read; no SQL query/live DB writes, merge, or push. Exact runtime scope awaits rerunning Test Connection with this build.
+
+## 2026-10-14 Remote EE Sync distinguish gate outcomes — Start
+
+- Investigate the user's screenshot showing the same generic failure after diagnostic work. Determine whether the UI is still on an older build or the permission query positively reported write access; make those outcomes distinguishable without weakening the gate.
+- TDD a regression for preserving the explicit positive write-permission result. No connection, credential access, Apply, or DB writes; feature branch only.
+
+## 2026-10-14 Remote EE Sync distinguish gate outcomes — End
+
+- Screenshot's generic wording could be produced by an older binary or by the current positive `HasWriteAccess = true` path, because sanitizer merged that verified finding with permission-check failures. This change preserves a distinct blocked message when effective write-level permissions are positively detected; diagnostics remain fail-closed.
+- Regression failed before the sanitizer update and passed after it. Full Tauri tests passed 330/330; `npm run check:quality` completed successfully with existing warnings; targeted Rust format and diff checks passed.
+- No SQL/live DB connection, credential access, Query B, Preview, Apply, merge, or push. Exact user_reader grant/scope remains unverified until the updated Test Connection reports its distinct result.
