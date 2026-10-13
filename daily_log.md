@@ -2102,3 +2102,8 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 
 - Review finding: the first follow-up gate still omitted login/user IMPERSONATE securables and allowed REFERENCES despite the strict read-only claim. Added effective permission enumeration for server logins and database users/roles; removed REFERENCES from every read-only allowlist.
 - Verification update: read-only permission gate regression 1/1; full Rust/Tauri 308/308; `npm run check:quality` passed with existing lint/build/Rust warnings; no live DB touched. Awaiting Qeen revalidation and configured source credentials for direct Query B comparison.
+
+## 2026-10-13 MSSQL source permission gate review — End
+
+- Result: Qeen's static review of the latest implementation found no remaining escalation issue; the gate rejects permissions beyond explicit read-only allowlists, including impersonation of database and server principals. Query B and the preview/approval lifecycle remain intact.
+- Validation: focused permission-gate test 1/1; full Rust/Tauri 308/308; `npm run check:quality` passed; `git diff --check` passed. Environment checks found no source credentials in Process/User/Machine; no connection or DB writes occurred. Direct Query B counts/mapping and runtime SQL-version behavior remain pending the user's configured read-only login and Qeen's direct audit.
