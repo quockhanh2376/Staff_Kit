@@ -63,7 +63,7 @@ The query applies the mapping `Code -> employee_id`, `Name -> full_name`, `NickN
 
 ## Safety boundaries
 
-- No remote insert/update/delete or arbitrary query is exposed by the EE List Update sync commands. Before any MSSQL query, the app checks that the configured login is not in write-capable server/database roles and has no effective database-level DML/DDL or source-table DML permissions; unknown permission results fail closed. The sync itself sends only Query B, a SELECT statement. Direct verification against the configured live SQL Server still requires a configured read-only login.
+- No remote insert/update/delete or arbitrary query is exposed by the EE List Update sync commands. Before any MSSQL query, the app checks fixed write-capable roles, effective server/database permissions against explicit read-only allowlists, and effective permissions on schemas, tables, views, procedures, and functions. Only read/metadata permissions are allowlisted; DML, DDL, execution, ownership, escalation, unknown permissions, SQL errors, NULL permission checks, or missing CONNECT evidence fail closed. The sync itself sends only Query B, a SELECT statement. Direct verification against the configured live SQL Server still requires a configured read-only login.
 - No local transaction is opened by the preview path; local DB writes happen only in the explicit approval command.
 - Local apply is restricted to `employee_list` and mapped source fields. No Employee master fields outside the approved mapping, loan/asset, auth, or other staff-group behavior is changed.
 - No live source DB writes, no live local DB writes during development, and no merge to main before Qeen approves the exact feature commit.

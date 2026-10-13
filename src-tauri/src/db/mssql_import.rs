@@ -161,6 +161,11 @@ SELECT CAST(CASE WHEN
     COALESCE(IS_SRVROLEMEMBER('sysadmin'), 1) = 1 OR
     COALESCE(IS_SRVROLEMEMBER('securityadmin'), 1) = 1 OR
     COALESCE(IS_SRVROLEMEMBER('serveradmin'), 1) = 1 OR
+    COALESCE(IS_SRVROLEMEMBER('bulkadmin'), 1) = 1 OR
+    COALESCE(HAS_PERMS_BY_NAME(NULL, 'SERVER', 'CONTROL SERVER'), 1) = 1 OR
+    COALESCE(HAS_PERMS_BY_NAME(NULL, 'SERVER', 'ALTER ANY DATABASE'), 1) = 1 OR
+    COALESCE(HAS_PERMS_BY_NAME(NULL, 'SERVER', 'ALTER ANY LOGIN'), 1) = 1 OR
+    COALESCE(HAS_PERMS_BY_NAME(NULL, 'SERVER', 'ALTER ANY SERVER ROLE'), 1) = 1 OR
     COALESCE(IS_MEMBER('db_owner'), 1) = 1 OR
     COALESCE(IS_MEMBER('db_datawriter'), 1) = 1 OR
     COALESCE(IS_MEMBER('db_ddladmin'), 1) = 1 OR
@@ -169,21 +174,101 @@ SELECT CAST(CASE WHEN
     COALESCE(HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'INSERT'), 1) = 1 OR
     COALESCE(HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'UPDATE'), 1) = 1 OR
     COALESCE(HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'DELETE'), 1) = 1 OR
+    COALESCE(HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'EXECUTE'), 1) = 1 OR
     COALESCE(HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'ALTER'), 1) = 1 OR
     COALESCE(HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'CONTROL'), 1) = 1 OR
     COALESCE(HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'CREATE TABLE'), 1) = 1 OR
+    COALESCE(HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'CREATE PROCEDURE'), 1) = 1 OR
+    COALESCE(HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'CREATE VIEW'), 1) = 1 OR
+    COALESCE(HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'ALTER ANY ROLE'), 1) = 1 OR
     COALESCE(HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'ALTER ANY SCHEMA'), 1) = 1 OR
     COALESCE(HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'ALTER ANY USER'), 1) = 1 OR
+    COALESCE(HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'TAKE OWNERSHIP'), 1) = 1 OR
+    COALESCE(HAS_PERMS_BY_NAME('dbo', 'SCHEMA', 'INSERT'), 1) = 1 OR
+    COALESCE(HAS_PERMS_BY_NAME('dbo', 'SCHEMA', 'UPDATE'), 1) = 1 OR
+    COALESCE(HAS_PERMS_BY_NAME('dbo', 'SCHEMA', 'DELETE'), 1) = 1 OR
+    COALESCE(HAS_PERMS_BY_NAME('dbo', 'SCHEMA', 'EXECUTE'), 1) = 1 OR
+    COALESCE(HAS_PERMS_BY_NAME('dbo', 'SCHEMA', 'ALTER'), 1) = 1 OR
+    COALESCE(HAS_PERMS_BY_NAME('dbo', 'SCHEMA', 'CONTROL'), 1) = 1 OR
+    COALESCE(HAS_PERMS_BY_NAME('dbo', 'SCHEMA', 'TAKE OWNERSHIP'), 1) = 1 OR
     COALESCE(HAS_PERMS_BY_NAME('dbo.Staffs', 'OBJECT', 'INSERT'), 1) = 1 OR
     COALESCE(HAS_PERMS_BY_NAME('dbo.Staffs', 'OBJECT', 'UPDATE'), 1) = 1 OR
     COALESCE(HAS_PERMS_BY_NAME('dbo.Staffs', 'OBJECT', 'DELETE'), 1) = 1 OR
     COALESCE(HAS_PERMS_BY_NAME('dbo.Staffs', 'OBJECT', 'ALTER'), 1) = 1 OR
     COALESCE(HAS_PERMS_BY_NAME('dbo.Staffs', 'OBJECT', 'CONTROL'), 1) = 1 OR
+    COALESCE(HAS_PERMS_BY_NAME('dbo.Staffs', 'OBJECT', 'TAKE OWNERSHIP'), 1) = 1 OR
     COALESCE(HAS_PERMS_BY_NAME('dbo.AspNetUsers', 'OBJECT', 'INSERT'), 1) = 1 OR
     COALESCE(HAS_PERMS_BY_NAME('dbo.AspNetUsers', 'OBJECT', 'UPDATE'), 1) = 1 OR
     COALESCE(HAS_PERMS_BY_NAME('dbo.AspNetUsers', 'OBJECT', 'DELETE'), 1) = 1
     OR COALESCE(HAS_PERMS_BY_NAME('dbo.AspNetUsers', 'OBJECT', 'ALTER'), 1) = 1
     OR COALESCE(HAS_PERMS_BY_NAME('dbo.AspNetUsers', 'OBJECT', 'CONTROL'), 1) = 1
+    OR COALESCE(HAS_PERMS_BY_NAME('dbo.AspNetUsers', 'OBJECT', 'TAKE OWNERSHIP'), 1) = 1
+    OR EXISTS (
+        SELECT 1
+        FROM sys.procedures AS P
+        WHERE COALESCE(
+            HAS_PERMS_BY_NAME(
+                QUOTENAME(OBJECT_SCHEMA_NAME(P.object_id)) + '.' + QUOTENAME(P.name),
+                'OBJECT',
+                'EXECUTE'
+            ),
+            1
+        ) = 1
+    )
+    OR EXISTS (
+        SELECT 1
+        FROM sys.fn_my_permissions(NULL, 'SERVER') AS EffectivePermission
+        WHERE EffectivePermission.permission_name NOT IN (
+            'CONNECT SQL',
+            'VIEW ANY DATABASE',
+            'VIEW ANY DEFINITION',
+            'VIEW SERVER STATE',
+            'VIEW SERVER PERFORMANCE STATE',
+            'VIEW SERVER SECURITY STATE',
+            'VIEW ANY ERROR LOG'
+        )
+    )
+    OR NOT EXISTS (
+        SELECT 1
+        FROM sys.fn_my_permissions(NULL, 'SERVER') AS EffectivePermission
+        WHERE EffectivePermission.permission_name = 'CONNECT SQL'
+    )
+    OR EXISTS (
+        SELECT 1
+        FROM sys.fn_my_permissions(DB_NAME(), 'DATABASE') AS EffectivePermission
+        WHERE EffectivePermission.permission_name NOT IN (
+            'CONNECT',
+            'SELECT',
+            'VIEW DEFINITION',
+            'VIEW DATABASE STATE',
+            'VIEW DATABASE PERFORMANCE STATE',
+            'VIEW DATABASE SECURITY STATE',
+            'SHOWPLAN',
+            'REFERENCES'
+        )
+    )
+    OR NOT EXISTS (
+        SELECT 1
+        FROM sys.fn_my_permissions(DB_NAME(), 'DATABASE') AS EffectivePermission
+        WHERE EffectivePermission.permission_name = 'CONNECT'
+    )
+    OR EXISTS (
+        SELECT 1
+        FROM sys.schemas AS S
+        CROSS APPLY sys.fn_my_permissions(S.name, 'SCHEMA') AS EffectivePermission
+        WHERE EffectivePermission.permission_name NOT IN ('SELECT', 'VIEW DEFINITION', 'REFERENCES')
+    )
+    OR EXISTS (
+        SELECT 1
+        FROM sys.objects AS O
+        INNER JOIN sys.schemas AS S ON S.schema_id = O.schema_id
+        CROSS APPLY sys.fn_my_permissions(
+            QUOTENAME(S.name) + '.' + QUOTENAME(O.name),
+            'OBJECT'
+        ) AS EffectivePermission
+        WHERE O.type IN ('U', 'V', 'P', 'PC', 'FN', 'IF', 'TF', 'FS', 'FT')
+          AND EffectivePermission.permission_name NOT IN ('SELECT', 'VIEW DEFINITION', 'REFERENCES')
+    )
     THEN 1 ELSE 0 END AS bit) AS HasWriteAccess
 "#;
 
@@ -1289,6 +1374,21 @@ mod tests {
         assert!(check.contains("is_member('db_datawriter')"));
         assert!(check.contains("has_perms_by_name('dbo.staffs', 'object', 'update')"));
         assert!(check.contains("has_perms_by_name('dbo.aspnetusers', 'object', 'insert')"));
+        assert!(check.contains("has_perms_by_name(null, 'server', 'control server')"));
+        assert!(check.contains("has_perms_by_name(null, 'server', 'alter any server role')"));
+        assert!(check.contains("has_perms_by_name(null, 'server', 'alter any login')"));
+        assert!(check.contains("has_perms_by_name(db_name(), 'database', 'alter any role')"));
+        assert!(check.contains("has_perms_by_name('dbo', 'schema', 'alter')"));
+        assert!(check.contains("has_perms_by_name('dbo.staffs', 'object', 'take ownership')"));
+        assert!(check.contains("has_perms_by_name(db_name(), 'database', 'execute')"));
+        assert!(check.contains("has_perms_by_name('dbo', 'schema', 'execute')"));
+        assert!(check.contains("from sys.procedures as p"));
+        assert!(check.contains("from sys.fn_my_permissions(null, 'server')"));
+        assert!(check.contains("permission_name = 'connect sql'"));
+        assert!(check.contains("permission_name = 'connect'"));
+        assert!(check.contains("cross apply sys.fn_my_permissions(s.name, 'schema')"));
+        assert!(check.contains("where o.type in ('u', 'v', 'p', 'pc', 'fn', 'if', 'tf', 'fs', 'ft')"));
+        assert!(check.contains("permission_name not in ('select', 'view definition', 'references')"));
         assert!(check.contains("coalesce(") && check.contains("then 1 else 0 end as bit"));
     }
 

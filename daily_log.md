@@ -2094,3 +2094,8 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Design decision update (2026-10-13): user explicitly selected Query B with INNER JOIN; staff without AspNetUsers are intentionally excluded. The earlier proposal to LEFT JOIN was replaced before implementation. User requested spec correction followed by implementation.
 - Implementation update: added fixed Query B preview/apply commands, fail-closed source-login permission preflight, read-only encrypted SQLite preview, Staff Code classification, stale-snapshot checks, and explicit approval UI. Preview rows are process-memory only; no source or local business DB was touched.
 - Verification so far: focused frontend 9/9, full frontend 228/228, focused Rust MSSQL 9/9, read-only SQLite guard 1/1, full Rust/Tauri 308/308, `npm run check:quality` passed. Direct source counts remain unverified because no MSSQL environment keys are configured.
+
+## 2026-10-13 MSSQL source permission gate review — Start
+
+- Objective: close Qeen's finding that the fail-closed MSSQL permission preflight omitted escalation permissions, then request revalidation of the exact new commit.
+- Safety: feature branch only; do not connect to or write the live source DB; direct Query B counts remain pending configured read-only credentials.
