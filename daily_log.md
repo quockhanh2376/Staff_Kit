@@ -2211,3 +2211,15 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Persisted the approved login in SQLCipher app settings (initial `user_reader`); super_admin-only confirmation and backend account checks cover saved and environment profiles before password retrieval/network. Legacy exact prohibited profile is migrated, Staff Kit password target cleared, and pending previews invalidated on account change.
 - Updated the sync spec and added Rust/frontend regressions. Focused Rust 27/27, full Tauri 327/327, frontend 232/232, `npm run check:quality`, and `git diff --check` passed; only existing warnings remain.
 - Deleted only the exact Staff Kit Credential Manager target without reading its secret. No HRMS-owned credential touched; no SQL/live Staff Kit DB accessed or written; no merge/push.
+
+## 2026-10-13 Remote EE Sync read-only gate diagnosis — Start
+
+- Trace the exact effective-permission check rejecting `user_reader` and distinguish actual write grants from false-positive scope checks.
+- Use only SELECT diagnostics against the approved source when an authorized read-only connection is available; never Apply or write to production or local business data.
+- Keep the gate fail-closed; add a focused regression and commit on the existing feature branch only if the exact false rejection is demonstrated.
+
+## 2026-10-13 Remote EE Sync read-only gate diagnosis — End
+
+- Found a concrete false-positive predicate: `HAS_PERMS_BY_NAME(P.name, 'SERVER ROLE', 'ANY')` classified every permission on a server role—including read-only `VIEW DEFINITION`—as write access. Replaced it with explicit `ALTER`, `CONTROL`, and `TAKE OWNERSHIP` checks; all unknown/NULL cases remain fail-closed.
+- TDD regression failed against the old `ANY` predicate, then passed after the change. Full Tauri suite 327/327 and `npm run check:quality` passed (existing warnings only); `git diff --check` passed.
+- Live per-login evidence could not be collected: all `STAFFKIT_MSSQL_*` environment variables are unset and the app-owned password target is absent. No SQL/DB connection or writes; exact `user_reader` predicate match remains to confirm with Test Connection/SELECT output.

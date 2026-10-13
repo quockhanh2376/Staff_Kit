@@ -263,10 +263,11 @@ SELECT CAST(CASE WHEN
         SELECT 1
         FROM sys.server_principals AS P
         WHERE P.type = 'R'
-          AND COALESCE(
-              HAS_PERMS_BY_NAME(P.name, 'SERVER ROLE', 'ANY'),
-              1
-          ) = 1
+          AND (
+              COALESCE(HAS_PERMS_BY_NAME(P.name, 'SERVER ROLE', 'ALTER'), 1) = 1 OR
+              COALESCE(HAS_PERMS_BY_NAME(P.name, 'SERVER ROLE', 'CONTROL'), 1) = 1 OR
+              COALESCE(HAS_PERMS_BY_NAME(P.name, 'SERVER ROLE', 'TAKE OWNERSHIP'), 1) = 1
+          )
     )
     THEN 1 ELSE 0 END AS bit) AS HasWriteAccess
 "#;
@@ -2189,7 +2190,10 @@ mod tests {
         assert!(check.contains("when 'r' then 'role'"));
         assert!(check.contains("from sys.server_principals as p"));
         assert!(check.contains("sys.fn_my_permissions(p.name, 'login')"));
-        assert!(check.contains("has_perms_by_name(p.name, 'server role', 'any')"));
+        assert!(check.contains("has_perms_by_name(p.name, 'server role', 'alter')"));
+        assert!(check.contains("has_perms_by_name(p.name, 'server role', 'control')"));
+        assert!(check.contains("has_perms_by_name(p.name, 'server role', 'take ownership')"));
+        assert!(!check.contains("has_perms_by_name(p.name, 'server role', 'any')"));
         assert!(check.contains("where p.type = 'r'"));
         assert!(
             check.contains("where o.type in ('u', 'v', 'p', 'pc', 'fn', 'if', 'tf', 'fs', 'ft')")
