@@ -2198,3 +2198,16 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Updated the exact Rust allowlist and current sync spec to `user_reader`; the gate still applies to saved profiles, environment overrides, and the final connect boundary. Added coverage that rejects the old `user_reader-`, case/whitespace variants, unknown names, and `aswhite-plus-webserver` before network/authentication.
 - TDD: focused allowlist test failed before the implementation change, then focused MSSQL tests passed 22/22. Full Tauri tests passed 322/322; `npm run check:quality` passed with existing warnings; target Rust formatting and diff checks passed.
 - TLS, Query B, and fail-closed permission checks unchanged. No passwords/HRMS credentials inspected or modified; no live DB connection/writes; no merge or push.
+
+## 2026-10-13 Remote EE Sync credential and approval cleanup — Start
+
+- Objective: remove prohibited legacy account use from Staff Kit runtime settings, make the approved SQL login a persisted admin-controlled value defaulting to `user_reader`, and require explicit super_admin authorization for changes.
+- Gate saved profiles and `STAFFKIT_MSSQL_*` overrides against the persisted approved account before SQL network/authentication; retain TLS, fixed Query B, and fail-closed read-only permission checks.
+- Legacy cleanup may clear only an exact prohibited username in Staff Kit EE Sync settings and delete only the Staff Kit Credential Manager target `staffkit.remote-ee-sync.sql-password.v1`; never inspect or touch HRMS-owned credentials.
+- Safety: feature worktree only; tests use in-memory state; no live SQL/Staff Kit DB access or writes, merge, or push.
+
+## 2026-10-13 Remote EE Sync credential and approval cleanup — End
+
+- Persisted the approved login in SQLCipher app settings (initial `user_reader`); super_admin-only confirmation and backend account checks cover saved and environment profiles before password retrieval/network. Legacy exact prohibited profile is migrated, Staff Kit password target cleared, and pending previews invalidated on account change.
+- Updated the sync spec and added Rust/frontend regressions. Focused Rust 27/27, full Tauri 327/327, frontend 232/232, `npm run check:quality`, and `git diff --check` passed; only existing warnings remain.
+- Deleted only the exact Staff Kit Credential Manager target without reading its secret. No HRMS-owned credential touched; no SQL/live Staff Kit DB accessed or written; no merge/push.

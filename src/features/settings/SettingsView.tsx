@@ -892,7 +892,7 @@ export function SettingsView({
 
             {auth.canImportData && (
                 <div className="mt-4 max-w-4xl">
-                    <RemoteEeSyncSettings />
+                    <RemoteEeSyncSettings isSuperAdmin={auth.isSuperAdminAccount} />
                 </div>
             )}
 

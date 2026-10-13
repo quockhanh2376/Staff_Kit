@@ -626,6 +626,9 @@ export const staffApi = {
   saveRemoteEeSyncSettings: (settings: Omit<RemoteEeSyncSettings, "hasSavedPassword" | "environmentOverride">, password: string) =>
     call<void>("save_remote_ee_sync_settings", { ...settings, password: password || null }),
 
+  changeRemoteEeSyncApprovedAccount: (username: string, confirmation: string) =>
+    call<void>("change_remote_ee_sync_approved_account", { username, confirmation }),
+
   removeRemoteEeSyncPassword: () => call<void>("remove_remote_ee_sync_password"),
 
   testRemoteEeSyncConnection: () => call<MssqlConnectionTestResult>("test_remote_ee_sync_connection"),

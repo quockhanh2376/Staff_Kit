@@ -790,6 +790,7 @@ export type RemoteEeSyncSettings = {
   port: number
   authType: MssqlAuthType
   username: string
+  approvedUsername: string
   hasSavedPassword: boolean
   environmentOverride: boolean
 }

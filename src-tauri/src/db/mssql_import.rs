@@ -17,7 +17,11 @@ use super::{humanize_sqlite_error, open_runtime_connection};
 
 const MSSQL_PORT_ENV: &str = "STAFFKIT_MSSQL_PORT";
 const MSSQL_PASSWORD_ENV: &str = "STAFFKIT_MSSQL_PASSWORD";
-const APPROVED_MSSQL_USERNAME: &str = "user_reader";
+const INITIAL_APPROVED_MSSQL_USERNAME: &str = "user_reader";
+const APPROVED_MSSQL_USERNAME_SETTING: &str = "remote_ee_sync_approved_username";
+const APPROVED_MSSQL_AUTHORIZED_BY_SETTING: &str = "remote_ee_sync_approved_username_authorized_by";
+const APPROVED_MSSQL_AUTHORIZED_AT_SETTING: &str = "remote_ee_sync_approved_username_authorized_at";
+const LEGACY_PROHIBITED_MSSQL_USERNAME: &str = "aswhite-plus-webserver";
 const MSSQL_ACCOUNT_ALLOWLIST_ERROR: &str = "Only the approved Staff Kit SQL login is allowed.";
 const MSSQL_SERVER_ENV: &str = "STAFFKIT_MSSQL_SERVER";
 const MSSQL_DATABASE_ENV: &str = "STAFFKIT_MSSQL_DATABASE";
@@ -302,6 +306,7 @@ pub struct RemoteEeSyncSettings {
     pub port: u16,
     pub auth_type: MssqlAuthType,
     pub username: String,
+    pub approved_username: String,
     pub has_saved_password: bool,
     pub environment_override: bool,
 }
@@ -313,6 +318,7 @@ struct MssqlConnectionConfig {
     port: u16,
     auth_type: MssqlAuthType,
     username: String,
+    approved_username: String,
     password: Option<String>,
     environment_override: bool,
 }
@@ -351,6 +357,7 @@ impl MssqlConnectionConfig {
             port: self.port,
             auth_type: self.auth_type,
             username: self.username.clone(),
+            approved_username: self.approved_username.clone(),
             has_saved_password,
             environment_override: self.environment_override,
         }
@@ -361,6 +368,15 @@ fn resolve_connection_config_from(
     env: &HashMap<String, String>,
     saved: Option<MssqlConnectionConfig>,
 ) -> Result<MssqlConnectionConfig, String> {
+    resolve_connection_config_with_approved(env, saved, INITIAL_APPROVED_MSSQL_USERNAME)
+}
+
+fn resolve_connection_config_with_approved(
+    env: &HashMap<String, String>,
+    saved: Option<MssqlConnectionConfig>,
+    approved_username: &str,
+) -> Result<MssqlConnectionConfig, String> {
+    validate_approved_mssql_username(approved_username)?;
     let names = [
         MSSQL_SERVER_ENV,
         MSSQL_DATABASE_ENV,
@@ -384,7 +400,7 @@ fn resolve_connection_config_from(
             "windows_integrated" => MssqlAuthType::WindowsIntegrated,
             _ => return Err("MSSQL environment configuration is incomplete or invalid.".into()),
         };
-        validate_mssql_account(auth_type, &username)?;
+        validate_mssql_account(auth_type, &username, approved_username)?;
         let port = match env.get(MSSQL_PORT_ENV) {
             Some(value) => value
                 .parse::<u16>()
@@ -408,12 +424,15 @@ fn resolve_connection_config_from(
             port,
             auth_type,
             username,
+            approved_username: approved_username.to_string(),
             password,
             environment_override: true,
         });
     }
     let config = saved.ok_or_else(|| "Remote EE Sync settings are not configured.".to_string())?;
-    validate_mssql_account(config.auth_type, &config.username)?;
+    validate_mssql_account(config.auth_type, &config.username, approved_username)?;
+    let mut config = config;
+    config.approved_username = approved_username.to_string();
     if config.server.trim().is_empty()
         || config.database.trim().is_empty()
         || config.port == 0
@@ -425,6 +444,118 @@ fn resolve_connection_config_from(
     }
     validate_mssql_server(&config.server)?;
     Ok(config)
+}
+
+fn resolve_environment_connection_config(
+    mut env: HashMap<String, String>,
+    approved_username: &str,
+    read_password: impl FnOnce() -> Option<String>,
+) -> Result<MssqlConnectionConfig, String> {
+    let auth_type = match env
+        .get(MSSQL_AUTH_TYPE_ENV)
+        .map(String::as_str)
+        .ok_or_else(|| {
+            "MSSQL environment configuration is incomplete; authentication type is required."
+                .to_string()
+        })? {
+        "sql_server" => MssqlAuthType::SqlServer,
+        "windows_integrated" => MssqlAuthType::WindowsIntegrated,
+        _ => return Err("MSSQL environment configuration is incomplete or invalid.".into()),
+    };
+    let username = env
+        .get(MSSQL_USERNAME_ENV)
+        .map(String::as_str)
+        .unwrap_or_default();
+    validate_mssql_account(auth_type, username, approved_username)?;
+
+    // Read the secret only after the account has passed the approved-login gate.
+    if let Some(password) = read_password() {
+        env.insert(MSSQL_PASSWORD_ENV.to_string(), password);
+    }
+    resolve_connection_config_with_approved(&env, None, approved_username)
+}
+
+fn read_approved_mssql_username(conn: &rusqlite::Connection) -> Result<String, String> {
+    let username = match super::get_setting_value(conn, APPROVED_MSSQL_USERNAME_SETTING)? {
+        Some(username) => username,
+        None => {
+            write_approved_mssql_username(conn, INITIAL_APPROVED_MSSQL_USERNAME)?;
+            INITIAL_APPROVED_MSSQL_USERNAME.to_string()
+        }
+    };
+    validate_approved_mssql_username(&username)?;
+    Ok(username)
+}
+
+fn write_approved_mssql_username(
+    conn: &rusqlite::Connection,
+    username: &str,
+) -> Result<(), String> {
+    validate_approved_mssql_username(username)?;
+    super::set_setting_value(conn, APPROVED_MSSQL_USERNAME_SETTING, Some(username))
+}
+
+fn validate_approved_mssql_username(username: &str) -> Result<(), String> {
+    if username.is_empty()
+        || username.trim() != username
+        || username.chars().count() > 128
+        || username.chars().any(char::is_control)
+        || username == LEGACY_PROHIBITED_MSSQL_USERNAME
+    {
+        return Err("The approved Staff Kit SQL login is invalid.".into());
+    }
+    Ok(())
+}
+
+fn validate_approved_mssql_account_change(
+    username: &str,
+    confirmation: &str,
+) -> Result<(), String> {
+    validate_approved_mssql_username(username)?;
+    if username != confirmation {
+        return Err("Account change confirmation does not match.".into());
+    }
+    Ok(())
+}
+
+fn legacy_remote_ee_account_cleanup_needed(conn: &rusqlite::Connection) -> Result<bool, String> {
+    let approved = super::get_setting_value(conn, APPROVED_MSSQL_USERNAME_SETTING)?;
+    let profile =
+        super::get_setting_value(conn, &format!("{REMOTE_EE_SYNC_SETTING_PREFIX}username"))?;
+    Ok(
+        approved.as_deref() == Some(LEGACY_PROHIBITED_MSSQL_USERNAME)
+            || profile.as_deref() == Some(LEGACY_PROHIBITED_MSSQL_USERNAME),
+    )
+}
+
+fn cleanup_legacy_remote_ee_account_settings(conn: &rusqlite::Connection) -> Result<bool, String> {
+    if !legacy_remote_ee_account_cleanup_needed(conn)? {
+        return Ok(false);
+    }
+
+    let approved = super::get_setting_value(conn, APPROVED_MSSQL_USERNAME_SETTING)?;
+    let safe_approved = match approved.as_deref() {
+        Some(LEGACY_PROHIBITED_MSSQL_USERNAME) | None => {
+            write_approved_mssql_username(conn, INITIAL_APPROVED_MSSQL_USERNAME)?;
+            INITIAL_APPROVED_MSSQL_USERNAME
+        }
+        Some(value) => value,
+    };
+    super::set_setting_value(
+        conn,
+        &format!("{REMOTE_EE_SYNC_SETTING_PREFIX}username"),
+        Some(safe_approved),
+    )?;
+    Ok(true)
+}
+
+fn invalidate_pending_employee_list_syncs() {
+    if let Some(pending) = PENDING_EMPLOYEE_LIST_SYNCS.get() {
+        pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
+    }
 }
 
 fn validate_mssql_server(server: &str) -> Result<(), String> {
@@ -487,7 +618,6 @@ fn process_mssql_environment() -> HashMap<String, String> {
         MSSQL_PORT_ENV,
         MSSQL_AUTH_TYPE_ENV,
         MSSQL_USERNAME_ENV,
-        MSSQL_PASSWORD_ENV,
     ]
     .iter()
     .filter_map(|name| {
@@ -498,8 +628,29 @@ fn process_mssql_environment() -> HashMap<String, String> {
     .collect()
 }
 
+fn has_mssql_environment_override() -> bool {
+    [
+        MSSQL_SERVER_ENV,
+        MSSQL_DATABASE_ENV,
+        MSSQL_PORT_ENV,
+        MSSQL_AUTH_TYPE_ENV,
+        MSSQL_USERNAME_ENV,
+        MSSQL_PASSWORD_ENV,
+    ]
+    .iter()
+    .any(|name| std::env::var_os(name).is_some())
+}
+
 pub fn get_remote_ee_sync_settings(app: &AppHandle) -> Result<RemoteEeSyncSettings, String> {
     let conn = open_runtime_connection(app)?;
+    if legacy_remote_ee_account_cleanup_needed(&conn)? {
+        // The target is owned exclusively by Staff Kit. Delete it before clearing the
+        // legacy profile, and never read its secret blob during cleanup.
+        delete_mssql_password()?;
+        cleanup_legacy_remote_ee_account_settings(&conn)?;
+        invalidate_pending_employee_list_syncs();
+    }
+    let approved_username = read_approved_mssql_username(&conn)?;
     let read = |key: &str| {
         super::get_setting_value(&conn, &format!("{REMOTE_EE_SYNC_SETTING_PREFIX}{key}"))
     };
@@ -513,9 +664,12 @@ pub fn get_remote_ee_sync_settings(app: &AppHandle) -> Result<RemoteEeSyncSettin
             Some("windows_integrated") => MssqlAuthType::WindowsIntegrated,
             _ => MssqlAuthType::SqlServer,
         },
-        username: read("username")?.unwrap_or_default(),
+        // Always display the active approved login; stale or unapproved profile values
+        // are never echoed back into the UI.
+        username: approved_username.clone(),
+        approved_username,
         password: None,
-        environment_override: !process_mssql_environment().is_empty(),
+        environment_override: has_mssql_environment_override(),
     };
     Ok(profile.safe_settings(read_mssql_password().unwrap_or(None).is_some()))
 }
@@ -525,8 +679,16 @@ pub fn save_remote_ee_sync_settings(
     settings: RemoteEeSyncSettings,
     password: Option<String>,
 ) -> Result<(), String> {
-    validate_remote_settings(&settings)?;
     let mut conn = open_runtime_connection(app)?;
+    if legacy_remote_ee_account_cleanup_needed(&conn)? {
+        delete_mssql_password()?;
+        cleanup_legacy_remote_ee_account_settings(&conn)?;
+    }
+    let approved_username = read_approved_mssql_username(&conn)?;
+    validate_remote_settings_against(&settings, &approved_username)?;
+    if settings.approved_username != approved_username {
+        return Err("The approved SQL login changed; reload Remote EE Sync settings.".into());
+    }
     let tx = conn
         .transaction()
         .map_err(|_| "Could not save Remote EE Sync settings.".to_string())?;
@@ -538,6 +700,61 @@ pub fn save_remote_ee_sync_settings(
     } else if let Some(password) = password.filter(|value| !value.is_empty()) {
         write_mssql_password(&password)?;
     }
+    Ok(())
+}
+
+pub fn change_remote_ee_sync_approved_account(
+    app: &AppHandle,
+    username: &str,
+    confirmation: &str,
+    authorized_by_account_id: i64,
+) -> Result<(), String> {
+    validate_approved_mssql_account_change(username, confirmation)?;
+    let mut conn = open_runtime_connection(app)?;
+    if legacy_remote_ee_account_cleanup_needed(&conn)? {
+        delete_mssql_password()?;
+        cleanup_legacy_remote_ee_account_settings(&conn)?;
+    }
+    let current_approved = read_approved_mssql_username(&conn)?;
+    if username == current_approved {
+        return Err("The requested SQL login is already approved.".into());
+    }
+
+    // Drop the old Staff Kit-only secret before activating the replacement account.
+    // A failure here leaves the existing approval unchanged.
+    delete_mssql_password()?;
+    let authorized_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .to_string();
+    let tx = conn
+        .transaction()
+        .map_err(|_| "Could not authorize the Staff Kit SQL login.".to_string())?;
+    write_approved_mssql_username(&tx, username)?;
+    super::set_setting_value(
+        &tx,
+        &format!("{REMOTE_EE_SYNC_SETTING_PREFIX}username"),
+        Some(username),
+    )?;
+    super::set_setting_value(
+        &tx,
+        &format!("{REMOTE_EE_SYNC_SETTING_PREFIX}auth_type"),
+        Some("sql_server"),
+    )?;
+    super::set_setting_value(
+        &tx,
+        APPROVED_MSSQL_AUTHORIZED_BY_SETTING,
+        Some(&authorized_by_account_id.to_string()),
+    )?;
+    super::set_setting_value(
+        &tx,
+        APPROVED_MSSQL_AUTHORIZED_AT_SETTING,
+        Some(&authorized_at),
+    )?;
+    tx.commit()
+        .map_err(|_| "Could not authorize the Staff Kit SQL login.".to_string())?;
+    invalidate_pending_employee_list_syncs();
     Ok(())
 }
 
@@ -574,7 +791,15 @@ pub fn remove_remote_ee_sync_password() -> Result<(), String> {
 }
 
 fn validate_remote_settings(settings: &RemoteEeSyncSettings) -> Result<(), String> {
-    validate_mssql_account(settings.auth_type, &settings.username)?;
+    validate_remote_settings_against(settings, INITIAL_APPROVED_MSSQL_USERNAME)
+}
+
+fn validate_remote_settings_against(
+    settings: &RemoteEeSyncSettings,
+    approved_username: &str,
+) -> Result<(), String> {
+    validate_mssql_account(settings.auth_type, &settings.username, approved_username)?;
+    validate_approved_mssql_username(approved_username)?;
     if settings.server.trim().is_empty()
         || settings.database.trim().is_empty()
         || settings.port == 0
@@ -588,8 +813,17 @@ fn validate_remote_settings(settings: &RemoteEeSyncSettings) -> Result<(), Strin
     Ok(())
 }
 
-fn validate_mssql_account(auth_type: MssqlAuthType, username: &str) -> Result<(), String> {
-    if auth_type == MssqlAuthType::SqlServer && username == APPROVED_MSSQL_USERNAME {
+fn validate_mssql_account(
+    auth_type: MssqlAuthType,
+    username: &str,
+    approved_username: &str,
+) -> Result<(), String> {
+    validate_approved_mssql_username(approved_username)?;
+    if auth_type == MssqlAuthType::SqlServer
+        && username == approved_username
+        && username != LEGACY_PROHIBITED_MSSQL_USERNAME
+        && approved_username != LEGACY_PROHIBITED_MSSQL_USERNAME
+    {
         Ok(())
     } else {
         Err(MSSQL_ACCOUNT_ALLOWLIST_ERROR.into())
@@ -597,11 +831,19 @@ fn validate_mssql_account(auth_type: MssqlAuthType, username: &str) -> Result<()
 }
 
 fn load_connection_config(app: &AppHandle) -> Result<MssqlConnectionConfig, String> {
-    let env = process_mssql_environment();
-    if !env.is_empty() {
-        return resolve_connection_config_from(&env, None);
-    }
     let conn = open_runtime_connection(app)?;
+    if legacy_remote_ee_account_cleanup_needed(&conn)? {
+        delete_mssql_password()?;
+        cleanup_legacy_remote_ee_account_settings(&conn)?;
+        invalidate_pending_employee_list_syncs();
+    }
+    let approved_username = read_approved_mssql_username(&conn)?;
+    let env = process_mssql_environment();
+    if has_mssql_environment_override() {
+        return resolve_environment_connection_config(env, &approved_username, || {
+            std::env::var(MSSQL_PASSWORD_ENV).ok()
+        });
+    }
     let read = |key: &str| {
         super::get_setting_value(&conn, &format!("{REMOTE_EE_SYNC_SETTING_PREFIX}{key}"))
     };
@@ -610,13 +852,16 @@ fn load_connection_config(app: &AppHandle) -> Result<MssqlConnectionConfig, Stri
         Some("sql_server") => MssqlAuthType::SqlServer,
         _ => return Err("Remote EE Sync settings are incomplete.".into()),
     };
+    let username = read("username")?.unwrap_or_default();
+    validate_mssql_account(auth_type, &username, &approved_username)?;
     let saved = MssqlConnectionConfig {
         server: read("server")?.unwrap_or_default(),
         database: read("database")?.unwrap_or_default(),
         port: read("port")?
             .and_then(|value| value.parse().ok())
             .unwrap_or(1433),
-        username: read("username")?.unwrap_or_default(),
+        username,
+        approved_username: approved_username.clone(),
         auth_type,
         password: if auth_type == MssqlAuthType::SqlServer {
             read_mssql_password()?
@@ -625,7 +870,7 @@ fn load_connection_config(app: &AppHandle) -> Result<MssqlConnectionConfig, Stri
         },
         environment_override: false,
     };
-    resolve_connection_config_from(&HashMap::new(), Some(saved))
+    resolve_connection_config_with_approved(&HashMap::new(), Some(saved), &approved_username)
 }
 
 #[cfg(windows)]
@@ -942,7 +1187,11 @@ fn sync_record_matches(source: &MssqlStaffRecord, local: &LocalEmployeeListRecor
 }
 
 async fn connect(connection: &MssqlConnectionConfig) -> Result<MssqlClient, String> {
-    validate_mssql_account(connection.auth_type, &connection.username)?;
+    validate_mssql_account(
+        connection.auth_type,
+        &connection.username,
+        &connection.approved_username,
+    )?;
     let mut config = Config::new();
     config.host(&connection.server);
     config.port(connection.port);
@@ -1372,7 +1621,8 @@ mod tests {
                     database: "AssetManagement".into(),
                     port: 1433,
                     auth_type: MssqlAuthType::SqlServer,
-                    username: APPROVED_MSSQL_USERNAME.into(),
+                    username: INITIAL_APPROVED_MSSQL_USERNAME.into(),
+                    approved_username: INITIAL_APPROVED_MSSQL_USERNAME.to_string(),
                     password: Some("synthetic-test-secret".into()),
                     environment_override: false,
                 }),
@@ -1401,7 +1651,8 @@ mod tests {
                     database: "AssetManagement".into(),
                     port: 1433,
                     auth_type: MssqlAuthType::SqlServer,
-                    username: APPROVED_MSSQL_USERNAME.into(),
+                    username: INITIAL_APPROVED_MSSQL_USERNAME.into(),
+                    approved_username: INITIAL_APPROVED_MSSQL_USERNAME.to_string(),
                     has_saved_password: false,
                     environment_override: false,
                 })
@@ -1429,7 +1680,8 @@ mod tests {
             database: "AssetManagement".into(),
             port: 1433,
             auth_type: MssqlAuthType::SqlServer,
-            username: APPROVED_MSSQL_USERNAME.into(),
+            username: INITIAL_APPROVED_MSSQL_USERNAME.into(),
+            approved_username: INITIAL_APPROVED_MSSQL_USERNAME.to_string(),
             password: Some("synthetic-test-secret".into()),
             environment_override: false,
         };
@@ -1447,7 +1699,8 @@ mod tests {
                 database: "AssetManagement".into(),
                 port: 1433,
                 auth_type: MssqlAuthType::SqlServer,
-                username: APPROVED_MSSQL_USERNAME.into(),
+                username: INITIAL_APPROVED_MSSQL_USERNAME.into(),
+                approved_username: INITIAL_APPROVED_MSSQL_USERNAME.to_string(),
                 has_saved_password: false,
                 environment_override: false,
             },
@@ -1475,7 +1728,8 @@ mod tests {
             database: "AssetManagement".into(),
             port: 1433,
             auth_type: MssqlAuthType::SqlServer,
-            username: APPROVED_MSSQL_USERNAME.into(),
+            username: INITIAL_APPROVED_MSSQL_USERNAME.into(),
+            approved_username: INITIAL_APPROVED_MSSQL_USERNAME.to_string(),
             has_saved_password: true,
             environment_override: false,
         };
@@ -1498,7 +1752,8 @@ mod tests {
             database: "AssetManagement".into(),
             port: 1433,
             auth_type: MssqlAuthType::SqlServer,
-            username: APPROVED_MSSQL_USERNAME.into(),
+            username: INITIAL_APPROVED_MSSQL_USERNAME.into(),
+            approved_username: INITIAL_APPROVED_MSSQL_USERNAME.to_string(),
             password: Some("synthetic-saved-secret".into()),
             environment_override: false,
         };
@@ -1514,6 +1769,7 @@ mod tests {
             port: 1433,
             auth_type: MssqlAuthType::SqlServer,
             username: "user_reader".into(),
+            approved_username: INITIAL_APPROVED_MSSQL_USERNAME.to_string(),
             password: Some("synthetic-test-secret".into()),
             environment_override: false,
         };
@@ -1555,6 +1811,7 @@ mod tests {
             port: 1433,
             auth_type: MssqlAuthType::SqlServer,
             username: "user_reader".into(),
+            approved_username: INITIAL_APPROVED_MSSQL_USERNAME.to_string(),
             has_saved_password: false,
             environment_override: false,
         };
@@ -1566,7 +1823,10 @@ mod tests {
             (MSSQL_SERVER_ENV.into(), "sql.example".into()),
             (MSSQL_DATABASE_ENV.into(), "AssetManagement".into()),
             (MSSQL_AUTH_TYPE_ENV.into(), "windows_integrated".into()),
-            (MSSQL_USERNAME_ENV.into(), APPROVED_MSSQL_USERNAME.into()),
+            (
+                MSSQL_USERNAME_ENV.into(),
+                INITIAL_APPROVED_MSSQL_USERNAME.into(),
+            ),
         ]);
         assert!(resolve_connection_config_from(&integrated_env, None).is_err());
 
@@ -1576,6 +1836,7 @@ mod tests {
             port: 1433,
             auth_type: MssqlAuthType::WindowsIntegrated,
             username: "user_reader".into(),
+            approved_username: INITIAL_APPROVED_MSSQL_USERNAME.to_string(),
             password: None,
             environment_override: false,
         };
@@ -1601,6 +1862,7 @@ mod tests {
                 port: 1,
                 auth_type: MssqlAuthType::SqlServer,
                 username: username.into(),
+                approved_username: INITIAL_APPROVED_MSSQL_USERNAME.to_string(),
                 password: Some("synthetic-test-secret".into()),
                 environment_override: false,
             };
@@ -1622,7 +1884,8 @@ mod tests {
             database: "AssetManagement".into(),
             port: 1433,
             auth_type: MssqlAuthType::SqlServer,
-            username: APPROVED_MSSQL_USERNAME.into(),
+            username: INITIAL_APPROVED_MSSQL_USERNAME.into(),
+            approved_username: INITIAL_APPROVED_MSSQL_USERNAME.to_string(),
             has_saved_password: false,
             environment_override: false,
         };
@@ -1664,7 +1927,7 @@ mod tests {
             ),
             (
                 "STAFFKIT_MSSQL_USERNAME".to_string(),
-                APPROVED_MSSQL_USERNAME.to_string(),
+                INITIAL_APPROVED_MSSQL_USERNAME.to_string(),
             ),
             (
                 "STAFFKIT_MSSQL_PASSWORD".to_string(),
@@ -1674,7 +1937,7 @@ mod tests {
         let config = resolve_connection_config_from(&env, None).expect("complete env profile");
         assert_eq!(config.server, "sql.example");
         assert_eq!(config.database, "AssetManagement");
-        assert_eq!(config.username, APPROVED_MSSQL_USERNAME);
+        assert_eq!(config.username, INITIAL_APPROVED_MSSQL_USERNAME);
         assert_eq!(config.password.as_deref(), Some("synthetic-test-secret"));
         assert!(config.environment_override);
     }
@@ -1946,5 +2209,119 @@ mod tests {
         assert!(message.contains("10.184.0.19:1433"));
         assert!(message.contains("Windows error 10060"));
         assert!(message.contains("network/VPN"));
+    }
+
+    #[test]
+    fn approved_account_is_persisted_and_defaults_to_current_staffkit_login() {
+        let conn = Connection::open_in_memory().expect("in-memory settings DB");
+        conn.execute_batch("CREATE TABLE app_settings(setting_key TEXT PRIMARY KEY, setting_value TEXT, updated_at TEXT);")
+            .expect("create settings table");
+
+        assert_eq!(read_approved_mssql_username(&conn).unwrap(), "user_reader");
+        write_approved_mssql_username(&conn, "future_reader").unwrap();
+        assert_eq!(
+            read_approved_mssql_username(&conn).unwrap(),
+            "future_reader"
+        );
+    }
+
+    #[test]
+    fn approved_account_change_requires_exact_super_admin_confirmation_and_rejects_hrms() {
+        assert!(validate_approved_mssql_account_change("future_reader", "future_reader").is_ok());
+        assert!(
+            validate_approved_mssql_account_change("future_reader", "different_reader").is_err()
+        );
+        assert!(validate_approved_mssql_account_change(
+            "aswhite-plus-webserver",
+            "aswhite-plus-webserver"
+        )
+        .is_err());
+        assert!(validate_approved_mssql_account_change(" reader", " reader").is_err());
+    }
+
+    #[test]
+    fn legacy_hrms_profile_is_cleared_but_other_staffkit_profiles_are_preserved() {
+        let conn = Connection::open_in_memory().expect("in-memory settings DB");
+        conn.execute_batch("CREATE TABLE app_settings(setting_key TEXT PRIMARY KEY, setting_value TEXT, updated_at TEXT);")
+            .expect("create settings table");
+        super::super::set_setting_value(
+            &conn,
+            "remote_ee_sync_username",
+            Some("aswhite-plus-webserver"),
+        )
+        .unwrap();
+        super::super::set_setting_value(
+            &conn,
+            "remote_ee_sync_approved_username",
+            Some("user_reader"),
+        )
+        .unwrap();
+
+        assert!(cleanup_legacy_remote_ee_account_settings(&conn).unwrap());
+        assert_eq!(
+            super::super::get_setting_value(&conn, "remote_ee_sync_username").unwrap(),
+            Some("user_reader".into())
+        );
+        assert_eq!(
+            super::super::get_setting_value(&conn, "remote_ee_sync_approved_username").unwrap(),
+            Some("user_reader".into())
+        );
+
+        assert!(!cleanup_legacy_remote_ee_account_settings(&conn).unwrap());
+    }
+
+    #[test]
+    fn saved_and_environment_accounts_must_match_persisted_approval() {
+        let saved = MssqlConnectionConfig {
+            server: "sql.example".into(),
+            database: "AssetManagement".into(),
+            port: 1433,
+            auth_type: MssqlAuthType::SqlServer,
+            username: "user_reader".into(),
+            approved_username: INITIAL_APPROVED_MSSQL_USERNAME.to_string(),
+            password: Some("synthetic-test-secret".into()),
+            environment_override: false,
+        };
+        assert!(resolve_connection_config_with_approved(
+            &HashMap::new(),
+            Some(saved.clone()),
+            "user_reader"
+        )
+        .is_ok());
+        assert!(resolve_connection_config_with_approved(
+            &HashMap::new(),
+            Some(saved),
+            "future_reader"
+        )
+        .is_err());
+
+        let env = HashMap::from([
+            (MSSQL_SERVER_ENV.into(), "sql.example".into()),
+            (MSSQL_DATABASE_ENV.into(), "AssetManagement".into()),
+            (MSSQL_AUTH_TYPE_ENV.into(), "sql_server".into()),
+            (MSSQL_USERNAME_ENV.into(), "aswhite-plus-webserver".into()),
+            (MSSQL_PASSWORD_ENV.into(), "synthetic-test-secret".into()),
+        ]);
+        assert!(resolve_connection_config_with_approved(&env, None, "user_reader").is_err());
+    }
+
+    #[test]
+    fn unapproved_environment_account_is_rejected_before_password_provider_runs() {
+        let env = HashMap::from([
+            (MSSQL_SERVER_ENV.into(), "sql.example".into()),
+            (MSSQL_DATABASE_ENV.into(), "AssetManagement".into()),
+            (MSSQL_AUTH_TYPE_ENV.into(), "sql_server".into()),
+            (MSSQL_USERNAME_ENV.into(), "aswhite-plus-webserver".into()),
+        ]);
+        let mut password_read = false;
+        let result = resolve_environment_connection_config(env, "user_reader", || {
+            password_read = true;
+            Some("synthetic-test-secret".into())
+        });
+        assert!(result.is_err());
+        assert!(
+            !password_read,
+            "unapproved account must fail before secret retrieval"
+        );
     }
 }

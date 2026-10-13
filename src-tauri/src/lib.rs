@@ -423,6 +423,7 @@ fn save_remote_ee_sync_settings(
     port: u16,
     auth_type: db::mssql_import::MssqlAuthType,
     username: String,
+    approved_username: String,
     password: Option<String>,
 ) -> Result<(), String> {
     let _ctx = auth_session::require_admin(&session_store, &session_token)?;
@@ -434,10 +435,28 @@ fn save_remote_ee_sync_settings(
             port,
             auth_type,
             username,
+            approved_username,
             has_saved_password: false,
             environment_override: false,
         },
         password,
+    )
+}
+
+#[tauri::command]
+fn change_remote_ee_sync_approved_account(
+    app: tauri::AppHandle,
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    session_token: String,
+    username: String,
+    confirmation: String,
+) -> Result<(), String> {
+    let ctx = auth_session::require_super_admin(&session_store, &session_token)?;
+    db::mssql_import::change_remote_ee_sync_approved_account(
+        &app,
+        &username,
+        &confirmation,
+        ctx.account_id,
     )
 }
 
@@ -1137,6 +1156,7 @@ pub fn run() {
             preview_import_excel,
             get_remote_ee_sync_settings,
             save_remote_ee_sync_settings,
+            change_remote_ee_sync_approved_account,
             remove_remote_ee_sync_password,
             test_remote_ee_sync_connection,
             preview_employee_list_mssql_sync,
@@ -1198,6 +1218,7 @@ mod tests {
         "update_local_account",
         "delete_local_account",
         "list_local_accounts",
+        "change_remote_ee_sync_approved_account",
     ];
 
     const ADMIN_COMMANDS: &[&str] = &[
@@ -1334,6 +1355,8 @@ mod tests {
                 "{command} must require admin access"
             );
         }
+        assert!(SUPER_ADMIN_COMMANDS.contains(&"change_remote_ee_sync_approved_account"));
+        assert!(!ADMIN_COMMANDS.contains(&"change_remote_ee_sync_approved_account"));
         for removed in [
             "get_mssql_connection_defaults",
             "test_mssql_connection",

@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 const api = vi.hoisted(() => ({
     getRemoteEeSyncSettings: vi.fn(),
     saveRemoteEeSyncSettings: vi.fn(),
+    changeRemoteEeSyncApprovedAccount: vi.fn(),
     removeRemoteEeSyncPassword: vi.fn(),
     testRemoteEeSyncConnection: vi.fn(),
 }))
@@ -18,11 +19,13 @@ beforeEach(() => {
         database: "AssetManagement",
         port: 1433,
         authType: "sql_server",
-        username: "reader",
+        username: "user_reader",
+        approvedUsername: "user_reader",
         hasSavedPassword: true,
         environmentOverride: true,
     })
     api.saveRemoteEeSyncSettings.mockResolvedValue(undefined)
+    api.changeRemoteEeSyncApprovedAccount.mockResolvedValue(undefined)
     api.testRemoteEeSyncConnection.mockResolvedValue({ status: "PASS", reason: "Query B completed.", rowCount: 12 })
 })
 
@@ -41,7 +44,7 @@ describe("Remote EE Sync settings", () => {
         fireEvent.change(password, { target: { value: "synthetic-test-secret" } })
         fireEvent.click(screen.getByRole("button", { name: "Save Settings" }))
         await waitFor(() => expect(api.saveRemoteEeSyncSettings).toHaveBeenCalledWith(
-            expect.objectContaining({ server: "sql.example", database: "AssetManagement", username: "reader" }),
+            expect.objectContaining({ server: "sql.example", database: "AssetManagement", username: "user_reader", approvedUsername: "user_reader" }),
             "synthetic-test-secret",
         ))
         fireEvent.click(screen.getByRole("button", { name: "Test Connection" }))
@@ -58,5 +61,23 @@ describe("Remote EE Sync settings", () => {
         expect(await screen.findByText(/FAIL/i)).toBeTruthy()
         expect(screen.getByText(/Read-only permissions could not be verified/i)).toBeTruthy()
         expect(api.testRemoteEeSyncConnection).toHaveBeenCalledWith()
+    })
+
+    it("shows account authorization only to super_admin and requires matching confirmation", async () => {
+        const { unmount } = render(<RemoteEeSyncSettings isSuperAdmin={false} />)
+        const activeAccount = await screen.findByLabelText("Approved SQL login") as HTMLInputElement
+        expect(activeAccount.value).toBe("user_reader")
+        expect(screen.queryByLabelText("New approved SQL login")).toBeNull()
+        unmount()
+
+        render(<RemoteEeSyncSettings isSuperAdmin />)
+        fireEvent.change(await screen.findByLabelText("New approved SQL login"), { target: { value: "new_reader" } })
+        const authorize = screen.getByRole("button", { name: "Authorize SQL login change" }) as HTMLButtonElement
+        expect(authorize.disabled).toBe(true)
+        fireEvent.change(screen.getByLabelText("Confirm new SQL login"), { target: { value: "new_reader" } })
+        expect(authorize.disabled).toBe(false)
+        fireEvent.click(authorize)
+        await waitFor(() => expect(api.changeRemoteEeSyncApprovedAccount).toHaveBeenCalledWith("new_reader", "new_reader"))
+        expect(await screen.findByText(/previous Staff Kit SQL password was removed/i)).toBeTruthy()
     })
 })

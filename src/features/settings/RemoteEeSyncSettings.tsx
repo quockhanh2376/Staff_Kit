@@ -5,11 +5,13 @@ import type { MssqlAuthType, MssqlConnectionTestResult, RemoteEeSyncSettings as 
 
 const inputClass = "w-full rounded-[8px] border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--primary)]/60"
 
-export function RemoteEeSyncSettings() {
+export function RemoteEeSyncSettings({ isSuperAdmin = false }: { isSuperAdmin?: boolean }) {
     const [settings, setSettings] = useState<SettingsDto | null>(null)
     const [password, setPassword] = useState("")
+    const [newApprovedUsername, setNewApprovedUsername] = useState("")
+    const [approvedUsernameConfirmation, setApprovedUsernameConfirmation] = useState("")
     const [result, setResult] = useState<MssqlConnectionTestResult | null>(null)
-    const [busy, setBusy] = useState<"load" | "save" | "test" | "remove" | null>("load")
+    const [busy, setBusy] = useState<"load" | "save" | "test" | "remove" | "account-change" | null>("load")
     const [message, setMessage] = useState<string | null>(null)
 
     useEffect(() => {
@@ -37,13 +39,38 @@ export function RemoteEeSyncSettings() {
                 database: settings.database,
                 port: settings.port,
                 authType: settings.authType,
-                username: settings.username,
+                username: settings.approvedUsername,
+                approvedUsername: settings.approvedUsername,
             }, password)
             setPassword("")
             setSettings({ ...settings, hasSavedPassword: settings.authType === "sql_server" && (password ? true : settings.hasSavedPassword) })
             setMessage("Settings saved. Any entered password is stored securely in Windows Credential Manager.")
         } catch {
             setMessage("Could not save settings or store the password securely. No password was saved in app settings.")
+        } finally {
+            setBusy(null)
+        }
+    }
+
+    const handleAuthorizeAccountChange = async () => {
+        if (!settings || !isSuperAdmin || !newApprovedUsername || newApprovedUsername !== approvedUsernameConfirmation) return
+        setBusy("account-change")
+        setResult(null)
+        setMessage(null)
+        try {
+            await staffApi.changeRemoteEeSyncApprovedAccount(newApprovedUsername, approvedUsernameConfirmation)
+            setPassword("")
+            setSettings((current) => current ? {
+                ...current,
+                username: newApprovedUsername,
+                approvedUsername: newApprovedUsername,
+                hasSavedPassword: false,
+            } : current)
+            setNewApprovedUsername("")
+            setApprovedUsernameConfirmation("")
+            setMessage("Approved login changed. Previous Staff Kit SQL password was removed. Enter the new password, save settings, then test read-only access.")
+        } catch {
+            setMessage("Could not authorize the SQL login change. The previous approved login remains active.")
         } finally {
             setBusy(null)
         }
@@ -85,10 +112,19 @@ export function RemoteEeSyncSettings() {
                 <label className="text-xs text-[var(--text-secondary)]">Port<input aria-label="Port" className={inputClass} type="number" min={1} max={65535} value={settings.port} onChange={(event) => update("port", Number(event.target.value))} /></label>
                 <label className="text-xs text-[var(--text-secondary)]">Authentication type<select aria-label="Authentication type" className={inputClass} value={settings.authType} onChange={(event) => update("authType", event.target.value as MssqlAuthType)}><option value="sql_server">SQL Server</option><option value="windows_integrated">Windows Integrated</option></select></label>
                 {settings.authType === "sql_server" && <>
-                    <label className="text-xs text-[var(--text-secondary)]">Username<input aria-label="Username" className={inputClass} autoComplete="off" value={settings.username} onChange={(event) => update("username", event.target.value)} /></label>
+                    <label className="text-xs text-[var(--text-secondary)]">Approved SQL login<input aria-label="Approved SQL login" className={inputClass} value={settings.approvedUsername} readOnly /></label>
                     <label className="text-xs text-[var(--text-secondary)]">Password<input aria-label="Password" className={inputClass} type="password" autoComplete="new-password" placeholder={settings.hasSavedPassword ? "Saved securely in Windows Credential Manager" : "Enter SQL password"} value={password} onChange={(event) => { setPassword(event.target.value); setResult(null) }} /></label>
                 </>}
             </div>
+            {isSuperAdmin && <fieldset className="mt-4 rounded-[8px] border border-[var(--border)] p-3">
+                <legend className="px-1 text-xs font-semibold text-[var(--text-primary)]">Approved SQL account change</legend>
+                <p className="text-xs text-[var(--text-secondary)]">Current approved SQL login: <strong>{settings.approvedUsername}</strong>. Changing it removes the old Staff Kit saved password. Test Connection must independently verify read-only permissions before Query B can run.</p>
+                <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                    <label className="text-xs text-[var(--text-secondary)]">New approved SQL login<input aria-label="New approved SQL login" className={inputClass} autoComplete="off" value={newApprovedUsername} onChange={(event) => setNewApprovedUsername(event.target.value)} /></label>
+                    <label className="text-xs text-[var(--text-secondary)]">Confirm new SQL login<input aria-label="Confirm new SQL login" className={inputClass} autoComplete="off" value={approvedUsernameConfirmation} onChange={(event) => setApprovedUsernameConfirmation(event.target.value)} /></label>
+                </div>
+                <button type="button" className="mt-2 rounded-[8px] border border-amber-500/40 px-3 py-2 text-sm font-medium disabled:opacity-50" disabled={busy !== null || !newApprovedUsername || newApprovedUsername === settings.approvedUsername || newApprovedUsername !== approvedUsernameConfirmation} onClick={() => void handleAuthorizeAccountChange()}>{busy === "account-change" ? "Authorizing…" : "Authorize SQL login change"}</button>
+            </fieldset>}
             {settings.hasSavedPassword && <div className="mt-2 flex items-center justify-between text-xs text-[var(--text-secondary)]"><span>Password saved securely in Windows Credential Manager.</span><button type="button" className="inline-flex items-center gap-1 text-red-300" disabled={busy !== null} onClick={() => void handleRemovePassword()}><Trash2 size={13} /> Remove password</button></div>}
             <div className="mt-3 flex flex-wrap items-center gap-2">
                 <button type="button" className="inline-flex items-center gap-2 rounded-[8px] bg-[var(--primary)] px-3 py-2 text-sm font-semibold text-white disabled:opacity-50" disabled={busy !== null} onClick={() => void handleSave()}>{busy === "save" ? <LoaderCircle size={14} className="animate-spin" /> : <Save size={14} />}Save Settings</button>
