@@ -32,7 +32,7 @@
 **Files:** `src-tauri/src/db/mssql_import.rs`
 
 1. Define dedicated serializable DTOs for preview rows, category counts, conflicts, preview ID, and apply result; do not reuse generic arbitrary-query DTOs where that weakens the fixed-query boundary.
-2. Add a fail-closed read-only permission preflight before all MSSQL query paths. Reject write-capable fixed roles, effective server/database permissions outside an explicit read-only allowlist, and DML/DDL/EXECUTE permissions on schemas, tables, views, procedures, or functions. Treat SQL errors, NULL permission checks, missing required CONNECT permissions, and unknown permission results as unverifiable and block the query.
+2. Add a fail-closed read-only permission preflight before all MSSQL query paths. Reject write-capable fixed roles, effective server/database permissions outside an explicit read-only allowlist, and DML/DDL/EXECUTE permissions on schemas, tables, views, procedures, functions, database users/roles, or server logins. Treat SQL errors, NULL permission checks, missing required CONNECT permissions, and unknown permission results as unverifiable and block the query.
 3. Add a fixed Query B constant: `INNER JOIN [AssetManagement].[dbo].[AspNetUsers]`, `WHERE Resigned = 0`, `ROW_NUMBER` deduplication by normalized Code with deterministic `S.Id` ordering, exact approved mappings, and no TOP limit.
 4. Normalize Staff Code by trim + uppercase for matching. Preserve the source display Code. Compare records against local `employee_list` by normalized Code and classify New, Changed, Unchanged, Missing. Detect codes owned by another staff group and block those rows rather than moving/updating them.
 5. Run focused Rust tests and confirm they pass.

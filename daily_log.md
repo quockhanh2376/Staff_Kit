@@ -2099,3 +2099,6 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 
 - Objective: close Qeen's finding that the fail-closed MSSQL permission preflight omitted escalation permissions, then request revalidation of the exact new commit.
 - Safety: feature branch only; do not connect to or write the live source DB; direct Query B counts remain pending configured read-only credentials.
+
+- Review finding: the first follow-up gate still omitted login/user IMPERSONATE securables and allowed REFERENCES despite the strict read-only claim. Added effective permission enumeration for server logins and database users/roles; removed REFERENCES from every read-only allowlist.
+- Verification update: read-only permission gate regression 1/1; full Rust/Tauri 308/308; `npm run check:quality` passed with existing lint/build/Rust warnings; no live DB touched. Awaiting Qeen revalidation and configured source credentials for direct Query B comparison.

@@ -243,8 +243,7 @@ SELECT CAST(CASE WHEN
             'VIEW DATABASE STATE',
             'VIEW DATABASE PERFORMANCE STATE',
             'VIEW DATABASE SECURITY STATE',
-            'SHOWPLAN',
-            'REFERENCES'
+            'SHOWPLAN'
         )
     )
     OR NOT EXISTS (
@@ -256,7 +255,7 @@ SELECT CAST(CASE WHEN
         SELECT 1
         FROM sys.schemas AS S
         CROSS APPLY sys.fn_my_permissions(S.name, 'SCHEMA') AS EffectivePermission
-        WHERE EffectivePermission.permission_name NOT IN ('SELECT', 'VIEW DEFINITION', 'REFERENCES')
+        WHERE EffectivePermission.permission_name NOT IN ('SELECT', 'VIEW DEFINITION')
     )
     OR EXISTS (
         SELECT 1
@@ -267,7 +266,27 @@ SELECT CAST(CASE WHEN
             'OBJECT'
         ) AS EffectivePermission
         WHERE O.type IN ('U', 'V', 'P', 'PC', 'FN', 'IF', 'TF', 'FS', 'FT')
-          AND EffectivePermission.permission_name NOT IN ('SELECT', 'VIEW DEFINITION', 'REFERENCES')
+          AND EffectivePermission.permission_name NOT IN ('SELECT', 'VIEW DEFINITION')
+    )
+    OR EXISTS (
+        SELECT 1
+        FROM sys.database_principals AS P
+        CROSS APPLY sys.fn_my_permissions(
+            P.name,
+            CASE P.type
+                WHEN 'R' THEN 'ROLE'
+                WHEN 'A' THEN 'APPLICATION ROLE'
+                ELSE 'USER'
+            END
+        ) AS EffectivePermission
+        WHERE EffectivePermission.permission_name NOT IN ('VIEW DEFINITION')
+    )
+    OR EXISTS (
+        SELECT 1
+        FROM sys.server_principals AS P
+        CROSS APPLY sys.fn_my_permissions(P.name, 'LOGIN') AS EffectivePermission
+        WHERE P.type <> 'R'
+          AND EffectivePermission.permission_name NOT IN ('VIEW DEFINITION')
     )
     THEN 1 ELSE 0 END AS bit) AS HasWriteAccess
 "#;
@@ -1387,8 +1406,13 @@ mod tests {
         assert!(check.contains("permission_name = 'connect sql'"));
         assert!(check.contains("permission_name = 'connect'"));
         assert!(check.contains("cross apply sys.fn_my_permissions(s.name, 'schema')"));
+        assert!(check.contains("from sys.database_principals as p"));
+        assert!(check.contains("when 'r' then 'role'"));
+        assert!(check.contains("from sys.server_principals as p"));
+        assert!(check.contains("sys.fn_my_permissions(p.name, 'login')"));
         assert!(check.contains("where o.type in ('u', 'v', 'p', 'pc', 'fn', 'if', 'tf', 'fs', 'ft')"));
-        assert!(check.contains("permission_name not in ('select', 'view definition', 'references')"));
+        assert!(check.contains("permission_name not in ('select', 'view definition')"));
+        assert!(!check.contains("references"));
         assert!(check.contains("coalesce(") && check.contains("then 1 else 0 end as bit"));
     }
 
