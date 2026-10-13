@@ -2083,3 +2083,11 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Exact scan: both legacy variants (`Cao Tran [Van|Quang] Duc`) = 0 in the feature worktree after the change. No matching strings were found in `dist` or `node_modules/.vite` before cleanup.
 - Cache cleanup: removed only `E:\Staff_Kit\dist` and `E:\Staff_Kit\node_modules\.vite`; preserved `help` and untracked docs; restored generated Tauri schemas after checks.
 - Validation: focused LAN tests 19/19; frontend unit tests 225/225; `npm run check:quality` passed with existing warnings; no live DB writes, merge, or push.
+
+## 2026-10-13 EE List MSSQL preview sync — Start
+
+- Objective: replace immediate Employee List Update writes with a read-only remote preview, Staff Code diff, explicit approval, and local EE List-only apply.
+- Approved Query B direction: fixed SELECT; no TOP row cap; keep all non-resigned Staff; LEFT JOIN optional AzureAD; dedupe by Code. Missing-from-source is report-only; non-EE-List employees remain untouched.
+- Audit findings: current Update calls test connection then `import_mssql_staff`, which queries then immediately upserts SQLite; SQL A uses INNER JOIN AspNetUsers and TOP (1000); update upsert matches employee IDs across every group.
+- Evidence limit: no MSSQL host/user/password configured in Process/User/Machine environment; no source DB connection or count comparison performed. No DB writes.
+- Safety: dedicated feature worktree `feat/employee-mssql-preview-sync`; preserve root untracked files; no merge or push before Qeen approval.
