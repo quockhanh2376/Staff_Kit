@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { staffApi } from "../../services/staff-api"
-import type { EmployeeRecord, TeamRecord } from "../../types/staff"
+import type { EmployeeListSyncPreview, EmployeeRecord, TeamRecord } from "../../types/staff"
 import type { StaffGroupKey, EmployeeSortState } from "../../types/app"
 import { getUserErrorMessage } from "../../lib/errorHandling"
 import { ALL_TEAMS_OPTION } from "../../lib/constants"
@@ -43,6 +43,8 @@ export function useEmployeeState({
     const [isUpdatingEmployeeListFromMssql, setUpdatingEmployeeListFromMssql] = useState(false)
     const [mssqlUpdateMessage, setMssqlUpdateMessage] = useState<string | null>(null)
     const [mssqlUpdateStatus, setMssqlUpdateStatus] = useState<"idle" | "success" | "error">("idle")
+    const [mssqlSyncPreview, setMssqlSyncPreview] = useState<EmployeeListSyncPreview | null>(null)
+    const [isApplyingMssqlSync, setApplyingMssqlSync] = useState(false)
     const [mssqlRefreshToken, setMssqlRefreshToken] = useState(0)
 
     const teamFilterMenuRef = useRef<HTMLDivElement | null>(null)
@@ -145,6 +147,8 @@ export function useEmployeeState({
         setTotalEmployees(0)
         setCurrentPage(1)
         setTeamFilterMenuOpen(false)
+        setMssqlSyncPreview(null)
+        setMssqlUpdateMessage(null)
     }
 
     // Close team filter menu on outside click
@@ -271,6 +275,7 @@ export function useEmployeeState({
             setUpdatingEmployeeListFromMssql(true)
             setMssqlUpdateMessage(null)
             setMssqlUpdateStatus("idle")
+            setMssqlSyncPreview(null)
             setGlobalError(null)
             const defaults = await staffApi.getMssqlConnectionDefaults()
             const host = defaults.host.trim()
@@ -278,25 +283,14 @@ export function useEmployeeState({
             if (!host || !user || !defaults.password) {
                 throw new Error("Missing MSSQL configuration. Open Settings > Import from MSSQL, or set STAFFKIT_MSSQL_HOST, STAFFKIT_MSSQL_USER, and STAFFKIT_MSSQL_PASSWORD.")
             }
-            await staffApi.testMssqlConnection(host, defaults.port, user, defaults.password)
-            const report = await staffApi.importMssqlStaff(
+            const preview = await staffApi.previewEmployeeListMssqlSync(
                 host,
                 defaults.port,
                 user,
                 defaults.password,
-                undefined,
-                "employee_list",
             )
-            console.info("[Staff Kit] MSSQL employee update report:", report)
-            setMssqlUpdateStatus("success")
-            setMssqlUpdateMessage(`Updated ${report.updated}, imported ${report.imported}, failed ${report.failed}.`)
-            setStaffGroupFilter("employee_list")
-            setTeamFilter(ALL_TEAMS_OPTION)
-            setTeamFilterSearchTerm("")
-            setStartDateFilter("")
-            setTeamFilterMenuOpen(false)
-            setCurrentPage(1)
-            setMssqlRefreshToken((value) => value + 1)
+            setMssqlSyncPreview(preview)
+            setMssqlUpdateMessage(`Preview ready: ${preview.counts.new} new, ${preview.counts.changed} changed, ${preview.counts.unchanged} unchanged, ${preview.counts.missing} missing.`)
         } catch (error) {
             console.error("[Staff Kit] MSSQL employee update failed")
             const message = getMssqlEmployeeUpdateErrorMessage(error)
@@ -306,6 +300,39 @@ export function useEmployeeState({
         } finally {
             setUpdatingEmployeeListFromMssql(false)
         }
+    }
+
+    const applyEmployeeListMssqlSync = async () => {
+        if (!mssqlSyncPreview || isApplyingMssqlSync) return
+        try {
+            setApplyingMssqlSync(true)
+            setMssqlUpdateStatus("idle")
+            setGlobalError(null)
+            const result = await staffApi.applyEmployeeListMssqlSync(mssqlSyncPreview.previewId)
+            setMssqlSyncPreview(null)
+            setMssqlUpdateStatus("success")
+            setMssqlUpdateMessage(`Updated ${result.counts.changed}, imported ${result.counts.new}, unchanged ${result.counts.unchanged}, missing ${result.counts.missing}. Completed ${new Date(result.completedAt).toLocaleString()}.`)
+            setStaffGroupFilter("employee_list")
+            setTeamFilter(ALL_TEAMS_OPTION)
+            setTeamFilterSearchTerm("")
+            setStartDateFilter("")
+            setTeamFilterMenuOpen(false)
+            setCurrentPage(1)
+            setMssqlRefreshToken((value) => value + 1)
+        } catch (error) {
+            const message = getMssqlEmployeeUpdateErrorMessage(error)
+            setMssqlUpdateStatus("error")
+            setMssqlUpdateMessage(message)
+            setGlobalError(message)
+        } finally {
+            setApplyingMssqlSync(false)
+        }
+    }
+
+    const cancelEmployeeListMssqlSync = () => {
+        setMssqlSyncPreview(null)
+        setMssqlUpdateMessage("Preview dismissed. No local data was changed.")
+        setMssqlUpdateStatus("idle")
     }
 
     return {
@@ -336,6 +363,8 @@ export function useEmployeeState({
         isUpdatingEmployeeListFromMssql,
         mssqlUpdateMessage,
         mssqlUpdateStatus,
+        mssqlSyncPreview,
+        isApplyingMssqlSync,
         teamOptions,
         teamFilterOptions,
         filteredTeamFilterOptions,
@@ -345,6 +374,8 @@ export function useEmployeeState({
         commitTypedTeamSelection,
         toggleColumnSort,
         updateEmployeeListFromMssql,
+        applyEmployeeListMssqlSync,
+        cancelEmployeeListMssqlSync,
         resetEmployeeStateOnLogout,
     }
 }
@@ -355,6 +386,18 @@ export function getMssqlEmployeeUpdateErrorMessage(error: unknown): string {
 
     if (normalized.includes("missing mssql configuration")) {
         return "MSSQL configuration is incomplete. Open Settings > Import from MSSQL and provide the required connection settings."
+    }
+
+    if (normalized.includes("read-only") || normalized.includes("write-level permissions")) {
+        return "The MSSQL source login must be read-only. Ask your database administrator to remove write permissions, then try again."
+    }
+
+    if (normalized.includes("preview") && (normalized.includes("expired") || normalized.includes("changed"))) {
+        return "The source or local EE List changed after this preview. Run Update again to review the latest data."
+    }
+
+    if (normalized.includes("conflict")) {
+        return "Some Staff Codes belong to another employee group. Resolve those records before applying the preview."
     }
 
     if (
@@ -379,6 +422,8 @@ export function getMssqlEmployeeUpdateErrorMessage(error: unknown): string {
 
     if (
         normalized.includes("query") ||
+        normalized.includes("source results") ||
+        normalized.includes("source query") ||
         normalized.includes("read mssql results") ||
         normalized.includes("import failed during preview")
     ) {

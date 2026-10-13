@@ -815,3 +815,36 @@ export type MssqlImportReport = {
   failed: number
   errors: MssqlImportError[]
 }
+
+export type EmployeeSyncCounts = {
+  new: number
+  changed: number
+  unchanged: number
+  missing: number
+  conflicts: number
+}
+
+export type EmployeeSyncRow = {
+  code: string
+  status: "new" | "changed" | "unchanged" | "missing" | "conflict"
+  sourceName: string | null
+  localName: string | null
+}
+
+export type EmployeeSyncConflict = {
+  code: string
+  reason: string
+}
+
+export type EmployeeListSyncPreview = {
+  previewId: string
+  createdAt: string
+  counts: EmployeeSyncCounts
+  rows: EmployeeSyncRow[]
+  conflicts: EmployeeSyncConflict[]
+}
+
+export type EmployeeListSyncResult = {
+  counts: EmployeeSyncCounts
+  completedAt: string
+}

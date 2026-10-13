@@ -75,6 +75,8 @@ import type {
   MssqlConnectionDefaults,
   MssqlImportPreview,
   MssqlImportReport,
+  EmployeeListSyncPreview,
+  EmployeeListSyncResult,
 } from "../types/staff"
 
 declare global {
@@ -638,4 +640,12 @@ export const staffApi = {
       query: query ?? null,
       staffGroup: staffGroup ?? null,
     }),
+
+  previewEmployeeListMssqlSync: (host: string, port: number, user: string, password: string) =>
+    call<EmployeeListSyncPreview>("preview_employee_list_mssql_sync", {
+      host, port, user, password,
+    }),
+
+  applyEmployeeListMssqlSync: (previewId: string) =>
+    call<EmployeeListSyncResult>("apply_employee_list_mssql_sync", { previewId }),
 }

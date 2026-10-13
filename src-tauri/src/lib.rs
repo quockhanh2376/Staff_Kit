@@ -465,6 +465,31 @@ async fn import_mssql_staff(
 }
 
 #[tauri::command]
+async fn preview_employee_list_mssql_sync(
+    app: tauri::AppHandle,
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    session_token: String,
+    host: String,
+    port: u16,
+    user: String,
+    password: String,
+) -> Result<db::mssql_import::EmployeeListSyncPreview, String> {
+    let _ctx = auth_session::require_admin(&session_store, &session_token)?;
+    db::mssql_import::preview_employee_list_sync(&app, &host, port, &user, &password).await
+}
+
+#[tauri::command]
+async fn apply_employee_list_mssql_sync(
+    app: tauri::AppHandle,
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    session_token: String,
+    preview_id: String,
+) -> Result<db::mssql_import::EmployeeListSyncResult, String> {
+    let _ctx = auth_session::require_admin(&session_store, &session_token)?;
+    db::mssql_import::apply_employee_list_sync(&app, &preview_id).await
+}
+
+#[tauri::command]
 fn inspect_import_columns(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -1121,7 +1146,9 @@ pub fn run() {
             get_mssql_connection_defaults,
             test_mssql_connection,
             preview_mssql_staff,
-            import_mssql_staff
+            import_mssql_staff,
+            preview_employee_list_mssql_sync,
+            apply_employee_list_mssql_sync
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
@@ -1230,6 +1257,8 @@ mod tests {
         "test_mssql_connection",
         "preview_mssql_staff",
         "import_mssql_staff",
+        "preview_employee_list_mssql_sync",
+        "apply_employee_list_mssql_sync",
     ];
 
     const AUTHENTICATED_COMMANDS: &[&str] = &[

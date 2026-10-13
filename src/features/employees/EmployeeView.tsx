@@ -374,6 +374,58 @@ export function EmployeeView({
                 </div>
             </div>
 
+            {emp.mssqlSyncPreview && (
+                <div className="mx-4 mt-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 md:mx-8">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                            <h2 className="text-sm font-bold">EE List sync preview</h2>
+                            <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                                Query B includes non-resigned Staff with an AspNetUsers account. Missing rows are report-only; nothing is written until you approve.
+                            </p>
+                            <p className="mt-1 text-xs text-[var(--text-secondary)]">Previewed {new Date(emp.mssqlSyncPreview.createdAt).toLocaleString()}</p>
+                        </div>
+                        <div className="flex gap-2">
+                            <button
+                                className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs"
+                                onClick={emp.cancelEmployeeListMssqlSync}
+                                type="button"
+                                disabled={emp.isApplyingMssqlSync}
+                            >Cancel</button>
+                            <button
+                                className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50"
+                                onClick={() => void emp.applyEmployeeListMssqlSync()}
+                                type="button"
+                                disabled={emp.isApplyingMssqlSync || emp.mssqlSyncPreview.counts.conflicts > 0}
+                            >{emp.isApplyingMssqlSync ? "Applying…" : "Approve and update EE List"}</button>
+                        </div>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-3 text-xs">
+                        <span>New <b>{emp.mssqlSyncPreview.counts.new}</b></span>
+                        <span>Changed <b>{emp.mssqlSyncPreview.counts.changed}</b></span>
+                        <span>Unchanged <b>{emp.mssqlSyncPreview.counts.unchanged}</b></span>
+                        <span>Missing <b>{emp.mssqlSyncPreview.counts.missing}</b></span>
+                        <span>Conflicts <b>{emp.mssqlSyncPreview.counts.conflicts}</b></span>
+                    </div>
+                    {emp.mssqlSyncPreview.conflicts.length > 0 && (
+                        <p className="mt-2 text-xs text-red-300">{emp.mssqlSyncPreview.conflicts.map((item) => `${item.code}: ${item.reason}`).join("; ")}</p>
+                    )}
+                    <div className="mt-3 max-h-56 overflow-auto rounded-md border border-[var(--border)]">
+                        <table className="w-full text-left text-xs">
+                            <thead className="sticky top-0 bg-[var(--surface)] text-[var(--text-secondary)]">
+                                <tr><th className="px-2 py-1.5">Staff Code</th><th className="px-2 py-1.5">Result</th><th className="px-2 py-1.5">Local Name</th><th className="px-2 py-1.5">Source Name</th></tr>
+                            </thead>
+                            <tbody>
+                                {emp.mssqlSyncPreview.rows.map((row, index) => (
+                                    <tr key={`${row.code}-${row.status}-${index}`} className="border-t border-[var(--border)]">
+                                        <td className="px-2 py-1">{row.code}</td><td className="px-2 py-1 capitalize">{row.status}</td><td className="px-2 py-1">{row.localName ?? "—"}</td><td className="px-2 py-1">{row.sourceName ?? "—"}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
+
             {/* Table area */}
             <div className="px-4 py-6 md:px-8">
                 <div className="overflow-hidden rounded-[12px] border border-[var(--border)] bg-[var(--surface)] shadow-[0_4px_6px_-1px_rgba(0,0,0,0.1)]">

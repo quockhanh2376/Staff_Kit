@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use tauri::{AppHandle, Manager};
 
 use schema::*;
@@ -143,6 +143,21 @@ pub(crate) fn open_runtime_connection(app: &AppHandle) -> Result<Connection, Str
     open_encrypted_connection(&db_path)
 }
 
+pub(crate) fn resolve_database_path_read_only(app: &AppHandle) -> Result<PathBuf, String> {
+    let path = if let Ok(Some(custom_folder)) = backup::get_db_custom_path(app) {
+        PathBuf::from(custom_folder).join(DB_FILE_NAME)
+    } else {
+        app.path()
+            .app_local_data_dir()
+            .map_err(|err| format!("failed to resolve app data directory: {err}"))?
+            .join(DB_FILE_NAME)
+    };
+    if !path.is_file() {
+        return Err("local employee database is not available for read-only preview".to_string());
+    }
+    Ok(path)
+}
+
 /// Open a connection and apply the AES-256 SQLCipher key.
 /// All reads/writes go through this — the DB file stays encrypted at rest.
 pub(crate) fn open_encrypted_connection(path: &std::path::Path) -> Result<Connection, String> {
@@ -152,6 +167,20 @@ pub(crate) fn open_encrypted_connection(path: &std::path::Path) -> Result<Connec
     conn.execute_batch(&format!("PRAGMA key = '{APP_DB_ENCRYPTION_KEY}';"))
         .map_err(|err| format!("failed to apply database encryption key: {err}"))?;
     configure_connection(&conn)?;
+    Ok(conn)
+}
+
+/// Open an existing encrypted database without permitting any SQLite writes.
+/// Deliberately avoids migrations, WAL setup, and all runtime configuration.
+pub(crate) fn open_encrypted_read_only_connection(
+    path: &std::path::Path,
+) -> Result<Connection, String> {
+    let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .map_err(|err| format!("failed to open sqlite database read-only: {err}"))?;
+    conn.execute_batch(&format!(
+        "PRAGMA key = '{APP_DB_ENCRYPTION_KEY}'; PRAGMA query_only = ON;"
+    ))
+    .map_err(|err| format!("failed to configure sqlite read-only access: {err}"))?;
     Ok(conn)
 }
 
@@ -1598,6 +1627,35 @@ fn normalize_header_key(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn encrypted_read_only_connection_rejects_writes_without_changing_data() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("staff-kit-sync-read-only-{unique}.db"));
+        let seed = Connection::open(&path).expect("create encrypted test database");
+        seed.execute_batch(&format!("PRAGMA key = '{APP_DB_ENCRYPTION_KEY}'; CREATE TABLE sample (value INTEGER); INSERT INTO sample VALUES (7);"))
+            .expect("seed encrypted test database");
+        drop(seed);
+
+        let readonly = open_encrypted_read_only_connection(&path).expect("open read-only database");
+        let query_only: i64 = readonly
+            .query_row("PRAGMA query_only", [], |row| row.get(0))
+            .expect("read query_only setting");
+        assert_eq!(query_only, 1);
+        assert!(readonly.execute("UPDATE sample SET value = 8", []).is_err());
+        drop(readonly);
+
+        let verify = open_encrypted_read_only_connection(&path).expect("reopen database read-only");
+        let value: i64 = verify
+            .query_row("SELECT value FROM sample", [], |row| row.get(0))
+            .expect("read unchanged data");
+        assert_eq!(value, 7);
+        drop(verify);
+        std::fs::remove_file(path).expect("remove test database");
+    }
 
     fn table_exists(conn: &Connection, table_name: &str) -> bool {
         conn.query_row(
