@@ -2187,3 +2187,14 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - TDD: new tests failed against the previous behavior, then passed. Focused MSSQL Rust tests 22/22; full Rust/Tauri tests 322/322; `npm run check:quality` passed with pre-existing lint/build/Rust warnings; target-file rustfmt check passed.
 - Safety: only synthetic test credentials used; no real passwords/profile secrets accessed or modified. No live DB connection or writes; no merge or push.
 
+
+## 2026-10-13 Remote EE Sync SQL login correction — Start
+
+- Objective: replace the exact approved SQL login with `user_reader` and add regressions proving all other usernames, including prohibited HRMS login `aswhite-plus-webserver`, are blocked before network/authentication.
+- Preserve the current Rust boundary, fail-closed read-only gate, TLS validation, and Query B; do not read or alter credentials or contact SQL Server.
+- Safety: feature branch only; no DB writes, merge, or push.
+## 2026-10-13 Remote EE Sync SQL login correction — End
+
+- Updated the exact Rust allowlist and current sync spec to `user_reader`; the gate still applies to saved profiles, environment overrides, and the final connect boundary. Added coverage that rejects the old `user_reader-`, case/whitespace variants, unknown names, and `aswhite-plus-webserver` before network/authentication.
+- TDD: focused allowlist test failed before the implementation change, then focused MSSQL tests passed 22/22. Full Tauri tests passed 322/322; `npm run check:quality` passed with existing warnings; target Rust formatting and diff checks passed.
+- TLS, Query B, and fail-closed permission checks unchanged. No passwords/HRMS credentials inspected or modified; no live DB connection/writes; no merge or push.

@@ -17,7 +17,7 @@ use super::{humanize_sqlite_error, open_runtime_connection};
 
 const MSSQL_PORT_ENV: &str = "STAFFKIT_MSSQL_PORT";
 const MSSQL_PASSWORD_ENV: &str = "STAFFKIT_MSSQL_PASSWORD";
-const APPROVED_MSSQL_USERNAME: &str = "user_reader-";
+const APPROVED_MSSQL_USERNAME: &str = "user_reader";
 const MSSQL_ACCOUNT_ALLOWLIST_ERROR: &str = "Only the approved Staff Kit SQL login is allowed.";
 const MSSQL_SERVER_ENV: &str = "STAFFKIT_MSSQL_SERVER";
 const MSSQL_DATABASE_ENV: &str = "STAFFKIT_MSSQL_DATABASE";
@@ -1513,7 +1513,7 @@ mod tests {
             database: "AssetManagement".into(),
             port: 1433,
             auth_type: MssqlAuthType::SqlServer,
-            username: "user_reader-".into(),
+            username: "user_reader".into(),
             password: Some("synthetic-test-secret".into()),
             environment_override: false,
         };
@@ -1522,8 +1522,9 @@ mod tests {
         for username in [
             "aswhite-plus-webserver",
             "other_user",
-            "User_Reader-",
-            "user_reader- ",
+            "user_reader-",
+            "User_Reader",
+            "user_reader ",
         ] {
             let mut saved = approved.clone();
             saved.username = username.into();
@@ -1553,7 +1554,7 @@ mod tests {
             database: "AssetManagement".into(),
             port: 1433,
             auth_type: MssqlAuthType::SqlServer,
-            username: "user_reader-".into(),
+            username: "user_reader".into(),
             has_saved_password: false,
             environment_override: false,
         };
@@ -1574,13 +1575,13 @@ mod tests {
             database: "AssetManagement".into(),
             port: 1433,
             auth_type: MssqlAuthType::WindowsIntegrated,
-            username: "user_reader-".into(),
+            username: "user_reader".into(),
             password: None,
             environment_override: false,
         };
         assert!(resolve_connection_config_from(&HashMap::new(), Some(integrated.clone())).is_err());
         integrated.auth_type = MssqlAuthType::SqlServer;
-        integrated.username = "user_reader-".into();
+        integrated.username = "user_reader".into();
         integrated.password = Some("synthetic-test-secret".into());
         assert!(resolve_connection_config_from(&HashMap::new(), Some(integrated)).is_ok());
     }
@@ -1590,8 +1591,9 @@ mod tests {
         for username in [
             "aswhite-plus-webserver",
             "other_user",
-            "User_Reader-",
-            "user_reader- ",
+            "user_reader-",
+            "User_Reader",
+            "user_reader ",
         ] {
             let connection = MssqlConnectionConfig {
                 server: "127.0.0.1".into(),
