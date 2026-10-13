@@ -277,18 +277,7 @@ export function useEmployeeState({
             setMssqlUpdateStatus("idle")
             setMssqlSyncPreview(null)
             setGlobalError(null)
-            const defaults = await staffApi.getMssqlConnectionDefaults()
-            const host = defaults.host.trim()
-            const user = defaults.user.trim()
-            if (!host || !user || !defaults.password) {
-                throw new Error("Missing MSSQL configuration. Open Settings > Import from MSSQL, or set STAFFKIT_MSSQL_HOST, STAFFKIT_MSSQL_USER, and STAFFKIT_MSSQL_PASSWORD.")
-            }
-            const preview = await staffApi.previewEmployeeListMssqlSync(
-                host,
-                defaults.port,
-                user,
-                defaults.password,
-            )
+            const preview = await staffApi.previewEmployeeListMssqlSync()
             setMssqlSyncPreview(preview)
             setMssqlUpdateMessage(`Preview ready: ${preview.counts.new} new, ${preview.counts.changed} changed, ${preview.counts.unchanged} unchanged, ${preview.counts.missing} missing.`)
         } catch (error) {
@@ -384,8 +373,12 @@ export function getMssqlEmployeeUpdateErrorMessage(error: unknown): string {
     const raw = error instanceof Error ? error.message : String(error)
     const normalized = raw.toLowerCase()
 
-    if (normalized.includes("missing mssql configuration")) {
-        return "MSSQL configuration is incomplete. Open Settings > Import from MSSQL and provide the required connection settings."
+    if (
+        normalized.includes("missing mssql configuration") ||
+        normalized.includes("remote ee sync settings") ||
+        normalized.includes("configuration is incomplete")
+    ) {
+        return "Remote EE Sync settings are incomplete. Open Settings > Remote EE Sync and verify the connection profile."
     }
 
     if (normalized.includes("read-only") || normalized.includes("write-level permissions")) {

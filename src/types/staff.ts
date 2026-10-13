@@ -782,38 +782,22 @@ export type ImportPreviewResult = {
   errors: ImportErrorItem[]
 }
 
-export type MssqlConnectionDefaults = {
-  host: string
+export type MssqlAuthType = "sql_server" | "windows_integrated"
+
+export type RemoteEeSyncSettings = {
+  server: string
+  database: string
   port: number
-  user: string
-  password: string
+  authType: MssqlAuthType
+  username: string
+  hasSavedPassword: boolean
+  environmentOverride: boolean
 }
 
-export type MssqlStaffRecord = {
-  code: string
-  name: string
-  nickName: string | null
-  workEmail: string | null
-  azureAdAccount: string | null
-}
-
-export type MssqlImportPreview = {
-  totalRows: number
-  records: MssqlStaffRecord[]
-}
-
-export type MssqlImportError = {
-  code: string
-  action: string
-  error: string | null
-}
-
-export type MssqlImportReport = {
-  totalRows: number
-  imported: number
-  updated: number
-  failed: number
-  errors: MssqlImportError[]
+export type MssqlConnectionTestResult = {
+  status: "PASS" | "FAIL"
+  reason: string
+  rowCount: number | null
 }
 
 export type EmployeeSyncCounts = {

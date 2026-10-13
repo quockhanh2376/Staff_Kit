@@ -72,9 +72,8 @@ import type {
   BorrowRequestRejectInput,
   TeamRecord,
   TeamUpsertInput,
-  MssqlConnectionDefaults,
-  MssqlImportPreview,
-  MssqlImportReport,
+  RemoteEeSyncSettings,
+  MssqlConnectionTestResult,
   EmployeeListSyncPreview,
   EmployeeListSyncResult,
 } from "../types/staff"
@@ -622,29 +621,16 @@ export const staffApi = {
       },
     }),
 
-  getMssqlConnectionDefaults: () =>
-    call<MssqlConnectionDefaults>("get_mssql_connection_defaults"),
+  getRemoteEeSyncSettings: () => call<RemoteEeSyncSettings>("get_remote_ee_sync_settings"),
 
-  testMssqlConnection: (host: string, port: number, user: string, password: string) =>
-    call<boolean>("test_mssql_connection", { host, port, user, password }),
+  saveRemoteEeSyncSettings: (settings: Omit<RemoteEeSyncSettings, "hasSavedPassword" | "environmentOverride">, password: string) =>
+    call<void>("save_remote_ee_sync_settings", { ...settings, password: password || null }),
 
-  previewMssqlStaff: (host: string, port: number, user: string, password: string, query?: string) =>
-    call<MssqlImportPreview>("preview_mssql_staff", {
-      host, port, user, password,
-      query: query ?? null,
-    }),
+  removeRemoteEeSyncPassword: () => call<void>("remove_remote_ee_sync_password"),
 
-  importMssqlStaff: (host: string, port: number, user: string, password: string, query?: string, staffGroup?: string) =>
-    call<MssqlImportReport>("import_mssql_staff", {
-      host, port, user, password,
-      query: query ?? null,
-      staffGroup: staffGroup ?? null,
-    }),
+  testRemoteEeSyncConnection: () => call<MssqlConnectionTestResult>("test_remote_ee_sync_connection"),
 
-  previewEmployeeListMssqlSync: (host: string, port: number, user: string, password: string) =>
-    call<EmployeeListSyncPreview>("preview_employee_list_mssql_sync", {
-      host, port, user, password,
-    }),
+  previewEmployeeListMssqlSync: () => call<EmployeeListSyncPreview>("preview_employee_list_mssql_sync"),
 
   applyEmployeeListMssqlSync: (previewId: string) =>
     call<EmployeeListSyncResult>("apply_employee_list_mssql_sync", { previewId }),

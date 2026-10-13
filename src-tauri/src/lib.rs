@@ -401,67 +401,63 @@ fn preview_import_excel(
     db::preview_import_excel(&app, payload)
 }
 
-// ── MSSQL import (admin) ─────────────────────────────────────────────────────
+// ── Remote EE Sync (admin) ────────────────────────────────────────────────────
 
 #[tauri::command]
-async fn get_mssql_connection_defaults(
-    session_store: tauri::State<'_, auth_session::SessionStore>,
-    session_token: String,
-) -> Result<db::mssql_import::MssqlConnectionDefaults, String> {
-    let _ctx = auth_session::require_admin(&session_store, &session_token)?;
-    Ok(db::mssql_import::get_mssql_connection_defaults().await)
-}
-
-#[tauri::command]
-async fn test_mssql_connection(
-    session_store: tauri::State<'_, auth_session::SessionStore>,
-    session_token: String,
-    host: String,
-    port: u16,
-    user: String,
-    password: String,
-) -> Result<bool, String> {
-    let _ctx = auth_session::require_admin(&session_store, &session_token)?;
-    db::mssql_import::test_mssql_connection(&host, port, &user, &password).await
-}
-
-#[tauri::command]
-async fn preview_mssql_staff(
-    session_store: tauri::State<'_, auth_session::SessionStore>,
-    session_token: String,
-    host: String,
-    port: u16,
-    user: String,
-    password: String,
-    query: Option<String>,
-) -> Result<db::mssql_import::MssqlImportPreview, String> {
-    let _ctx = auth_session::require_admin(&session_store, &session_token)?;
-    db::mssql_import::preview_mssql_staff(&host, port, &user, &password, query.as_deref()).await
-}
-
-#[tauri::command]
-async fn import_mssql_staff(
+fn get_remote_ee_sync_settings(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
     session_token: String,
-    host: String,
-    port: u16,
-    user: String,
-    password: String,
-    query: Option<String>,
-    staff_group: Option<String>,
-) -> Result<db::mssql_import::MssqlImportReport, String> {
+) -> Result<db::mssql_import::RemoteEeSyncSettings, String> {
     let _ctx = auth_session::require_admin(&session_store, &session_token)?;
-    db::mssql_import::import_mssql_staff(
+    db::mssql_import::get_remote_ee_sync_settings(&app)
+}
+
+#[tauri::command]
+fn save_remote_ee_sync_settings(
+    app: tauri::AppHandle,
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    session_token: String,
+    server: String,
+    database: String,
+    port: u16,
+    auth_type: db::mssql_import::MssqlAuthType,
+    username: String,
+    password: Option<String>,
+) -> Result<(), String> {
+    let _ctx = auth_session::require_admin(&session_store, &session_token)?;
+    db::mssql_import::save_remote_ee_sync_settings(
         &app,
-        &host,
-        port,
-        &user,
-        &password,
-        query.as_deref(),
-        staff_group.as_deref(),
+        db::mssql_import::RemoteEeSyncSettings {
+            server,
+            database,
+            port,
+            auth_type,
+            username,
+            has_saved_password: false,
+            environment_override: false,
+        },
+        password,
     )
-    .await
+}
+
+#[tauri::command]
+fn remove_remote_ee_sync_password(
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    session_token: String,
+) -> Result<(), String> {
+    let _ctx = auth_session::require_admin(&session_store, &session_token)?;
+    db::mssql_import::remove_remote_ee_sync_password()
+}
+
+#[tauri::command]
+async fn test_remote_ee_sync_connection(
+    app: tauri::AppHandle,
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    session_token: String,
+) -> Result<db::mssql_import::MssqlConnectionTestResult, String> {
+    let _ctx = auth_session::require_admin(&session_store, &session_token)?;
+    Ok(db::mssql_import::test_remote_ee_sync_connection(&app).await)
 }
 
 #[tauri::command]
@@ -469,13 +465,9 @@ async fn preview_employee_list_mssql_sync(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
     session_token: String,
-    host: String,
-    port: u16,
-    user: String,
-    password: String,
 ) -> Result<db::mssql_import::EmployeeListSyncPreview, String> {
     let _ctx = auth_session::require_admin(&session_store, &session_token)?;
-    db::mssql_import::preview_employee_list_sync(&app, &host, port, &user, &password).await
+    db::mssql_import::preview_employee_list_sync(&app).await
 }
 
 #[tauri::command]
@@ -1143,10 +1135,10 @@ pub fn run() {
             detect_import_file,
             import_excel,
             preview_import_excel,
-            get_mssql_connection_defaults,
-            test_mssql_connection,
-            preview_mssql_staff,
-            import_mssql_staff,
+            get_remote_ee_sync_settings,
+            save_remote_ee_sync_settings,
+            remove_remote_ee_sync_password,
+            test_remote_ee_sync_connection,
             preview_employee_list_mssql_sync,
             apply_employee_list_mssql_sync
         ])
@@ -1253,10 +1245,10 @@ mod tests {
         "import_excel",
         "preview_import_excel",
         "detect_import_file",
-        "get_mssql_connection_defaults",
-        "test_mssql_connection",
-        "preview_mssql_staff",
-        "import_mssql_staff",
+        "get_remote_ee_sync_settings",
+        "save_remote_ee_sync_settings",
+        "remove_remote_ee_sync_password",
+        "test_remote_ee_sync_connection",
         "preview_employee_list_mssql_sync",
         "apply_employee_list_mssql_sync",
     ];
@@ -1328,6 +1320,34 @@ mod tests {
     }
 
     #[test]
+    fn remote_ee_sync_uses_admin_guard_and_exposes_no_arbitrary_mssql_sql_command() {
+        for command in [
+            "get_remote_ee_sync_settings",
+            "save_remote_ee_sync_settings",
+            "remove_remote_ee_sync_password",
+            "test_remote_ee_sync_connection",
+            "preview_employee_list_mssql_sync",
+            "apply_employee_list_mssql_sync",
+        ] {
+            assert!(
+                ADMIN_COMMANDS.contains(&command),
+                "{command} must require admin access"
+            );
+        }
+        for removed in [
+            "get_mssql_connection_defaults",
+            "test_mssql_connection",
+            "preview_mssql_staff",
+            "import_mssql_staff",
+        ] {
+            assert!(
+                !registered_commands().contains(&removed),
+                "legacy SQL command {removed} must not be registered"
+            );
+        }
+    }
+
+    #[test]
     fn classification_counts_are_non_empty_and_disjoint() {
         assert!(!PUBLIC_COMMANDS.is_empty());
         assert!(!SUPER_ADMIN_COMMANDS.is_empty());
@@ -1350,9 +1370,7 @@ mod tests {
 
         let store = auth_session::SessionStore::new();
         assert_eq!(
-            auth_session::require_admin(&store, "")
-                .unwrap_err()
-                .code(),
+            auth_session::require_admin(&store, "").unwrap_err().code(),
             auth_session::AUTH_REQUIRED
         );
 

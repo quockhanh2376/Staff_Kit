@@ -2107,3 +2107,30 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 
 - Result: Qeen's static review of the latest implementation found no remaining escalation issue; the gate rejects permissions beyond explicit read-only allowlists, including impersonation of database and server principals. Query B and the preview/approval lifecycle remain intact.
 - Validation: focused permission-gate test 1/1; full Rust/Tauri 308/308; `npm run check:quality` passed; `git diff --check` passed. Environment checks found no source credentials in Process/User/Machine; no connection or DB writes occurred. Direct Query B counts/mapping and runtime SQL-version behavior remain pending the user's configured read-only login and Qeen's direct audit.
+
+## 2026-10-13 Remote EE Sync secure settings — Start
+
+- Objective: update the approved EE List MSSQL sync spec and implement secure Remote EE Sync settings with verified read-only access, fixed Query B, and preview-before-apply.
+- Security: source permissions must be verified fail-closed including inherited roles; secrets stay out of logs/source/plaintext settings; no remote or live local DB writes during validation.
+- Scope: isolated feature worktree only; preserve all existing untracked files; no merge before Qeen approval.
+
+## 2026-10-13 Remote EE Sync secure settings — End
+
+- Updated the EE List sync spec and implementation plan for the approved Query B, Remote EE Sync settings, secure password storage, and fail-closed permission verification.
+- Implemented the Settings profile, Windows Credential Manager password storage, full-profile-only environment override, PASS/FAIL Test Connection, configured-database Query B, and removed arbitrary MSSQL import/query IPC and UI.
+- Verification: `npm run check:quality` passed; frontend unit tests 231/231; Rust/Tauri tests 311/311; `git diff --check` passed. Existing lint/build/Rust warnings remain.
+- DB safety: source read-only credentials are not configured in Process/User/Machine environment. No source or live Staff Kit DB connection/write was made. Direct Query B row/mapping comparison is blocked pending user configuration and Qeen verification.
+- Commit remains on the feature branch; no push or merge. Qeen independent review pending exact commit.
+
+## 2026-10-13 Remote EE Sync Qeen review follow-up — Start
+
+- Objective: close Qeen's finding that the read-only gate omitted role-specific server securable permissions.
+- Approach: inspect effective ANY permission on each visible server-role securable; treat NULL/unverifiable results as write-capable. SQL Server documentation was checked because `fn_my_permissions` does not document SERVER ROLE as a supported class.
+- No source/live DB connection or writes; environment variables remain unconfigured.
+
+## 2026-10-13 Remote EE Sync Qeen review follow-up — End
+
+- Added a regression assertion and server-role permission gate using `HAS_PERMS_BY_NAME(role, 'SERVER ROLE', 'ANY')`, with NULL failing closed.
+- Red test reproduced the missing gate before implementation; focused permission test passed after the fix.
+- Verification: `npm run check:quality` passed; frontend unit tests 231/231; full Rust/Tauri tests 311/311. Existing lint/build/Rust warnings remain.
+- Qeen revalidation of the updated commit pending. Direct Query B count/mapping remains blocked because `STAFFKIT_MSSQL_*` is not configured. No DB connection or writes occurred.

@@ -4,9 +4,6 @@ import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 
 const api = vi.hoisted(() => ({
-    getMssqlConnectionDefaults: vi.fn(),
-    testMssqlConnection: vi.fn(),
-    importMssqlStaff: vi.fn(),
     previewEmployeeListMssqlSync: vi.fn(),
     applyEmployeeListMssqlSync: vi.fn(),
     listTeams: vi.fn(),
@@ -27,14 +24,6 @@ const baseOptions = {
 
 beforeEach(() => {
     vi.clearAllMocks()
-    api.getMssqlConnectionDefaults.mockResolvedValue({
-        host: "  sql.example  ",
-        port: 1433,
-        user: "  staff-user  ",
-        password: "secret",
-    })
-    api.testMssqlConnection.mockResolvedValue(true)
-    api.importMssqlStaff.mockResolvedValue({ updated: 2, imported: 1, failed: 0 })
     api.previewEmployeeListMssqlSync.mockResolvedValue({
         previewId: "preview-1",
         createdAt: "2026-10-13T00:00:00Z",
@@ -56,14 +45,7 @@ describe("employee MSSQL update flow", () => {
             await result.current.updateEmployeeListFromMssql()
         })
 
-        expect(api.previewEmployeeListMssqlSync).toHaveBeenCalledWith(
-            "sql.example",
-            1433,
-            "staff-user",
-            "secret",
-        )
-        expect(api.testMssqlConnection).not.toHaveBeenCalled()
-        expect(api.importMssqlStaff).not.toHaveBeenCalled()
+        expect(api.previewEmployeeListMssqlSync).toHaveBeenCalledWith()
         expect(api.applyEmployeeListMssqlSync).not.toHaveBeenCalled()
         expect(result.current.mssqlSyncPreview?.counts.missing).toBe(4)
         expect(result.current.mssqlUpdateMessage).toContain("Preview ready")

@@ -1,60 +1,30 @@
 use std::collections::HashMap;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use rusqlite::{params, OptionalExtension, Transaction};
+use rusqlite::{params, Transaction};
 use serde::Serialize;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 use tiberius::{Client, Config};
 use tokio::net::TcpStream;
 use tokio::time::{sleep, timeout};
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
 use super::column::{upsert_dynamic_field_definitions_for_map, upsert_dynamic_fields_tx};
-use super::employee::UpsertAction;
 use super::schema::{AZURE_AD_ACCOUNT_FIELD_KEY, STAFF_GROUP_EMPLOYEE_LIST};
-use super::{
-    humanize_sqlite_error, normalize_optional_text, open_runtime_connection, require_text,
-};
+use super::{humanize_sqlite_error, open_runtime_connection};
 
-const MSSQL_HOST_ENV: &str = "STAFFKIT_MSSQL_HOST";
 const MSSQL_PORT_ENV: &str = "STAFFKIT_MSSQL_PORT";
-const MSSQL_USER_ENV: &str = "STAFFKIT_MSSQL_USER";
 const MSSQL_PASSWORD_ENV: &str = "STAFFKIT_MSSQL_PASSWORD";
+const MSSQL_SERVER_ENV: &str = "STAFFKIT_MSSQL_SERVER";
+const MSSQL_DATABASE_ENV: &str = "STAFFKIT_MSSQL_DATABASE";
+const MSSQL_AUTH_TYPE_ENV: &str = "STAFFKIT_MSSQL_AUTH_TYPE";
+const MSSQL_USERNAME_ENV: &str = "STAFFKIT_MSSQL_USERNAME";
+const REMOTE_EE_SYNC_SECRET_REF: &str = "staffkit.remote-ee-sync.sql-password.v1";
+const REMOTE_EE_SYNC_SETTING_PREFIX: &str = "remote_ee_sync_";
 const MSSQL_CONNECT_ATTEMPTS: usize = 3;
 const MSSQL_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const MSSQL_CONNECT_RETRY_DELAY: Duration = Duration::from_millis(250);
-
-const DEFAULT_MSSQL_QUERY: &str = r#"
-WITH StaffList AS
-(
-    SELECT
-        S.[Code],
-        S.[Name],
-        S.[NickName],
-        COALESCE(S.[WorkEmail], S.[WorkEmail2]) AS [WorkEmail],
-        ASPU.UserName AS [AzureAD],
-        ROW_NUMBER() OVER (
-            PARTITION BY S.[Code]
-            ORDER BY S.[Code]
-        ) AS RowNum
-    FROM [AssetManagement].[dbo].[Staffs] AS S
-    INNER JOIN [AssetManagement].[dbo].[AspNetUsers] AS ASPU
-        ON S.Id = ASPU.StaffId
-    WHERE S.[Resigned] = 0
-)
-SELECT TOP (1000)
-    [Code],
-    [Name],
-    [NickName],
-    [WorkEmail],
-    [AzureAD]
-FROM StaffList
-WHERE RowNum = 1
-ORDER BY [Code]
-"#;
 
 const EE_LIST_SYNC_QUERY: &str = r#"
 WITH StaffList AS
@@ -69,8 +39,8 @@ WITH StaffList AS
             PARTITION BY UPPER(LTRIM(RTRIM(S.[Code])))
             ORDER BY S.[Id], ASPU.[UserName]
         ) AS RowNum
-    FROM [AssetManagement].[dbo].[Staffs] AS S
-    INNER JOIN [AssetManagement].[dbo].[AspNetUsers] AS ASPU
+    FROM [dbo].[Staffs] AS S
+    INNER JOIN [dbo].[AspNetUsers] AS ASPU
         ON S.[Id] = ASPU.[StaffId]
     WHERE S.[Resigned] = 0
 )
@@ -149,12 +119,6 @@ struct PendingEmployeeListSync {
 
 static PENDING_EMPLOYEE_LIST_SYNCS: OnceLock<Mutex<HashMap<String, PendingEmployeeListSync>>> =
     OnceLock::new();
-
-pub fn build_connection_string(host: &str, port: u16, user: &str, password: &str) -> String {
-    format!(
-        "server=tcp:{host},{port};database=AssetManagement;uid={user};pwd={password};encrypt=true;TrustServerCertificate=yes;"
-    )
-}
 
 const MSSQL_READ_ONLY_CHECK: &str = r#"
 SELECT CAST(CASE WHEN
@@ -288,6 +252,15 @@ SELECT CAST(CASE WHEN
         WHERE P.type <> 'R'
           AND EffectivePermission.permission_name NOT IN ('VIEW DEFINITION')
     )
+    OR EXISTS (
+        SELECT 1
+        FROM sys.server_principals AS P
+        WHERE P.type = 'R'
+          AND COALESCE(
+              HAS_PERMS_BY_NAME(P.name, 'SERVER ROLE', 'ANY'),
+              1
+          ) = 1
+    )
     THEN 1 ELSE 0 END AS bit) AS HasWriteAccess
 "#;
 
@@ -311,29 +284,374 @@ async fn ensure_mssql_login_is_read_only(client: &mut MssqlClient) -> Result<(),
     Ok(())
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MssqlConnectionDefaults {
-    pub host: String,
-    pub port: u16,
-    pub user: String,
-    pub password: String,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MssqlAuthType {
+    SqlServer,
+    WindowsIntegrated,
 }
 
-impl Default for MssqlConnectionDefaults {
-    fn default() -> Self {
-        let port = std::env::var(MSSQL_PORT_ENV)
-            .ok()
-            .and_then(|value| value.parse::<u16>().ok())
-            .unwrap_or(1433);
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteEeSyncSettings {
+    pub server: String,
+    pub database: String,
+    pub port: u16,
+    pub auth_type: MssqlAuthType,
+    pub username: String,
+    pub has_saved_password: bool,
+    pub environment_override: bool,
+}
 
+#[derive(Clone)]
+struct MssqlConnectionConfig {
+    server: String,
+    database: String,
+    port: u16,
+    auth_type: MssqlAuthType,
+    username: String,
+    password: Option<String>,
+    environment_override: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MssqlConnectionTestResult {
+    pub status: String,
+    pub reason: String,
+    pub row_count: Option<usize>,
+}
+
+impl MssqlConnectionTestResult {
+    fn pass(row_count: usize) -> Self {
         Self {
-            host: std::env::var(MSSQL_HOST_ENV).unwrap_or_default(),
-            port,
-            user: std::env::var(MSSQL_USER_ENV).unwrap_or_default(),
-            password: std::env::var(MSSQL_PASSWORD_ENV).unwrap_or_default(),
+            status: "PASS".into(),
+            reason: "Read-only access verified; approved Query B completed.".into(),
+            row_count: Some(row_count),
         }
     }
+
+    fn fail(reason: impl Into<String>) -> Self {
+        Self {
+            status: "FAIL".into(),
+            reason: reason.into(),
+            row_count: None,
+        }
+    }
+}
+
+impl MssqlConnectionConfig {
+    fn safe_settings(&self, has_saved_password: bool) -> RemoteEeSyncSettings {
+        RemoteEeSyncSettings {
+            server: self.server.clone(),
+            database: self.database.clone(),
+            port: self.port,
+            auth_type: self.auth_type,
+            username: self.username.clone(),
+            has_saved_password,
+            environment_override: self.environment_override,
+        }
+    }
+}
+
+fn resolve_connection_config_from(
+    env: &HashMap<String, String>,
+    saved: Option<MssqlConnectionConfig>,
+) -> Result<MssqlConnectionConfig, String> {
+    let names = [
+        MSSQL_SERVER_ENV,
+        MSSQL_DATABASE_ENV,
+        MSSQL_PORT_ENV,
+        MSSQL_AUTH_TYPE_ENV,
+        MSSQL_USERNAME_ENV,
+        MSSQL_PASSWORD_ENV,
+    ];
+    if names.iter().any(|name| env.contains_key(*name)) {
+        let server = env.get(MSSQL_SERVER_ENV).cloned().unwrap_or_default();
+        let database = env.get(MSSQL_DATABASE_ENV).cloned().unwrap_or_default();
+        let username = env.get(MSSQL_USERNAME_ENV).cloned().unwrap_or_default();
+        let auth_type = match env
+            .get(MSSQL_AUTH_TYPE_ENV)
+            .map(String::as_str)
+            .ok_or_else(|| {
+                "MSSQL environment configuration is incomplete; authentication type is required."
+                    .to_string()
+            })? {
+            "sql_server" => MssqlAuthType::SqlServer,
+            "windows_integrated" => MssqlAuthType::WindowsIntegrated,
+            _ => return Err("MSSQL environment configuration is incomplete or invalid.".into()),
+        };
+        let port = match env.get(MSSQL_PORT_ENV) {
+            Some(value) => value
+                .parse::<u16>()
+                .map_err(|_| "MSSQL environment configuration has an invalid port.".to_string())?,
+            None => 1433,
+        };
+        let password = env.get(MSSQL_PASSWORD_ENV).cloned();
+        if server.trim().is_empty()
+            || database.trim().is_empty()
+            || port == 0
+            || (auth_type == MssqlAuthType::SqlServer
+                && (username.trim().is_empty()
+                    || password.as_deref().unwrap_or_default().is_empty()))
+        {
+            return Err("MSSQL environment configuration is incomplete; saved settings are not used as fallback.".into());
+        }
+        return Ok(MssqlConnectionConfig {
+            server,
+            database,
+            port,
+            auth_type,
+            username,
+            password,
+            environment_override: true,
+        });
+    }
+    let config = saved.ok_or_else(|| "Remote EE Sync settings are not configured.".to_string())?;
+    if config.server.trim().is_empty()
+        || config.database.trim().is_empty()
+        || config.port == 0
+        || (config.auth_type == MssqlAuthType::SqlServer
+            && (config.username.trim().is_empty()
+                || config.password.as_deref().unwrap_or_default().is_empty()))
+    {
+        return Err("Remote EE Sync settings are incomplete.".into());
+    }
+    Ok(config)
+}
+
+fn process_mssql_environment() -> HashMap<String, String> {
+    [
+        MSSQL_SERVER_ENV,
+        MSSQL_DATABASE_ENV,
+        MSSQL_PORT_ENV,
+        MSSQL_AUTH_TYPE_ENV,
+        MSSQL_USERNAME_ENV,
+        MSSQL_PASSWORD_ENV,
+    ]
+    .iter()
+    .filter_map(|name| {
+        std::env::var(name)
+            .ok()
+            .map(|value| ((*name).to_string(), value))
+    })
+    .collect()
+}
+
+pub fn get_remote_ee_sync_settings(app: &AppHandle) -> Result<RemoteEeSyncSettings, String> {
+    let conn = open_runtime_connection(app)?;
+    let read = |key: &str| {
+        super::get_setting_value(&conn, &format!("{REMOTE_EE_SYNC_SETTING_PREFIX}{key}"))
+    };
+    let profile = MssqlConnectionConfig {
+        server: read("server")?.unwrap_or_default(),
+        database: read("database")?.unwrap_or_else(|| "AssetManagement".into()),
+        port: read("port")?
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(1433),
+        auth_type: match read("auth_type")?.as_deref() {
+            Some("windows_integrated") => MssqlAuthType::WindowsIntegrated,
+            _ => MssqlAuthType::SqlServer,
+        },
+        username: read("username")?.unwrap_or_default(),
+        password: None,
+        environment_override: !process_mssql_environment().is_empty(),
+    };
+    Ok(profile.safe_settings(read_mssql_password().unwrap_or(None).is_some()))
+}
+
+pub fn save_remote_ee_sync_settings(
+    app: &AppHandle,
+    settings: RemoteEeSyncSettings,
+    password: Option<String>,
+) -> Result<(), String> {
+    validate_remote_settings(&settings)?;
+    let mut conn = open_runtime_connection(app)?;
+    let tx = conn
+        .transaction()
+        .map_err(|_| "Could not save Remote EE Sync settings.".to_string())?;
+    write_remote_profile_settings(&tx, &settings)?;
+    tx.commit()
+        .map_err(|_| "Could not save Remote EE Sync settings.".to_string())?;
+    if settings.auth_type == MssqlAuthType::WindowsIntegrated {
+        delete_mssql_password()?;
+    } else if let Some(password) = password.filter(|value| !value.is_empty()) {
+        write_mssql_password(&password)?;
+    }
+    Ok(())
+}
+
+fn write_remote_profile_settings(
+    conn: &rusqlite::Connection,
+    settings: &RemoteEeSyncSettings,
+) -> Result<(), String> {
+    for (key, value) in [
+        ("server", settings.server.trim().to_string()),
+        ("database", settings.database.trim().to_string()),
+        ("port", settings.port.to_string()),
+        (
+            "auth_type",
+            match settings.auth_type {
+                MssqlAuthType::SqlServer => "sql_server",
+                MssqlAuthType::WindowsIntegrated => "windows_integrated",
+            }
+            .to_string(),
+        ),
+        ("username", settings.username.trim().to_string()),
+        ("secret_ref", REMOTE_EE_SYNC_SECRET_REF.to_string()),
+    ] {
+        super::set_setting_value(
+            conn,
+            &format!("{REMOTE_EE_SYNC_SETTING_PREFIX}{key}"),
+            Some(&value),
+        )?;
+    }
+    Ok(())
+}
+
+pub fn remove_remote_ee_sync_password() -> Result<(), String> {
+    delete_mssql_password()
+}
+
+fn validate_remote_settings(settings: &RemoteEeSyncSettings) -> Result<(), String> {
+    if settings.server.trim().is_empty()
+        || settings.database.trim().is_empty()
+        || settings.port == 0
+    {
+        return Err("Server, database, and a valid port are required.".into());
+    }
+    if settings.auth_type == MssqlAuthType::SqlServer && settings.username.trim().is_empty() {
+        return Err("Username is required for SQL Server authentication.".into());
+    }
+    Ok(())
+}
+
+fn load_connection_config(app: &AppHandle) -> Result<MssqlConnectionConfig, String> {
+    let env = process_mssql_environment();
+    if !env.is_empty() {
+        return resolve_connection_config_from(&env, None);
+    }
+    let conn = open_runtime_connection(app)?;
+    let read = |key: &str| {
+        super::get_setting_value(&conn, &format!("{REMOTE_EE_SYNC_SETTING_PREFIX}{key}"))
+    };
+    let auth_type = match read("auth_type")?.as_deref() {
+        Some("windows_integrated") => MssqlAuthType::WindowsIntegrated,
+        Some("sql_server") => MssqlAuthType::SqlServer,
+        _ => return Err("Remote EE Sync settings are incomplete.".into()),
+    };
+    let saved = MssqlConnectionConfig {
+        server: read("server")?.unwrap_or_default(),
+        database: read("database")?.unwrap_or_default(),
+        port: read("port")?
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(1433),
+        username: read("username")?.unwrap_or_default(),
+        auth_type,
+        password: if auth_type == MssqlAuthType::SqlServer {
+            read_mssql_password()?
+        } else {
+            None
+        },
+        environment_override: false,
+    };
+    resolve_connection_config_from(&HashMap::new(), Some(saved))
+}
+
+#[cfg(windows)]
+fn read_mssql_password() -> Result<Option<String>, String> {
+    use std::ptr;
+    use windows_sys::Win32::Foundation::{GetLastError, ERROR_NOT_FOUND};
+    use windows_sys::Win32::Security::Credentials::{
+        CredFree, CredReadW, CREDENTIALW, CRED_TYPE_GENERIC,
+    };
+    let target: Vec<u16> = REMOTE_EE_SYNC_SECRET_REF
+        .encode_utf16()
+        .chain([0])
+        .collect();
+    let mut credential: *mut CREDENTIALW = ptr::null_mut();
+    if unsafe { CredReadW(target.as_ptr(), CRED_TYPE_GENERIC, 0, &mut credential) } == 0 {
+        return if unsafe { GetLastError() } == ERROR_NOT_FOUND {
+            Ok(None)
+        } else {
+            Err("Windows secure credential could not be read.".into())
+        };
+    }
+    let result = unsafe {
+        let item = &*credential;
+        if item.CredentialBlob.is_null() || item.CredentialBlobSize == 0 {
+            Err("Stored SQL credential is invalid.".to_string())
+        } else {
+            String::from_utf8(
+                std::slice::from_raw_parts(item.CredentialBlob, item.CredentialBlobSize as usize)
+                    .to_vec(),
+            )
+            .map_err(|_| "Stored SQL credential is invalid.".to_string())
+        }
+    };
+    unsafe {
+        CredFree(credential.cast());
+    }
+    result.map(Some)
+}
+#[cfg(not(windows))]
+fn read_mssql_password() -> Result<Option<String>, String> {
+    Err("Secure SQL password storage is available only on Windows.".into())
+}
+
+#[cfg(windows)]
+fn write_mssql_password(password: &str) -> Result<(), String> {
+    use std::ptr;
+    use windows_sys::Win32::Security::Credentials::{
+        CredWriteW, CREDENTIALW, CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC,
+    };
+    if password.len() > 5120 {
+        return Err("SQL password exceeds Windows Credential Manager limits.".into());
+    }
+    let mut target: Vec<u16> = REMOTE_EE_SYNC_SECRET_REF
+        .encode_utf16()
+        .chain([0])
+        .collect();
+    let mut blob = password.as_bytes().to_vec();
+    let mut item = CREDENTIALW::default();
+    item.Type = CRED_TYPE_GENERIC;
+    item.TargetName = target.as_mut_ptr();
+    item.CredentialBlobSize = blob.len() as u32;
+    item.CredentialBlob = blob.as_mut_ptr();
+    item.Persist = CRED_PERSIST_LOCAL_MACHINE;
+    item.UserName = ptr::null_mut();
+    let success = unsafe { CredWriteW(&item, 0) };
+    blob.fill(0);
+    if success == 0 {
+        Err("Windows secure credential storage failed.".into())
+    } else {
+        Ok(())
+    }
+}
+#[cfg(not(windows))]
+fn write_mssql_password(_password: &str) -> Result<(), String> {
+    Err("Secure SQL password storage is available only on Windows.".into())
+}
+
+#[cfg(windows)]
+fn delete_mssql_password() -> Result<(), String> {
+    use windows_sys::Win32::Foundation::{GetLastError, ERROR_NOT_FOUND};
+    use windows_sys::Win32::Security::Credentials::{CredDeleteW, CRED_TYPE_GENERIC};
+    let target: Vec<u16> = REMOTE_EE_SYNC_SECRET_REF
+        .encode_utf16()
+        .chain([0])
+        .collect();
+    if unsafe { CredDeleteW(target.as_ptr(), CRED_TYPE_GENERIC, 0) } != 0
+        || unsafe { GetLastError() } == ERROR_NOT_FOUND
+    {
+        Ok(())
+    } else {
+        Err("Windows secure credential could not be removed.".into())
+    }
+}
+#[cfg(not(windows))]
+fn delete_mssql_password() -> Result<(), String> {
+    Err("Secure SQL password storage is available only on Windows.".into())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -346,31 +664,6 @@ pub struct MssqlStaffRecord {
     pub azure_ad_account: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MssqlImportPreview {
-    pub total_rows: usize,
-    pub records: Vec<MssqlStaffRecord>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MssqlImportReport {
-    pub total_rows: usize,
-    pub imported: u32,
-    pub updated: u32,
-    pub failed: u32,
-    pub errors: Vec<MssqlImportError>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MssqlImportError {
-    pub code: String,
-    pub action: String,
-    pub error: Option<String>,
-}
-
 type MssqlClient = Client<Compat<TcpStream>>;
 
 fn format_mssql_connect_error(error: impl std::fmt::Display) -> String {
@@ -381,21 +674,17 @@ fn format_mssql_connect_error(error: impl std::fmt::Display) -> String {
         || normalized.contains("forcibly closed")
         || normalized.contains("connection reset")
     {
-        return format!(
-            "MSSQL connection failed: the server closed the connection during TLS/authentication negotiation (Windows error 10054). Verify the SQL Server port, TLS/encryption settings, firewall, and SQL credentials. Details: {detail}"
-        );
+        return "MSSQL connection failed during TLS/authentication negotiation (Windows error 10054). Verify server, port, TLS settings, firewall, and credentials.".into();
     }
 
     if normalized.contains("tls")
         || normalized.contains("handshake")
         || normalized.contains("certificate")
     {
-        return format!(
-            "MSSQL connection failed during TLS negotiation. Verify the SQL Server encryption settings and certificate configuration. Details: {detail}"
-        );
+        return "MSSQL connection failed during TLS negotiation. Verify SQL Server encryption and certificate configuration.".into();
     }
 
-    format!("MSSQL authentication failed. Verify the SQL username and password. Details: {detail}")
+    "MSSQL authentication failed. Verify the selected authentication type and credentials.".into()
 }
 
 fn is_retryable_mssql_connect_error(detail: &str) -> bool {
@@ -413,50 +702,10 @@ fn is_retryable_mssql_connect_error(detail: &str) -> bool {
 fn format_mssql_tcp_connect_error(addr: &str, detail: &str) -> String {
     let normalized = detail.to_ascii_lowercase();
     if normalized.contains("10060") || normalized.contains("timed out") {
-        return format!(
-            "MSSQL network connection failed for {addr}: the server did not respond within the timeout (Windows error 10060). Check that the computer is connected to the company network/VPN, SQL Server is running, TCP is enabled, and firewall port 1433 is open. Details: {detail}"
-        );
+        return format!("MSSQL network connection failed for {addr}: timeout (Windows error 10060). Check company network/VPN, server availability, TCP, and firewall.");
     }
 
-    format!(
-        "MSSQL network connection failed for {addr}. Check the host, port, network/VPN, and firewall settings. Details: {detail}"
-    )
-}
-
-fn append_import_log(app: &AppHandle, message: impl AsRef<str>) {
-    let Ok(mut log_dir) = app.path().app_local_data_dir() else {
-        eprintln!("[mssql_import] {}", message.as_ref());
-        return;
-    };
-
-    log_dir.push("logs");
-    if let Err(err) = fs::create_dir_all(&log_dir) {
-        eprintln!(
-            "[mssql_import] failed to create log directory {}: {err}",
-            log_dir.to_string_lossy()
-        );
-        eprintln!("[mssql_import] {}", message.as_ref());
-        return;
-    }
-
-    let log_path = log_dir.join("mssql-import.log");
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or_default();
-
-    match OpenOptions::new().create(true).append(true).open(&log_path) {
-        Ok(mut file) => {
-            let _ = writeln!(file, "[{timestamp}] {}", message.as_ref());
-        }
-        Err(err) => {
-            eprintln!(
-                "[mssql_import] failed to open log file {}: {err}",
-                log_path.to_string_lossy()
-            );
-            eprintln!("[mssql_import] {}", message.as_ref());
-        }
-    }
+    format!("MSSQL network connection failed for {addr}. Check server, port, network/VPN, and firewall settings.")
 }
 
 fn get_required_mssql_text(
@@ -598,105 +847,34 @@ fn sync_record_matches(source: &MssqlStaffRecord, local: &LocalEmployeeListRecor
             == normalize_sync_text(local.azure_ad_account.as_deref())
 }
 
-fn upsert_mssql_staff_record(
-    tx: &Transaction<'_>,
-    record: &MssqlStaffRecord,
-    staff_group: &str,
-) -> Result<UpsertAction, String> {
-    let employee_id = require_text(record.code.clone(), "employeeId")?
-        .trim()
-        .to_uppercase();
-    let full_name = require_text(record.name.clone(), "fullName")?;
-    let email =
-        normalize_optional_text(record.work_email.clone()).map(|value| value.to_lowercase());
-    let nick_name = normalize_optional_text(record.nick_name.clone());
-
-    let existing_id: Option<i64> = tx
-        .query_row(
-            "SELECT id FROM employees WHERE employee_id = ?",
-            params![employee_id.as_str()],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(|err| format!("failed to check employee existence: {err}"))?;
-
-    if let Some(id) = existing_id {
-        tx.execute(
-            r#"
-            UPDATE employees
-            SET
-              full_name = ?,
-              nick_name = COALESCE(?, nick_name),
-              email = ?,
-              updated_at = datetime('now')
-            WHERE id = ?
-            "#,
-            params![
-                full_name.as_str(),
-                nick_name.as_deref(),
-                email.as_deref(),
-                id
-            ],
-        )
-        .map_err(humanize_sqlite_error)?;
-
-        upsert_mssql_azure_ad_account(tx, id, record.azure_ad_account.as_deref())?;
-
-        return Ok(UpsertAction::Updated);
+async fn connect(connection: &MssqlConnectionConfig) -> Result<MssqlClient, String> {
+    let mut config = Config::new();
+    config.host(&connection.server);
+    config.port(connection.port);
+    config.database(&connection.database);
+    config.encryption(tiberius::EncryptionLevel::Required);
+    config.readonly(true);
+    match connection.auth_type {
+        MssqlAuthType::SqlServer => config.authentication(tiberius::AuthMethod::sql_server(
+            &connection.username,
+            connection.password.as_deref().unwrap_or_default(),
+        )),
+        MssqlAuthType::WindowsIntegrated => {
+            #[cfg(windows)]
+            config.authentication(tiberius::AuthMethod::Integrated);
+            #[cfg(not(windows))]
+            return Err("Windows Integrated authentication is available only on Windows.".into());
+        }
     }
-
-    tx.execute(
-        r#"
-        INSERT INTO employees (
-          employee_id,
-          full_name,
-          nick_name,
-          email,
-          staff_group,
-          updated_at
-        ) VALUES (
-          ?, ?, ?, ?, ?, datetime('now')
-        )
-        "#,
-        params![
-            employee_id.as_str(),
-            full_name.as_str(),
-            nick_name.as_deref(),
-            email.as_deref(),
-            staff_group,
-        ],
-    )
-    .map_err(humanize_sqlite_error)?;
-
-    let inserted_id = tx.last_insert_rowid();
-    upsert_mssql_azure_ad_account(tx, inserted_id, record.azure_ad_account.as_deref())?;
-
-    Ok(UpsertAction::Inserted)
-}
-
-fn upsert_mssql_azure_ad_account(
-    tx: &Transaction<'_>,
-    employee_id: i64,
-    value: Option<&str>,
-) -> Result<(), String> {
-    let Some(value) = normalize_optional_text(value.map(str::to_string)) else {
-        return Ok(());
-    };
-
-    let mut fields = HashMap::new();
-    fields.insert(AZURE_AD_ACCOUNT_FIELD_KEY.to_string(), value);
-    upsert_dynamic_field_definitions_for_map(tx, &fields)?;
-    upsert_dynamic_fields_tx(tx, employee_id, &fields)
-}
-
-async fn connect(connection_string: &str) -> Result<MssqlClient, String> {
-    let config = Config::from_ado_string(connection_string)
-        .map_err(|err| format!("invalid connection string: {err}"))?;
-    let addr = config.get_addr();
+    let addr = format!("{}:{}", connection.server, connection.port);
     let mut last_error = None;
 
     for attempt in 1..=MSSQL_CONNECT_ATTEMPTS {
-        let tcp_result = timeout(MSSQL_CONNECT_TIMEOUT, TcpStream::connect(&addr)).await;
+        let tcp_result = timeout(
+            MSSQL_CONNECT_TIMEOUT,
+            TcpStream::connect((&connection.server[..], connection.port)),
+        )
+        .await;
         let tcp = match tcp_result {
             Ok(Ok(tcp)) => tcp,
             Ok(Err(err)) => {
@@ -744,36 +922,60 @@ async fn connect(connection_string: &str) -> Result<MssqlClient, String> {
     }))
 }
 
-pub async fn get_mssql_connection_defaults() -> MssqlConnectionDefaults {
-    MssqlConnectionDefaults::default()
+pub async fn test_remote_ee_sync_connection(app: &AppHandle) -> MssqlConnectionTestResult {
+    let result = async {
+        let config = load_connection_config(app)?;
+        let rows = fetch_employee_list_sync_source(&config).await?;
+        Ok::<usize, String>(rows.len())
+    }
+    .await;
+    match result {
+        Ok(count) => MssqlConnectionTestResult::pass(count),
+        Err(error) => MssqlConnectionTestResult::fail(sanitize_connection_reason(&error)),
+    }
 }
 
-pub async fn test_mssql_connection(
-    host: &str,
-    port: u16,
-    user: &str,
-    password: &str,
-) -> Result<bool, String> {
-    let conn_str = build_connection_string(host, port, user, password);
-    let mut client = connect(&conn_str).await?;
-    ensure_mssql_login_is_read_only(&mut client).await?;
-    let stream = client
-        .query("SELECT 1 AS test", &[])
-        .await
-        .map_err(|err| format!("MSSQL query failed: {err}"))?;
-
-    let _ = stream.into_results().await;
-    Ok(true)
+fn sanitize_connection_reason(error: &str) -> String {
+    let normalized = error.to_ascii_lowercase();
+    if normalized.contains("read-only")
+        || normalized.contains("write-level")
+        || normalized.contains("permission")
+    {
+        "Read-only permissions could not be verified or write access was detected. Configure a read-only SQL login.".into()
+    } else if normalized.contains("windows integrated authentication is available only on windows")
+    {
+        "Windows Integrated authentication is available only on Windows.".into()
+    } else if normalized.contains("secure sql password storage")
+        || normalized.contains("credential manager")
+    {
+        "Windows secure credential storage is unavailable; no SQL connection was attempted.".into()
+    } else if normalized.contains("tls")
+        || normalized.contains("certificate")
+        || normalized.contains("handshake")
+    {
+        "Encrypted SQL connection or server certificate validation failed. Verify the SQL Server TLS certificate.".into()
+    } else if normalized.contains("incomplete")
+        || normalized.contains("not configured")
+        || normalized.contains("settings")
+    {
+        error.to_string()
+    } else if normalized.contains("10060")
+        || normalized.contains("timed out")
+        || normalized.contains("network")
+    {
+        "Could not reach the SQL Server. Check server, port, network/VPN, and firewall.".into()
+    } else if normalized.contains("authentication") || normalized.contains("login failed") {
+        "SQL Server authentication failed. Check the selected authentication type and credentials."
+            .into()
+    } else {
+        "Connection or approved Query B failed; no database changes were made.".into()
+    }
 }
 
 async fn fetch_employee_list_sync_source(
-    host: &str,
-    port: u16,
-    user: &str,
-    password: &str,
+    connection: &MssqlConnectionConfig,
 ) -> Result<Vec<MssqlStaffRecord>, String> {
-    let conn_str = build_connection_string(host, port, user, password);
-    let mut client = connect(&conn_str).await?;
+    let mut client = connect(connection).await?;
     ensure_mssql_login_is_read_only(&mut client).await?;
     let stream = client
         .query(EE_LIST_SYNC_QUERY, &[])
@@ -885,12 +1087,9 @@ fn next_employee_sync_preview_id() -> String {
 
 pub async fn preview_employee_list_sync(
     app: &AppHandle,
-    host: &str,
-    port: u16,
-    user: &str,
-    password: &str,
 ) -> Result<EmployeeListSyncPreview, String> {
-    let source = fetch_employee_list_sync_source(host, port, user, password).await?;
+    let connection = load_connection_config(app)?;
+    let source = fetch_employee_list_sync_source(&connection).await?;
     let (local, non_employee_list_codes) = read_employee_list_snapshot(app)?;
     let diff = compare_employee_list(&source, &local, &non_employee_list_codes);
     let preview_id = next_employee_sync_preview_id();
@@ -923,23 +1122,8 @@ pub async fn apply_employee_list_sync(
     app: &AppHandle,
     preview_id: &str,
 ) -> Result<EmployeeListSyncResult, String> {
-    let credentials = MssqlConnectionDefaults::default();
-    if credentials.host.trim().is_empty()
-        || credentials.user.trim().is_empty()
-        || credentials.password.is_empty()
-    {
-        return Err(
-            "Missing MSSQL configuration. Configure the read-only source login and retry."
-                .to_string(),
-        );
-    }
-    let source = fetch_employee_list_sync_source(
-        credentials.host.trim(),
-        credentials.port,
-        credentials.user.trim(),
-        &credentials.password,
-    )
-    .await?;
+    let connection = load_connection_config(app)?;
+    let source = fetch_employee_list_sync_source(&connection).await?;
     let previews = PENDING_EMPLOYEE_LIST_SYNCS.get_or_init(|| Mutex::new(HashMap::new()));
     let pending = previews
         .lock()
@@ -1065,155 +1249,133 @@ fn upsert_sync_azure_ad(
     }
 }
 
-pub async fn preview_mssql_staff(
-    host: &str,
-    port: u16,
-    user: &str,
-    password: &str,
-    query: Option<&str>,
-) -> Result<MssqlImportPreview, String> {
-    let conn_str = build_connection_string(host, port, user, password);
-    let sql = query.unwrap_or(DEFAULT_MSSQL_QUERY);
-    let mut client = connect(&conn_str).await?;
-    ensure_mssql_login_is_read_only(&mut client).await?;
-
-    let stream = client
-        .query(sql, &[])
-        .await
-        .map_err(|err| format!("MSSQL query failed: {err}"))?;
-
-    let rows = stream
-        .into_first_result()
-        .await
-        .map_err(|err| format!("failed to read MSSQL results: {err}"))?;
-
-    let mut records = Vec::with_capacity(rows.len());
-
-    for row in &rows {
-        let code_index = find_mssql_column_index(row, &["Code"])
-            .ok_or_else(|| "MSSQL row missing Code column".to_string())?;
-        let name_index = find_mssql_column_index(row, &["Name"])
-            .ok_or_else(|| "MSSQL row missing Name column".to_string())?;
-        let code = get_required_mssql_text(row, code_index, "Code")?;
-        let name = get_required_mssql_text(row, name_index, "Name")?;
-        let nick_name =
-            get_optional_mssql_text(row, find_mssql_column_index(row, &["NickName", "Nickname"]));
-        let email =
-            get_optional_mssql_text(row, find_mssql_column_index(row, &["WorkEmail", "Email"]));
-        let azure_ad_account = get_optional_mssql_text(
-            row,
-            find_mssql_column_index(row, &["AzureAD", "AzureAdAccount", "AzureADAccount"]),
-        );
-
-        records.push(MssqlStaffRecord {
-            code,
-            name,
-            nick_name,
-            work_email: email,
-            azure_ad_account,
-        });
-    }
-
-    Ok(MssqlImportPreview {
-        total_rows: records.len(),
-        records,
-    })
-}
-
-pub async fn import_mssql_staff(
-    app: &AppHandle,
-    host: &str,
-    port: u16,
-    user: &str,
-    password: &str,
-    query: Option<&str>,
-    staff_group: Option<&str>,
-) -> Result<MssqlImportReport, String> {
-    let target_group = staff_group.unwrap_or(STAFF_GROUP_EMPLOYEE_LIST);
-    append_import_log(
-        app,
-        format!(
-            "start host={host} port={port} user={user} staff_group={target_group} query={}",
-            if query.is_some() { "custom" } else { "default" }
-        ),
-    );
-
-    let preview = match preview_mssql_staff(host, port, user, password, query).await {
-        Ok(preview) => {
-            append_import_log(
-                app,
-                format!("preview_ok total_rows={}", preview.records.len()),
-            );
-            preview
-        }
-        Err(err) => {
-            append_import_log(app, format!("preview_failed error={err}"));
-            return Err(format!("MSSQL import failed during preview: {err}"));
-        }
-    };
-
-    let mut conn = match open_runtime_connection(app) {
-        Ok(conn) => conn,
-        Err(err) => {
-            append_import_log(app, format!("sqlite_open_failed error={err}"));
-            return Err(format!("MSSQL import failed before database write: {err}"));
-        }
-    };
-    let tx = conn.transaction().map_err(|err| {
-        append_import_log(app, format!("transaction_start_failed error={err}"));
-        format!("MSSQL import failed to start database transaction: {err}")
-    })?;
-
-    let mut report = MssqlImportReport {
-        total_rows: preview.records.len(),
-        imported: 0,
-        updated: 0,
-        failed: 0,
-        errors: Vec::new(),
-    };
-
-    for record in &preview.records {
-        match upsert_mssql_staff_record(&tx, record, target_group) {
-            Ok(UpsertAction::Inserted) => report.imported += 1,
-            Ok(UpsertAction::Updated) => report.updated += 1,
-            Err(err) => {
-                report.failed += 1;
-                append_import_log(app, format!("row_failed code={} error={err}", record.code));
-                report.errors.push(MssqlImportError {
-                    code: record.code.clone(),
-                    action: "failed".to_string(),
-                    error: Some(err),
-                });
-            }
-        }
-    }
-
-    tx.commit().map_err(|err| {
-        append_import_log(app, format!("commit_failed error={err}"));
-        format!("MSSQL import failed to commit database transaction: {err}")
-    })?;
-
-    append_import_log(
-        app,
-        format!(
-            "finish total_rows={} imported={} updated={} failed={}",
-            report.total_rows, report.imported, report.updated, report.failed
-        ),
-    );
-
-    Ok(report)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use rusqlite::Connection;
 
     #[test]
+    fn remote_ee_sync_settings_dto_never_contains_password_material() {
+        let settings = RemoteEeSyncSettings {
+            server: "sql.example".into(),
+            database: "AssetManagement".into(),
+            port: 1433,
+            auth_type: MssqlAuthType::SqlServer,
+            username: "staff-reader".into(),
+            has_saved_password: true,
+            environment_override: false,
+        };
+        let serialized = serde_json::to_string(&settings).expect("serialize safe DTO");
+        assert!(
+            !serialized.contains("\"password\":") && !serialized.contains("synthetic-test-secret")
+        );
+        assert!(!serialized.contains("synthetic-test-secret"));
+        assert!(serialized.contains("hasSavedPassword"));
+    }
+
+    #[test]
+    fn partial_environment_override_is_rejected_without_falling_back_to_saved_profile() {
+        let env = HashMap::from([(
+            "STAFFKIT_MSSQL_SERVER".to_string(),
+            "sql.example".to_string(),
+        )]);
+        let saved = MssqlConnectionConfig {
+            server: "saved.example".into(),
+            database: "AssetManagement".into(),
+            port: 1433,
+            auth_type: MssqlAuthType::SqlServer,
+            username: "reader".into(),
+            password: Some("synthetic-saved-secret".into()),
+            environment_override: false,
+        };
+        let result = resolve_connection_config_from(&env, Some(saved));
+        assert!(result.err().unwrap().contains("incomplete"));
+    }
+
+    #[test]
+    fn saved_profile_persists_only_non_secret_fields_and_secret_reference() {
+        let conn = Connection::open_in_memory().expect("in-memory settings DB");
+        conn.execute_batch("CREATE TABLE app_settings(setting_key TEXT PRIMARY KEY, setting_value TEXT, updated_at TEXT);")
+            .expect("create settings table");
+        let settings = RemoteEeSyncSettings {
+            server: "sql.example".into(),
+            database: "AssetManagement".into(),
+            port: 1433,
+            auth_type: MssqlAuthType::SqlServer,
+            username: "reader".into(),
+            has_saved_password: false,
+            environment_override: false,
+        };
+        write_remote_profile_settings(&conn, &settings).expect("save non-secret profile");
+        let keys: Vec<String> = conn
+            .prepare("SELECT setting_key FROM app_settings ORDER BY setting_key")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let values: Vec<String> = conn
+            .prepare("SELECT setting_value FROM app_settings ORDER BY setting_key")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(values.contains(&REMOTE_EE_SYNC_SECRET_REF.to_string()));
+        assert!(!keys.iter().any(|key| key.ends_with("password")));
+        assert_eq!(keys.len(), 6);
+    }
+
+    #[test]
+    fn environment_override_is_used_only_when_required_fields_are_complete() {
+        let env = HashMap::from([
+            (
+                "STAFFKIT_MSSQL_SERVER".to_string(),
+                "sql.example".to_string(),
+            ),
+            (
+                "STAFFKIT_MSSQL_DATABASE".to_string(),
+                "AssetManagement".to_string(),
+            ),
+            ("STAFFKIT_MSSQL_PORT".to_string(), "1433".to_string()),
+            (
+                "STAFFKIT_MSSQL_AUTH_TYPE".to_string(),
+                "sql_server".to_string(),
+            ),
+            (
+                "STAFFKIT_MSSQL_USERNAME".to_string(),
+                "staff-reader".to_string(),
+            ),
+            (
+                "STAFFKIT_MSSQL_PASSWORD".to_string(),
+                "synthetic-test-secret".to_string(),
+            ),
+        ]);
+        let config = resolve_connection_config_from(&env, None).expect("complete env profile");
+        assert_eq!(config.server, "sql.example");
+        assert_eq!(config.database, "AssetManagement");
+        assert_eq!(config.username, "staff-reader");
+        assert_eq!(config.password.as_deref(), Some("synthetic-test-secret"));
+        assert!(config.environment_override);
+    }
+
+    #[test]
+    fn test_connection_result_contains_safe_status_reason_and_optional_row_count() {
+        let result =
+            MssqlConnectionTestResult::fail("Read-only permissions could not be verified.");
+        let serialized = serde_json::to_string(&result).expect("serialize result");
+        assert!(serialized.contains("FAIL"));
+        assert!(serialized.contains("reason"));
+        assert!(!serialized.contains("password"));
+        assert_eq!(result.row_count, None);
+    }
+
+    #[test]
     fn ee_list_sync_query_is_the_fixed_approved_read_only_query() {
         let query = EE_LIST_SYNC_QUERY.to_ascii_lowercase();
 
-        assert!(query.contains("inner join [assetmanagement].[dbo].[aspnetusers]"));
+        assert!(query.contains("inner join [dbo].[aspnetusers]"));
+        assert!(query.contains("from [dbo].[staffs]"));
         assert!(query.contains("where s.[resigned] = 0"));
         assert!(query.contains("coalesce(s.[workemail], s.[workemail2]) as [workemail]"));
         assert!(query.contains("as [azuread]"));
@@ -1375,18 +1537,6 @@ mod tests {
     }
 
     #[test]
-    fn build_connection_string_requires_encryption_and_trusted_certificate() {
-        let connection_string = build_connection_string("sql.example", 1433, "staff", "secret");
-
-        assert!(connection_string.contains("server=tcp:sql.example,1433;"));
-        assert!(connection_string.contains("uid=staff;"));
-        assert!(connection_string.contains("pwd=secret;"));
-        assert!(connection_string.contains("encrypt=true;"));
-        assert!(connection_string.contains("TrustServerCertificate=yes;"));
-        assert!(connection_string.contains("database=AssetManagement;"));
-    }
-
-    #[test]
     fn read_only_login_check_fails_closed_for_write_roles_and_table_permissions() {
         let check = MSSQL_READ_ONLY_CHECK.to_ascii_lowercase();
         assert!(check.contains("is_srvrolemember('sysadmin')"));
@@ -1410,55 +1560,14 @@ mod tests {
         assert!(check.contains("when 'r' then 'role'"));
         assert!(check.contains("from sys.server_principals as p"));
         assert!(check.contains("sys.fn_my_permissions(p.name, 'login')"));
-        assert!(check.contains("where o.type in ('u', 'v', 'p', 'pc', 'fn', 'if', 'tf', 'fs', 'ft')"));
+        assert!(check.contains("has_perms_by_name(p.name, 'server role', 'any')"));
+        assert!(check.contains("where p.type = 'r'"));
+        assert!(
+            check.contains("where o.type in ('u', 'v', 'p', 'pc', 'fn', 'if', 'tf', 'fs', 'ft')")
+        );
         assert!(check.contains("permission_name not in ('select', 'view definition')"));
         assert!(!check.contains("references"));
         assert!(check.contains("coalesce(") && check.contains("then 1 else 0 end as bit"));
-    }
-
-    #[test]
-    fn upsert_existing_staff_record_updates_azure_ad_account() {
-        let conn = Connection::open_in_memory().expect("open in-memory sqlite database");
-        super::super::configure_connection(&conn).expect("configure sqlite pragmas");
-        super::super::apply_migrations(&conn).expect("apply database migrations");
-        conn.execute(
-            "INSERT INTO employees (employee_id, full_name, staff_group) VALUES (?, ?, ?)",
-            params!["ASWVN405", "Le Thanh Dat", STAFF_GROUP_EMPLOYEE_LIST],
-        )
-        .expect("seed existing employee");
-
-        let mut conn = conn;
-        let tx = conn.transaction().expect("start transaction");
-        let record = MssqlStaffRecord {
-            code: "ASWVN405".to_string(),
-            name: "Lê Thanh Đạt".to_string(),
-            nick_name: None,
-            work_email: Some("d.lethanh@eml.com.au".to_string()),
-            azure_ad_account: Some("d.le2@aswhiteglobal.com".to_string()),
-        };
-
-        assert!(matches!(
-            upsert_mssql_staff_record(&tx, &record, STAFF_GROUP_EMPLOYEE_LIST),
-            Ok(UpsertAction::Updated)
-        ));
-        tx.commit().expect("commit transaction");
-
-        let azure_ad_account: Option<String> = conn
-            .query_row(
-                r#"
-                SELECT v.value
-                FROM employees e
-                LEFT JOIN employee_dynamic_values v
-                  ON v.employee_id = e.id
-                 AND v.field_key = ?
-                WHERE e.employee_id = ?
-                "#,
-                params![AZURE_AD_ACCOUNT_FIELD_KEY, "ASWVN405"],
-                |row| row.get(0),
-            )
-            .expect("read updated AzureAD account");
-
-        assert_eq!(azure_ad_account.as_deref(), Some("d.le2@aswhiteglobal.com"));
     }
 
     #[test]
@@ -1471,46 +1580,5 @@ mod tests {
         assert!(message.contains("10.184.0.19:1433"));
         assert!(message.contains("Windows error 10060"));
         assert!(message.contains("network/VPN"));
-    }
-
-    #[test]
-    fn upsert_mssql_staff_record_persists_nickname_and_azure_ad_account() {
-        let conn = Connection::open_in_memory().expect("open in-memory sqlite database");
-        super::super::configure_connection(&conn).expect("configure sqlite pragmas");
-        super::super::apply_migrations(&conn).expect("apply database migrations");
-
-        let mut conn = conn;
-        let tx = conn.transaction().expect("start transaction");
-        let record = MssqlStaffRecord {
-            code: "ASWVN001".to_string(),
-            name: "Test User".to_string(),
-            nick_name: Some("Tester".to_string()),
-            work_email: Some("test@example.com".to_string()),
-            azure_ad_account: Some("tester@example.com".to_string()),
-        };
-
-        assert!(matches!(
-            upsert_mssql_staff_record(&tx, &record, STAFF_GROUP_EMPLOYEE_LIST),
-            Ok(UpsertAction::Inserted)
-        ));
-        tx.commit().expect("commit transaction");
-
-        let (nick_name, azure_ad_account): (Option<String>, Option<String>) = conn
-            .query_row(
-                r#"
-                SELECT e.nick_name, v.value
-                FROM employees e
-                LEFT JOIN employee_dynamic_values v
-                  ON v.employee_id = e.id
-                 AND v.field_key = ?
-                WHERE e.employee_id = ?
-                "#,
-                params![AZURE_AD_ACCOUNT_FIELD_KEY, "ASWVN001"],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .expect("read imported employee");
-
-        assert_eq!(nick_name.as_deref(), Some("Tester"));
-        assert_eq!(azure_ad_account.as_deref(), Some("tester@example.com"));
     }
 }

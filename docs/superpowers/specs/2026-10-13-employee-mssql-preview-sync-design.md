@@ -1,20 +1,14 @@
-# EE List MSSQL Preview Sync Design
+# EE List Remote MSSQL Sync Design
 
 ## Goal
 
-Change the EE List **Update** action into an explicitly approved sync from the configured MSSQL staff source into the local `employee_list` records. The source is queried only; the operation never sends a write statement to MSSQL.
+Update EE List synchronization to use the approved fixed Query B, a credential-safe Remote EE Sync settings screen, a verified read-only SQL Server login, a local comparison preview, and explicit local approval before writes.
 
-## Current behavior and root cause
+## Approved source query
 
-`useEmployeeState.updateEmployeeListFromMssql` tests the configured MSSQL connection and then calls `import_mssql_staff`. That backend command runs the default query and immediately upserts the returned rows to SQLite. The button has no comparison preview or approval boundary.
+Query B is the canonical sync query. It selects Staffs joined to AspNetUsers with `INNER JOIN`, filters `Resigned = 0`, deduplicates by normalized `Code`, has no TOP limit, and maps `Code`, `Name`, `NickName`, `COALESCE(WorkEmail, WorkEmail2) AS WorkEmail`, and `AspNetUsers.UserName AS AzureAD`. Staff rows lacking AspNetUsers are intentionally excluded. The application owns this SQL; the user cannot enter SQL.
 
-The current default query joins `Staffs` to `AspNetUsers` with `INNER JOIN` and limits output to `TOP (1000)`. It therefore omits staff without an ASP.NET user by design and any eligible joined rows beyond the first 1000. Its `ROW_NUMBER` ordering by `Code` does not resolve duplicates deterministically. The existing upsert searches employee IDs globally, so an EE List update can alter a matching employee in another staff group.
-
-No MSSQL connection settings were present in the Process, User, or Machine environment during this audit. Consequently, live Query A/Query B counts and source connectivity have not been verified.
-
-## Approved query direction
-
-Use the user-approved fixed Query B owned by the EE List sync path:
+The configured database is the SQL connection's current database; the fixed query uses schema-qualified objects so the selected database is honored:
 
 ```sql
 WITH StaffList AS
@@ -29,9 +23,8 @@ WITH StaffList AS
             PARTITION BY UPPER(LTRIM(RTRIM(S.[Code])))
             ORDER BY S.[Id], ASPU.[UserName]
         ) AS RowNum
-    FROM [AssetManagement].[dbo].[Staffs] AS S
-    INNER JOIN [AssetManagement].[dbo].[AspNetUsers] AS ASPU
-        ON S.[Id] = ASPU.[StaffId]
+    FROM [dbo].[Staffs] AS S
+    INNER JOIN [dbo].[AspNetUsers] AS ASPU ON S.[Id] = ASPU.[StaffId]
     WHERE S.[Resigned] = 0
 )
 SELECT [Code], [Name], [NickName], [WorkEmail], [AzureAD]
@@ -40,34 +33,28 @@ WHERE RowNum = 1
 ORDER BY [Code]
 ```
 
-Query B intentionally uses `INNER JOIN`: staff without `AspNetUsers` are not part of the sync result. It has no row cap. It deduplicates by normalized Staff Code with deterministic ordering. It returns `Code`, `Name`, `NickName`, `COALESCE(WorkEmail, WorkEmail2) AS WorkEmail`, and `AspNetUsers.UserName AS AzureAD`. The EE List sync command accepts no arbitrary SQL text. The legacy custom MSSQL import panel remains a separate workflow, but its connection is subject to the same fail-closed read-only permission check. The user explicitly confirmed this Query B, including the inner-join exclusion rule, on 2026-10-13.
+## Settings and credentials
 
-The query applies the mapping `Code -> employee_id`, `Name -> full_name`, `NickName -> nick_name`, `WorkEmail -> email`, and `AzureAD -> azure_account` only when that column is included by the approved query. Source eligibility is `Resigned = 0`. Staff Code is trimmed and case-normalized for matching. Query B collapses duplicate source Codes deterministically.
+Add Settings → Remote EE Sync with Server, Database, Authentication type, Username, Password, and Test Connection. Supported authentication types are SQL Server authentication and Windows Integrated authentication; Windows Integrated is available only on Windows and uses the current Windows identity. The UI receives only non-secret profile fields and a `hasSavedPassword` boolean. Password entry is sent directly to a backend command and never returned to the UI.
 
-## Flow
+Persist server, database, port, authentication type, username, and a fixed secret reference in the SQLCipher `app_settings` table. Store SQL passwords in the current Windows user's Credential Manager (protected by Windows credential encryption/DPAPI); do not store password material in SQLite, source, exports, logs, or profile files. On non-Windows platforms, SQL password persistence is unavailable and must fail closed with a clear reason. Empty password on save preserves an existing password; an explicit remove action deletes it. Environment variables `STAFFKIT_MSSQL_SERVER`, `STAFFKIT_MSSQL_DATABASE`, `STAFFKIT_MSSQL_PORT`, `STAFFKIT_MSSQL_AUTH_TYPE`, `STAFFKIT_MSSQL_USERNAME`, and `STAFFKIT_MSSQL_PASSWORD` provide a temporary full-profile override for automation. If any is present, all fields required by the selected auth type must be present; never mix partial environment configuration with saved settings. Environment values are never persisted or returned. Do not log their values.
 
-1. Clicking Update requests a preview. The backend connects with configured credentials and executes only the fixed Query B. It performs no MSSQL mutations.
-2. The backend reads current local employee-list records and AzureAD values through a SQLite read-only connection (`SQLITE_OPEN_READ_ONLY` plus `PRAGMA query_only=ON`); preview must not call migration or WAL configuration routines.
-3. Compare by normalized Staff Code and classify `New`, `Changed`, `Unchanged`, and `Missing from source`. Missing is report-only. Rows in other staff groups are not changed; if a source Code collides with a non-EE-List row, show a conflict and block applying that conflicting row rather than moving or rewriting it.
-4. Display category counts and reviewable row details before presenting an explicit approval action. Preview connection/query errors are visible and leave local DB contents unchanged.
-5. Approval references the exact preview snapshot. The backend confirms that the current source result still matches that snapshot; if it changed, reject the approval and require a fresh preview. After confirmation, one SQLite transaction inserts New rows and updates only mapped fields of Changed `employee_list` rows. It leaves Unchanged, Missing, and other-group rows untouched.
-6. On success, refresh the EE List and show completion time plus New/Changed/Unchanged/Missing counts. On failure, show a safe actionable error and preserve the prior local data through transaction rollback. Result/error feedback is session-visible; no extra status write occurs before approval.
+## Read-only connection gate
 
-## Component ownership
+Before Test Connection or sync, connect with required encryption, system-trusted server certificate validation, and the configured database; certificate validation failures block connection. Run a non-destructive permission introspection query that checks effective server, database, schema, object, role, and principal permissions including inherited permissions. Reject when any effective write/escalation permission exists, required permission evidence is NULL/missing, or inspection fails. The connection's ApplicationIntent/read-only option is not treated as a substitute for permission verification. The only data query allowed is the fixed Query B SELECT; Test Connection performs the same permission gate and Query B fetch, returning PASS/FAIL, a safe reason, and row count without employee rows. Permission introspection is limited to read-only metadata SELECTs. No remote INSERT/UPDATE/DELETE/DDL is issued.
 
-- `src-tauri/src/db/mssql_import.rs`: fixed sync query, source record normalization/deduplication, read-only local snapshot, category comparison, preview snapshot lifecycle, approved transactional apply. Keep the generic MSSQL import behavior separate.
-- `src-tauri/src/lib.rs`: admin-authorized preview/apply command wrappers and preview-state registration.
-- `src/services/staff-api.ts` and `src/types/staff.ts`: typed preview/apply IPC DTOs.
-- `src/features/employees/useEmployeeState.ts` and `EmployeeView.tsx`: Update preview/approval state, category/result/error display, successful list refresh.
-- Focused Rust and frontend tests cover mapping, classification, local read-only preview, approval gating, local-only apply, duplicate/conflict behavior, connection failure, status feedback, and refresh after source changes.
+## Sync lifecycle
 
-## Safety boundaries
+Connect → permission gate → Query B → read local EE List through encrypted SQLite read-only connection → compare by normalized Staff Code → show New/Changed/Unchanged/Missing preview → wait for explicit approval → re-fetch Query B and recheck source permissions → apply only New/Changed EE List rows in one local transaction. Missing is report-only. Other employee groups, Employee master behavior, loans, assets, and auth remain untouched. Test Connection, preview, and all pre-approval operations perform no local business writes. Apply is the only local write boundary.
 
-- No remote insert/update/delete or arbitrary query is exposed by the EE List Update sync commands. Before any MSSQL query, the app checks fixed write-capable roles, effective server/database permissions against explicit read-only allowlists, and effective permissions on schemas, tables, views, procedures, functions, database users/roles, and server logins. Only read/metadata permissions are allowlisted; DML, DDL, execution, impersonation, ownership, escalation, unknown permissions, SQL errors, NULL permission checks, or missing CONNECT evidence fail closed. The sync itself sends only Query B, a SELECT statement. Direct verification against the configured live SQL Server still requires a configured read-only login.
-- No local transaction is opened by the preview path; local DB writes happen only in the explicit approval command.
-- Local apply is restricted to `employee_list` and mapped source fields. No Employee master fields outside the approved mapping, loan/asset, auth, or other staff-group behavior is changed.
-- No live source DB writes, no live local DB writes during development, and no merge to main before Qeen approves the exact feature commit.
+## Legacy SQL paths
 
-## Acceptance evidence
+Retire the generic MSSQL importer UI and its Tauri commands because arbitrary SQL and arbitrary staff-group imports violate the fixed Query B boundary. Preserve the unrelated Excel import flow. All remaining MSSQL connections use the single Remote EE Sync profile and permission gate.
 
-Tests prove new/change/unchanged/missing classification by Staff Code; approved mapping and Code dedupe; preview does not change local rows; approval applies only New/Changed EE List rows; failed connection or changed source snapshot causes zero local writes; and a repeated preview after changed source data returns the new values. A direct SQL A/B count comparison requires configured read-only source credentials and must be recorded separately from fixture tests.
+## Error and status behavior
+
+Test Connection always resolves to a result with PASS/FAIL, safe reason, and optional row count; secrets, connection strings, employee rows, and raw driver errors are not logged or returned. EE List displays preview, completion time/counts, or a safe actionable failure. No password is included in exported profiles; no MSSQL credentials are part of import/export files.
+
+## Verification and safety
+
+Tests cover configuration precedence and partial env rejection, password-free DTOs, secret storage abstraction, fixed Query B-only APIs, role-inherited permission denial, Test Connection PASS/FAIL results, preview-before-approval, local-write boundary, and existing New/Changed/Unchanged/Missing behavior. Qeen independently validates the exact commit and permission enforcement. Direct Query B count and field mapping verification is only performed using a separately configured read-only login; no live source or live Staff Kit DB writes are allowed.

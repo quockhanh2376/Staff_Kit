@@ -26,6 +26,7 @@ import { STAFF_GROUP_BUTTONS, DEFAULT_NEW_ACCOUNT_PASSWORD } from "../../lib/con
 import { getGroupCount } from "../../lib/utils"
 import { AssetDashboard } from "../assets/AssetDashboard"
 import { useIdleCollapse } from "./useIdleCollapse"
+import { RemoteEeSyncSettings } from "./RemoteEeSyncSettings"
 
 import type { DataImportState } from '../import/useDataImportState'
 
@@ -432,14 +433,6 @@ export function SettingsView({
                                                 <Upload size={14} />
                                             )}
                                             {imp.isImporting ? "Preparing import..." : "Import Excel"}
-                                        </button>
-                                        <button
-                                            className={`mt-2 ${settingsSecondaryButtonClass}`}
-                                            onClick={() => void imp.handleOpenMssqlImport()}
-                                            type="button"
-                                        >
-                                            <Database size={14} />
-                                            Import from MSSQL
                                         </button>
                                     </>
                                 ) : (
@@ -896,6 +889,12 @@ export function SettingsView({
                 </div>
                 ) : null}
             </div>{/* end lg:grid-cols-2 */}
+
+            {auth.canImportData && (
+                <div className="mt-4 max-w-4xl">
+                    <RemoteEeSyncSettings />
+                </div>
+            )}
 
             <AssetDashboard
                 activeUserScope={activeUserScope}
