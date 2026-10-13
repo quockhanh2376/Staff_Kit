@@ -2163,3 +2163,27 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Verification: focused MSSQL tests 19/19; full Rust/Tauri tests 319/319; `npm run check:quality` passed; target file rustfmt check passed. Repo-wide cargo fmt check reports unrelated pre-existing formatting diffs.
 - Safety: tests use in-memory DB fixtures only. No live DB writes, merge, or push.
 
+## 2026-10-13 Remote EE Sync SQL TLS certificate — Start
+
+- Objective: record the DBA-confirmed SQL Server TLS cause and define acceptance checks for the replacement trusted certificate.
+- Evidence supplied by user: SQL Server 2017 ERRORLOG says, “A self-generated certificate was successfully loaded for encryption.” Treat the server's self-generated certificate as the confirmed TLS root cause; do not change client TLS validation or connection code.
+- Safety: documentation only; no credentials, DB connection, DB writes, Apply, merge, or push.
+
+## 2026-10-13 Remote EE Sync SQL TLS certificate — End
+
+- Recorded the confirmed server-side TLS root cause: SQL Server 2017 loaded its self-generated certificate. No speculative connection-code change or validation bypass was made.
+- Added DBA certificate acceptance checks covering exact host preservation, DNS/IP SAN matching, certificate validity/trusted chain, Staff Kit Test Connection, read-only permission gate, Query B mapping/counts, Preview-only verification, and no writes.
+- Verification: `git diff --check` passed. No app tests were needed because only documentation changed. No connection, Apply, DB write, merge, or push occurred.
+
+## 2026-10-13 Remote EE Sync SQL account allowlist — Start
+
+- Objective: enforce the exact approved SQL login `user_reader-` in Rust before any SQL network/authentication activity, covering saved profiles, environment overrides, Test Connection, Preview, and Apply.
+- Safety: do not inspect/change passwords or HRMS credentials; preserve TLS, permission gate, and Query B; no live DB connection or writes; feature branch only, no merge/push.
+
+## 2026-10-13 Remote EE Sync SQL account allowlist — End
+
+- Added exact `user_reader-` enforcement for saved profiles, environment overrides, settings validation, and the final Rust `connect()` boundary. Rejects the prohibited/unknown usernames, case/whitespace variants, and Windows Integrated auth before TCP/TLS/authentication.
+- Updated the EE Sync design spec. TLS, the fail-closed read-only permission gate, and Query B were not changed.
+- TDD: new tests failed against the previous behavior, then passed. Focused MSSQL Rust tests 22/22; full Rust/Tauri tests 322/322; `npm run check:quality` passed with pre-existing lint/build/Rust warnings; target-file rustfmt check passed.
+- Safety: only synthetic test credentials used; no real passwords/profile secrets accessed or modified. No live DB connection or writes; no merge or push.
+

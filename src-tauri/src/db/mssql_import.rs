@@ -17,6 +17,8 @@ use super::{humanize_sqlite_error, open_runtime_connection};
 
 const MSSQL_PORT_ENV: &str = "STAFFKIT_MSSQL_PORT";
 const MSSQL_PASSWORD_ENV: &str = "STAFFKIT_MSSQL_PASSWORD";
+const APPROVED_MSSQL_USERNAME: &str = "user_reader-";
+const MSSQL_ACCOUNT_ALLOWLIST_ERROR: &str = "Only the approved Staff Kit SQL login is allowed.";
 const MSSQL_SERVER_ENV: &str = "STAFFKIT_MSSQL_SERVER";
 const MSSQL_DATABASE_ENV: &str = "STAFFKIT_MSSQL_DATABASE";
 const MSSQL_AUTH_TYPE_ENV: &str = "STAFFKIT_MSSQL_AUTH_TYPE";
@@ -382,6 +384,7 @@ fn resolve_connection_config_from(
             "windows_integrated" => MssqlAuthType::WindowsIntegrated,
             _ => return Err("MSSQL environment configuration is incomplete or invalid.".into()),
         };
+        validate_mssql_account(auth_type, &username)?;
         let port = match env.get(MSSQL_PORT_ENV) {
             Some(value) => value
                 .parse::<u16>()
@@ -410,6 +413,7 @@ fn resolve_connection_config_from(
         });
     }
     let config = saved.ok_or_else(|| "Remote EE Sync settings are not configured.".to_string())?;
+    validate_mssql_account(config.auth_type, &config.username)?;
     if config.server.trim().is_empty()
         || config.database.trim().is_empty()
         || config.port == 0
@@ -570,6 +574,7 @@ pub fn remove_remote_ee_sync_password() -> Result<(), String> {
 }
 
 fn validate_remote_settings(settings: &RemoteEeSyncSettings) -> Result<(), String> {
+    validate_mssql_account(settings.auth_type, &settings.username)?;
     if settings.server.trim().is_empty()
         || settings.database.trim().is_empty()
         || settings.port == 0
@@ -581,6 +586,14 @@ fn validate_remote_settings(settings: &RemoteEeSyncSettings) -> Result<(), Strin
         return Err("Username is required for SQL Server authentication.".into());
     }
     Ok(())
+}
+
+fn validate_mssql_account(auth_type: MssqlAuthType, username: &str) -> Result<(), String> {
+    if auth_type == MssqlAuthType::SqlServer && username == APPROVED_MSSQL_USERNAME {
+        Ok(())
+    } else {
+        Err(MSSQL_ACCOUNT_ALLOWLIST_ERROR.into())
+    }
 }
 
 fn load_connection_config(app: &AppHandle) -> Result<MssqlConnectionConfig, String> {
@@ -929,6 +942,7 @@ fn sync_record_matches(source: &MssqlStaffRecord, local: &LocalEmployeeListRecor
 }
 
 async fn connect(connection: &MssqlConnectionConfig) -> Result<MssqlClient, String> {
+    validate_mssql_account(connection.auth_type, &connection.username)?;
     let mut config = Config::new();
     config.host(&connection.server);
     config.port(connection.port);
@@ -1018,7 +1032,9 @@ pub async fn test_remote_ee_sync_connection(app: &AppHandle) -> MssqlConnectionT
 
 fn sanitize_connection_reason(error: &str) -> String {
     let normalized = error.to_ascii_lowercase();
-    if normalized.contains("read-only")
+    if normalized.contains("only the approved staff kit sql login is allowed") {
+        "Remote EE Sync is restricted to the approved Staff Kit SQL login.".into()
+    } else if normalized.contains("read-only")
         || normalized.contains("write-level")
         || normalized.contains("permission")
     {
@@ -1355,9 +1371,9 @@ mod tests {
                     server: server.into(),
                     database: "AssetManagement".into(),
                     port: 1433,
-                    auth_type: MssqlAuthType::WindowsIntegrated,
-                    username: String::new(),
-                    password: None,
+                    auth_type: MssqlAuthType::SqlServer,
+                    username: APPROVED_MSSQL_USERNAME.into(),
+                    password: Some("synthetic-test-secret".into()),
                     environment_override: false,
                 }),
             )
@@ -1384,8 +1400,8 @@ mod tests {
                     server: server.into(),
                     database: "AssetManagement".into(),
                     port: 1433,
-                    auth_type: MssqlAuthType::WindowsIntegrated,
-                    username: String::new(),
+                    auth_type: MssqlAuthType::SqlServer,
+                    username: APPROVED_MSSQL_USERNAME.into(),
                     has_saved_password: false,
                     environment_override: false,
                 })
@@ -1412,9 +1428,9 @@ mod tests {
             server: server.into(),
             database: "AssetManagement".into(),
             port: 1433,
-            auth_type: MssqlAuthType::WindowsIntegrated,
-            username: String::new(),
-            password: None,
+            auth_type: MssqlAuthType::SqlServer,
+            username: APPROVED_MSSQL_USERNAME.into(),
+            password: Some("synthetic-test-secret".into()),
             environment_override: false,
         };
         let resolved = resolve_connection_config_from(&HashMap::new(), Some(config))
@@ -1430,8 +1446,8 @@ mod tests {
                 server: server.into(),
                 database: "AssetManagement".into(),
                 port: 1433,
-                auth_type: MssqlAuthType::WindowsIntegrated,
-                username: String::new(),
+                auth_type: MssqlAuthType::SqlServer,
+                username: APPROVED_MSSQL_USERNAME.into(),
                 has_saved_password: false,
                 environment_override: false,
             },
@@ -1459,7 +1475,7 @@ mod tests {
             database: "AssetManagement".into(),
             port: 1433,
             auth_type: MssqlAuthType::SqlServer,
-            username: "staff-reader".into(),
+            username: APPROVED_MSSQL_USERNAME.into(),
             has_saved_password: true,
             environment_override: false,
         };
@@ -1482,12 +1498,116 @@ mod tests {
             database: "AssetManagement".into(),
             port: 1433,
             auth_type: MssqlAuthType::SqlServer,
-            username: "reader".into(),
+            username: APPROVED_MSSQL_USERNAME.into(),
             password: Some("synthetic-saved-secret".into()),
             environment_override: false,
         };
         let result = resolve_connection_config_from(&env, Some(saved));
         assert!(result.err().unwrap().contains("incomplete"));
+    }
+
+    #[test]
+    fn only_exact_approved_login_is_accepted_for_saved_and_environment_profiles() {
+        let approved = MssqlConnectionConfig {
+            server: "sql.example".into(),
+            database: "AssetManagement".into(),
+            port: 1433,
+            auth_type: MssqlAuthType::SqlServer,
+            username: "user_reader-".into(),
+            password: Some("synthetic-test-secret".into()),
+            environment_override: false,
+        };
+        assert!(resolve_connection_config_from(&HashMap::new(), Some(approved.clone())).is_ok());
+
+        for username in [
+            "aswhite-plus-webserver",
+            "other_user",
+            "User_Reader-",
+            "user_reader- ",
+        ] {
+            let mut saved = approved.clone();
+            saved.username = username.into();
+            assert!(
+                resolve_connection_config_from(&HashMap::new(), Some(saved)).is_err(),
+                "saved profile username {username:?} must be rejected"
+            );
+
+            let env = HashMap::from([
+                (MSSQL_SERVER_ENV.into(), "sql.example".into()),
+                (MSSQL_DATABASE_ENV.into(), "AssetManagement".into()),
+                (MSSQL_AUTH_TYPE_ENV.into(), "sql_server".into()),
+                (MSSQL_USERNAME_ENV.into(), username.into()),
+                (MSSQL_PASSWORD_ENV.into(), "synthetic-test-secret".into()),
+            ]);
+            assert!(
+                resolve_connection_config_from(&env, None).is_err(),
+                "environment username {username:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn only_approved_sql_authentication_can_be_saved_or_resolved() {
+        let mut settings = RemoteEeSyncSettings {
+            server: "sql.example".into(),
+            database: "AssetManagement".into(),
+            port: 1433,
+            auth_type: MssqlAuthType::SqlServer,
+            username: "user_reader-".into(),
+            has_saved_password: false,
+            environment_override: false,
+        };
+        assert!(validate_remote_settings(&settings).is_ok());
+        settings.username = "aswhite-plus-webserver".into();
+        assert!(validate_remote_settings(&settings).is_err());
+
+        let integrated_env = HashMap::from([
+            (MSSQL_SERVER_ENV.into(), "sql.example".into()),
+            (MSSQL_DATABASE_ENV.into(), "AssetManagement".into()),
+            (MSSQL_AUTH_TYPE_ENV.into(), "windows_integrated".into()),
+            (MSSQL_USERNAME_ENV.into(), APPROVED_MSSQL_USERNAME.into()),
+        ]);
+        assert!(resolve_connection_config_from(&integrated_env, None).is_err());
+
+        let mut integrated = MssqlConnectionConfig {
+            server: "sql.example".into(),
+            database: "AssetManagement".into(),
+            port: 1433,
+            auth_type: MssqlAuthType::WindowsIntegrated,
+            username: "user_reader-".into(),
+            password: None,
+            environment_override: false,
+        };
+        assert!(resolve_connection_config_from(&HashMap::new(), Some(integrated.clone())).is_err());
+        integrated.auth_type = MssqlAuthType::SqlServer;
+        integrated.username = "user_reader-".into();
+        integrated.password = Some("synthetic-test-secret".into());
+        assert!(resolve_connection_config_from(&HashMap::new(), Some(integrated)).is_ok());
+    }
+
+    #[tokio::test]
+    async fn connect_rejects_unapproved_login_before_network_or_tls() {
+        for username in [
+            "aswhite-plus-webserver",
+            "other_user",
+            "User_Reader-",
+            "user_reader- ",
+        ] {
+            let connection = MssqlConnectionConfig {
+                server: "127.0.0.1".into(),
+                database: "AssetManagement".into(),
+                port: 1,
+                auth_type: MssqlAuthType::SqlServer,
+                username: username.into(),
+                password: Some("synthetic-test-secret".into()),
+                environment_override: false,
+            };
+            let error = connect(&connection)
+                .await
+                .err()
+                .expect("disallowed account must fail before attempting the local socket");
+            assert!(error.contains(MSSQL_ACCOUNT_ALLOWLIST_ERROR));
+        }
     }
 
     #[test]
@@ -1500,7 +1620,7 @@ mod tests {
             database: "AssetManagement".into(),
             port: 1433,
             auth_type: MssqlAuthType::SqlServer,
-            username: "reader".into(),
+            username: APPROVED_MSSQL_USERNAME.into(),
             has_saved_password: false,
             environment_override: false,
         };
@@ -1542,7 +1662,7 @@ mod tests {
             ),
             (
                 "STAFFKIT_MSSQL_USERNAME".to_string(),
-                "staff-reader".to_string(),
+                APPROVED_MSSQL_USERNAME.to_string(),
             ),
             (
                 "STAFFKIT_MSSQL_PASSWORD".to_string(),
@@ -1552,7 +1672,7 @@ mod tests {
         let config = resolve_connection_config_from(&env, None).expect("complete env profile");
         assert_eq!(config.server, "sql.example");
         assert_eq!(config.database, "AssetManagement");
-        assert_eq!(config.username, "staff-reader");
+        assert_eq!(config.username, APPROVED_MSSQL_USERNAME);
         assert_eq!(config.password.as_deref(), Some("synthetic-test-secret"));
         assert!(config.environment_override);
     }
