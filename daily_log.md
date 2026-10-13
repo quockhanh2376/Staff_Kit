@@ -2223,3 +2223,15 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Found a concrete false-positive predicate: `HAS_PERMS_BY_NAME(P.name, 'SERVER ROLE', 'ANY')` classified every permission on a server role—including read-only `VIEW DEFINITION`—as write access. Replaced it with explicit `ALTER`, `CONTROL`, and `TAKE OWNERSHIP` checks; all unknown/NULL cases remain fail-closed.
 - TDD regression failed against the old `ANY` predicate, then passed after the change. Full Tauri suite 327/327 and `npm run check:quality` passed (existing warnings only); `git diff --check` passed.
 - Live per-login evidence could not be collected: all `STAFFKIT_MSSQL_*` environment variables are unset and the app-owned password target is absent. No SQL/DB connection or writes; exact `user_reader` predicate match remains to confirm with Test Connection/SELECT output.
+
+## 2026-10-13 Remote EE Sync read-only gate diagnostic detail — Start
+
+- Follow up on the user's exact Test Connection result: “Could not verify read-only access.” The previous session recorded no connection data; this session sees the Staff Kit Credential Manager target present but no `STAFFKIT_MSSQL_*` environment profile.
+- Trace the generic result to the discarded Tiberius query/stream error and add bounded, sanitized SQL Server diagnostics without weakening the permission gate.
+- Safety: do not retrieve credentials or connect to production in this session; feature branch only, SELECT-only design, no Apply, DB writes, merge, or push.
+
+## 2026-10-13 Remote EE Sync read-only gate diagnostic detail — End
+
+- Confirmed the current generic Test Connection response originates from `ensure_mssql_login_is_read_only` discarding Tiberius errors for both query execution and result streaming; the UI sanitizer then collapses the remaining permission diagnostic to a generic message. This confirms where the failure occurs, but not its exact SQL permission/scope.
+- Added bounded, control-character-stripped SQL Server error number/message display for server errors, and explicit fail-closed diagnostics for driver/no-result cases. Permission result logic, SQL query, Query B, and connection checks are unchanged.
+- Focused diagnostics tests 2/2 and full Tauri tests 329/329 passed; `npm run check:quality` passed (existing warnings). Target file rustfmt and `git diff --check` passed. No credential was read; no SQL query/live DB writes, merge, or push. Exact runtime scope awaits rerunning Test Connection with this build.

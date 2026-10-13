@@ -6,7 +6,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use rusqlite::{params, Transaction};
 use serde::Serialize;
 use tauri::AppHandle;
-use tiberius::{Client, Config};
+use tiberius::{error::Error as TiberiusError, Client, Config};
 use tokio::net::TcpStream;
 use tokio::time::{sleep, timeout};
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
@@ -276,20 +276,44 @@ async fn ensure_mssql_login_is_read_only(client: &mut MssqlClient) -> Result<(),
     let rows = client
         .query(MSSQL_READ_ONLY_CHECK, &[])
         .await
-        .map_err(|_| "Could not verify read-only access for the MSSQL source login.".to_string())?
+        .map_err(|error| format_read_only_check_error(&error))?
         .into_first_result()
         .await
-        .map_err(|_| "Could not verify read-only access for the MSSQL source login.".to_string())?;
+        .map_err(|error| format_read_only_check_error(&error))?;
     let has_write_access = rows
         .first()
         .and_then(|row| row.get::<bool, _>(0))
         .ok_or_else(|| {
-            "Could not verify read-only access for the MSSQL source login.".to_string()
+            "Read-only permission diagnostic: the permission query returned no readable HasWriteAccess bit.".to_string()
         })?;
     if has_write_access {
         return Err("MSSQL source login has write-level permissions. Configure a read-only login before syncing.".to_string());
     }
     Ok(())
+}
+
+fn format_read_only_check_error(error: &TiberiusError) -> String {
+    match error {
+        TiberiusError::Server(server_error) => format_read_only_server_message(
+            server_error.code(),
+            server_error.message(),
+        ),
+        _ => "Read-only permission diagnostic: SQL driver query/stream failure; no permission result was accepted.".into(),
+    }
+}
+
+fn format_read_only_server_message(code: u32, message: &str) -> String {
+    let sanitized: String = message
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(240)
+        .collect();
+    let message = sanitized.trim();
+    if message.is_empty() {
+        format!("Read-only permission diagnostic: SQL Server error {code}; no permission result was accepted.")
+    } else {
+        format!("Read-only permission diagnostic: SQL Server error {code}: {message}")
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
@@ -1282,7 +1306,9 @@ pub async fn test_remote_ee_sync_connection(app: &AppHandle) -> MssqlConnectionT
 
 fn sanitize_connection_reason(error: &str) -> String {
     let normalized = error.to_ascii_lowercase();
-    if normalized.contains("only the approved staff kit sql login is allowed") {
+    if normalized.starts_with("read-only permission diagnostic:") {
+        error.to_string()
+    } else if normalized.contains("only the approved staff kit sql login is allowed") {
         "Remote EE Sync is restricted to the approved Staff Kit SQL login.".into()
     } else if normalized.contains("read-only")
         || normalized.contains("write-level")
@@ -2201,6 +2227,25 @@ mod tests {
         assert!(check.contains("permission_name not in ('select', 'view definition')"));
         assert!(!check.contains("references"));
         assert!(check.contains("coalesce(") && check.contains("then 1 else 0 end as bit"));
+    }
+
+    #[test]
+    fn read_only_sql_server_diagnostic_is_preserved_for_test_connection() {
+        let diagnostic = "Read-only permission diagnostic: SQL Server error 916: SELECT permission denied on database metadata.";
+        assert_eq!(sanitize_connection_reason(diagnostic), diagnostic);
+    }
+
+    #[test]
+    fn read_only_sql_server_diagnostic_is_bounded_and_strips_control_characters() {
+        let diagnostic = format_read_only_server_message(
+            916,
+            "SELECT permission denied\n\r\t on database metadata.",
+        );
+        assert_eq!(
+            diagnostic,
+            "Read-only permission diagnostic: SQL Server error 916: SELECT permission denied on database metadata."
+        );
+        assert!(format_read_only_server_message(916, &"x".repeat(300)).len() < 300);
     }
 
     #[test]
