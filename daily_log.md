@@ -2134,3 +2134,17 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Red test reproduced the missing gate before implementation; focused permission test passed after the fix.
 - Verification: `npm run check:quality` passed; frontend unit tests 231/231; full Rust/Tauri tests 311/311. Existing lint/build/Rust warnings remain.
 - Qeen revalidation of the updated commit pending. Direct Query B count/mapping remains blocked because `STAFFKIT_MSSQL_*` is not configured. No DB connection or writes occurred.
+
+## 2026-10-13 Remote EE Sync TLS diagnostics — Start
+
+- Objective: investigate SQL Server TLS validation failure and improve safe Test Connection diagnostics while preserving certificate verification, Query B, and permission gate.
+- Evidence: TCP 10.184.0.19:1433 is reachable; reverse DNS resolves to ASWPLUSV2.aswigsyd.int. Actual certificate SAN, expiry, and issuer chain are not yet available from the client.
+- Safety: feature worktree only; no DB connection or writes, credentials, merge, or push.
+
+## 2026-10-13 Remote EE Sync TLS diagnostics — End
+
+- Root cause confirmed in application diagnostics: native TLS error categories were discarded by generic formatter/sanitizer. Actual server certificate defect cannot be assigned without reading the certificate; the IP resolves to `ASWPLUSV2.aswigsyd.int`.
+- Added safe Test Connection guidance for hostname/SAN mismatch, untrusted chain, expiry, and generic TLS failures. Encryption remains required and certificate validation remains enabled; Query B and read-only permission gate are unchanged.
+- Verification: focused TLS tests 4/4; all MSSQL Rust tests 15/15; full Rust/Tauri tests 315/315; `npm run check:quality` passed with pre-existing warnings; `git diff --check` passed after log formatting.
+- DB safety: no remote or live local DB connection/writes; no credentials accessed. Direct Test Connection and Query B comparison pending a securely configured profile; no merge or push.
+

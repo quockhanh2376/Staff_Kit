@@ -670,6 +670,30 @@ fn format_mssql_connect_error(error: impl std::fmt::Display) -> String {
     let detail = error.to_string();
     let normalized = detail.to_ascii_lowercase();
 
+    if normalized.contains("cn name does not match")
+        || normalized.contains("hostname mismatch")
+        || normalized.contains("wrong principal")
+        || normalized.contains("0x800b010f")
+    {
+        return "TLS certificate hostname mismatch. Configure the SQL Server using the DNS hostname in the certificate SAN; use an IP only when the certificate includes that IP.".into();
+    }
+
+    if normalized.contains("untrusted root")
+        || normalized.contains("trusted root authority")
+        || normalized.contains("unknown ca")
+        || normalized.contains("0x800b0109")
+    {
+        return "TLS certificate chain is not trusted. Install the issuing CA and required intermediate certificates in the Windows certificate trust store.".into();
+    }
+
+    if normalized.contains("not within its validity period")
+        || normalized.contains("certificate has expired")
+        || normalized.contains("cert_e_expired")
+        || normalized.contains("0x800b0101")
+    {
+        return "TLS certificate is expired or not yet valid. Renew the SQL Server certificate and verify the client system clock.".into();
+    }
+
     if normalized.contains("10054")
         || normalized.contains("forcibly closed")
         || normalized.contains("connection reset")
@@ -949,6 +973,12 @@ fn sanitize_connection_reason(error: &str) -> String {
         || normalized.contains("credential manager")
     {
         "Windows secure credential storage is unavailable; no SQL connection was attempted.".into()
+    } else if normalized.contains("tls certificate hostname mismatch") {
+        "TLS certificate hostname mismatch. Configure the SQL Server using the DNS hostname in the certificate SAN; use an IP only when the certificate includes that IP.".into()
+    } else if normalized.contains("tls certificate chain is not trusted") {
+        "TLS certificate chain is not trusted. Install the issuing CA and required intermediate certificates in the Windows certificate trust store.".into()
+    } else if normalized.contains("tls certificate is expired") {
+        "TLS certificate is expired or not yet valid. Renew the SQL Server certificate and verify the client system clock.".into()
     } else if normalized.contains("tls")
         || normalized.contains("certificate")
         || normalized.contains("handshake")
@@ -1368,6 +1398,52 @@ mod tests {
         assert!(serialized.contains("reason"));
         assert!(!serialized.contains("password"));
         assert_eq!(result.row_count, None);
+    }
+
+    #[test]
+    fn tls_test_connection_reason_distinguishes_hostname_mismatch_without_raw_details() {
+        let formatted = format_mssql_connect_error(
+            "The certificate's CN name does not match the passed value. password=secret",
+        );
+        let reason = sanitize_connection_reason(&formatted);
+
+        assert!(reason.contains("DNS hostname"));
+        assert!(reason.contains("certificate SAN"));
+        assert!(!reason.contains("secret"));
+        assert!(!reason.contains("CN name"));
+    }
+
+    #[test]
+    fn tls_test_connection_reason_distinguishes_untrusted_chain() {
+        let formatted = format_mssql_connect_error(
+            "A certificate chain could not be built to a trusted root authority.",
+        );
+        let reason = sanitize_connection_reason(&formatted);
+
+        assert!(reason.contains("trusted"));
+        assert!(reason.contains("CA"));
+    }
+
+    #[test]
+    fn tls_test_connection_reason_distinguishes_expired_certificate() {
+        let formatted = format_mssql_connect_error(
+            "A required certificate is not within its validity period when verifying against the current system clock.",
+        );
+        let reason = sanitize_connection_reason(&formatted);
+
+        let normalized = reason.to_ascii_lowercase();
+        assert!(normalized.contains("expired"));
+        assert!(normalized.contains("renew"));
+    }
+
+    #[test]
+    fn tls_test_connection_reason_keeps_unknown_tls_failure_actionable_and_safe() {
+        let formatted = format_mssql_connect_error("TLS handshake failed with secret=do-not-show");
+        let reason = sanitize_connection_reason(&formatted);
+
+        assert!(reason.contains("TLS"));
+        assert!(reason.contains("certificate"));
+        assert!(!reason.contains("do-not-show"));
     }
 
     #[test]
