@@ -2259,3 +2259,14 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Confirmed a separate observability defect in EE List Update: its frontend error mapper collapsed the backend's bounded permission-query diagnostic and verified-write result into identical generic DBA guidance. Focused tests failed before the UI change and passed after. The UI now preserves only recognized bounded safe diagnostics, with credential-like content rejected.
 - Added isolated regressions for local AzureAD mapping, Missing retention, unrelated employee-group preservation, and UI refresh after Apply. Frontend tests 236/236, Rust tests 330/330, `npm run check:quality`, target Rust formatting, and diff checks passed; existing warnings remain.
 - Started `npm run tauri:dev` from the feature worktree at port 5173; saved Credential Manager target exists and no MSSQL environment override is set. Windows remained at the lock screen, so no live Test Connection, Query B count, direct field comparison, or Preview could be observed. No Apply, remote SQL command, credential inspection, merge, or push; underlying live failure remains unconfirmed.
+
+## 2026-10-14 Live EE Sync permission-gate diagnosis — Start
+
+- Zon unlocked and signed in to the feature build. Test Connection with the saved profile passed transport/authentication and returned the verified `HasWriteAccess` rejection; Query B has not run.
+- Identify the exact permission scope using SELECT-only diagnostics through the existing saved-profile connection. Preserve the fail-closed gate and never read/display credentials or Apply to live data.
+
+## 2026-10-14 Live EE Sync permission-gate diagnosis — End
+
+- Runtime Test Connection on saved profile reported `effective SERVER permission ALTER ANY DATABASE`; TLS/login succeeded on the successful attempt. A later attempt coincided with TCP unavailable, then port 1433 recovered. The effective server permission is the confirmed cause; Query B and Preview remain blocked before source fetch.
+- Added bounded SELECT-only permission finding after the existing positive write gate; it only explains the rejection, cannot authorize, and falls back to the original block if diagnostic fails. Qeen independently reviewed the diff and reported PASS; no permission bypass, Apply, live DB write, merge, or push.
+- Full Rust tests passed 331/331, focused finding test passed, `npm run check:quality` passed (one existing ESLint warning), rustfmt and diff checks passed. EE List Update UI retest after rebuild is pending local admin re-login; Test Connection evidence is exact.

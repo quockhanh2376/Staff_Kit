@@ -272,6 +272,99 @@ SELECT CAST(CASE WHEN
     THEN 1 ELSE 0 END AS bit) AS HasWriteAccess
 "#;
 
+// This SELECT only explains a positive result from MSSQL_READ_ONLY_CHECK. It is
+// never used to authorize a connection or to weaken the fail-closed gate.
+const MSSQL_READ_ONLY_FINDING: &str = r#"
+WITH Findings AS (
+    SELECT 10 AS Priority, 'SERVER ROLE MEMBER' AS ScopeName, R.RoleName AS PermissionName
+    FROM (VALUES ('sysadmin'), ('securityadmin'), ('serveradmin'), ('bulkadmin')) AS R(RoleName)
+    WHERE COALESCE(IS_SRVROLEMEMBER(R.RoleName), 1) = 1
+    UNION ALL
+    SELECT 20, 'SERVER', P.PermissionName
+    FROM (VALUES ('CONTROL SERVER'), ('ALTER ANY DATABASE'), ('ALTER ANY LOGIN'), ('ALTER ANY SERVER ROLE')) AS P(PermissionName)
+    WHERE COALESCE(HAS_PERMS_BY_NAME(NULL, 'SERVER', P.PermissionName), 1) = 1
+    UNION ALL
+    SELECT 30, 'DATABASE ROLE MEMBER', R.RoleName
+    FROM (VALUES ('db_owner'), ('db_datawriter'), ('db_ddladmin'), ('db_securityadmin'), ('db_accessadmin')) AS R(RoleName)
+    WHERE COALESCE(IS_MEMBER(R.RoleName), 1) = 1
+    UNION ALL
+    SELECT 40, 'DATABASE', P.PermissionName
+    FROM (VALUES ('INSERT'), ('UPDATE'), ('DELETE'), ('EXECUTE'), ('ALTER'), ('CONTROL'),
+        ('CREATE TABLE'), ('CREATE PROCEDURE'), ('CREATE VIEW'), ('ALTER ANY ROLE'),
+        ('ALTER ANY SCHEMA'), ('ALTER ANY USER'), ('TAKE OWNERSHIP')) AS P(PermissionName)
+    WHERE COALESCE(HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', P.PermissionName), 1) = 1
+    UNION ALL
+    SELECT 50, 'DBO SCHEMA', P.PermissionName
+    FROM (VALUES ('INSERT'), ('UPDATE'), ('DELETE'), ('EXECUTE'), ('ALTER'), ('CONTROL'),
+        ('TAKE OWNERSHIP')) AS P(PermissionName)
+    WHERE COALESCE(HAS_PERMS_BY_NAME('dbo', 'SCHEMA', P.PermissionName), 1) = 1
+    UNION ALL
+    SELECT 60, 'SOURCE OBJECT', P.PermissionName
+    FROM (VALUES ('dbo.Staffs'), ('dbo.AspNetUsers')) AS O(ObjectName)
+    CROSS JOIN (VALUES ('INSERT'), ('UPDATE'), ('DELETE'), ('ALTER'), ('CONTROL'),
+        ('TAKE OWNERSHIP')) AS P(PermissionName)
+    WHERE COALESCE(HAS_PERMS_BY_NAME(O.ObjectName, 'OBJECT', P.PermissionName), 1) = 1
+    UNION ALL
+    SELECT 70, 'PROCEDURE', 'EXECUTE'
+    FROM sys.procedures AS P
+    WHERE COALESCE(HAS_PERMS_BY_NAME(
+        QUOTENAME(OBJECT_SCHEMA_NAME(P.object_id)) + '.' + QUOTENAME(P.name),
+        'OBJECT', 'EXECUTE'), 1) = 1
+    UNION ALL
+    SELECT 80, 'SERVER EFFECTIVE', EffectivePermission.permission_name
+    FROM sys.fn_my_permissions(NULL, 'SERVER') AS EffectivePermission
+    WHERE EffectivePermission.permission_name NOT IN (
+        'CONNECT SQL', 'VIEW ANY DATABASE', 'VIEW ANY DEFINITION', 'VIEW SERVER STATE',
+        'VIEW SERVER PERFORMANCE STATE', 'VIEW SERVER SECURITY STATE', 'VIEW ANY ERROR LOG')
+    UNION ALL
+    SELECT 90, 'SERVER CONNECT', 'UNVERIFIED'
+    WHERE NOT EXISTS (SELECT 1 FROM sys.fn_my_permissions(NULL, 'SERVER')
+        WHERE permission_name = 'CONNECT SQL')
+    UNION ALL
+    SELECT 100, 'DATABASE EFFECTIVE', EffectivePermission.permission_name
+    FROM sys.fn_my_permissions(DB_NAME(), 'DATABASE') AS EffectivePermission
+    WHERE EffectivePermission.permission_name NOT IN (
+        'CONNECT', 'SELECT', 'VIEW DEFINITION', 'VIEW DATABASE STATE',
+        'VIEW DATABASE PERFORMANCE STATE', 'VIEW DATABASE SECURITY STATE', 'SHOWPLAN')
+    UNION ALL
+    SELECT 110, 'DATABASE CONNECT', 'UNVERIFIED'
+    WHERE NOT EXISTS (SELECT 1 FROM sys.fn_my_permissions(DB_NAME(), 'DATABASE')
+        WHERE permission_name = 'CONNECT')
+    UNION ALL
+    SELECT 120, 'SCHEMA EFFECTIVE', EffectivePermission.permission_name
+    FROM sys.schemas AS S
+    CROSS APPLY sys.fn_my_permissions(S.name, 'SCHEMA') AS EffectivePermission
+    WHERE EffectivePermission.permission_name NOT IN ('SELECT', 'VIEW DEFINITION')
+    UNION ALL
+    SELECT 130, 'OBJECT EFFECTIVE', EffectivePermission.permission_name
+    FROM sys.objects AS O
+    INNER JOIN sys.schemas AS S ON S.schema_id = O.schema_id
+    CROSS APPLY sys.fn_my_permissions(QUOTENAME(S.name) + '.' + QUOTENAME(O.name), 'OBJECT') AS EffectivePermission
+    WHERE O.type IN ('U', 'V', 'P', 'PC', 'FN', 'IF', 'TF', 'FS', 'FT')
+      AND EffectivePermission.permission_name NOT IN ('SELECT', 'VIEW DEFINITION')
+    UNION ALL
+    SELECT 140, 'DATABASE PRINCIPAL', EffectivePermission.permission_name
+    FROM sys.database_principals AS P
+    CROSS APPLY sys.fn_my_permissions(P.name,
+        CASE P.type WHEN 'R' THEN 'ROLE' WHEN 'A' THEN 'APPLICATION ROLE' ELSE 'USER' END
+    ) AS EffectivePermission
+    WHERE EffectivePermission.permission_name NOT IN ('VIEW DEFINITION')
+    UNION ALL
+    SELECT 150, 'SERVER LOGIN', EffectivePermission.permission_name
+    FROM sys.server_principals AS P
+    CROSS APPLY sys.fn_my_permissions(P.name, 'LOGIN') AS EffectivePermission
+    WHERE P.type <> 'R' AND EffectivePermission.permission_name NOT IN ('VIEW DEFINITION')
+    UNION ALL
+    SELECT 160, 'SERVER ROLE', P.PermissionName
+    FROM sys.server_principals AS R
+    CROSS JOIN (VALUES ('ALTER'), ('CONTROL'), ('TAKE OWNERSHIP')) AS P(PermissionName)
+    WHERE R.type = 'R'
+      AND COALESCE(HAS_PERMS_BY_NAME(R.name, 'SERVER ROLE', P.PermissionName), 1) = 1
+)
+SELECT TOP (1) ScopeName, PermissionName FROM Findings
+ORDER BY Priority, ScopeName, PermissionName
+"#;
+
 async fn ensure_mssql_login_is_read_only(client: &mut MssqlClient) -> Result<(), String> {
     let rows = client
         .query(MSSQL_READ_ONLY_CHECK, &[])
@@ -287,9 +380,46 @@ async fn ensure_mssql_login_is_read_only(client: &mut MssqlClient) -> Result<(),
             "Read-only permission diagnostic: the permission query returned no readable HasWriteAccess bit.".to_string()
         })?;
     if has_write_access {
-        return Err("MSSQL source login has write-level permissions. Configure a read-only login before syncing.".to_string());
+        return Err(read_only_permission_finding(client).await.unwrap_or_else(|| {
+            "MSSQL source login has write-level permissions. Configure a read-only login before syncing.".to_string()
+        }));
     }
     Ok(())
+}
+
+async fn read_only_permission_finding(client: &mut MssqlClient) -> Option<String> {
+    let rows = client
+        .query(MSSQL_READ_ONLY_FINDING, &[])
+        .await
+        .ok()?
+        .into_first_result()
+        .await
+        .ok()?;
+    let row = rows.first()?;
+    Some(format_read_only_permission_finding(
+        row.get::<&str, _>(0)?,
+        row.get::<&str, _>(1)?,
+    ))
+}
+
+fn format_read_only_permission_finding(scope: &str, permission: &str) -> String {
+    fn safe_part(part: &str) -> String {
+        if part.is_empty()
+            || part.len() > 80
+            || !part.chars().all(|character| {
+                character.is_ascii_alphanumeric() || character == '_' || character == ' '
+            })
+        {
+            "UNSPECIFIED".to_string()
+        } else {
+            part.to_ascii_uppercase()
+        }
+    }
+    format!(
+        "Read-only permission diagnostic: effective {} permission {}; syncing is blocked.",
+        safe_part(scope),
+        safe_part(permission)
+    )
 }
 
 fn format_read_only_check_error(error: &TiberiusError) -> String {
@@ -2264,6 +2394,21 @@ mod tests {
             sanitize_connection_reason(write_access),
             "Read-only verification found effective write-level permissions for this SQL login; syncing is blocked."
         );
+    }
+
+    #[test]
+    fn read_only_finding_names_effective_scope_and_permission_without_secrets() {
+        let finding = format_read_only_permission_finding("SERVER", "ALTER ANY DATABASE");
+        assert_eq!(
+            finding,
+            "Read-only permission diagnostic: effective SERVER permission ALTER ANY DATABASE; syncing is blocked."
+        );
+        assert_eq!(sanitize_connection_reason(&finding), finding);
+        let unsafe_finding =
+            format_read_only_permission_finding("OBJECT\npassword=hidden", "UPDATE\r");
+        assert!(!unsafe_finding.contains("password="));
+        assert!(!unsafe_finding.contains('\n'));
+        assert!(!unsafe_finding.contains('\r'));
     }
 
     #[test]
