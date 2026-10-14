@@ -2283,3 +2283,15 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Added a SELECT-only comparison diagnostic for server-class/default-class results, effective `fn_my_permissions`, built-in permission existence, dbcreator, and sysadmin; regression tests prove NULL remains blocked and comparison displays it distinctly. Qeen static review: PASS, safe pending live values.
 - Verification: focused permission tests passed; full Rust suite 332/332 passed; `npm run check:quality` passed (existing lint/build warnings only); scoped rustfmt and `git diff --check` passed. Full-workspace `cargo fmt --check` reports pre-existing formatting differences in unrelated files; none were formatted.
 - Live SSMS comparison and app Test Connection/Query B Preview remain unverified this turn; Computer Use stopped on physical Escape. No remote/local live DB writes, no Apply, merge, or push.
+
+## 2026-10-14 Fix permission diagnostic precedence — Start
+
+- Zon supplied SQL Server output: `HAS_PERMS_BY_NAME(NULL,'SERVER','ALTER ANY DATABASE')=NULL`, documented `NULL,NULL` form=0, `fn_my_permissions` count=0, built-in permission exists=1, dbcreator=0, sysadmin=0. The app screenshot still reports a failure but displays only this comparison.
+- Trace the gate diagnostic path: determine why the comparison short-circuits before the actual permission finding; adjust diagnostics only, preserve read-only gate and fail-closed behavior, then request Qeen review. No Apply or live DB writes.
+
+## 2026-10-14 Fix permission diagnostic precedence — End
+
+- Zon provided runtime SSMS evidence for `user_reader`: `HAS_PERMS_BY_NAME(NULL,'SERVER','ALTER ANY DATABASE')=NULL`; `HAS_PERMS_BY_NAME(NULL,NULL,...)=0`; `fn_my_permissions` count=0; built-in permission exists=1; dbcreator/sysadmin=0. Staff Kit still displayed only the comparison and blocked Test Connection.
+- Traced the message path: `read_only_permission_finding` returned the first comparison row before executing `MSSQL_READ_ONLY_FINDING`, so the actual gate trigger was hidden. Changed it to query the permission finding first and append the comparison as secondary evidence; gate semantics remain unchanged and fail-closed.
+- TDD: new diagnostic-priority test failed before implementation and passed after. Full Rust tests passed 333/333; `npm run check:quality` passed with existing lint/build warnings; scoped rustfmt and `git diff --check` passed.
+- No Apply, source/local DB writes, credential reads, merge, or push. New diagnostic must still be tested in the live app to identify the actual permission or unverifiable check causing rejection.

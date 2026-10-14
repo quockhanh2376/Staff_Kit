@@ -406,36 +406,37 @@ async fn ensure_mssql_login_is_read_only(client: &mut MssqlClient) -> Result<(),
 }
 
 async fn read_only_permission_finding(client: &mut MssqlClient) -> Option<String> {
-    let comparison_rows = client
-        .query(MSSQL_SERVER_PERMISSION_COMPARISON, &[])
-        .await
-        .ok()?
-        .into_first_result()
-        .await
-        .ok()?;
-    if let Some(row) = comparison_rows.first() {
-        return Some(format_server_permission_comparison(
-            row.get::<i32, _>(0),
-            row.get::<i32, _>(1),
-            row.get::<i32, _>(2),
-            row.get::<i32, _>(3),
-            row.get::<i32, _>(4),
-            row.get::<i32, _>(5),
-        ));
-    }
+    let finding = match client.query(MSSQL_READ_ONLY_FINDING, &[]).await {
+        Ok(stream) => match stream.into_first_result().await {
+            Ok(rows) => rows.first().and_then(|row| {
+                Some(format_read_only_permission_finding(
+                    row.get::<&str, _>(0)?,
+                    row.get::<&str, _>(1)?,
+                ))
+            }),
+            Err(_) => None,
+        },
+        Err(_) => None,
+    };
 
-    let rows = client
-        .query(MSSQL_READ_ONLY_FINDING, &[])
-        .await
-        .ok()?
-        .into_first_result()
-        .await
-        .ok()?;
-    let row = rows.first()?;
-    Some(format_read_only_permission_finding(
-        row.get::<&str, _>(0)?,
-        row.get::<&str, _>(1)?,
-    ))
+    let comparison = match client.query(MSSQL_SERVER_PERMISSION_COMPARISON, &[]).await {
+        Ok(stream) => match stream.into_first_result().await {
+            Ok(rows) => rows.first().map(|row| {
+                format_server_permission_comparison(
+                    row.get::<i32, _>(0),
+                    row.get::<i32, _>(1),
+                    row.get::<i32, _>(2),
+                    row.get::<i32, _>(3),
+                    row.get::<i32, _>(4),
+                    row.get::<i32, _>(5),
+                )
+            }),
+            Err(_) => None,
+        },
+        Err(_) => None,
+    };
+
+    combine_read_only_permission_diagnostics(finding, comparison)
 }
 
 fn format_server_permission_comparison(
@@ -454,7 +455,7 @@ fn format_server_permission_comparison(
         }
     }
     format!(
-        "Read-only permission diagnostic: ALTER ANY DATABASE HAS_PERMS_BY_NAME(server)={}; HAS_PERMS_BY_NAME(default)={}; fn_my_permissions(server)={}; built_in_server_permission={}; dbcreator={}; sysadmin={}.",
+        "ALTER ANY DATABASE probe: HAS_PERMS_BY_NAME(server)={}; HAS_PERMS_BY_NAME(default)={}; fn_my_permissions(server)={}; built_in_server_permission={}; dbcreator={}; sysadmin={}.",
         value(server_class),
         value(default_class),
         value(fn_my_permissions),
@@ -462,6 +463,22 @@ fn format_server_permission_comparison(
         value(dbcreator),
         value(sysadmin)
     )
+}
+
+fn combine_read_only_permission_diagnostics(
+    finding: Option<String>,
+    comparison: Option<String>,
+) -> Option<String> {
+    match (finding, comparison) {
+        (Some(finding), Some(comparison)) => {
+            Some(format!("{finding} Additional evidence: {comparison}"))
+        }
+        (Some(finding), None) => Some(finding),
+        (None, Some(comparison)) => Some(format!(
+            "Read-only permission diagnostic: no specific effective write permission was identified. {comparison}"
+        )),
+        (None, None) => None,
+    }
 }
 
 fn format_read_only_permission_finding(scope: &str, permission: &str) -> String {
@@ -2503,8 +2520,24 @@ mod tests {
                 Some(0),
                 Some(0),
             ),
-            "Read-only permission diagnostic: ALTER ANY DATABASE HAS_PERMS_BY_NAME(server)=NULL; HAS_PERMS_BY_NAME(default)=0; fn_my_permissions(server)=0; built_in_server_permission=1; dbcreator=0; sysadmin=0."
+            "ALTER ANY DATABASE probe: HAS_PERMS_BY_NAME(server)=NULL; HAS_PERMS_BY_NAME(default)=0; fn_my_permissions(server)=0; built_in_server_permission=1; dbcreator=0; sysadmin=0."
         );
+    }
+
+    #[test]
+    fn actual_permission_finding_is_primary_over_comparison_details() {
+        let diagnostic = combine_read_only_permission_diagnostics(
+            Some(format_read_only_permission_finding("DATABASE", "UPDATE")),
+            Some(
+                "Permission comparison: ALTER ANY DATABASE default=0; fn_my_permissions=0.".into(),
+            ),
+        )
+        .expect("actual permission finding is available");
+
+        assert!(diagnostic
+            .starts_with("Read-only permission diagnostic: effective DATABASE permission UPDATE;"));
+        assert!(diagnostic.contains("ALTER ANY DATABASE default=0"));
+        assert!(!diagnostic.starts_with("Read-only permission diagnostic: ALTER ANY DATABASE"));
     }
 
     #[test]
