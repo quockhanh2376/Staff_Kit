@@ -191,7 +191,8 @@ SELECT CAST(CASE WHEN
     OR EXISTS (
         SELECT 1
         FROM sys.fn_my_permissions(NULL, 'SERVER') AS EffectivePermission
-        WHERE EffectivePermission.permission_name NOT IN (
+        WHERE EffectivePermission.permission_name IS NULL OR
+              EffectivePermission.permission_name NOT IN (
             'CONNECT SQL',
             'VIEW ANY DATABASE',
             'VIEW ANY DEFINITION',
@@ -209,13 +210,16 @@ SELECT CAST(CASE WHEN
     OR EXISTS (
         SELECT 1
         FROM sys.fn_my_permissions(DB_NAME(), 'DATABASE') AS EffectivePermission
-        WHERE EffectivePermission.permission_name NOT IN (
+        WHERE EffectivePermission.permission_name IS NULL OR
+              EffectivePermission.permission_name NOT IN (
             'CONNECT',
             'SELECT',
             'VIEW DEFINITION',
             'VIEW DATABASE STATE',
             'VIEW DATABASE PERFORMANCE STATE',
             'VIEW DATABASE SECURITY STATE',
+            'VIEW ANY COLUMN ENCRYPTION KEY DEFINITION',
+            'VIEW ANY COLUMN MASTER KEY DEFINITION',
             'SHOWPLAN'
         )
     )
@@ -228,7 +232,13 @@ SELECT CAST(CASE WHEN
         SELECT 1
         FROM sys.schemas AS S
         CROSS APPLY sys.fn_my_permissions(S.name, 'SCHEMA') AS EffectivePermission
-        WHERE EffectivePermission.permission_name NOT IN ('SELECT', 'VIEW DEFINITION')
+        WHERE S.schema_id < 16384
+          AND S.name NOT IN ('db_owner', 'db_accessadmin', 'db_securityadmin', 'db_ddladmin',
+                             'db_backupoperator', 'db_datareader', 'db_datawriter',
+                             'db_denydatareader', 'db_denydatawriter')
+          AND (EffectivePermission.permission_name IS NULL OR
+               EffectivePermission.permission_name NOT IN
+                   ('SELECT', 'VIEW DEFINITION', 'VIEW CHANGE TRACKING'))
     )
     OR EXISTS (
         SELECT 1
@@ -238,8 +248,15 @@ SELECT CAST(CASE WHEN
             QUOTENAME(S.name) + '.' + QUOTENAME(O.name),
             'OBJECT'
         ) AS EffectivePermission
-        WHERE O.type IN ('U', 'V', 'P', 'PC', 'FN', 'IF', 'TF', 'FS', 'FT')
-          AND EffectivePermission.permission_name NOT IN ('SELECT', 'VIEW DEFINITION')
+        WHERE O.type IN ('U', 'V', 'P', 'PC', 'RF', 'X', 'FN', 'IF', 'TF', 'FS', 'FT',
+                         'AF', 'SN', 'SO', 'SQ', 'ET')
+          AND (EffectivePermission.permission_name IS NULL OR
+               EffectivePermission.permission_name NOT IN
+                   ('SELECT', 'VIEW DEFINITION', 'VIEW CHANGE TRACKING')
+               AND NOT (
+                   O.type IN ('FN', 'FS', 'AF')
+                   AND EffectivePermission.permission_name = 'EXECUTE'
+               ))
     )
     OR EXISTS (
         SELECT 1
@@ -252,14 +269,18 @@ SELECT CAST(CASE WHEN
                 ELSE 'USER'
             END
         ) AS EffectivePermission
-        WHERE EffectivePermission.permission_name NOT IN ('VIEW DEFINITION')
+        WHERE P.name <> USER_NAME()
+          AND (EffectivePermission.permission_name IS NULL OR
+               EffectivePermission.permission_name NOT IN ('VIEW DEFINITION'))
     )
     OR EXISTS (
         SELECT 1
         FROM sys.server_principals AS P
         CROSS APPLY sys.fn_my_permissions(P.name, 'LOGIN') AS EffectivePermission
         WHERE P.type <> 'R'
-          AND EffectivePermission.permission_name NOT IN ('VIEW DEFINITION')
+          AND P.name <> SUSER_SNAME()
+          AND (EffectivePermission.permission_name IS NULL OR
+               EffectivePermission.permission_name NOT IN ('VIEW DEFINITION'))
     )
     OR EXISTS (
         SELECT 1
@@ -307,7 +328,7 @@ WITH Findings AS (
         ('TAKE OWNERSHIP')) AS P(PermissionName)
     WHERE COALESCE(HAS_PERMS_BY_NAME(O.ObjectName, 'OBJECT', P.PermissionName), 1) = 1
     UNION ALL
-    SELECT 70, 'PROCEDURE', 'EXECUTE'
+    SELECT 70, 'PROCEDURE', ('EXECUTE ON ' COLLATE DATABASE_DEFAULT) + (OBJECT_SCHEMA_NAME(P.object_id) COLLATE DATABASE_DEFAULT) + ('.' COLLATE DATABASE_DEFAULT) + (P.name COLLATE DATABASE_DEFAULT)
     FROM sys.procedures AS P
     WHERE COALESCE(HAS_PERMS_BY_NAME(
         QUOTENAME(OBJECT_SCHEMA_NAME(P.object_id)) + '.' + QUOTENAME(P.name),
@@ -315,7 +336,8 @@ WITH Findings AS (
     UNION ALL
     SELECT 80, 'SERVER EFFECTIVE', EffectivePermission.permission_name
     FROM sys.fn_my_permissions(NULL, 'SERVER') AS EffectivePermission
-    WHERE EffectivePermission.permission_name NOT IN (
+    WHERE EffectivePermission.permission_name IS NULL OR
+          EffectivePermission.permission_name NOT IN (
         'CONNECT SQL', 'VIEW ANY DATABASE', 'VIEW ANY DEFINITION', 'VIEW SERVER STATE',
         'VIEW SERVER PERFORMANCE STATE', 'VIEW SERVER SECURITY STATE', 'VIEW ANY ERROR LOG')
     UNION ALL
@@ -325,37 +347,58 @@ WITH Findings AS (
     UNION ALL
     SELECT 100, 'DATABASE EFFECTIVE', EffectivePermission.permission_name
     FROM sys.fn_my_permissions(DB_NAME(), 'DATABASE') AS EffectivePermission
-    WHERE EffectivePermission.permission_name NOT IN (
+    WHERE EffectivePermission.permission_name IS NULL OR
+          EffectivePermission.permission_name NOT IN (
         'CONNECT', 'SELECT', 'VIEW DEFINITION', 'VIEW DATABASE STATE',
-        'VIEW DATABASE PERFORMANCE STATE', 'VIEW DATABASE SECURITY STATE', 'SHOWPLAN')
+        'VIEW DATABASE PERFORMANCE STATE', 'VIEW DATABASE SECURITY STATE',
+        'VIEW ANY COLUMN ENCRYPTION KEY DEFINITION',
+        'VIEW ANY COLUMN MASTER KEY DEFINITION', 'SHOWPLAN')
     UNION ALL
     SELECT 110, 'DATABASE CONNECT', 'UNVERIFIED'
     WHERE NOT EXISTS (SELECT 1 FROM sys.fn_my_permissions(DB_NAME(), 'DATABASE')
         WHERE permission_name = 'CONNECT')
     UNION ALL
-    SELECT 120, 'SCHEMA EFFECTIVE', EffectivePermission.permission_name
+    SELECT 120, 'SCHEMA EFFECTIVE', (COALESCE(EffectivePermission.permission_name, 'UNVERIFIED') COLLATE DATABASE_DEFAULT) + (' ON ' COLLATE DATABASE_DEFAULT) + (S.name COLLATE DATABASE_DEFAULT)
     FROM sys.schemas AS S
     CROSS APPLY sys.fn_my_permissions(S.name, 'SCHEMA') AS EffectivePermission
-    WHERE EffectivePermission.permission_name NOT IN ('SELECT', 'VIEW DEFINITION')
+    WHERE S.schema_id < 16384
+      AND S.name NOT IN ('db_owner', 'db_accessadmin', 'db_securityadmin', 'db_ddladmin',
+                         'db_backupoperator', 'db_datareader', 'db_datawriter',
+                         'db_denydatareader', 'db_denydatawriter')
+      AND (EffectivePermission.permission_name IS NULL OR
+           EffectivePermission.permission_name NOT IN
+               ('SELECT', 'VIEW DEFINITION', 'VIEW CHANGE TRACKING'))
     UNION ALL
-    SELECT 130, 'OBJECT EFFECTIVE', EffectivePermission.permission_name
+    SELECT 130, 'OBJECT EFFECTIVE', (COALESCE(EffectivePermission.permission_name, 'UNVERIFIED') COLLATE DATABASE_DEFAULT) + (' ON ' COLLATE DATABASE_DEFAULT) + (S.name COLLATE DATABASE_DEFAULT) + ('.' COLLATE DATABASE_DEFAULT) + (O.name COLLATE DATABASE_DEFAULT)
     FROM sys.objects AS O
     INNER JOIN sys.schemas AS S ON S.schema_id = O.schema_id
     CROSS APPLY sys.fn_my_permissions(QUOTENAME(S.name) + '.' + QUOTENAME(O.name), 'OBJECT') AS EffectivePermission
-    WHERE O.type IN ('U', 'V', 'P', 'PC', 'FN', 'IF', 'TF', 'FS', 'FT')
-      AND EffectivePermission.permission_name NOT IN ('SELECT', 'VIEW DEFINITION')
+    WHERE O.type IN ('U', 'V', 'P', 'PC', 'RF', 'X', 'FN', 'IF', 'TF', 'FS', 'FT',
+                     'AF', 'SN', 'SO', 'SQ', 'ET')
+      AND (EffectivePermission.permission_name IS NULL OR
+           EffectivePermission.permission_name NOT IN
+               ('SELECT', 'VIEW DEFINITION', 'VIEW CHANGE TRACKING')
+           AND NOT (
+               O.type IN ('FN', 'FS', 'AF')
+               AND EffectivePermission.permission_name = 'EXECUTE'
+           ))
     UNION ALL
     SELECT 140, 'DATABASE PRINCIPAL', EffectivePermission.permission_name
     FROM sys.database_principals AS P
     CROSS APPLY sys.fn_my_permissions(P.name,
         CASE P.type WHEN 'R' THEN 'ROLE' WHEN 'A' THEN 'APPLICATION ROLE' ELSE 'USER' END
     ) AS EffectivePermission
-    WHERE EffectivePermission.permission_name NOT IN ('VIEW DEFINITION')
+    WHERE P.name <> USER_NAME()
+      AND (EffectivePermission.permission_name IS NULL OR
+           EffectivePermission.permission_name NOT IN ('VIEW DEFINITION'))
     UNION ALL
     SELECT 150, 'SERVER LOGIN', EffectivePermission.permission_name
     FROM sys.server_principals AS P
     CROSS APPLY sys.fn_my_permissions(P.name, 'LOGIN') AS EffectivePermission
-    WHERE P.type <> 'R' AND EffectivePermission.permission_name NOT IN ('VIEW DEFINITION')
+    WHERE P.type <> 'R'
+      AND P.name <> SUSER_SNAME()
+      AND (EffectivePermission.permission_name IS NULL OR
+           EffectivePermission.permission_name NOT IN ('VIEW DEFINITION'))
     UNION ALL
     SELECT 160, 'SERVER ROLE', P.PermissionName
     FROM sys.server_principals AS R
@@ -414,9 +457,9 @@ async fn read_only_permission_finding(client: &mut MssqlClient) -> Option<String
                     row.get::<&str, _>(1)?,
                 ))
             }),
-            Err(_) => None,
+            Err(error) => Some(format_read_only_check_error(&error)),
         },
-        Err(_) => None,
+        Err(error) => Some(format_read_only_check_error(&error)),
     };
 
     let comparison = match client.query(MSSQL_SERVER_PERMISSION_COMPARISON, &[]).await {
@@ -486,7 +529,10 @@ fn format_read_only_permission_finding(scope: &str, permission: &str) -> String 
         if part.is_empty()
             || part.len() > 80
             || !part.chars().all(|character| {
-                character.is_ascii_alphanumeric() || character == '_' || character == ' '
+                character.is_ascii_alphanumeric()
+                    || character == '_'
+                    || character == ' '
+                    || character == '.'
             })
         {
             "UNSPECIFIED".to_string()
@@ -2454,10 +2500,8 @@ mod tests {
         assert!(check.contains("has_perms_by_name(p.name, 'server role', 'take ownership')"));
         assert!(!check.contains("has_perms_by_name(p.name, 'server role', 'any')"));
         assert!(check.contains("where p.type = 'r'"));
-        assert!(
-            check.contains("where o.type in ('u', 'v', 'p', 'pc', 'fn', 'if', 'tf', 'fs', 'ft')")
-        );
-        assert!(check.contains("permission_name not in ('select', 'view definition')"));
+        assert!(check.contains("where o.type in ('u', 'v', 'p', 'pc', 'rf', 'x'"));
+        assert!(check.contains("'view change tracking'"));
         assert!(!check.contains("references"));
         assert!(
             check.contains("coalesce(has_perms_by_name(null, null, 'alter any database'), 1) = 1")
@@ -2467,6 +2511,135 @@ mod tests {
             .contains("coalesce(has_perms_by_name(null, null, p.permissionname), 1) = 1"));
         assert!(!check.contains("has_perms_by_name(null, 'server',"));
         assert!(check.contains("coalesce(") && check.contains("then 1 else 0 end as bit"));
+    }
+
+    // Evaluate the permission predicates used by both production SQL statements
+    // with SQL's three-valued NULL semantics, rather than duplicating their lists
+    // in a Rust classifier that could drift from the gate.
+    fn effective_permission_is_blocked(
+        query: &str,
+        scope_marker: &str,
+        permission: Option<&str>,
+    ) -> bool {
+        let scope = query
+            .split_once(scope_marker)
+            .expect("permission scope exists")
+            .1;
+        let not_in = scope
+            .find("EffectivePermission.permission_name NOT IN")
+            .expect("effective permission filter exists");
+        let guarded = scope[..not_in]
+            .rfind("EffectivePermission.permission_name IS NULL OR")
+            .filter(|position| not_in - position < 100);
+        let predicate_start = guarded.unwrap_or(not_in);
+        let predicate_end = not_in + scope[not_in..].find(')').expect("permission list closes") + 1;
+        let predicate = &scope[predicate_start..predicate_end];
+        let sql = format!(
+            "WITH EffectivePermission(permission_name) AS (VALUES (?1)) \
+             SELECT CASE WHEN {predicate} THEN 1 ELSE 0 END FROM EffectivePermission"
+        );
+        let conn = Connection::open_in_memory().expect("in-memory predicate evaluation");
+        conn.query_row(&sql, [permission], |row| row.get::<_, i64>(0))
+            .expect("permission predicate executes")
+            == 1
+    }
+
+    #[test]
+    fn effective_permissions_allow_only_known_metadata_and_fail_closed_on_null() {
+        let scopes = [
+            (
+                "FROM sys.fn_my_permissions(NULL, 'SERVER') AS EffectivePermission",
+                "VIEW ANY DEFINITION",
+            ),
+            (
+                "FROM sys.fn_my_permissions(DB_NAME(), 'DATABASE') AS EffectivePermission",
+                "VIEW ANY COLUMN ENCRYPTION KEY DEFINITION",
+            ),
+            (
+                "CROSS APPLY sys.fn_my_permissions(S.name, 'SCHEMA') AS EffectivePermission",
+                "VIEW CHANGE TRACKING",
+            ),
+            (
+                "QUOTENAME(S.name) + '.' + QUOTENAME(O.name)",
+                "VIEW CHANGE TRACKING",
+            ),
+            ("FROM sys.database_principals AS P", "VIEW DEFINITION"),
+            ("FROM sys.server_principals AS P", "VIEW DEFINITION"),
+        ];
+        for query in [MSSQL_READ_ONLY_CHECK, MSSQL_READ_ONLY_FINDING] {
+            for (scope, metadata_permission) in scopes {
+                assert!(
+                    !effective_permission_is_blocked(query, scope, Some(metadata_permission)),
+                    "metadata {metadata_permission} must be read-only at {scope}"
+                );
+                for denied in [
+                    Some("UPDATE"),
+                    Some("EXECUTE"),
+                    Some("NEW UNKNOWN PERMISSION"),
+                    None,
+                ] {
+                    assert!(
+                        effective_permission_is_blocked(query, scope, denied),
+                        "write, unknown, or NULL permission {denied:?} must block at {scope}"
+                    );
+                }
+            }
+            let database =
+                "FROM sys.fn_my_permissions(DB_NAME(), 'DATABASE') AS EffectivePermission";
+            assert!(!effective_permission_is_blocked(
+                query,
+                database,
+                Some("VIEW ANY COLUMN MASTER KEY DEFINITION")
+            ));
+        }
+    }
+
+    #[test]
+    fn effective_object_audit_includes_sql_2017_write_capable_object_kinds() {
+        // SQL Server's sys.objects includes grantable securables beyond tables,
+        // views, and ordinary procedures. An omitted kind could conceal writes.
+        for query in [MSSQL_READ_ONLY_CHECK, MSSQL_READ_ONLY_FINDING] {
+            let object_scope = query
+                .split_once("FROM sys.objects AS O")
+                .expect("object permission audit exists")
+                .1;
+            let supported_types = object_scope
+                .split_once("O.type IN (")
+                .expect("object kinds are selected")
+                .1
+                .split_once(')')
+                .expect("object kind list closes")
+                .0;
+            for kind in ["'SN'", "'SO'", "'SQ'", "'X'", "'RF'", "'AF'", "'ET'"] {
+                assert!(
+                    supported_types.contains(kind),
+                    "{kind} must be audited for effective permissions"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn permission_finding_identifies_the_schema_or_procedure_without_raw_sql_details() {
+        let finding = MSSQL_READ_ONLY_FINDING.to_ascii_lowercase();
+        assert!(finding.contains("'schema effective', (coalesce(effectivepermission.permission_name, 'unverified') collate database_default)"));
+        assert!(finding.contains("'procedure', ('execute on ' collate database_default)"));
+        assert_eq!(
+            format_read_only_permission_finding("SCHEMA EFFECTIVE", "ALTER ON dbo"),
+            "Read-only permission diagnostic: effective SCHEMA EFFECTIVE permission ALTER ON DBO; syncing is blocked."
+        );
+        assert!(
+            format_read_only_permission_finding("PROCEDURE", "EXECUTE ON dbo.ReadStaff")
+                .contains("EXECUTE ON DBO.READSTAFF")
+        );
+    }
+
+    #[test]
+    fn finding_concatenation_uses_database_collation_for_sql_2017() {
+        let finding = MSSQL_READ_ONLY_FINDING.to_ascii_lowercase();
+        assert!(finding.contains("(coalesce(effectivepermission.permission_name, 'unverified') collate database_default) + (' on ' collate database_default) + (s.name collate database_default)"));
+        assert!(finding.contains("(object_schema_name(p.object_id) collate database_default)"));
+        assert!(finding.contains("(o.name collate database_default)"));
     }
 
     #[test]
@@ -2677,5 +2850,35 @@ mod tests {
             !password_read,
             "unapproved account must fail before secret retrieval"
         );
+    }
+
+    #[tokio::test]
+    async fn live_sql_server_read_only_and_query_b() {
+        let password = match read_mssql_password() {
+            Ok(Some(p)) => p,
+            _ => return,
+        };
+        let config = MssqlConnectionConfig {
+            server: "10.184.0.19".into(),
+            database: "AssetManagement".into(),
+            port: 1433,
+            auth_type: MssqlAuthType::SqlServer,
+            username: "user_reader".into(),
+            approved_username: "user_reader".into(),
+            password: Some(password),
+            environment_override: false,
+        };
+        let mut client = connect(&config).await.expect("connect");
+        let read_only_res = ensure_mssql_login_is_read_only(&mut client).await;
+        assert!(read_only_res.is_ok(), "Read-only gate must PASS for user_reader: {:?}", read_only_res.err());
+
+        let source_rows = fetch_employee_list_sync_source(&config).await.expect("fetch_employee_list_sync_source");
+        assert_eq!(source_rows.len(), 397, "Expected exactly 397 rows from canonical Query B");
+        let first = &source_rows[0];
+        assert_eq!(first.code, "ASWCVN01");
+        assert_eq!(first.name, "Brendan Cunningham");
+        assert_eq!(first.nick_name.as_deref(), Some("Brendan"));
+        assert_eq!(first.work_email.as_deref(), Some("Brendan@consulting.aswhiteglobal.com"));
+        assert_eq!(first.azure_ad_account.as_deref(), Some("Brendan@consulting.aswhiteglobal.com"));
     }
 }

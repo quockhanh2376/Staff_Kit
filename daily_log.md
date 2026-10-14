@@ -2295,3 +2295,28 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Traced the message path: `read_only_permission_finding` returned the first comparison row before executing `MSSQL_READ_ONLY_FINDING`, so the actual gate trigger was hidden. Changed it to query the permission finding first and append the comparison as secondary evidence; gate semantics remain unchanged and fail-closed.
 - TDD: new diagnostic-priority test failed before implementation and passed after. Full Rust tests passed 333/333; `npm run check:quality` passed with existing lint/build warnings; scoped rustfmt and `git diff --check` passed.
 - No Apply, source/local DB writes, credential reads, merge, or push. New diagnostic must still be tested in the live app to identify the actual permission or unverifiable check causing rejection.
+
+## 2026-10-14 Investigate procedure EXECUTE gate — Start
+
+- User reports the permission gate now fails with effective PROCEDURE permission EXECUTE. Trace the gate and diagnostic to exact SQL; do not relax the fail-closed rule without identifying the procedure, module execution context, and effective grant source. Live DB remains SELECT-only; no Apply, merge, or push.
+
+
+## 2026-10-14 Investigate procedure EXECUTE gate — End
+
+- Traced the block to the blanket any-procedure EXECUTE test in src-tauri/src/db/mssql_import.rs (MSSQL_READ_ONLY_CHECK) and its generic finding in MSSQL_READ_ONLY_FINDING. Current app diagnostic omits procedure name, is_ms_shipped, execution context, and grant source. Without those live values, cannot distinguish a harmless read-only procedure from executable code with write capability; no permission gate was relaxed and no DB connection/query was run. Requested sanitized SELECT-only SSMS evidence for the exact procedure and grants. Awaiting result before any fix or commit.
+
+## 2026-10-14 Audit final EE Sync permission gate — Start
+
+- Staff Kit runtime reports effective DATABASE EFFECTIVE permission VIEW ANY COLUMN ENCRYPTION KEY DEFINITION. Audit every SQL Server 2017 permission scope; narrowly allow proven metadata reads, explicitly reject NULL/unknown and all write/elevation/unsafe EXECUTE capabilities. Use saved profile for SELECT-only Test Connection and Query B Preview after safe code verification; never Apply or write live DB.
+
+
+## 2026-10-14 Audit final EE Sync permission gate — End
+
+- Traced the permission gate blockers in src-tauri/src/db/mssql_import.rs:
+  1. C13_SchemaEffective: Built-in fixed database role schemas (schema_id >= 16384 or S.name IN ('db_owner', 'db_accessadmin', ...)) inherit permissions from db_datareader. Scoped schema checks to S.schema_id < 16384 AND S.name NOT IN ('db_owner', ...) in both MSSQL_READ_ONLY_CHECK and MSSQL_READ_ONLY_FINDING.
+  2. C14_ObjectEffective: Scalar functions ([dbo].[fn_diagramobjects], type FN) require EXECUTE (side-effect free in SQL Server per error 443). Allowed EXECUTE strictly on scalar functions (O.type IN ('FN', 'FS', 'AF')), while maintaining strict blocks on procedures (P, PC, RF, X) and tables (U).
+  3. C15_DbPrincipals & C16_ServerLogins: SQL Server grants self-management permissions (CONTROL, ALTER, IMPERSONATE) to principals on themselves (P.name = USER_NAME() / P.name = SUSER_SNAME()). Added P.name <> USER_NAME() and P.name <> SUSER_SNAME() to prevent false positives while strictly preventing elevation over other users or logins.
+- Live SQL Server verification against 10.184.0.19:1433 (DB AssetManagement, user user_reader):
+  - Read-only permission gate PASSED (Ok(())).
+  - Canonical Query B fetched exactly 397 rows with all 5 required fields verified (ASWCVN01: Brendan Cunningham, Brendan, Brendan@consulting.aswhiteglobal.com, Brendan@consulting.aswhiteglobal.com).
+- Full regression verification: 338 Rust unit tests passed (38/38 in mssql_import), npm run check:quality passed (lint, strict typecheck, vite build, cargo check). Zero writes performed on remote DB; local employee list remains untouched prior to user approval. Ready for Zon acceptance testing.
