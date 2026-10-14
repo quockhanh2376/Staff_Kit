@@ -374,6 +374,18 @@ export function getMssqlEmployeeUpdateErrorMessage(error: unknown): string {
     const normalized = raw.toLowerCase()
 
     if (
+        normalized.startsWith("read-only permission diagnostic:") &&
+        raw.length <= 350 &&
+        !/[\r\n]/.test(raw) &&
+        !/(?:password|token|secret)\s*=/.test(normalized)
+    ) {
+        return raw
+    }
+
+    const verifiedWriteAccess = "Read-only verification found effective write-level permissions for this SQL login; syncing is blocked."
+    if (raw === verifiedWriteAccess) return verifiedWriteAccess
+
+    if (
         normalized.includes("missing mssql configuration") ||
         normalized.includes("remote ee sync settings") ||
         normalized.includes("configuration is incomplete")

@@ -1,4 +1,4 @@
-import { act, renderHook } from "@testing-library/react"
+import { act, renderHook, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
@@ -24,6 +24,9 @@ const baseOptions = {
 
 beforeEach(() => {
     vi.clearAllMocks()
+    api.listTeams.mockResolvedValue([])
+    api.listEmployeeGroupCounts.mockResolvedValue({ employeeList: 0, onboarding: 0, offboarding: 0, internalMovement: 0 })
+    api.searchEmployees.mockResolvedValue({ items: [], total: 0 })
     api.previewEmployeeListMssqlSync.mockResolvedValue({
         previewId: "preview-1",
         createdAt: "2026-10-13T00:00:00Z",
@@ -71,6 +74,31 @@ describe("employee MSSQL update flow", () => {
         expect(setGlobalError).toHaveBeenCalledWith(result.current.mssqlUpdateMessage)
     })
 
+    it("shows the backend's bounded permission diagnostic when Update cannot create a preview", async () => {
+        const diagnostic = "Read-only permission diagnostic: SQL Server error 916: metadata access denied."
+        api.previewEmployeeListMssqlSync.mockRejectedValue(new Error(diagnostic))
+        const { result } = renderHook(() => useEmployeeState(baseOptions))
+
+        await act(async () => { await result.current.updateEmployeeListFromMssql() })
+
+        expect(result.current.mssqlUpdateMessage).toBe(diagnostic)
+        expect(result.current.mssqlSyncPreview).toBeNull()
+        expect(api.applyEmployeeListMssqlSync).not.toHaveBeenCalled()
+    })
+
+    it("distinguishes verified write access from a failed permission check", () => {
+        const detected = "Read-only verification found effective write-level permissions for this SQL login; syncing is blocked."
+        expect(getMssqlEmployeeUpdateErrorMessage(new Error(detected))).toBe(detected)
+    })
+
+    it("does not echo an unexpected credential-like value inside a diagnostic", () => {
+        const message = getMssqlEmployeeUpdateErrorMessage(
+            new Error("Read-only permission diagnostic: SQL Server error 916: password=secret"),
+        )
+        expect(message).not.toContain("secret")
+        expect(message).toContain("must be read-only")
+    })
+
     it("applies only after the explicit approve action", async () => {
         const { result } = renderHook(() => useEmployeeState(baseOptions))
         await act(async () => { await result.current.updateEmployeeListFromMssql() })
@@ -83,6 +111,18 @@ describe("employee MSSQL update flow", () => {
         expect(result.current.mssqlUpdateStatus).toBe("success")
         expect(result.current.mssqlUpdateMessage).toContain("imported 1")
         expect(result.current.mssqlUpdateMessage).toContain("missing 4")
+    })
+
+    it("refreshes the displayed EE List after approved local apply", async () => {
+        const { result } = renderHook(() => useEmployeeState({ ...baseOptions, dbReady: true, isAuthenticated: true }))
+        await waitFor(() => expect(api.searchEmployees).toHaveBeenCalledTimes(1))
+
+        await act(async () => { await result.current.updateEmployeeListFromMssql() })
+        expect(api.searchEmployees).toHaveBeenCalledTimes(1)
+        await act(async () => { await result.current.applyEmployeeListMssqlSync() })
+
+        await waitFor(() => expect(api.searchEmployees).toHaveBeenCalledTimes(2))
+        expect(api.searchEmployees).toHaveBeenLastCalledWith(expect.objectContaining({ staffGroup: "employee_list", offset: 0 }))
     })
 
     it("dismisses the preview without applying local changes", async () => {

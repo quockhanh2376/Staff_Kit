@@ -2246,3 +2246,16 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Screenshot's generic wording could be produced by an older binary or by the current positive `HasWriteAccess = true` path, because sanitizer merged that verified finding with permission-check failures. This change preserves a distinct blocked message when effective write-level permissions are positively detected; diagnostics remain fail-closed.
 - Regression failed before the sanitizer update and passed after it. Full Tauri tests passed 330/330; `npm run check:quality` completed successfully with existing warnings; targeted Rust format and diff checks passed.
 - No SQL/live DB connection, credential access, Query B, Preview, Apply, merge, or push. Exact user_reader grant/scope remains unverified until the updated Test Connection reports its distinct result.
+
+## 2026-10-14 EE List Update end-to-end root-cause audit — Start
+
+- Trace the approved Query B sync from UI and saved profile through connection, permission verification, source mapping, preview, local Apply transaction, and UI refresh. Gather runtime evidence from the current feature build before changing behavior.
+- Use the saved Windows credential only through Staff Kit; do not inspect or print it. Remote operations are SELECT-only, and live local Apply is excluded.
+- Preserve unrelated worktree changes, implement a focused root-cause fix only when supported by evidence, run required checks, commit only this feature branch, and request independent Qeen validation. No merge or push.
+
+## 2026-10-14 EE List Update end-to-end root-cause audit — End
+
+- Static trace: Update invokes a fresh profile resolution and connection through the saved Staff Kit Credential Manager target, then the fail-closed permission query and fixed Query B. Query B uses the approved INNER JOIN, active filter, Code dedupe, five mapped columns, and no TOP cap. Preview reads local EE List and holds a diff; only explicit Apply re-fetches source and writes New/Changed EE List rows in a transaction; UI refreshes after success.
+- Confirmed a separate observability defect in EE List Update: its frontend error mapper collapsed the backend's bounded permission-query diagnostic and verified-write result into identical generic DBA guidance. Focused tests failed before the UI change and passed after. The UI now preserves only recognized bounded safe diagnostics, with credential-like content rejected.
+- Added isolated regressions for local AzureAD mapping, Missing retention, unrelated employee-group preservation, and UI refresh after Apply. Frontend tests 236/236, Rust tests 330/330, `npm run check:quality`, target Rust formatting, and diff checks passed; existing warnings remain.
+- Started `npm run tauri:dev` from the feature worktree at port 5173; saved Credential Manager target exists and no MSSQL environment override is set. Windows remained at the lock screen, so no live Test Connection, Query B count, direct field comparison, or Preview could be observed. No Apply, remote SQL command, credential inspection, merge, or push; underlying live failure remains unconfirmed.

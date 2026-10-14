@@ -2141,6 +2141,10 @@ mod tests {
             "INSERT INTO employees (employee_id, full_name, staff_group) VALUES ('ASWVN1400', 'Other Group', 'onboarding')",
             [],
         ).expect("seed other group employee");
+        conn.execute(
+            "INSERT INTO employees (employee_id, full_name, staff_group) VALUES ('ASWVN1399', 'Missing From Source', 'employee_list')",
+            [],
+        ).expect("seed missing source employee");
 
         let mut conn = conn;
         let tx = conn.transaction().expect("start approved transaction");
@@ -2180,6 +2184,22 @@ mod tests {
         assert_eq!(nick.as_deref(), Some("Nick"));
         assert_eq!(email.as_deref(), Some("person@example.com"));
         assert_eq!(group, STAFF_GROUP_EMPLOYEE_LIST);
+        let azure_ad: String = conn
+            .query_row(
+                "SELECT value FROM employee_dynamic_values WHERE employee_id = (SELECT id FROM employees WHERE employee_id = 'ASWVN1325') AND field_key = ?1",
+                [AZURE_AD_ACCOUNT_FIELD_KEY],
+                |row| row.get(0),
+            )
+            .expect("read mapped AzureAD");
+        assert_eq!(azure_ad, "person@corp.example");
+        let missing_name: String = conn
+            .query_row(
+                "SELECT full_name FROM employees WHERE employee_id = 'ASWVN1399'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("read retained missing EE List employee");
+        assert_eq!(missing_name, "Missing From Source");
         let other_name: String = conn
             .query_row(
                 "SELECT full_name FROM employees WHERE employee_id = 'ASWVN1400'",
