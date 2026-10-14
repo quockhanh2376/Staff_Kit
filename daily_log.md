@@ -2271,3 +2271,15 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Added bounded SELECT-only permission finding after the existing positive write gate; it only explains the rejection, cannot authorize, and falls back to the original block if diagnostic fails. Qeen independently reviewed the diff and reported PASS; no permission bypass, Apply, live DB write, merge, or push.
 - Full Rust tests passed 331/331, focused finding test passed, `npm run check:quality` passed (one existing ESLint warning), rustfmt and diff checks passed. After admin re-login, EE List → Update displayed the same exact permission finding and stopped before Preview.
 - No Query B, source row count, preview, Apply, local/remote write, merge, or push; the positive server permission remains the blocker.
+
+## 2026-10-14 Verify SQL 2017 permission NULL handling — Start
+
+- User supplied SSMS evidence that `IS_SRVROLEMEMBER('dbcreator')` and `IS_SRVROLEMEMBER('sysadmin')` are 0 while `HAS_PERMS_BY_NAME(NULL,'SERVER',...)` returned NULL. Verify SQL Server 2017 semantics and compare the explicit SERVER class, default class, and `fn_my_permissions` through the saved Staff Kit profile.
+- Correct any false interpretation of NULL without allowing unknown permissions through. Keep the connection/permission gate fail-closed; after a proven correction, test Update/Query B/Preview only, never Apply.
+
+## 2026-10-14 Verify SQL 2017 permission NULL handling — End
+
+- Microsoft SQL Server 2017 documentation demonstrates server permission checks with `HAS_PERMS_BY_NAME(NULL, NULL, ...)`; SSMS evidence supplied by Zon showed the prior `NULL, 'SERVER'` call returned NULL. The gate had wrapped this result with `COALESCE(..., 1)`, which could report a false elevated permission. Updated server checks to the documented form and retained `COALESCE(..., 1)` so any remaining NULL still blocks.
+- Added a SELECT-only comparison diagnostic for server-class/default-class results, effective `fn_my_permissions`, built-in permission existence, dbcreator, and sysadmin; regression tests prove NULL remains blocked and comparison displays it distinctly. Qeen static review: PASS, safe pending live values.
+- Verification: focused permission tests passed; full Rust suite 332/332 passed; `npm run check:quality` passed (existing lint/build warnings only); scoped rustfmt and `git diff --check` passed. Full-workspace `cargo fmt --check` reports pre-existing formatting differences in unrelated files; none were formatted.
+- Live SSMS comparison and app Test Connection/Query B Preview remain unverified this turn; Computer Use stopped on physical Escape. No remote/local live DB writes, no Apply, merge, or push.

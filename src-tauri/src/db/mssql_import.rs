@@ -133,10 +133,12 @@ SELECT CAST(CASE WHEN
     COALESCE(IS_SRVROLEMEMBER('securityadmin'), 1) = 1 OR
     COALESCE(IS_SRVROLEMEMBER('serveradmin'), 1) = 1 OR
     COALESCE(IS_SRVROLEMEMBER('bulkadmin'), 1) = 1 OR
-    COALESCE(HAS_PERMS_BY_NAME(NULL, 'SERVER', 'CONTROL SERVER'), 1) = 1 OR
-    COALESCE(HAS_PERMS_BY_NAME(NULL, 'SERVER', 'ALTER ANY DATABASE'), 1) = 1 OR
-    COALESCE(HAS_PERMS_BY_NAME(NULL, 'SERVER', 'ALTER ANY LOGIN'), 1) = 1 OR
-    COALESCE(HAS_PERMS_BY_NAME(NULL, 'SERVER', 'ALTER ANY SERVER ROLE'), 1) = 1 OR
+    -- SQL Server's documented server-permission form uses NULL for both
+    -- securable and class; a NULL result remains a verification failure.
+    COALESCE(HAS_PERMS_BY_NAME(NULL, NULL, 'CONTROL SERVER'), 1) = 1 OR
+    COALESCE(HAS_PERMS_BY_NAME(NULL, NULL, 'ALTER ANY DATABASE'), 1) = 1 OR
+    COALESCE(HAS_PERMS_BY_NAME(NULL, NULL, 'ALTER ANY LOGIN'), 1) = 1 OR
+    COALESCE(HAS_PERMS_BY_NAME(NULL, NULL, 'ALTER ANY SERVER ROLE'), 1) = 1 OR
     COALESCE(IS_MEMBER('db_owner'), 1) = 1 OR
     COALESCE(IS_MEMBER('db_datawriter'), 1) = 1 OR
     COALESCE(IS_MEMBER('db_ddladmin'), 1) = 1 OR
@@ -282,7 +284,7 @@ WITH Findings AS (
     UNION ALL
     SELECT 20, 'SERVER', P.PermissionName
     FROM (VALUES ('CONTROL SERVER'), ('ALTER ANY DATABASE'), ('ALTER ANY LOGIN'), ('ALTER ANY SERVER ROLE')) AS P(PermissionName)
-    WHERE COALESCE(HAS_PERMS_BY_NAME(NULL, 'SERVER', P.PermissionName), 1) = 1
+    WHERE COALESCE(HAS_PERMS_BY_NAME(NULL, NULL, P.PermissionName), 1) = 1
     UNION ALL
     SELECT 30, 'DATABASE ROLE MEMBER', R.RoleName
     FROM (VALUES ('db_owner'), ('db_datawriter'), ('db_ddladmin'), ('db_securityadmin'), ('db_accessadmin')) AS R(RoleName)
@@ -365,6 +367,22 @@ SELECT TOP (1) ScopeName, PermissionName FROM Findings
 ORDER BY Priority, ScopeName, PermissionName
 "#;
 
+const MSSQL_SERVER_PERMISSION_COMPARISON: &str = r#"
+SELECT
+    CONVERT(int, HAS_PERMS_BY_NAME(NULL, 'SERVER', 'ALTER ANY DATABASE')) AS ServerClassHasAlterAnyDatabase,
+    CONVERT(int, HAS_PERMS_BY_NAME(NULL, NULL, 'ALTER ANY DATABASE')) AS DefaultClassHasAlterAnyDatabase,
+    CONVERT(int, CASE WHEN EXISTS (
+        SELECT 1 FROM sys.fn_my_permissions(NULL, 'SERVER')
+        WHERE permission_name = 'ALTER ANY DATABASE'
+    ) THEN 1 ELSE 0 END) AS FnMyPermissionsHasAlterAnyDatabase,
+    CONVERT(int, CASE WHEN EXISTS (
+        SELECT 1 FROM sys.fn_builtin_permissions('SERVER')
+        WHERE permission_name = 'ALTER ANY DATABASE'
+    ) THEN 1 ELSE 0 END) AS BuiltinServerPermissionExists,
+    CONVERT(int, IS_SRVROLEMEMBER('dbcreator')) AS DbcreatorMember,
+    CONVERT(int, IS_SRVROLEMEMBER('sysadmin')) AS SysadminMember
+"#;
+
 async fn ensure_mssql_login_is_read_only(client: &mut MssqlClient) -> Result<(), String> {
     let rows = client
         .query(MSSQL_READ_ONLY_CHECK, &[])
@@ -388,6 +406,24 @@ async fn ensure_mssql_login_is_read_only(client: &mut MssqlClient) -> Result<(),
 }
 
 async fn read_only_permission_finding(client: &mut MssqlClient) -> Option<String> {
+    let comparison_rows = client
+        .query(MSSQL_SERVER_PERMISSION_COMPARISON, &[])
+        .await
+        .ok()?
+        .into_first_result()
+        .await
+        .ok()?;
+    if let Some(row) = comparison_rows.first() {
+        return Some(format_server_permission_comparison(
+            row.get::<i32, _>(0),
+            row.get::<i32, _>(1),
+            row.get::<i32, _>(2),
+            row.get::<i32, _>(3),
+            row.get::<i32, _>(4),
+            row.get::<i32, _>(5),
+        ));
+    }
+
     let rows = client
         .query(MSSQL_READ_ONLY_FINDING, &[])
         .await
@@ -400,6 +436,32 @@ async fn read_only_permission_finding(client: &mut MssqlClient) -> Option<String
         row.get::<&str, _>(0)?,
         row.get::<&str, _>(1)?,
     ))
+}
+
+fn format_server_permission_comparison(
+    server_class: Option<i32>,
+    default_class: Option<i32>,
+    fn_my_permissions: Option<i32>,
+    builtin_permission: Option<i32>,
+    dbcreator: Option<i32>,
+    sysadmin: Option<i32>,
+) -> String {
+    fn value(result: Option<i32>) -> &'static str {
+        match result {
+            Some(0) => "0",
+            Some(1) => "1",
+            Some(_) | None => "NULL",
+        }
+    }
+    format!(
+        "Read-only permission diagnostic: ALTER ANY DATABASE HAS_PERMS_BY_NAME(server)={}; HAS_PERMS_BY_NAME(default)={}; fn_my_permissions(server)={}; built_in_server_permission={}; dbcreator={}; sysadmin={}.",
+        value(server_class),
+        value(default_class),
+        value(fn_my_permissions),
+        value(builtin_permission),
+        value(dbcreator),
+        value(sysadmin)
+    )
 }
 
 fn format_read_only_permission_finding(scope: &str, permission: &str) -> String {
@@ -2351,9 +2413,11 @@ mod tests {
         assert!(check.contains("is_member('db_datawriter')"));
         assert!(check.contains("has_perms_by_name('dbo.staffs', 'object', 'update')"));
         assert!(check.contains("has_perms_by_name('dbo.aspnetusers', 'object', 'insert')"));
-        assert!(check.contains("has_perms_by_name(null, 'server', 'control server')"));
-        assert!(check.contains("has_perms_by_name(null, 'server', 'alter any server role')"));
-        assert!(check.contains("has_perms_by_name(null, 'server', 'alter any login')"));
+        assert!(check.contains("coalesce(has_perms_by_name(null, null, 'control server'), 1)"));
+        assert!(
+            check.contains("coalesce(has_perms_by_name(null, null, 'alter any server role'), 1)")
+        );
+        assert!(check.contains("coalesce(has_perms_by_name(null, null, 'alter any login'), 1)"));
         assert!(check.contains("has_perms_by_name(db_name(), 'database', 'alter any role')"));
         assert!(check.contains("has_perms_by_name('dbo', 'schema', 'alter')"));
         assert!(check.contains("has_perms_by_name('dbo.staffs', 'object', 'take ownership')"));
@@ -2378,6 +2442,13 @@ mod tests {
         );
         assert!(check.contains("permission_name not in ('select', 'view definition')"));
         assert!(!check.contains("references"));
+        assert!(
+            check.contains("coalesce(has_perms_by_name(null, null, 'alter any database'), 1) = 1")
+        );
+        assert!(MSSQL_READ_ONLY_FINDING
+            .to_ascii_lowercase()
+            .contains("coalesce(has_perms_by_name(null, null, p.permissionname), 1) = 1"));
+        assert!(!check.contains("has_perms_by_name(null, 'server',"));
         assert!(check.contains("coalesce(") && check.contains("then 1 else 0 end as bit"));
     }
 
@@ -2409,6 +2480,31 @@ mod tests {
         assert!(!unsafe_finding.contains("password="));
         assert!(!unsafe_finding.contains('\n'));
         assert!(!unsafe_finding.contains('\r'));
+    }
+
+    #[test]
+    fn permission_comparison_reports_null_without_calling_it_a_grant() {
+        let check = MSSQL_READ_ONLY_CHECK.to_ascii_lowercase();
+        let finding = MSSQL_READ_ONLY_FINDING.to_ascii_lowercase();
+        assert!(check.contains("coalesce(has_perms_by_name(null, null, 'alter any database'), 1)"));
+        assert!(finding.contains("coalesce(has_perms_by_name(null, null, p.permissionname), 1)"));
+        assert!(MSSQL_SERVER_PERMISSION_COMPARISON
+            .to_ascii_lowercase()
+            .contains("has_perms_by_name(null, 'server', 'alter any database')"));
+        assert!(MSSQL_SERVER_PERMISSION_COMPARISON
+            .to_ascii_lowercase()
+            .contains("has_perms_by_name(null, null, 'alter any database')"));
+        assert_eq!(
+            format_server_permission_comparison(
+                None,
+                Some(0),
+                Some(0),
+                Some(1),
+                Some(0),
+                Some(0),
+            ),
+            "Read-only permission diagnostic: ALTER ANY DATABASE HAS_PERMS_BY_NAME(server)=NULL; HAS_PERMS_BY_NAME(default)=0; fn_my_permissions(server)=0; built_in_server_permission=1; dbcreator=0; sysadmin=0."
+        );
     }
 
     #[test]
