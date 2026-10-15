@@ -426,7 +426,7 @@ fn save_remote_ee_sync_settings(
     approved_username: String,
     password: Option<String>,
 ) -> Result<(), String> {
-    let _ctx = auth_session::require_admin(&session_store, &session_token)?;
+    let ctx = auth_session::require_admin(&session_store, &session_token)?;
     db::mssql_import::save_remote_ee_sync_settings(
         &app,
         db::mssql_import::RemoteEeSyncSettings {
@@ -440,6 +440,7 @@ fn save_remote_ee_sync_settings(
             environment_override: false,
         },
         password,
+        ctx.account_id,
     )
 }
 

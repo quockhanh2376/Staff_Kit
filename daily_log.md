@@ -1,5 +1,16 @@
 # Daily Log - 2026-10-15
 
+## 2026-10-15 — Simplify Remote EE Sync Settings (Start)
+- Streamline Remote EE Sync settings UI to Server, SQL Username, Password with compact Save beside credentials, hide Port (default 1433), move Database into collapsed Advanced Settings (default AssetManagement), hide Authentication type (retain SQL Server), support admin account/password rotation in Save without plaintext leak or unsafe reuse, and preserve fail-closed security gating.
+
+## 2026-10-15 — Simplify Remote EE Sync Settings (End)
+- Simplified Remote EE Sync UI: removed technical description lines and unneeded separate account change panel.
+- Arranged single compact row for Server, SQL Username, Password, compact ✓ Save button, and Test Connection button.
+- Hidden Port (defaults to 1433 internally), hidden Authentication type (retaining SQL Server Authentication), and moved Database to collapsed Advanced Settings (defaults to AssetManagement).
+- Single Save action supports admin account and password rotation, purges obsolete credentials on login change, records authorization metadata, and rejects prohibited logins (`aswhite-plus-webserver`) without credential leakage.
+- Preserved TLS and fail-closed permission checks; backward-compatible defaults ensure existing saved profiles remain functional post-upgrade.
+- Automated tests pass: 353 Rust tests, 243 Vitest tests, lint, typecheck, and Vite production build clean.
+
 ## 2026-10-15 — EE Sync Preview Buttons: Skip | Approve and no-op write gating (Start)
 - Streamline EE List sync preview actions to two buttons (Skip | Approve), gate Approve on importable changes with no blocking conflicts, and guarantee no-op zero-write transactional safety.
 

@@ -712,6 +712,12 @@ fn resolve_connection_config_with_approved(
     let config = saved.ok_or_else(|| "Remote EE Sync settings are not configured.".to_string())?;
     validate_mssql_account(config.auth_type, &config.username, approved_username)?;
     let mut config = config;
+    if config.database.trim().is_empty() {
+        config.database = "AssetManagement".into();
+    }
+    if config.port == 0 {
+        config.port = 1433;
+    }
     config.approved_username = approved_username.to_string();
     if config.server.trim().is_empty()
         || config.database.trim().is_empty()
@@ -936,9 +942,17 @@ pub fn get_remote_ee_sync_settings(app: &AppHandle) -> Result<RemoteEeSyncSettin
     };
     let profile = MssqlConnectionConfig {
         server: read("server")?.unwrap_or_default(),
-        database: read("database")?.unwrap_or_else(|| "AssetManagement".into()),
+        database: {
+            let db = read("database")?.unwrap_or_else(|| "AssetManagement".into());
+            if db.trim().is_empty() {
+                "AssetManagement".into()
+            } else {
+                db
+            }
+        },
         port: read("port")?
             .and_then(|value| value.parse().ok())
+            .filter(|&p| p > 0)
             .unwrap_or(1433),
         auth_type: match read("auth_type")?.as_deref() {
             Some("windows_integrated") => MssqlAuthType::WindowsIntegrated,
@@ -958,28 +972,100 @@ pub fn save_remote_ee_sync_settings(
     app: &AppHandle,
     settings: RemoteEeSyncSettings,
     password: Option<String>,
+    authorized_by_account_id: i64,
 ) -> Result<(), String> {
     let mut conn = open_runtime_connection(app)?;
-    if legacy_remote_ee_account_cleanup_needed(&conn)? {
-        delete_mssql_password()?;
-        cleanup_legacy_remote_ee_account_settings(&conn)?;
+    save_remote_ee_sync_settings_conn(
+        &mut conn,
+        &settings,
+        password,
+        authorized_by_account_id,
+        write_mssql_password,
+        delete_mssql_password,
+    )?;
+    Ok(())
+}
+
+pub(crate) fn save_remote_ee_sync_settings_conn(
+    conn: &mut rusqlite::Connection,
+    settings: &RemoteEeSyncSettings,
+    password: Option<String>,
+    authorized_by_account_id: i64,
+    write_pw: impl FnOnce(&str) -> Result<(), String>,
+    mut delete_pw: impl FnMut() -> Result<(), String>,
+) -> Result<(), String> {
+    if legacy_remote_ee_account_cleanup_needed(conn)? {
+        delete_pw()?;
+        cleanup_legacy_remote_ee_account_settings(conn)?;
     }
-    let approved_username = read_approved_mssql_username(&conn)?;
-    validate_remote_settings_against(&settings, &approved_username)?;
-    if settings.approved_username != approved_username {
-        return Err("The approved SQL login changed; reload Remote EE Sync settings.".into());
+    let current_approved = read_approved_mssql_username(conn)?;
+    let target_username = settings.username.trim();
+    if target_username.is_empty() {
+        return Err("Username is required for SQL Server authentication.".into());
     }
+    validate_approved_mssql_username(target_username)?;
+
+    if settings.server.trim().is_empty() {
+        return Err("Server is required.".into());
+    }
+    validate_mssql_server(&settings.server)?;
+
+    let database = if settings.database.trim().is_empty() {
+        "AssetManagement".to_string()
+    } else {
+        settings.database.trim().to_string()
+    };
+    let port = if settings.port == 0 { 1433 } else { settings.port };
+
+    let is_account_rotation = target_username != current_approved;
+
     let tx = conn
         .transaction()
         .map_err(|_| "Could not save Remote EE Sync settings.".to_string())?;
-    write_remote_profile_settings(&tx, &settings)?;
+
+    if is_account_rotation {
+        let authorized_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .to_string();
+        write_approved_mssql_username(&tx, target_username)?;
+        super::set_setting_value(
+            &tx,
+            APPROVED_MSSQL_AUTHORIZED_BY_SETTING,
+            Some(&authorized_by_account_id.to_string()),
+        )?;
+        super::set_setting_value(
+            &tx,
+            APPROVED_MSSQL_AUTHORIZED_AT_SETTING,
+            Some(&authorized_at),
+        )?;
+    }
+
+    let normalized_settings = RemoteEeSyncSettings {
+        server: settings.server.trim().to_string(),
+        database,
+        port,
+        auth_type: MssqlAuthType::SqlServer,
+        username: target_username.to_string(),
+        approved_username: target_username.to_string(),
+        has_saved_password: false,
+        environment_override: false,
+    };
+    write_remote_profile_settings(&tx, &normalized_settings)?;
     tx.commit()
         .map_err(|_| "Could not save Remote EE Sync settings.".to_string())?;
-    if settings.auth_type == MssqlAuthType::WindowsIntegrated {
-        delete_mssql_password()?;
-    } else if let Some(password) = password.filter(|value| !value.is_empty()) {
-        write_mssql_password(&password)?;
+
+    if is_account_rotation {
+        delete_pw()?;
+        if let Some(password) = password.filter(|val| !val.is_empty()) {
+            write_pw(&password)?;
+        }
+        invalidate_pending_employee_list_syncs();
+    } else if let Some(password) = password.filter(|val| !val.is_empty()) {
+        write_pw(&password)?;
     }
+
     Ok(())
 }
 
@@ -1136,9 +1222,17 @@ fn load_connection_config(app: &AppHandle) -> Result<MssqlConnectionConfig, Stri
     validate_mssql_account(auth_type, &username, &approved_username)?;
     let saved = MssqlConnectionConfig {
         server: read("server")?.unwrap_or_default(),
-        database: read("database")?.unwrap_or_default(),
+        database: {
+            let db = read("database")?.unwrap_or_else(|| "AssetManagement".into());
+            if db.trim().is_empty() {
+                "AssetManagement".into()
+            } else {
+                db
+            }
+        },
         port: read("port")?
             .and_then(|value| value.parse().ok())
+            .filter(|&p| p > 0)
             .unwrap_or(1433),
         username,
         approved_username: approved_username.clone(),
@@ -3041,6 +3135,207 @@ mod tests {
             !password_read,
             "unapproved account must fail before secret retrieval"
         );
+    }
+
+    #[test]
+    fn admin_save_supports_account_rotation_and_clears_old_password_when_no_new_password() {
+        let mut conn = Connection::open_in_memory().expect("in-memory settings DB");
+        conn.execute_batch(
+            "CREATE TABLE app_settings(setting_key TEXT PRIMARY KEY, setting_value TEXT, updated_at TEXT);"
+        ).expect("create settings table");
+        write_approved_mssql_username(&conn, "user_reader").expect("seed approved login");
+
+        let settings = RemoteEeSyncSettings {
+            server: "sql.example".into(),
+            database: "AssetManagement".into(),
+            port: 1433,
+            auth_type: MssqlAuthType::SqlServer,
+            username: "rotated_reader".into(),
+            approved_username: "user_reader".into(),
+            has_saved_password: true,
+            environment_override: false,
+        };
+
+        let mut deleted = false;
+        let mut written_password: Option<String> = None;
+
+        let result = save_remote_ee_sync_settings_conn(
+            &mut conn,
+            &settings,
+            None,
+            42,
+            |pw| { written_password = Some(pw.to_string()); Ok(()) },
+            || { deleted = true; Ok(()) },
+        );
+        assert!(result.is_ok(), "Admin save must succeed for valid rotation: {:?}", result.err());
+        assert!(deleted, "Old password must be deleted when account rotates");
+        assert_eq!(written_password, None, "No new password must be written if none was entered");
+        assert_eq!(read_approved_mssql_username(&conn).unwrap(), "rotated_reader");
+        let authorized_by: String = conn.query_row(
+            "SELECT setting_value FROM app_settings WHERE setting_key = ?1",
+            [APPROVED_MSSQL_AUTHORIZED_BY_SETTING],
+            |row| row.get(0),
+        ).expect("read authorized_by");
+        assert_eq!(authorized_by, "42");
+    }
+
+    #[test]
+    fn admin_save_supports_account_rotation_with_new_password() {
+        let mut conn = Connection::open_in_memory().expect("in-memory settings DB");
+        conn.execute_batch(
+            "CREATE TABLE app_settings(setting_key TEXT PRIMARY KEY, setting_value TEXT, updated_at TEXT);"
+        ).expect("create settings table");
+        write_approved_mssql_username(&conn, "user_reader").expect("seed approved login");
+
+        let settings = RemoteEeSyncSettings {
+            server: "sql.example".into(),
+            database: "AssetManagement".into(),
+            port: 1433,
+            auth_type: MssqlAuthType::SqlServer,
+            username: "rotated_reader".into(),
+            approved_username: "user_reader".into(),
+            has_saved_password: false,
+            environment_override: false,
+        };
+
+        let mut deleted = false;
+        let mut written_password: Option<String> = None;
+
+        let result = save_remote_ee_sync_settings_conn(
+            &mut conn,
+            &settings,
+            Some("new-secret".into()),
+            42,
+            |pw| { written_password = Some(pw.to_string()); Ok(()) },
+            || { deleted = true; Ok(()) },
+        );
+        assert!(result.is_ok());
+        assert!(deleted, "Old password must be dropped before saving new credential");
+        assert_eq!(written_password.as_deref(), Some("new-secret"));
+        assert_eq!(read_approved_mssql_username(&conn).unwrap(), "rotated_reader");
+    }
+
+    #[test]
+    fn admin_save_rejects_prohibited_hrms_username() {
+        let mut conn = Connection::open_in_memory().expect("in-memory settings DB");
+        conn.execute_batch(
+            "CREATE TABLE app_settings(setting_key TEXT PRIMARY KEY, setting_value TEXT, updated_at TEXT);"
+        ).expect("create settings table");
+        write_approved_mssql_username(&conn, "user_reader").expect("seed approved login");
+
+        let settings = RemoteEeSyncSettings {
+            server: "sql.example".into(),
+            database: "AssetManagement".into(),
+            port: 1433,
+            auth_type: MssqlAuthType::SqlServer,
+            username: "aswhite-plus-webserver".into(),
+            approved_username: "user_reader".into(),
+            has_saved_password: false,
+            environment_override: false,
+        };
+
+        let mut deleted = false;
+        let mut written = false;
+
+        let result = save_remote_ee_sync_settings_conn(
+            &mut conn,
+            &settings,
+            Some("secret".into()),
+            42,
+            |_| { written = true; Ok(()) },
+            || { deleted = true; Ok(()) },
+        );
+        assert!(result.is_err(), "Must reject prohibited HRMS login");
+        assert!(!deleted && !written, "Must not touch credentials on prohibited login attempt");
+        assert_eq!(read_approved_mssql_username(&conn).unwrap(), "user_reader");
+    }
+
+    #[test]
+    fn admin_save_preserves_password_when_saving_same_account_without_new_password() {
+        let mut conn = Connection::open_in_memory().expect("in-memory settings DB");
+        conn.execute_batch(
+            "CREATE TABLE app_settings(setting_key TEXT PRIMARY KEY, setting_value TEXT, updated_at TEXT);"
+        ).expect("create settings table");
+        write_approved_mssql_username(&conn, "user_reader").expect("seed approved login");
+
+        let settings = RemoteEeSyncSettings {
+            server: "sql-updated.example".into(),
+            database: "".into(), // blank to test default
+            port: 0, // 0 to test default
+            auth_type: MssqlAuthType::SqlServer,
+            username: "user_reader".into(),
+            approved_username: "user_reader".into(),
+            has_saved_password: true,
+            environment_override: false,
+        };
+
+        let mut deleted = false;
+        let mut written = false;
+
+        let result = save_remote_ee_sync_settings_conn(
+            &mut conn,
+            &settings,
+            None,
+            42,
+            |_| { written = true; Ok(()) },
+            || { deleted = true; Ok(()) },
+        );
+        assert!(result.is_ok());
+        assert!(!deleted, "Existing password must not be deleted for same account update without password");
+        assert!(!written, "No password write should happen when no password was passed");
+
+        // Verify defaults
+        let db: String = conn.query_row(
+            "SELECT setting_value FROM app_settings WHERE setting_key = 'remote_ee_sync_database'",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(db, "AssetManagement");
+        let port: String = conn.query_row(
+            "SELECT setting_value FROM app_settings WHERE setting_key = 'remote_ee_sync_port'",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(port, "1433");
+    }
+
+    #[test]
+    fn existing_saved_profile_remains_usable_after_upgrade() {
+        let conn = Connection::open_in_memory().expect("in-memory settings DB");
+        conn.execute_batch(
+            "CREATE TABLE app_settings(setting_key TEXT PRIMARY KEY, setting_value TEXT, updated_at TEXT);"
+        ).expect("create settings table");
+        super::super::set_setting_value(&conn, "remote_ee_sync_server", Some("legacy.corp")).unwrap();
+        super::super::set_setting_value(&conn, "remote_ee_sync_database", Some("")).unwrap();
+        super::super::set_setting_value(&conn, "remote_ee_sync_port", Some("0")).unwrap();
+        super::super::set_setting_value(&conn, "remote_ee_sync_auth_type", Some("sql_server")).unwrap();
+        super::super::set_setting_value(&conn, "remote_ee_sync_username", Some("user_reader")).unwrap();
+        super::super::set_setting_value(&conn, "remote_ee_sync_approved_username", Some("user_reader")).unwrap();
+
+        let read = |key: &str| {
+            super::super::get_setting_value(&conn, &format!("remote_ee_sync_{key}"))
+        };
+        let approved_username = read_approved_mssql_username(&conn).unwrap();
+        let saved = MssqlConnectionConfig {
+            server: read("server").unwrap().unwrap(),
+            database: {
+                let db = read("database").unwrap().unwrap_or_else(|| "AssetManagement".into());
+                if db.trim().is_empty() { "AssetManagement".into() } else { db }
+            },
+            port: read("port").unwrap().and_then(|v| v.parse().ok()).filter(|&p| p > 0).unwrap_or(1433),
+            username: read("username").unwrap().unwrap(),
+            approved_username: approved_username.clone(),
+            auth_type: MssqlAuthType::SqlServer,
+            password: Some("retained-secret".into()),
+            environment_override: false,
+        };
+
+        let resolved = resolve_connection_config_with_approved(&HashMap::new(), Some(saved), &approved_username)
+            .expect("existing upgraded profile must resolve cleanly");
+        assert_eq!(resolved.server, "legacy.corp");
+        assert_eq!(resolved.database, "AssetManagement");
+        assert_eq!(resolved.port, 1433);
+        assert_eq!(resolved.username, "user_reader");
     }
 
     #[tokio::test]
