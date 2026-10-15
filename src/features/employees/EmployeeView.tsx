@@ -385,17 +385,33 @@ export function EmployeeView({
                         </div>
                         <div className="flex gap-2">
                             <button
-                                className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs"
-                                onClick={emp.cancelEmployeeListMssqlSync}
+                                className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs hover:bg-[var(--surface-hover)] disabled:opacity-50"
+                                onClick={emp.skipEmployeeListMssqlSync}
                                 type="button"
                                 disabled={emp.isApplyingMssqlSync}
-                            >Cancel</button>
-                            <button
-                                className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50"
-                                onClick={() => void emp.applyEmployeeListMssqlSync()}
-                                type="button"
-                                disabled={emp.isApplyingMssqlSync || emp.mssqlSyncPreview.counts.conflicts > 0}
-                            >{emp.isApplyingMssqlSync ? "Applying…" : "Approve and update EE List"}</button>
+                            >Skip</button>
+                            {(() => {
+                                const hasImportableChanges =
+                                    emp.mssqlSyncPreview.counts.new > 0 || emp.mssqlSyncPreview.counts.changed > 0
+                                const hasConflicts = emp.mssqlSyncPreview.counts.conflicts > 0
+                                const canApprove = hasImportableChanges && !hasConflicts
+
+                                return (
+                                    <button
+                                        className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                                        onClick={() => void emp.applyEmployeeListMssqlSync()}
+                                        type="button"
+                                        disabled={emp.isApplyingMssqlSync || !canApprove}
+                                        title={
+                                            hasConflicts
+                                                ? "Resolve Staff Code group conflicts before approving"
+                                                : !hasImportableChanges
+                                                  ? "No new or changed records to approve"
+                                                  : undefined
+                                        }
+                                    >{emp.isApplyingMssqlSync ? "Applying…" : "Approve"}</button>
+                                )
+                            })()}
                         </div>
                     </div>
                     <div className="mt-3 flex flex-wrap gap-3 text-xs">

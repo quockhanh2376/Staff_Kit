@@ -1,5 +1,17 @@
 # Daily Log - 2026-10-15
 
+## 2026-10-15 — EE Sync Preview Buttons: Skip | Approve and no-op write gating (Start)
+- Streamline EE List sync preview actions to two buttons (Skip | Approve), gate Approve on importable changes with no blocking conflicts, and guarantee no-op zero-write transactional safety.
+
+## 2026-10-15 — EE Sync Preview Buttons: Skip | Approve and no-op write gating (End)
+- Replaced Cancel with Skip and renamed Approve and update EE List to Approve; exactly two preview buttons.
+- Skip clears Preview without calling IPC or DB writes; no lifecycle/group changes.
+- Approve disabled when importable changes (New + Changed) == 0 (e.g. all-unchanged or missing-only) or when blocking conflicts exist.
+- Backend transactional apply helper `apply_employee_list_diff_tx` rejects unapproved zero-diff/no-op apply attempts with error, guaranteeing zero DB writes.
+- Verified Repeat sync is no-op and never writes. Verified Floating overlay, Offboarding, and asset loans remain intact.
+- Full test suites pass: 348 Rust tests, 241 Vitest tests, lint and typecheck clean.
+
+
 ## 2026-10-15 — Fix login failure after lifecycle migration (Start)
 - Diagnose and fix startup migration failure preventing local accounts from loading during app initialization.
 

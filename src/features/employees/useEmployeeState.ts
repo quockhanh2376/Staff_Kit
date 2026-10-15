@@ -298,6 +298,9 @@ export function useEmployeeState({
 
     const applyEmployeeListMssqlSync = async () => {
         if (!mssqlSyncPreview || isApplyingMssqlSync) return
+        const hasImportableChanges = mssqlSyncPreview.counts.new > 0 || mssqlSyncPreview.counts.changed > 0
+        const hasConflicts = mssqlSyncPreview.counts.conflicts > 0
+        if (!hasImportableChanges || hasConflicts) return
         try {
             setApplyingMssqlSync(true)
             setMssqlUpdateStatus("idle")
@@ -323,11 +326,13 @@ export function useEmployeeState({
         }
     }
 
-    const cancelEmployeeListMssqlSync = () => {
+    const skipEmployeeListMssqlSync = () => {
         setMssqlSyncPreview(null)
         setMssqlUpdateMessage("Preview dismissed. No local data was changed.")
         setMssqlUpdateStatus("idle")
     }
+
+    const cancelEmployeeListMssqlSync = skipEmployeeListMssqlSync
 
     return {
         employees,
@@ -371,6 +376,7 @@ export function useEmployeeState({
         toggleColumnSort,
         updateEmployeeListFromMssql,
         applyEmployeeListMssqlSync,
+        skipEmployeeListMssqlSync,
         cancelEmployeeListMssqlSync,
         resetEmployeeStateOnLogout,
     }

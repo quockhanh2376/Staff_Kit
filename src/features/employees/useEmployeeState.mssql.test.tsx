@@ -125,12 +125,69 @@ describe("employee MSSQL update flow", () => {
         expect(api.searchEmployees).toHaveBeenLastCalledWith(expect.objectContaining({ staffGroup: "employee_list", offset: 0 }))
     })
 
-    it("dismisses the preview without applying local changes", async () => {
+    it("dismisses the preview with Skip without applying local changes", async () => {
+        const { result } = renderHook(() => useEmployeeState(baseOptions))
+        await act(async () => { await result.current.updateEmployeeListFromMssql() })
+        act(() => result.current.skipEmployeeListMssqlSync())
+        expect(result.current.mssqlSyncPreview).toBeNull()
+        expect(result.current.mssqlUpdateMessage).toContain("No local data was changed")
+        expect(api.applyEmployeeListMssqlSync).not.toHaveBeenCalled()
+    })
+
+    it("cancelEmployeeListMssqlSync alias works identically to skip", async () => {
         const { result } = renderHook(() => useEmployeeState(baseOptions))
         await act(async () => { await result.current.updateEmployeeListFromMssql() })
         act(() => result.current.cancelEmployeeListMssqlSync())
         expect(result.current.mssqlSyncPreview).toBeNull()
         expect(result.current.mssqlUpdateMessage).toContain("No local data was changed")
+        expect(api.applyEmployeeListMssqlSync).not.toHaveBeenCalled()
+    })
+
+    it("does not invoke apply API when all previewed records are unchanged", async () => {
+        api.previewEmployeeListMssqlSync.mockResolvedValueOnce({
+            previewId: "preview-unchanged",
+            createdAt: "2026-10-15T00:00:00Z",
+            counts: { new: 0, changed: 0, unchanged: 10, missing: 0, conflicts: 0 },
+            rows: [],
+            conflicts: [],
+        })
+        const { result } = renderHook(() => useEmployeeState(baseOptions))
+        await act(async () => { await result.current.updateEmployeeListFromMssql() })
+        expect(result.current.mssqlSyncPreview?.counts.unchanged).toBe(10)
+
+        await act(async () => { await result.current.applyEmployeeListMssqlSync() })
+        expect(api.applyEmployeeListMssqlSync).not.toHaveBeenCalled()
+    })
+
+    it("does not invoke apply API when records are missing-only (report-only)", async () => {
+        api.previewEmployeeListMssqlSync.mockResolvedValueOnce({
+            previewId: "preview-missing-only",
+            createdAt: "2026-10-15T00:00:00Z",
+            counts: { new: 0, changed: 0, unchanged: 5, missing: 3, conflicts: 0 },
+            rows: [],
+            conflicts: [],
+        })
+        const { result } = renderHook(() => useEmployeeState(baseOptions))
+        await act(async () => { await result.current.updateEmployeeListFromMssql() })
+        expect(result.current.mssqlSyncPreview?.counts.missing).toBe(3)
+
+        await act(async () => { await result.current.applyEmployeeListMssqlSync() })
+        expect(api.applyEmployeeListMssqlSync).not.toHaveBeenCalled()
+    })
+
+    it("does not invoke apply API when preview contains blocking conflicts", async () => {
+        api.previewEmployeeListMssqlSync.mockResolvedValueOnce({
+            previewId: "preview-conflict",
+            createdAt: "2026-10-15T00:00:00Z",
+            counts: { new: 2, changed: 1, unchanged: 5, missing: 0, conflicts: 1 },
+            rows: [],
+            conflicts: [{ code: "ASWVN999", reason: "Belongs to onboarding" }],
+        })
+        const { result } = renderHook(() => useEmployeeState(baseOptions))
+        await act(async () => { await result.current.updateEmployeeListFromMssql() })
+        expect(result.current.mssqlSyncPreview?.counts.conflicts).toBe(1)
+
+        await act(async () => { await result.current.applyEmployeeListMssqlSync() })
         expect(api.applyEmployeeListMssqlSync).not.toHaveBeenCalled()
     })
 
@@ -156,5 +213,17 @@ describe("employee MSSQL feedback rendering contract", () => {
 
         expect(source).not.toContain("max-w-[360px] truncate")
         expect(source).toContain("max-w-[520px] break-words text-xs leading-snug")
+    })
+
+    it("renders exactly two preview buttons: Skip | Approve with proper gating", () => {
+        const source = readFileSync(resolve(process.cwd(), "src/features/employees/EmployeeView.tsx"), "utf8")
+
+        expect(source).toContain(">Skip</button>")
+        expect(source).toContain(">{emp.isApplyingMssqlSync ? \"Applying…\" : \"Approve\"}</button>")
+        expect(source).not.toContain("Approve and update EE List")
+        expect(source).not.toContain(">Cancel</button>")
+        expect(source).toContain("onClick={emp.skipEmployeeListMssqlSync}")
+        expect(source).toContain("const hasImportableChanges =")
+        expect(source).toContain("const canApprove = hasImportableChanges && !hasConflicts")
     })
 })
