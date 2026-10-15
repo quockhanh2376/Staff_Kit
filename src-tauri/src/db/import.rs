@@ -639,6 +639,8 @@ pub fn import_excel(app: &AppHandle, payload: ImportExcelInput) -> Result<Import
                         selected_column_index(&selected_column_keys, "notes", columns.notes),
                     ),
                     staff_group: None,
+                    is_floating: None,
+                    lifecycle_status: None,
                     dynamic_fields: if dynamic_fields.is_empty() {
                         None
                     } else {

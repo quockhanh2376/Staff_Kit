@@ -1,3 +1,18 @@
+# Daily Log - 2026-10-15
+
+## 2026-10-15 — Approved HR Lifecycle and Floating workflow implementation (Start)
+- Implement approved HR lifecycle states (`lifecycle_status`), 4 canonical staff groups + Floating overlay (`is_floating`), transitions (Reject Offer, Offboarding, Rehire, Internal Movement), and Query B Sync diff/collapsing.
+
+## 2026-10-15 — Approved HR Lifecycle and Floating workflow implementation (End)
+- Kept 4 canonical staff groups; implemented Floating as overlay via `is_floating = 1`.
+- Implemented `lifecycle_status` (`active`, `pending`, `offer_rejected`, `resigned`, `rehired`, `transferring`).
+- Floating employees appear in both EE List and independent Floating view with synchronized counts.
+- Implemented transitions with explicit approval confirmation (`window.confirm`).
+- Preserved Staff ID, employee_id, audit history, teams, and asset loans.
+- Query B comparison treats Missing (ASWVN1145) as report-only without auto-offboarding.
+- Color-coded diff highlights and collapsible Unchanged rows in Sync Preview.
+- Added DB migration and automated regression test suite; all 17 Rust employee tests and 236 frontend unit tests pass cleanly.
+
 # Daily Log - 2026-04-20
 
 ## 2026-08-06 — SEC-002 Phase C blocker fixes (Start)

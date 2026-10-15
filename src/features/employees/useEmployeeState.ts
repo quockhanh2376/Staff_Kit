@@ -35,7 +35,10 @@ export function useEmployeeState({
         onboarding: 0,
         offboarding: 0,
         internalMovement: 0,
+        floating: 0,
+        total: 0,
     })
+    const [isFloatingFilterActive, setIsFloatingFilterActive] = useState(false)
     const [rowsPerPage, setRowsPerPage] = useState(500)
     const [currentPage, setCurrentPage] = useState(1)
     const [isLoadingEmployees, setLoadingEmployees] = useState(false)
@@ -91,7 +94,7 @@ export function useEmployeeState({
     // Reset to page 1 when filters change
     useEffect(() => {
         setCurrentPage(1)
-    }, [searchTerm, staffGroupFilter, teamFilter, startDateFilter, rowsPerPage, employeeSort])
+    }, [searchTerm, staffGroupFilter, isFloatingFilterActive, teamFilter, startDateFilter, rowsPerPage, employeeSort])
 
     // Load employees
     useEffect(() => {
@@ -106,6 +109,7 @@ export function useEmployeeState({
                 const response = await staffApi.searchEmployees({
                     query: searchTerm.trim() ? searchTerm.trim() : null,
                     staffGroup: staffGroupFilter,
+                    isFloating: isFloatingFilterActive ? true : null,
                     teamName: teamFilter === ALL_TEAMS_OPTION ? null : teamFilter,
                     startDateFrom: startDateFilter || null,
                     sortKey: employeeSort?.key ?? null,
@@ -130,6 +134,7 @@ export function useEmployeeState({
         isAuthenticated,
         searchTerm,
         staffGroupFilter,
+        isFloatingFilterActive,
         teamFilter,
         startDateFilter,
         rowsPerPage,
@@ -332,6 +337,8 @@ export function useEmployeeState({
         setSearchTerm,
         staffGroupFilter,
         setStaffGroupFilter,
+        isFloatingFilterActive,
+        setIsFloatingFilterActive,
         teamFilter,
         teamFilterSearchTerm,
         setTeamFilterSearchTerm,

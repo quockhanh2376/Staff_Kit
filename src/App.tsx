@@ -126,8 +126,11 @@ function App() {
   const emp = employeeState
 
   const selectedGroupLabel = useMemo(
-    () => STAFF_GROUP_BUTTONS.find((item) => item.key === emp.staffGroupFilter)?.label ?? "Employee list",
-    [emp.staffGroupFilter],
+    () =>
+      emp.isFloatingFilterActive
+        ? "Floating"
+        : STAFF_GROUP_BUTTONS.find((item) => item.key === emp.staffGroupFilter)?.label ?? "Employee list",
+    [emp.staffGroupFilter, emp.isFloatingFilterActive],
   )
 
   const scopedKeys = useScopedStorageKeys(activeAccount?.accountKey, emp.staffGroupFilter)
@@ -262,8 +265,11 @@ function App() {
 
   // ── Derived employee labels ───────────────────────────────────────────────────
   const selectedGroupTotal = useMemo(
-    () => getGroupCount(emp.employeeGroupCounts, emp.staffGroupFilter),
-    [emp.employeeGroupCounts, emp.staffGroupFilter],
+    () =>
+      emp.isFloatingFilterActive
+        ? (emp.employeeGroupCounts.floating ?? 0)
+        : getGroupCount(emp.employeeGroupCounts, emp.staffGroupFilter),
+    [emp.employeeGroupCounts, emp.staffGroupFilter, emp.isFloatingFilterActive],
   )
 
   // ── Login page ───────────────────────────────────────────────────────────────
@@ -404,12 +410,13 @@ function App() {
           <div className="mt-8 flex flex-col items-center gap-3">
             {STAFF_GROUP_BUTTONS.map((button) => {
               const count = getGroupCount(emp.employeeGroupCounts, button.key)
-              const active = emp.staffGroupFilter === button.key
+              const active = !emp.isFloatingFilterActive && emp.staffGroupFilter === button.key
               return (
                 <button
                   key={button.key}
                   className={`group-capsule-button ${active ? "group-capsule-button-active" : ""}`}
                   onClick={() => {
+                    emp.setIsFloatingFilterActive(false)
                     emp.setStaffGroupFilter(button.key)
                     setActiveView("employees")
                   }}
@@ -420,6 +427,19 @@ function App() {
                 </button>
               )
             })}
+            <button
+              key="floating"
+              className={`group-capsule-button ${emp.isFloatingFilterActive ? "group-capsule-button-active" : ""}`}
+              onClick={() => {
+                emp.setStaffGroupFilter("employee_list")
+                emp.setIsFloatingFilterActive(true)
+                setActiveView("employees")
+              }}
+              type="button"
+            >
+              <span>Floating</span>
+              <span className="group-capsule-count">{emp.employeeGroupCounts.floating ?? 0}</span>
+            </button>
           </div>
 
           {/* Note box — auto-saves to localStorage */}

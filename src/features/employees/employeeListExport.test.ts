@@ -26,6 +26,8 @@ const employee: EmployeeRecord = {
     staffGroup: "employee_list",
     dynamicFields: { location: "Hanoi" },
     updatedAt: "2026-07-28T00:00:00Z",
+    isFloating: false,
+    lifecycleStatus: null,
 }
 
 describe("employee list export projection", () => {

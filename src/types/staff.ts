@@ -1,4 +1,4 @@
-﻿/** Database initialization status returned on app startup. */
+/** Database initialization status returned on app startup. */
 export type DatabaseStatus = {
   initialized: boolean
   dbPath: string
@@ -458,6 +458,8 @@ export type EmployeeRecord = {
   storedComputerName: string | null
   notes: string | null
   staffGroup: string
+  isFloating: boolean
+  lifecycleStatus: string | null
   dynamicFields: Record<string, string>
   updatedAt: string
 }
@@ -473,6 +475,7 @@ export type EmployeeQueryInput = {
   query?: string | null
   teamName?: string | null
   staffGroup?: string | null
+  isFloating?: boolean | null
   startDateFrom?: string | null
   startDateTo?: string | null
   sortKey?: string | null
@@ -531,6 +534,8 @@ export type EmployeeGroupCounts = {
   onboarding: number
   offboarding: number
   internalMovement: number
+  floating: number
+  total: number
 }
 
 export type LocalAccountRecord = {
@@ -618,12 +623,16 @@ export type EmployeePayload = {
   computerName?: string | null
   notes?: string | null
   staffGroup?: string | null
+  isFloating?: boolean | null
+  lifecycleStatus?: string | null
   dynamicFields?: Record<string, string> | null
 }
 
 export type MoveEmployeesGroupInput = {
   employeeIds: number[]
   targetStaffGroup: string
+  action?: string | null
+  reason?: string | null
 }
 
 export type EmployeeColumnDefinition = {

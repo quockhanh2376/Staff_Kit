@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { staffApi } from "../../services/staff-api"
 import type { EmployeeRecord } from "../../types/staff"
 import type { StaffGroupKey, ActiveTableEditCell, TableEditDrafts } from "../../types/app"
@@ -69,7 +69,7 @@ export function useTableEdit({
     const [activeTableEditCell, setActiveTableEditCell] = useState<ActiveTableEditCell | null>(null)
     const [isSavingTableEdits, setSavingTableEdits] = useState(false)
     const [selectedMoveEmployeeIds, setSelectedMoveEmployeeIds] = useState<number[]>([])
-    const [moveTargetGroup, setMoveTargetGroup] = useState<StaffGroupKey>("employee_list")
+    const [moveTargetGroup, setMoveTargetGroup] = useState<string>("employee_list")
     const [isMovingEmployees, setMovingEmployees] = useState(false)
     const [isDeletingSelectedEmployee, setDeletingSelectedEmployee] = useState(false)
 
@@ -253,14 +253,47 @@ export function useTableEdit({
 
     // ── Move employees ───────────────────────────────────────────────────────────
 
+    useEffect(() => {
+        if (staffGroupFilter === "employee_list") {
+            setMoveTargetGroup("set_floating")
+        } else {
+            setMoveTargetGroup("employee_list")
+        }
+    }, [staffGroupFilter])
+
     const handleMoveSelectedEmployees = async () => {
         if (!canMoveSelectedRows || isMovingEmployees) return
+
+        let actionDescription = `move ${selectedMoveEmployeeIds.length} employee(s) to ${moveTargetGroup}`
+        if (moveTargetGroup === "reject_offer") {
+            actionDescription = `REJECT OFFER for ${selectedMoveEmployeeIds.length} employee(s) (remain in Onboarding with status 'offer_rejected')`
+        } else if (moveTargetGroup === "set_floating" || moveTargetGroup === "floating") {
+            actionDescription = `mark ${selectedMoveEmployeeIds.length} employee(s) as Floating (in transition, active in EE List)`
+        } else if (moveTargetGroup === "clear_floating") {
+            actionDescription = `clear Floating status for ${selectedMoveEmployeeIds.length} employee(s)`
+        } else if (moveTargetGroup === "offboarding") {
+            actionDescription = `OFFBOARD ${selectedMoveEmployeeIds.length} employee(s) (mark as resigned)`
+        } else if (moveTargetGroup === "employee_list" && staffGroupFilter === "offboarding") {
+            actionDescription = `REHIRE ${selectedMoveEmployeeIds.length} employee(s) back into active EE List`
+        } else if (moveTargetGroup === "internal_movement") {
+            actionDescription = `transfer ${selectedMoveEmployeeIds.length} employee(s) to Internal Movement`
+        }
+
+        const confirmed = window.confirm(`Approve HR transition: Are you sure you want to ${actionDescription}?`)
+        if (!confirmed) return
 
         try {
             setMovingEmployees(true)
             await staffApi.moveEmployeesGroup({
                 employeeIds: selectedMoveEmployeeIds,
                 targetStaffGroup: moveTargetGroup,
+                action: moveTargetGroup.startsWith("set_floating") || moveTargetGroup === "floating"
+                    ? "floating"
+                    : moveTargetGroup === "clear_floating"
+                    ? "clear_floating"
+                    : moveTargetGroup === "reject_offer"
+                    ? "reject_offer"
+                    : undefined,
             })
             setSelectedMoveEmployeeIds([])
             triggerReload()

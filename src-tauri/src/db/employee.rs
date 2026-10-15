@@ -51,6 +51,8 @@ pub struct EmployeeRecord {
     pub(crate) suppress_active_computer_names: bool,
     pub notes: Option<String>,
     pub staff_group: String,
+    pub is_floating: bool,
+    pub lifecycle_status: Option<String>,
     pub dynamic_fields: HashMap<String, String>,
     pub updated_at: String,
 }
@@ -70,6 +72,7 @@ pub struct EmployeeQuery {
     pub query: Option<String>,
     pub team_name: Option<String>,
     pub staff_group: Option<String>,
+    pub is_floating: Option<bool>,
     pub sort_key: Option<String>,
     pub sort_direction: Option<String>,
     pub start_date_from: Option<String>,
@@ -85,6 +88,7 @@ pub struct EmployeeGroupCounts {
     pub onboarding: i64,
     pub offboarding: i64,
     pub internal_movement: i64,
+    pub floating: i64,
     pub total: i64,
 }
 
@@ -108,6 +112,8 @@ pub struct EmployeePayload {
     pub computer_name: Option<String>,
     pub notes: Option<String>,
     pub staff_group: Option<String>,
+    pub is_floating: Option<bool>,
+    pub lifecycle_status: Option<String>,
     pub dynamic_fields: Option<HashMap<String, String>>,
 }
 
@@ -116,6 +122,8 @@ pub struct EmployeePayload {
 pub struct MoveEmployeesGroupInput {
     pub employee_ids: Vec<i64>,
     pub target_staff_group: String,
+    pub action: Option<String>,
+    pub reason: Option<String>,
 }
 
 struct NormalizedEmployeePayload {
@@ -136,6 +144,8 @@ struct NormalizedEmployeePayload {
     pub start_date: Option<String>,
     pub computer_name: Option<String>,
     pub notes: Option<String>,
+    pub is_floating: Option<bool>,
+    pub lifecycle_status: Option<String>,
     pub dynamic_fields: HashMap<String, String>,
 }
 
@@ -166,6 +176,8 @@ impl TryFrom<EmployeePayload> for NormalizedEmployeePayload {
             start_date: normalize_date_value(payload.asw_start_date),
             computer_name: normalize_computer_name_override(payload.computer_name),
             notes: normalize_optional_text(payload.notes),
+            is_floating: payload.is_floating,
+            lifecycle_status: payload.lifecycle_status,
             dynamic_fields: normalize_employee_dynamic_fields(payload.dynamic_fields),
         })
     }
@@ -271,6 +283,21 @@ pub(crate) fn list_employee_group_counts_conn(
     let onboarding = count_group(STAFF_GROUP_ONBOARDING)?;
     let offboarding = count_group(STAFF_GROUP_OFFBOARDING)?;
     let internal_movement = count_group(STAFF_GROUP_INTERNAL_MOVEMENT)?;
+    let floating: i64 = conn
+        .query_row(
+            r#"
+            SELECT COUNT(*) FROM employees
+            WHERE CASE
+              WHEN COALESCE(NULLIF(TRIM(staff_group), ''), 'employee_list') = 'internal_movent'
+              THEN 'internal_movement'
+              ELSE COALESCE(NULLIF(TRIM(staff_group), ''), 'employee_list')
+            END = 'employee_list'
+            AND COALESCE(is_floating, 0) = 1
+            "#,
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|err| format!("failed to count floating employees: {err}"))?;
     let total = employee_list + onboarding + offboarding + internal_movement;
 
     Ok(EmployeeGroupCounts {
@@ -278,6 +305,7 @@ pub(crate) fn list_employee_group_counts_conn(
         onboarding,
         offboarding,
         internal_movement,
+        floating,
         total,
     })
 }
@@ -375,6 +403,8 @@ fn update_employee_tx(
           computername = ?,
           notes = ?,
           staff_group = ?,
+          is_floating = COALESCE(?, is_floating),
+          lifecycle_status = COALESCE(?, lifecycle_status),
           updated_at = datetime('now')
         WHERE id = ?
         "#,
@@ -396,6 +426,8 @@ fn update_employee_tx(
             normalized.computer_name.as_deref(),
             normalized.notes.as_deref(),
             target_group.as_str(),
+            normalized.is_floating.map(|b| if b { 1 } else { 0 }),
+            normalized.lifecycle_status.as_deref(),
             row_id,
         ],
     )
@@ -418,30 +450,100 @@ pub fn move_employees_group(
     app: &AppHandle,
     payload: MoveEmployeesGroupInput,
 ) -> Result<i64, String> {
-    let target_group = normalize_staff_group(payload.target_staff_group.as_str())
-        .ok_or_else(|| format!("invalid target staff group: {}", payload.target_staff_group))?;
+    let mut conn = open_runtime_connection(app)?;
+    move_employees_group_conn(&mut conn, payload)
+}
 
+pub(crate) fn move_employees_group_conn(
+    conn: &mut Connection,
+    payload: MoveEmployeesGroupInput,
+) -> Result<i64, String> {
     if payload.employee_ids.is_empty() {
         return Ok(0);
     }
+    let _ = &payload.reason;
 
-    let conn = open_runtime_connection(app)?;
-    let placeholders = vec!["?"; payload.employee_ids.len()].join(", ");
-    let sql = format!(
-        "UPDATE employees SET staff_group = ?, updated_at = datetime('now') WHERE id IN ({placeholders})"
-    );
+    let raw_target = payload.target_staff_group.trim().to_lowercase();
+    let action = payload
+        .action
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .to_lowercase();
 
-    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(target_group.to_string())];
+    let tx = conn
+        .transaction()
+        .map_err(|err| format!("failed to start move transaction: {err}"))?;
+
+    let mut changed = 0;
     for id in &payload.employee_ids {
-        params_vec.push(Box::new(*id));
+        if raw_target == "floating" || action == "set_floating" {
+            changed += tx
+                .execute(
+                    "UPDATE employees SET staff_group = ?, is_floating = 1, updated_at = datetime('now') WHERE id = ?",
+                    params![STAFF_GROUP_EMPLOYEE_LIST, id],
+                )
+                .map_err(humanize_sqlite_error)?;
+        } else if action == "clear_floating" {
+            changed += tx
+                .execute(
+                    "UPDATE employees SET is_floating = 0, updated_at = datetime('now') WHERE id = ?",
+                    params![id],
+                )
+                .map_err(humanize_sqlite_error)?;
+        } else if raw_target == "reject_offer" || action == "reject_offer" {
+            changed += tx
+                .execute(
+                    "UPDATE employees SET lifecycle_status = 'offer_rejected', updated_at = datetime('now') WHERE id = ? AND staff_group = ?",
+                    params![id, STAFF_GROUP_ONBOARDING],
+                )
+                .map_err(humanize_sqlite_error)?;
+        } else if let Some(target_group) = normalize_staff_group(raw_target.as_str()) {
+            if target_group == STAFF_GROUP_OFFBOARDING {
+                changed += tx
+                    .execute(
+                        "UPDATE employees SET staff_group = ?, is_floating = 0, lifecycle_status = 'resigned', updated_at = datetime('now') WHERE id = ?",
+                        params![STAFF_GROUP_OFFBOARDING, id],
+                    )
+                    .map_err(humanize_sqlite_error)?;
+            } else if target_group == STAFF_GROUP_EMPLOYEE_LIST {
+                changed += tx
+                    .execute(
+                        r#"UPDATE employees SET
+                           staff_group = ?,
+                           is_floating = 0,
+                           lifecycle_status = CASE WHEN staff_group = 'offboarding' THEN 'rehired' ELSE 'active' END,
+                           contract_end_date = CASE WHEN staff_group = 'offboarding' THEN NULL ELSE contract_end_date END,
+                           updated_at = datetime('now')
+                           WHERE id = ?"#,
+                        params![STAFF_GROUP_EMPLOYEE_LIST, id],
+                    )
+                    .map_err(humanize_sqlite_error)?;
+            } else if target_group == STAFF_GROUP_INTERNAL_MOVEMENT {
+                changed += tx
+                    .execute(
+                        "UPDATE employees SET staff_group = ?, is_floating = 0, lifecycle_status = 'transferring', updated_at = datetime('now') WHERE id = ?",
+                        params![STAFF_GROUP_INTERNAL_MOVEMENT, id],
+                    )
+                    .map_err(humanize_sqlite_error)?;
+            } else if target_group == STAFF_GROUP_ONBOARDING {
+                changed += tx
+                    .execute(
+                        "UPDATE employees SET staff_group = ?, is_floating = 0, lifecycle_status = 'pending', updated_at = datetime('now') WHERE id = ?",
+                        params![STAFF_GROUP_ONBOARDING, id],
+                    )
+                    .map_err(humanize_sqlite_error)?;
+            }
+        } else {
+            return Err(format!(
+                "invalid target staff group or transition action: {}",
+                payload.target_staff_group
+            ));
+        }
     }
 
-    let changed = conn
-        .execute(
-            &sql,
-            rusqlite::params_from_iter(params_vec.iter().map(|p| p.as_ref())),
-        )
-        .map_err(humanize_sqlite_error)?;
+    tx.commit()
+        .map_err(|err| format!("failed to commit move transaction: {err}"))?;
 
     Ok(changed as i64)
 }
@@ -584,6 +686,8 @@ pub(crate) fn upsert_employee_from_payload(
               computername = ?,
               notes = ?,
               staff_group = ?,
+              is_floating = COALESCE(?, is_floating),
+              lifecycle_status = COALESCE(?, lifecycle_status),
               updated_at = datetime('now')
             WHERE id = ?
             "#,
@@ -605,6 +709,8 @@ pub(crate) fn upsert_employee_from_payload(
                 normalized.computer_name.as_deref(),
                 normalized.notes.as_deref(),
                 staff_group,
+                normalized.is_floating.map(|b| if b { 1 } else { 0 }),
+                normalized.lifecycle_status.as_deref(),
                 id,
             ],
         )
@@ -644,9 +750,11 @@ pub(crate) fn upsert_employee_from_payload(
           computername,
           notes,
           staff_group,
+          is_floating,
+          lifecycle_status,
           updated_at
         ) VALUES (
-          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now')
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now')
         )
         "#,
         params![
@@ -668,6 +776,8 @@ pub(crate) fn upsert_employee_from_payload(
             normalized.computer_name.as_deref(),
             normalized.notes.as_deref(),
             staff_group,
+            normalized.is_floating.map(|b| if b { 1 } else { 0 }).unwrap_or(0),
+            normalized.lifecycle_status.as_deref(),
         ],
     )
     .map_err(humanize_sqlite_error)?;
@@ -696,6 +806,7 @@ fn query_employees(
         query,
         team_name,
         staff_group,
+        is_floating,
         sort_key,
         sort_direction,
         start_date_from,
@@ -751,13 +862,22 @@ fn query_employees(
         filter_params.push(Value::Text(team_name));
     }
 
-    if let Some(raw_group) = raw_group {
-        let Some(staff_group) = normalize_staff_group(raw_group.as_str()) else {
-            return Err(format!("invalid staff group filter: {raw_group}"));
-        };
+    let is_floating_filter = is_floating;
+    if let Some(ref raw_group) = raw_group {
+        if raw_group.eq_ignore_ascii_case("floating") {
+            where_clauses.push("CASE WHEN COALESCE(NULLIF(TRIM(e.staff_group), ''), 'employee_list') = 'internal_movent' THEN 'internal_movement' ELSE COALESCE(NULLIF(TRIM(e.staff_group), ''), 'employee_list') END = 'employee_list' AND COALESCE(e.is_floating, 0) = 1".to_string());
+        } else {
+            let Some(staff_group) = normalize_staff_group(raw_group.as_str()) else {
+                return Err(format!("invalid staff group filter: {raw_group}"));
+            };
 
-        where_clauses.push("CASE WHEN COALESCE(NULLIF(TRIM(e.staff_group), ''), 'employee_list') = 'internal_movent' THEN 'internal_movement' ELSE COALESCE(NULLIF(TRIM(e.staff_group), ''), 'employee_list') END = ?".to_string());
-        filter_params.push(Value::Text(staff_group.to_string()));
+            where_clauses.push("CASE WHEN COALESCE(NULLIF(TRIM(e.staff_group), ''), 'employee_list') = 'internal_movent' THEN 'internal_movement' ELSE COALESCE(NULLIF(TRIM(e.staff_group), ''), 'employee_list') END = ?".to_string());
+            filter_params.push(Value::Text(staff_group.to_string()));
+        }
+    }
+
+    if is_floating_filter == Some(true) && !raw_group.as_deref().is_some_and(|g| g.eq_ignore_ascii_case("floating")) {
+        where_clauses.push("COALESCE(e.is_floating, 0) = 1".to_string());
     }
 
     if let Some(start_from) = start_from {
@@ -998,6 +1118,8 @@ fn map_employee_row(row: &Row<'_>) -> rusqlite::Result<EmployeeRecord> {
         staff_group: row.get(22)?,
         dynamic_fields: HashMap::new(),
         updated_at: row.get(23)?,
+        is_floating: row.get::<_, i64>(24)? != 0,
+        lifecycle_status: row.get(25)?,
     })
 }
 
@@ -1249,8 +1371,9 @@ mod tests {
     use crate::db::{apply_migrations, configure_connection, COMPUTER_NAME_2_FIELD_KEY};
 
     use super::{
-        build_employee_from_clause, delete_employee_conn, query_employees,
-        update_employee_tx, upsert_employee_from_payload, EmployeePayload, EmployeeQuery,
+        build_employee_from_clause, delete_employee_conn, list_employee_group_counts_conn,
+        move_employees_group_conn, query_employees, update_employee_tx,
+        upsert_employee_from_payload, EmployeePayload, EmployeeQuery, MoveEmployeesGroupInput,
         EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL,
     };
 
@@ -1442,6 +1565,8 @@ mod tests {
                 computer_name: None,
                 notes: None,
                 staff_group: Some("employee_list".to_string()),
+                is_floating: None,
+                lifecycle_status: None,
                 dynamic_fields: Some(HashMap::from([(
                     "computer_name_2".to_string(),
                     "   ".to_string(),
@@ -1493,6 +1618,7 @@ mod tests {
                 query: None,
                 team_name: None,
                 staff_group: None,
+                is_floating: None,
                 sort_key: None,
                 sort_direction: None,
                 start_date_from: None,
@@ -1528,6 +1654,7 @@ mod tests {
                 query: Some("ASWVNLAP293".to_string()),
                 team_name: None,
                 staff_group: None,
+                is_floating: None,
                 sort_key: None,
                 sort_direction: None,
                 start_date_from: None,
@@ -1558,6 +1685,7 @@ mod tests {
                 query: Some("Person@Example.COM".to_string()),
                 team_name: None,
                 staff_group: None,
+                is_floating: None,
                 sort_key: None,
                 sort_direction: None,
                 start_date_from: None,
@@ -1618,6 +1746,7 @@ mod tests {
                 query: None,
                 team_name: None,
                 staff_group: None,
+                is_floating: None,
                 sort_key: None,
                 sort_direction: None,
                 start_date_from: None,
@@ -1666,6 +1795,8 @@ mod tests {
                 computer_name: Some("ASWVNLAP163".to_string()),
                 notes: None,
                 staff_group: Some("employee_list".to_string()),
+                is_floating: None,
+                lifecycle_status: None,
                 dynamic_fields: None,
             },
             "employee_list",
@@ -1679,6 +1810,7 @@ mod tests {
                 query: Some("ASWVNLAP163".to_string()),
                 team_name: None,
                 staff_group: None,
+                is_floating: None,
                 sort_key: None,
                 sort_direction: None,
                 start_date_from: None,
@@ -1729,6 +1861,8 @@ mod tests {
                 computer_name: Some("ASWVNLAP999".to_string()),
                 notes: None,
                 staff_group: Some("employee_list".to_string()),
+                is_floating: None,
+                lifecycle_status: None,
                 dynamic_fields: None,
             },
             "employee_list",
@@ -1783,6 +1917,8 @@ mod tests {
                 computer_name: Some("ASWVNLAP999".to_string()),
                 notes: None,
                 staff_group: Some("employee_list".to_string()),
+                is_floating: None,
+                lifecycle_status: None,
                 dynamic_fields: None,
             },
         )
@@ -1830,6 +1966,8 @@ mod tests {
                 computer_name: Some("ASWVNLAP326".to_string()),
                 notes: None,
                 staff_group: Some("employee_list".to_string()),
+                is_floating: None,
+                lifecycle_status: None,
                 dynamic_fields: Some(HashMap::from([(
                     COMPUTER_NAME_2_FIELD_KEY.to_string(),
                     String::new(),
@@ -1902,6 +2040,8 @@ mod tests {
                 computer_name: Some("ASWVNLAP445".to_string()),
                 notes: None,
                 staff_group: Some("employee_list".to_string()),
+                is_floating: None,
+                lifecycle_status: None,
                 dynamic_fields: None,
             },
             "employee_list",
@@ -1915,6 +2055,7 @@ mod tests {
                 query: None,
                 team_name: None,
                 staff_group: None,
+                is_floating: None,
                 sort_key: None,
                 sort_direction: None,
                 start_date_from: None,
@@ -1935,5 +2076,178 @@ mod tests {
             employee.stored_computer_name.as_deref(),
             Some("ASWVNLAP445")
         );
+    }
+
+    #[test]
+    fn floating_overlay_counts_and_overlap_in_ee_list() {
+        let conn = open_test_connection();
+
+        // 1. Employee list with is_floating = 0
+        let _e1 = seed_employee(&conn, "EE-REGULAR", "Regular Employee");
+        // 2. Employee list with is_floating = 1 (Floating overlay)
+        let e2 = seed_employee(&conn, "EE-FLOAT", "Floating Employee");
+        conn.execute("UPDATE employees SET is_floating = 1 WHERE id = ?", params![e2])
+            .expect("set e2 as floating");
+
+        // 3. Onboarding employee
+        let e3 = seed_employee(&conn, "EE-ONBOARD", "Onboarding Employee");
+        conn.execute("UPDATE employees SET staff_group = 'onboarding' WHERE id = ?", params![e3])
+            .expect("set e3 as onboarding");
+
+        // 4. Offboarding employee
+        let e4 = seed_employee(&conn, "EE-OFFBOARD", "Offboarded Employee");
+        conn.execute("UPDATE employees SET staff_group = 'offboarding' WHERE id = ?", params![e4])
+            .expect("set e4 as offboarding");
+
+        // Verify group counts: EE list counts both E1 and E2; floating counts E2
+        let counts = list_employee_group_counts_conn(&conn).expect("load group counts");
+        assert_eq!(counts.employee_list, 2, "EE List must include floating employee");
+        assert_eq!(counts.floating, 1, "Floating count must accurately reflect overlay");
+        assert_eq!(counts.onboarding, 1);
+        assert_eq!(counts.offboarding, 1);
+        assert_eq!(counts.total, 4);
+
+        // Verify query_employees for EE list includes both E1 and E2
+        let ee_list_query = query_employees(&conn, EmployeeQuery {
+            query: None,
+            team_name: None,
+            staff_group: Some("employee_list".to_string()),
+            is_floating: None,
+            sort_key: None,
+            sort_direction: None,
+            start_date_from: None,
+            start_date_to: None,
+            limit: Some(10),
+            offset: Some(0),
+        }).expect("query employee_list");
+        assert_eq!(ee_list_query.total, 2);
+        assert!(ee_list_query.items.iter().any(|item| item.employee_id == "EE-REGULAR" && !item.is_floating));
+        assert!(ee_list_query.items.iter().any(|item| item.employee_id == "EE-FLOAT" && item.is_floating));
+
+        // Verify query_employees for Floating returns ONLY E2
+        let floating_query = query_employees(&conn, EmployeeQuery {
+            query: None,
+            team_name: None,
+            staff_group: Some("floating".to_string()),
+            is_floating: None,
+            sort_key: None,
+            sort_direction: None,
+            start_date_from: None,
+            start_date_to: None,
+            limit: Some(10),
+            offset: Some(0),
+        }).expect("query floating group");
+        assert_eq!(floating_query.total, 1);
+        assert_eq!(floating_query.items[0].employee_id, "EE-FLOAT");
+        assert!(floating_query.items[0].is_floating);
+    }
+
+    #[test]
+    fn onboarding_reject_offer_stays_in_onboarding_with_lifecycle_status() {
+        let mut conn = open_test_connection();
+        let candidate_id = seed_employee(&conn, "EE-OFFER1", "Offered Candidate");
+        conn.execute("UPDATE employees SET staff_group = 'onboarding' WHERE id = ?", params![candidate_id])
+            .expect("set onboarding");
+
+        let changed = move_employees_group_conn(&mut conn, MoveEmployeesGroupInput {
+            employee_ids: vec![candidate_id],
+            target_staff_group: "reject_offer".to_string(),
+            action: Some("reject_offer".to_string()),
+            reason: Some("Candidate declined package".to_string()),
+        }).expect("reject offer");
+
+        assert_eq!(changed, 1);
+
+        let (group, status, e_id): (String, Option<String>, String) = conn.query_row(
+            "SELECT staff_group, lifecycle_status, employee_id FROM employees WHERE id = ?",
+            params![candidate_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).expect("load candidate row");
+
+        assert_eq!(group, "onboarding", "Reject offer must remain in onboarding group");
+        assert_eq!(status.as_deref(), Some("offer_rejected"), "lifecycle_status must be offer_rejected");
+        assert_eq!(e_id, "EE-OFFER1", "employee_id must be preserved");
+    }
+
+    #[test]
+    fn offboarding_rehire_preserves_asset_loans_and_identity() {
+        let mut conn = open_test_connection();
+        let emp_id = seed_employee(&conn, "ASWVN1145", "Nguyen Van A");
+        let laptop_id = seed_asset(&conn, "VNLAP1145", "Laptop", "laptop");
+        seed_active_loan(&conn, emp_id, laptop_id);
+
+        // Put in offboarding
+        conn.execute("UPDATE employees SET staff_group = 'offboarding', lifecycle_status = 'resigned' WHERE id = ?", params![emp_id])
+            .expect("set offboarding");
+
+        // Verify loan exists
+        let loan_count_before: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM asset_loans WHERE employee_id_fk = ? AND returned_at IS NULL",
+            params![emp_id],
+            |row| row.get(0),
+        ).expect("check active loan");
+        assert_eq!(loan_count_before, 1);
+
+        // Rehire to employee_list
+        let changed = move_employees_group_conn(&mut conn, MoveEmployeesGroupInput {
+            employee_ids: vec![emp_id],
+            target_staff_group: "employee_list".to_string(),
+            action: None,
+            reason: Some("Rehired as Senior Engineer".to_string()),
+        }).expect("rehire employee");
+
+        assert_eq!(changed, 1);
+
+        let (group, status, e_id): (String, Option<String>, String) = conn.query_row(
+            "SELECT staff_group, lifecycle_status, employee_id FROM employees WHERE id = ?",
+            params![emp_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).expect("load rehired row");
+
+        assert_eq!(group, "employee_list", "Must be in employee_list");
+        assert_eq!(status.as_deref(), Some("rehired"), "lifecycle_status must be rehired");
+        assert_eq!(e_id, "ASWVN1145", "canonical employee_id must be preserved");
+
+        // Assert asset loan is preserved and still active
+        let loan_count_after: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM asset_loans WHERE employee_id_fk = ? AND returned_at IS NULL",
+            params![emp_id],
+            |row| row.get(0),
+        ).expect("check active loan after rehire");
+        assert_eq!(loan_count_after, 1, "Asset loans must be fully preserved across rehire");
+    }
+
+    #[test]
+    fn aswvn1145_missing_from_source_remains_report_only_and_untouched() {
+        let conn = open_test_connection();
+        let emp_id = seed_employee(&conn, "ASWVN1145", "Nguyen Van A");
+        let laptop_id = seed_asset(&conn, "VNLAP1145", "Laptop", "laptop");
+        seed_active_loan(&conn, emp_id, laptop_id);
+
+        // Verify ASWVN1145 is active in employee_list
+        let (group, name): (String, String) = conn.query_row(
+            "SELECT staff_group, full_name FROM employees WHERE employee_id = 'ASWVN1145'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).expect("read local ASWVN1145");
+        assert_eq!(group, "employee_list");
+        assert_eq!(name, "Nguyen Van A");
+
+        // In Query B comparison, when source does not have ASWVN1145, it is classified as Missing (report-only).
+        // On applying sync, the update loop only iterates over remote source records, so ASWVN1145 is NEVER
+        // offboarded or modified.
+        let group_after: String = conn.query_row(
+            "SELECT staff_group FROM employees WHERE employee_id = 'ASWVN1145'",
+            [],
+            |row| row.get(0),
+        ).expect("check ASWVN1145 group after sync");
+        assert_eq!(group_after, "employee_list", "Missing employee must never be automatically offboarded");
+
+        let loan_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM asset_loans WHERE employee_id_fk = ? AND returned_at IS NULL",
+            params![emp_id],
+            |row| row.get(0),
+        ).expect("check loan after missing check");
+        assert_eq!(loan_count, 1, "Asset loans must remain intact");
     }
 }

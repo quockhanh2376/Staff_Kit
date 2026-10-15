@@ -369,6 +369,7 @@ fn build_preview(
         ),
         sort_key: None,
         sort_direction: None,
+        is_floating: None,
         start_date_from: payload.start_date_from.clone(),
         start_date_to: payload.start_date_to.clone(),
         limit: None,

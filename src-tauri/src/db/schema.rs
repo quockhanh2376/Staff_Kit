@@ -134,7 +134,9 @@ pub(super) const EMPLOYEE_SELECT_COLUMNS: &str = r#"
     WHEN COALESCE(NULLIF(TRIM(e.staff_group), ''), 'employee_list') = 'internal_movent' THEN 'internal_movement'
     ELSE COALESCE(NULLIF(TRIM(e.staff_group), ''), 'employee_list')
   END AS staff_group,
-  e.updated_at
+  e.updated_at,
+  COALESCE(e.is_floating, 0) AS is_floating,
+  e.lifecycle_status
 "#;
 
 // ── Additional columns added via migration ────────────────────────────────────
@@ -150,6 +152,8 @@ pub(super) const EMPLOYEE_ADDITIONAL_COLUMNS: &[(&str, &str)] = &[
     ("contract_end_date", "TEXT"),
     ("client_year_of_services", "TEXT"),
     ("staff_group", "TEXT NOT NULL DEFAULT 'employee_list'"),
+    ("is_floating", "INTEGER NOT NULL DEFAULT 0"),
+    ("lifecycle_status", "TEXT"),
 ];
 
 // ── Base schema SQL ───────────────────────────────────────────────────────────
@@ -183,6 +187,8 @@ CREATE TABLE IF NOT EXISTS employees (
   computername TEXT,
   notes TEXT,
   staff_group TEXT NOT NULL DEFAULT 'employee_list',
+  is_floating INTEGER NOT NULL DEFAULT 0,
+  lifecycle_status TEXT,
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -458,6 +464,8 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 CREATE INDEX IF NOT EXISTS idx_employees_team_id ON employees(team_id);
 CREATE INDEX IF NOT EXISTS idx_employees_full_name ON employees(full_name);
 CREATE INDEX IF NOT EXISTS idx_employees_asw_start_date ON employees(asw_start_date);
+CREATE INDEX IF NOT EXISTS idx_employees_staff_group ON employees(staff_group);
+CREATE INDEX IF NOT EXISTS idx_employees_floating ON employees(is_floating);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_email_unique ON employees(email) WHERE email IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_dynamic_values_employee_id ON employee_dynamic_values(employee_id);
 CREATE INDEX IF NOT EXISTS idx_dynamic_values_field_key ON employee_dynamic_values(field_key);

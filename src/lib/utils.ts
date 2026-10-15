@@ -33,7 +33,7 @@ export const formatDate = (value: string | null) => {
 }
 
 /** Returns the employee count for a given staff group key. */
-export const getGroupCount = (counts: EmployeeGroupCounts, key: StaffGroupKey): number => {
+export const getGroupCount = (counts: EmployeeGroupCounts, key: StaffGroupKey | "floating"): number => {
     switch (key) {
         case "employee_list":
             return counts.employeeList
@@ -43,6 +43,8 @@ export const getGroupCount = (counts: EmployeeGroupCounts, key: StaffGroupKey): 
             return counts.offboarding
         case "internal_movement":
             return counts.internalMovement
+        case "floating":
+            return counts.floating ?? 0
         default:
             return 0
     }

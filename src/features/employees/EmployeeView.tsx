@@ -15,8 +15,7 @@ import { staffApi } from "../../services/staff-api"
 import type { EmployeeState } from "./useEmployeeState"
 import type { TableEditState } from "./useTableEdit"
 import type { ColumnState } from "../columns/useColumnState"
-import type { StaffGroupKey } from "../../types/app"
-import { STAFF_GROUP_BUTTONS, DATE_COLUMN_KEYS } from "../../lib/constants"
+import { DATE_COLUMN_KEYS } from "../../lib/constants"
 import { formatDate } from "../../lib/utils"
 import { formatEmployeeIdForDisplay } from "./employeeIdDisplay"
 import { collectDuplicateComputerEmployeeIds } from "./employeeTableRules"
@@ -409,20 +408,95 @@ export function EmployeeView({
                     {emp.mssqlSyncPreview.conflicts.length > 0 && (
                         <p className="mt-2 text-xs text-red-300">{emp.mssqlSyncPreview.conflicts.map((item) => `${item.code}: ${item.reason}`).join("; ")}</p>
                     )}
-                    <div className="mt-3 max-h-56 overflow-auto rounded-md border border-[var(--border)]">
-                        <table className="w-full text-left text-xs">
-                            <thead className="sticky top-0 bg-[var(--surface)] text-[var(--text-secondary)]">
-                                <tr><th className="px-2 py-1.5">Staff Code</th><th className="px-2 py-1.5">Result</th><th className="px-2 py-1.5">Local Name</th><th className="px-2 py-1.5">Source Name</th></tr>
-                            </thead>
-                            <tbody>
-                                {emp.mssqlSyncPreview.rows.map((row, index) => (
-                                    <tr key={`${row.code}-${row.status}-${index}`} className="border-t border-[var(--border)]">
-                                        <td className="px-2 py-1">{row.code}</td><td className="px-2 py-1 capitalize">{row.status}</td><td className="px-2 py-1">{row.localName ?? "—"}</td><td className="px-2 py-1">{row.sourceName ?? "—"}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
+                    {(() => {
+                        const diffRows = emp.mssqlSyncPreview.rows.filter((row) => row.status !== "unchanged")
+                        const unchangedRows = emp.mssqlSyncPreview.rows.filter((row) => row.status === "unchanged")
+
+                        const getStatusBadge = (status: string) => {
+                            switch (status) {
+                                case "new":
+                                    return <span className="rounded bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-400">New</span>
+                                case "changed":
+                                    return <span className="rounded bg-sky-500/20 px-2 py-0.5 text-[10px] font-bold uppercase text-sky-400">Changed</span>
+                                case "missing":
+                                    return <span className="rounded bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-400">Missing (Report-only)</span>
+                                case "conflict":
+                                    return <span className="rounded bg-rose-500/20 px-2 py-0.5 text-[10px] font-bold uppercase text-rose-400">Conflict</span>
+                                default:
+                                    return <span className="rounded bg-gray-500/20 px-2 py-0.5 text-[10px] font-medium text-gray-400">{status}</span>
+                            }
+                        }
+
+                        const getRowHighlight = (status: string) => {
+                            switch (status) {
+                                case "new":
+                                    return "bg-emerald-500/5 hover:bg-emerald-500/10"
+                                case "changed":
+                                    return "bg-sky-500/5 hover:bg-sky-500/10"
+                                case "missing":
+                                    return "bg-amber-500/5 hover:bg-amber-500/10"
+                                case "conflict":
+                                    return "bg-rose-500/5 hover:bg-rose-500/10"
+                                default:
+                                    return ""
+                            }
+                        }
+
+                        return (
+                            <div className="mt-3 space-y-3">
+                                {diffRows.length > 0 ? (
+                                    <div className="max-h-64 overflow-auto rounded-md border border-[var(--border)]">
+                                        <table className="w-full text-left text-xs">
+                                            <thead className="sticky top-0 bg-[var(--surface)] text-[var(--text-secondary)] shadow-sm">
+                                                <tr>
+                                                    <th className="px-3 py-2">Staff Code</th>
+                                                    <th className="px-3 py-2">Result</th>
+                                                    <th className="px-3 py-2">Local Name</th>
+                                                    <th className="px-3 py-2">Source Name</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {diffRows.map((row, index) => (
+                                                    <tr key={`diff-${row.code}-${row.status}-${index}`} className={`border-t border-[var(--border)] transition ${getRowHighlight(row.status)}`}>
+                                                        <td className="px-3 py-1.5 font-mono font-medium">{row.code}</td>
+                                                        <td className="px-3 py-1.5">{getStatusBadge(row.status)}</td>
+                                                        <td className="px-3 py-1.5">{row.localName ?? "—"}</td>
+                                                        <td className="px-3 py-1.5">{row.sourceName ?? "—"}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                ) : (
+                                    <div className="rounded-md border border-[var(--border)] bg-[var(--surface-hover)]/20 px-3 py-2 text-xs text-[var(--text-secondary)]">
+                                        No diff rows detected. All employee records match HRMS.
+                                    </div>
+                                )}
+
+                                {unchangedRows.length > 0 && (
+                                    <details className="rounded-md border border-[var(--border)] bg-[var(--surface-hover)]/20 text-xs">
+                                        <summary className="cursor-pointer px-3 py-2 font-medium text-[var(--text-secondary)] select-none hover:text-[var(--text-primary)]">
+                                            Unchanged rows ({unchangedRows.length}) — Click to expand
+                                        </summary>
+                                        <div className="max-h-48 overflow-auto border-t border-[var(--border)]">
+                                            <table className="w-full text-left text-xs">
+                                                <tbody>
+                                                    {unchangedRows.map((row, index) => (
+                                                        <tr key={`unchanged-${row.code}-${index}`} className="border-b border-[var(--border)]/30 hover:bg-[var(--surface-hover)]/40">
+                                                            <td className="px-3 py-1 font-mono text-[var(--text-secondary)]">{row.code}</td>
+                                                            <td className="px-3 py-1 text-[var(--text-secondary)]">Unchanged</td>
+                                                            <td className="px-3 py-1 text-[var(--text-secondary)]">{row.localName ?? "—"}</td>
+                                                            <td className="px-3 py-1 text-[var(--text-secondary)]">{row.sourceName ?? "—"}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </details>
+                                )}
+                            </div>
+                        )
+                    })()}
                 </div>
             )}
 
@@ -622,6 +696,21 @@ export function EmployeeView({
                                                                         {typeof displayCellValue === "string" && hasSearchMatch(displayCellValue, emp.searchTerm) ? (
                                                                             <HighlightText text={displayCellValue} query={emp.searchTerm} />
                                                                         ) : displayCellValue}
+                                                                        {column.key === "fullName" && employee.isFloating && (
+                                                                            <span className="ml-2 inline-flex items-center rounded-full border border-indigo-500/30 bg-indigo-500/15 px-2 py-0.5 text-[10px] font-medium text-indigo-400">
+                                                                                Floating
+                                                                            </span>
+                                                                        )}
+                                                                        {column.key === "fullName" && employee.lifecycleStatus === "offer_rejected" && (
+                                                                            <span className="ml-2 inline-flex items-center rounded-full border border-rose-500/30 bg-rose-500/15 px-2 py-0.5 text-[10px] font-medium text-rose-400">
+                                                                                Offer Rejected
+                                                                            </span>
+                                                                        )}
+                                                                        {column.key === "fullName" && employee.lifecycleStatus === "rehired" && (
+                                                                            <span className="ml-2 inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
+                                                                                Rehired
+                                                                            </span>
+                                                                        )}
                                                                     </span>
                                                                 )
                                                             })()}
@@ -645,7 +734,24 @@ export function EmployeeView({
                             >
                                 <div className="flex items-start justify-between gap-3">
                                     <div>
-                                        <div className="font-semibold text-[var(--text-primary)]">{employee.fullName}</div>
+                                        <div className="flex flex-wrap items-center gap-1.5">
+                                            <span className="font-semibold text-[var(--text-primary)]">{employee.fullName}</span>
+                                            {employee.isFloating && (
+                                                <span className="rounded-full border border-indigo-500/30 bg-indigo-500/15 px-1.5 py-0.5 text-[10px] text-indigo-400">
+                                                    Floating
+                                                </span>
+                                            )}
+                                            {employee.lifecycleStatus === "offer_rejected" && (
+                                                <span className="rounded-full border border-rose-500/30 bg-rose-500/15 px-1.5 py-0.5 text-[10px] text-rose-400">
+                                                    Offer Rejected
+                                                </span>
+                                            )}
+                                            {employee.lifecycleStatus === "rehired" && (
+                                                <span className="rounded-full border border-emerald-500/30 bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-400">
+                                                    Rehired
+                                                </span>
+                                            )}
+                                        </div>
                                         <div className="text-xs text-[var(--text-secondary)]">{formatEmployeeIdForDisplay(employee.employeeId)}</div>
                                     </div>
                                     <span className="text-xs text-[var(--text-secondary)]">
@@ -731,16 +837,43 @@ export function EmployeeView({
                                         className="rounded-[8px] border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm text-[var(--text-primary)] disabled:opacity-50"
                                         value={edit.moveTargetGroup}
                                         onChange={(event) =>
-                                            edit.setMoveTargetGroup(event.target.value as StaffGroupKey)
+                                            edit.setMoveTargetGroup(event.target.value)
                                         }
                                         disabled={!canEditEmployeeTable || edit.isMovingEmployees || edit.isSavingTableEdits}
-                                        title="Target list for selected EE IDs"
+                                        title="Target list or action for selected EE IDs"
                                     >
-                                        {STAFF_GROUP_BUTTONS.map((item) => (
-                                            <option key={item.key} value={item.key}>
-                                                {item.label}
-                                            </option>
-                                        ))}
+                                        {emp.staffGroupFilter === "onboarding" && (
+                                            <>
+                                                <option value="employee_list">Move to Employee List (Active)</option>
+                                                <option value="reject_offer">Reject Offer (Remain in Onboarding)</option>
+                                                <option value="internal_movement">Move to Internal Movement</option>
+                                                <option value="offboarding">Move to Offboarding</option>
+                                            </>
+                                        )}
+                                        {emp.staffGroupFilter === "offboarding" && (
+                                            <>
+                                                <option value="employee_list">Rehire to Employee List</option>
+                                                <option value="internal_movement">Move to Internal Movement</option>
+                                                <option value="onboarding">Move to Onboarding</option>
+                                            </>
+                                        )}
+                                        {emp.staffGroupFilter === "employee_list" && (
+                                            <>
+                                                <option value="set_floating">Mark as Floating</option>
+                                                <option value="clear_floating">Clear Floating</option>
+                                                <option value="internal_movement">Move to Internal Movement</option>
+                                                <option value="offboarding">Offboard (Resigned)</option>
+                                                <option value="onboarding">Move to Onboarding</option>
+                                            </>
+                                        )}
+                                        {emp.staffGroupFilter === "internal_movement" && (
+                                            <>
+                                                <option value="employee_list">Complete Movement (Employee List)</option>
+                                                <option value="set_floating">Mark as Floating</option>
+                                                <option value="offboarding">Offboard (Resigned)</option>
+                                                <option value="onboarding">Move to Onboarding</option>
+                                            </>
+                                        )}
                                     </select>
                                     <button
                                         className="rounded-[8px] border border-[var(--primary)]/50 px-3 py-1.5 text-sm font-medium text-[var(--primary)] transition hover:bg-[var(--primary)]/10 disabled:opacity-50"
@@ -752,9 +885,19 @@ export function EmployeeView({
                                             edit.isMovingEmployees ||
                                             edit.isSavingTableEdits
                                         }
-                                        title="Move selected EE IDs to target list"
+                                        title="Execute selected HR transition"
                                     >
-                                        {edit.isMovingEmployees ? "Moving..." : "Move"}
+                                        {edit.isMovingEmployees
+                                            ? "Processing..."
+                                            : edit.moveTargetGroup === "reject_offer"
+                                            ? "Reject Offer"
+                                            : edit.moveTargetGroup === "employee_list" && emp.staffGroupFilter === "offboarding"
+                                            ? "Rehire"
+                                            : edit.moveTargetGroup === "set_floating"
+                                            ? "Set Floating"
+                                            : edit.moveTargetGroup === "clear_floating"
+                                            ? "Clear Floating"
+                                            : "Move"}
                                     </button>
                                     {emp.staffGroupFilter === "offboarding" && (
                                         <button
