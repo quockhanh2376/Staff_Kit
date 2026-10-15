@@ -390,6 +390,14 @@ fn ensure_employee_columns(conn: &Connection) -> Result<(), String> {
         .map_err(|err| format!("failed to add column '{column_name}': {err}"))?;
     }
 
+    conn.execute_batch(
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_employees_staff_group ON employees(staff_group);
+        CREATE INDEX IF NOT EXISTS idx_employees_floating ON employees(is_floating);
+        "#,
+    )
+    .map_err(|err| format!("failed to create employee indexes: {err}"))?;
+
     Ok(())
 }
 
@@ -2491,4 +2499,80 @@ mod tests {
         assert_eq!(monitor_active_after, 1);
         assert_eq!(conflict_active_after, 0);
     }
+
+    #[test]
+    fn existing_db_without_lifecycle_columns_migrates_cleanly_and_preserves_local_accounts() {
+        let conn = Connection::open_in_memory().expect("open legacy database");
+        configure_connection(&conn).expect("configure sqlite pragmas");
+
+        // Simulate pre-feature legacy database: employees without is_floating / lifecycle_status / staff_group
+        conn.execute_batch(
+            r#"
+            CREATE TABLE employees (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                employee_id TEXT NOT NULL UNIQUE,
+                full_name TEXT NOT NULL,
+                team_id INTEGER,
+                asw_start_date TEXT,
+                email TEXT,
+                nick_name TEXT,
+                project TEXT,
+                job_title TEXT,
+                notes TEXT,
+                computername TEXT
+            );
+            CREATE TABLE app_local_accounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_key TEXT NOT NULL UNIQUE,
+                username TEXT NOT NULL UNIQUE,
+                display_name TEXT NOT NULL,
+                role TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                recovery_code_hash TEXT NOT NULL,
+                force_password_reset INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            INSERT INTO app_local_accounts (account_key, username, display_name, role, password_hash, recovery_code_hash)
+            VALUES ('acc-admin-1', 'admin', 'Admin User', 'super_admin', '$argon2id$v=19$m=19456,t=2,p=1$fakehash', '$argon2id$v=19$m=19456,t=2,p=1$fakerecovery');
+            INSERT INTO employees (id, employee_id, full_name)
+            VALUES (1, 'ASWVN1145', 'Nguyen Van A');
+            "#,
+        ).expect("create legacy database");
+
+        // Run migrations — must NOT fail with "no such column: staff_group" or "is_floating"
+        apply_migrations(&conn).expect("apply migrations to legacy database");
+
+        // Verify columns and indexes exist
+        let (staff_group, is_floating, lifecycle_status): (String, i64, Option<String>) = conn.query_row(
+            "SELECT staff_group, is_floating, lifecycle_status FROM employees WHERE employee_id = 'ASWVN1145'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).expect("query migrated employee columns");
+        assert_eq!(staff_group, "employee_list");
+        assert_eq!(is_floating, 0);
+        assert_eq!(lifecycle_status, None);
+
+        // Verify indexes exist
+        let index_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN ('idx_employees_staff_group', 'idx_employees_floating')",
+            [],
+            |row| row.get(0),
+        ).expect("count created indexes");
+        assert_eq!(index_count, 2, "both staff_group and floating indexes must be created");
+
+        // Verify local account survived intact without data loss
+        let (username, role, display_name): (String, String, String) = conn.query_row(
+            "SELECT username, role, display_name FROM app_local_accounts WHERE username = 'admin'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).expect("query existing admin account");
+        assert_eq!(username, "admin");
+        assert_eq!(role, "super_admin");
+        assert_eq!(display_name, "Admin User");
+
+        // Idempotent reapplication must also succeed
+        apply_migrations(&conn).expect("reapply migrations idempotently");
+    }
 }
+

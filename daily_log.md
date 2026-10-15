@@ -1,5 +1,15 @@
 # Daily Log - 2026-10-15
 
+## 2026-10-15 — Fix login failure after lifecycle migration (Start)
+- Diagnose and fix startup migration failure preventing local accounts from loading during app initialization.
+
+## 2026-10-15 — Fix login failure after lifecycle migration (End)
+- Root cause: `idx_employees_staff_group` and `idx_employees_floating` were defined in `BASE_SCHEMA_SQL` before `ensure_employee_columns()` ran `ALTER TABLE` to add the columns to existing databases.
+- Fix: Deferred index creation in `ensure_employee_columns()` after column migration, removing premature index creation from `BASE_SCHEMA_SQL`.
+- Preserved existing local accounts, credentials, employees, assets, and loans without DB recreation or reset.
+- Added regression test `existing_db_without_lifecycle_columns_migrates_cleanly_and_preserves_local_accounts`.
+
+
 ## 2026-10-15 — Approved HR Lifecycle and Floating workflow implementation (Start)
 - Implement approved HR lifecycle states (`lifecycle_status`), 4 canonical staff groups + Floating overlay (`is_floating`), transitions (Reject Offer, Offboarding, Rehire, Internal Movement), and Query B Sync diff/collapsing.
 

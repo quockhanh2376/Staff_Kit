@@ -464,8 +464,6 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 CREATE INDEX IF NOT EXISTS idx_employees_team_id ON employees(team_id);
 CREATE INDEX IF NOT EXISTS idx_employees_full_name ON employees(full_name);
 CREATE INDEX IF NOT EXISTS idx_employees_asw_start_date ON employees(asw_start_date);
-CREATE INDEX IF NOT EXISTS idx_employees_staff_group ON employees(staff_group);
-CREATE INDEX IF NOT EXISTS idx_employees_floating ON employees(is_floating);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_email_unique ON employees(email) WHERE email IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_dynamic_values_employee_id ON employee_dynamic_values(employee_id);
 CREATE INDEX IF NOT EXISTS idx_dynamic_values_field_key ON employee_dynamic_values(field_key);
