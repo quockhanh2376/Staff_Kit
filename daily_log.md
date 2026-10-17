@@ -1,5 +1,26 @@
 # Daily Log - 2026-10-17
 
+## 2026-10-17 — Prepare Staff Kit v2.2.0-rc.3 Release (Start)
+- Branch: `release/v2.2.0-rc.3` from baseline `a2609a298c43e5f8a2b9f99a863fc6bd3193c8a2`.
+- Objective: prepare version 2.2.0-rc.3 release candidate on dedicated release branch.
+- Scope: update application version metadata consistently across `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.lock` to `2.2.0-rc.3` (WiX `2.2.0.3`).
+- Preserve application functionality, database schema, and existing business logic unchanged.
+- Validation: verify clean quality checks (`npm run check:quality`) and build Windows desktop packages (`npm run tauri:build`) to verify EXE, MSI, and NSIS setup artifacts.
+
+## 2026-10-17 — Prepare Staff Kit v2.2.0-rc.3 Release (End)
+- Updated version metadata consistently to `2.2.0-rc.3` (WiX `2.2.0.3`):
+  * `package.json`: `"version": "2.2.0-rc.3"`
+  * `src-tauri/Cargo.toml`: `version = "2.2.0-rc.3"`
+  * `src-tauri/tauri.conf.json`: `"version": "2.2.0-rc.3"`, `"wix": { "version": "2.2.0.3" }`
+  * `src-tauri/Cargo.lock`: `name = "staff-kit"` `version = "2.2.0-rc.3"`
+- Application functionality, database schema, and existing business logic remain completely unchanged.
+- Quality gates verified: `npm run check:quality` passed cleanly (ESLint, TypeScript typecheck, Vite production build, Cargo check).
+- Packaged Windows desktop artifacts built successfully via `npm run tauri:build`:
+  * Binary: `src-tauri/target/release/staff-kit.exe` (20,978,688 bytes)
+  * WiX MSI: `src-tauri/target/release/bundle/msi/Staff Kit_2.2.0-rc.3_x64_en-US.msi` (7,749,632 bytes)
+  * NSIS Setup: `src-tauri/target/release/bundle/nsis/Staff Kit_2.2.0-rc.3_x64-setup.exe` (5,576,309 bytes)
+- Feature branch commit prepared: `chore(release): prepare v2.2.0-rc.3` on `release/v2.2.0-rc.3`.
+
 ## 2026-10-17 — Config Sync Header Keyboard & ARIA Accessibility (Start)
 - Audit Config Sync collapse/expand panel for keyboard accessibility and ARIA semantics.
 - Fix verified accessibility defects: native button semantics with focus-visible indicator, aria-controls referencing panel id, panel landmark region, and focus management when collapsed while strictly preserving visual appearance, transitions, and form persistence.
