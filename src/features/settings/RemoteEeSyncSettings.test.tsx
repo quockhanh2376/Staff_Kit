@@ -32,15 +32,31 @@ describe("Config Sync settings collapsible panel", () => {
         render(<RemoteEeSyncSettings />)
         const header = screen.getByRole("button", { name: /config sync/i })
         expect(header).toBeTruthy()
+        expect(header.tagName.toLowerCase()).toBe("button")
         expect(header.getAttribute("aria-expanded")).toBe("false")
+        expect(header.getAttribute("aria-controls")).toBe("config-sync-panel")
+        expect(header.getAttribute("id")).toBe("config-sync-header")
         expect(screen.getByText("Config Sync")).toBeTruthy()
         expect(screen.getByLabelText("Expand Config Sync")).toBeTruthy()
+
+        const panel = document.getElementById("config-sync-panel")
+        expect(panel).toBeTruthy()
+        expect(panel?.className).toContain("invisible")
 
         const section = screen.getByLabelText("Config Sync")
         expect(section.className).toContain("rounded-[16px]")
         expect(section.className).toContain("shadow-[0_18px_42px_rgba(0,0,0,0.22)]")
 
         // Wait for settings to load
+        await waitFor(() => expect(api.getRemoteEeSyncSettings).toHaveBeenCalled())
+    })
+
+    it("provides focus-visible styling on the header button", async () => {
+        render(<RemoteEeSyncSettings />)
+        const header = screen.getByRole("button", { name: /config sync/i })
+        expect(header.tagName.toLowerCase()).toBe("button")
+        expect(header.className).toContain("focus-visible:ring-2")
+        expect(header.className).toContain("focus-visible:ring-emerald-500/70")
         await waitFor(() => expect(api.getRemoteEeSyncSettings).toHaveBeenCalled())
     })
 
@@ -63,6 +79,35 @@ describe("Config Sync settings collapsible panel", () => {
         fireEvent.click(header)
         expect(header.getAttribute("aria-expanded")).toBe("false")
         expect(screen.getByLabelText("Expand Config Sync")).toBeTruthy()
+    })
+
+    it("toggles collapse/expand via Enter and Space keyboard navigation with ARIA updates", async () => {
+        render(<RemoteEeSyncSettings />)
+        const header = screen.getByRole("button", { name: /config sync/i })
+        const panel = document.getElementById("config-sync-panel")
+        expect(header.getAttribute("aria-expanded")).toBe("false")
+        expect(panel?.className).toContain("invisible")
+
+        // Press Enter to expand
+        fireEvent.keyDown(header, { key: "Enter" })
+        expect(header.getAttribute("aria-expanded")).toBe("true")
+        expect(panel?.className).toContain("visible")
+        expect(await screen.findByLabelText("Server")).toBeTruthy()
+
+        // Press Enter to collapse
+        fireEvent.keyDown(header, { key: "Enter" })
+        expect(header.getAttribute("aria-expanded")).toBe("false")
+        expect(panel?.className).toContain("invisible")
+
+        // Press Space to expand
+        fireEvent.keyDown(header, { key: " " })
+        expect(header.getAttribute("aria-expanded")).toBe("true")
+        expect(panel?.className).toContain("visible")
+
+        // Press Space to collapse
+        fireEvent.keyDown(header, { key: " " })
+        expect(header.getAttribute("aria-expanded")).toBe("false")
+        expect(panel?.className).toContain("invisible")
     })
 
     it("preserves form state across collapse and expand cycles", async () => {

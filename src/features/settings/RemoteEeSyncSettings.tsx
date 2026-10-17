@@ -108,12 +108,13 @@ export function RemoteEeSyncSettings({
             {...card.bindActivityHandlers}
             className="self-start overflow-hidden rounded-[16px] border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text-secondary)] shadow-[0_18px_42px_rgba(0,0,0,0.22)]"
         >
-            <div
-                className={`cursor-pointer transition-colors hover:bg-[var(--surface-hover)] min-h-[68px] bg-[var(--surface-hover)] px-4 py-4 ${card.isExpanded ? "border-b border-[var(--border)]" : ""}`}
-                onClick={() => card.setExpanded((current) => !current)}
-                role="button"
-                tabIndex={0}
+            <button
+                type="button"
+                id="config-sync-header"
                 aria-expanded={card.isExpanded}
+                aria-controls="config-sync-panel"
+                className={`w-full text-left cursor-pointer transition-colors hover:bg-[var(--surface-hover)] min-h-[68px] bg-[var(--surface-hover)] px-4 py-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/70 focus-visible:ring-inset ${card.isExpanded ? "border-b border-[var(--border)]" : ""}`}
+                onClick={() => card.setExpanded((current) => !current)}
                 onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault()
@@ -121,22 +122,23 @@ export function RemoteEeSyncSettings({
                     }
                 }}
             >
-                <div className="flex items-center justify-between gap-3">
-                    <div className="flex min-h-[36px] min-w-0 items-center gap-2 text-xl font-semibold text-[var(--text-primary)]">
+                <span className="flex items-center justify-between gap-3">
+                    <span className="flex min-h-[36px] min-w-0 items-center gap-2 text-xl font-semibold text-[var(--text-primary)]">
                         <Database size={20} className="shrink-0 text-emerald-400" />
-                        <div>Config Sync</div>
+                        <span>Config Sync</span>
                         <span
                             aria-label={card.isExpanded ? "Collapse Config Sync" : "Expand Config Sync"}
                             className="ml-1 inline-flex items-center justify-center rounded-[8px] border border-[var(--border)] bg-[var(--surface-hover)] p-1 text-[var(--text-secondary)]"
                         >
                             {card.isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                         </span>
-                    </div>
-                </div>
-            </div>
+                    </span>
+                </span>
+            </button>
 
             <div
-                className={`origin-top overflow-hidden transition-[max-height,opacity] duration-300 ease-out ${card.isExpanded ? "max-h-[1400px] opacity-100" : "max-h-0 opacity-0"}`}
+                id="config-sync-panel"
+                className={`origin-top overflow-hidden transition-[max-height,opacity,visibility] duration-300 ease-out ${card.isExpanded ? "max-h-[1400px] opacity-100 visible" : "max-h-0 opacity-0 invisible pointer-events-none"}`}
             >
                 <div className="space-y-4 p-4">
                     {!settings ? (

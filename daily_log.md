@@ -1,5 +1,19 @@
 # Daily Log - 2026-10-17
 
+## 2026-10-17 — Config Sync Header Keyboard & ARIA Accessibility (Start)
+- Audit Config Sync collapse/expand panel for keyboard accessibility and ARIA semantics.
+- Fix verified accessibility defects: native button semantics with focus-visible indicator, aria-controls referencing panel id, panel landmark region, and focus management when collapsed while strictly preserving visual appearance, transitions, and form persistence.
+- Add focused UI regression tests for Enter/Space keyboard toggling, aria-controls, and aria-expanded state.
+
+## 2026-10-17 — Config Sync Header Keyboard & ARIA Accessibility (End)
+- Audited Config Sync collapsible panel for keyboard accessibility and ARIA semantics.
+- Upgraded collapsible header to a semantic `<button type="button">` with `id="config-sync-header"`, `aria-expanded`, and `aria-controls="config-sync-panel"`.
+- Assigned `id="config-sync-panel"` to the controlled container and applied `invisible` (`visibility: hidden`) / `pointer-events-none` when collapsed, transitioning via `transition-[max-height,opacity,visibility]` to prevent hidden form inputs from trapping keyboard focus when collapsed.
+- Added emerald `focus-visible:ring-2` outline for clear keyboard focus indication while omitting rings on mouse clicks.
+- Preserved visual appearance, CSS styling, form state persistence, idle auto-collapse, and security boundaries.
+- Added comprehensive regression tests in `RemoteEeSyncSettings.test.tsx` verifying Enter/Space keyboard toggling, ARIA attributes, and focus-visible styling (247 tests passing).
+- All checks pass cleanly: `npm run check:quality`, `npm run test:unit`, and `npm run test:supplemental`.
+
 ## 2026-10-17 — Config Sync UI Polish (Start)
 - Rename Remote EE Sync to Config Sync. Make Config Sync a collapsible panel with styling and interaction identical to Admin Portal (default collapsed on Settings open, toggle via header/chevron, preserve fields, saved values, Save, Test Connection, and Advanced Settings).
 
