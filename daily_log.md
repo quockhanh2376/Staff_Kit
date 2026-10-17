@@ -1,3 +1,18 @@
+# Daily Log - 2026-10-18
+
+## 2026-10-18 — Staff Kit v2.2.1 Official GitHub Release Publication (Complete)
+- Approved Commit: `36b338206929f5d018f969ac7353da14bb01c3eb` (merged to `main` via `--ff-only`, pushed to `origin/main`).
+- Annotated Tag: `v2.2.1` pushed to `origin`.
+- Release URL: https://github.com/quockhanh2376/Staff_Kit/releases/tag/v2.2.1
+- Uploaded Assets & Hashes:
+  * `staff-kit.exe` (20,978,688 bytes | SHA256: `204A7AC7C7DB049B35A02682A203679FF4177E8012CD608A9FB4AA5BA3B7682E`)
+  * `Staff Kit_2.2.1_x64_en-US.msi` (7,749,632 bytes | SHA256: `30A77E8F05DD53CDA929CD8D1FDFDA895604D187475A25B53B8510293CC82A00`)
+  * `Staff Kit_2.2.1_x64-setup.exe` (5,578,040 bytes | SHA256: `0EA2289C7CF903F4357181442D06E98F1D0C816C7CADC42EB4976FC76DB4BDBF`)
+  * `SHA256SUMS.txt` (272 bytes | SHA256: `D50BD083DA20196218E9C669F725027C8FE5980FC8E9D2C14F2A18894B8B2969`)
+- Verification: Qeen downloaded assets from GitHub; SHA256 checksums matched approved build bit-for-bit.
+- Database Safety: Shared DB (`0AF089EC...`) and Local DB (`1AEA3889...`) verified bit-for-bit unchanged.
+- Release Status: OFFICIAL STABLE RELEASE COMPLETE.
+
 # Daily Log - 2026-10-17
 
 ## 2026-10-17 — Prepare Staff Kit v2.2.1 Official Release (Start)
