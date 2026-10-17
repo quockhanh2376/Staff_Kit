@@ -401,9 +401,10 @@ export function getMssqlEmployeeUpdateErrorMessage(error: unknown): string {
     if (
         normalized.includes("missing mssql configuration") ||
         normalized.includes("remote ee sync settings") ||
+        normalized.includes("config sync settings") ||
         normalized.includes("configuration is incomplete")
     ) {
-        return "Remote EE Sync settings are incomplete. Open Settings > Remote EE Sync and verify the connection profile."
+        return "Config Sync settings are incomplete. Open Settings > Config Sync and verify the connection profile."
     }
 
     if (normalized.includes("read-only") || normalized.includes("write-level permissions")) {

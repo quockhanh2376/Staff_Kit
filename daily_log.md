@@ -1,3 +1,16 @@
+# Daily Log - 2026-10-17
+
+## 2026-10-17 — Config Sync UI Polish (Start)
+- Rename Remote EE Sync to Config Sync. Make Config Sync a collapsible panel with styling and interaction identical to Admin Portal (default collapsed on Settings open, toggle via header/chevron, preserve fields, saved values, Save, Test Connection, and Advanced Settings).
+
+## 2026-10-17 — Config Sync UI Polish (End)
+- Renamed Remote EE Sync to Config Sync across UI title, labels, and feedback messages.
+- Re-architected Config Sync as a collapsible card with styling and interaction identical to Admin Portal: rounded-[16px] surface, header with emerald Database icon, badge chevron indicator, and smooth height/opacity transitions via useIdleCollapse.
+- Defaults to collapsed on Settings open; header click or chevron toggle smoothly expands and collapses the panel.
+- Form state is strictly preserved across collapse and expand cycles; Save Settings and Test Connection operate reliably when expanded.
+- Preserved all SQL connection, credential storage, Query B, TLS, and security gate boundaries without change.
+- Automated tests pass: 353 Rust tests, 245 Vitest frontend tests; full quality gate clean (lint, typecheck, production build, cargo check).
+
 # Daily Log - 2026-10-15
 
 ## 2026-10-15 — Simplify Remote EE Sync Settings (Start)
