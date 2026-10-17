@@ -1,5 +1,27 @@
 # Daily Log - 2026-10-17
 
+## 2026-10-17 — Prepare Staff Kit v2.2.1 Official Release (Start)
+- Branch: `release/v2.2.1` from baseline `9e6525f1243791f7b249e7ab922bd1c6bb9ff883`.
+- Objective: prepare official stable release v2.2.1 on dedicated release branch.
+- Scope: update application version metadata consistently across `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.lock` to `2.2.1` (WiX `2.2.1.0`), prepare release notes in `docs/release-notes/2026-10-17-v2.2.1.md`.
+- Preserve application functionality, database schema, and existing business logic unchanged.
+- Validation: verify clean quality checks (`npm run check:quality`) and build Windows desktop packages (`npm run tauri:build`) to verify EXE, MSI, and NSIS setup artifacts with SHA256 checksums.
+
+## 2026-10-17 — Prepare Staff Kit v2.2.1 Official Release (End)
+- Updated version metadata consistently to `2.2.1` (WiX `2.2.1.0`):
+  * `package.json`: `"version": "2.2.1"`
+  * `src-tauri/Cargo.toml`: `version = "2.2.1"`
+  * `src-tauri/tauri.conf.json`: `"version": "2.2.1"`, `"wix": { "version": "2.2.1.0" }`
+  * `src-tauri/Cargo.lock`: `name = "staff-kit"` `version = "2.2.1"`
+- Prepared comprehensive release notes in `docs/release-notes/2026-10-17-v2.2.1.md`.
+- Application functionality, database schema, and existing business logic remain completely unchanged.
+- Quality gates verified: `npm run check:quality` passed cleanly (ESLint, TypeScript typecheck, Vite production build, Cargo check). All unit, supplemental, and Tauri tests pass (247 frontend Vitest tests, 353 Rust tests).
+- Packaged Windows desktop artifacts built successfully via `npm run tauri:build`:
+  * Binary: `src-tauri/target/release/staff-kit.exe` (20,978,688 bytes | SHA256: `204a7ac7c7db049b35a02682a203679ff4177e8012cd608a9fb4aa5ba3b7682e`)
+  * WiX MSI: `src-tauri/target/release/bundle/msi/Staff Kit_2.2.1_x64_en-US.msi` (7,749,632 bytes | SHA256: `30a77e8f05dd53cda929cd8d1fdfda895604d187475a25b53b8510293cc82a00`)
+  * NSIS Setup: `src-tauri/target/release/bundle/nsis/Staff Kit_2.2.1_x64-setup.exe` (5,578,040 bytes | SHA256: `0ea2289c7cf903f4357181442d06e98f1d0c816c7cadc42eb4976fc76db4bdbf`)
+- Dedicated release branch prepared: `release/v2.2.1`.
+
 ## 2026-10-17 — Prepare Staff Kit v2.2.0-rc.3 Release (Start)
 - Branch: `release/v2.2.0-rc.3` from baseline `a2609a298c43e5f8a2b9f99a863fc6bd3193c8a2`.
 - Objective: prepare version 2.2.0-rc.3 release candidate on dedicated release branch.
