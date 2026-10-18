@@ -94,6 +94,7 @@ export function RemoteEeSyncSettings({
     const handleRemovePassword = async () => {
         setBusy("remove")
         setMessage(null)
+        setResult(null)
         try {
             await staffApi.removeRemoteEeSyncPassword()
             setSettings((current) => current ? { ...current, hasSavedPassword: false } : current)
@@ -198,11 +199,15 @@ export function RemoteEeSyncSettings({
                                     </button>
                                     <button
                                         type="button"
-                                        className="rounded-[8px] border border-[var(--border)] px-3 py-1.5 text-xs font-medium hover:bg-[var(--surface-hover)] disabled:opacity-50"
+                                        className={`rounded-[8px] px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-50 ${
+                                            result?.status === "PASS"
+                                                ? "border border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700"
+                                                : "border border-[var(--border)] hover:bg-[var(--surface-hover)]"
+                                        }`}
                                         disabled={busy !== null}
                                         onClick={() => void handleTest()}
                                     >
-                                        {busy === "test" ? "Testing…" : "Test Connection"}
+                                        {busy === "test" ? "Testing…" : result?.status === "PASS" ? "✓ Connected" : "Test Connection"}
                                     </button>
                                 </div>
                             </div>
@@ -253,14 +258,10 @@ export function RemoteEeSyncSettings({
                             </details>
 
                             {message && <p role="status" className="text-xs text-[var(--text-secondary)]">{message}</p>}
-                            {result && (
+                            {result && result.status !== "PASS" && (
                                 <div
                                     role="status"
-                                    className={`rounded border p-3 text-xs ${
-                                        result.status === "PASS"
-                                            ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
-                                            : "border-red-500/40 bg-red-500/10 text-red-200"
-                                    }`}
+                                    className="rounded border border-red-500/40 bg-red-500/10 p-3 text-xs text-red-200"
                                 >
                                     <strong>{result.status}</strong>: {result.reason}
                                     {result.rowCount !== null && <span className="ml-2">{result.rowCount} source rows</span>}

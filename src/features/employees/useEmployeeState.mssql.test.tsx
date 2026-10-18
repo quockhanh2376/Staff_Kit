@@ -51,7 +51,7 @@ describe("employee MSSQL update flow", () => {
         expect(api.previewEmployeeListMssqlSync).toHaveBeenCalledWith()
         expect(api.applyEmployeeListMssqlSync).not.toHaveBeenCalled()
         expect(result.current.mssqlSyncPreview?.counts.missing).toBe(4)
-        expect(result.current.mssqlUpdateMessage).toContain("Preview ready")
+        expect(result.current.mssqlUpdateMessage).toBeNull()
     })
 
     it("does not create a preview when the source query fails", async () => {
@@ -109,8 +109,24 @@ describe("employee MSSQL update flow", () => {
         expect(api.applyEmployeeListMssqlSync).toHaveBeenCalledWith("preview-1")
         expect(result.current.mssqlSyncPreview).toBeNull()
         expect(result.current.mssqlUpdateStatus).toBe("success")
-        expect(result.current.mssqlUpdateMessage).toContain("imported 1")
-        expect(result.current.mssqlUpdateMessage).toContain("missing 4")
+        expect(result.current.mssqlUpdateMessage).toBe("✓ Imported 1, updated 2 employees")
+    })
+
+    it("auto-hides approval success message after 10 seconds", async () => {
+        vi.useFakeTimers()
+        const { result } = renderHook(() => useEmployeeState(baseOptions))
+        await act(async () => { await result.current.updateEmployeeListFromMssql() })
+        await act(async () => { await result.current.applyEmployeeListMssqlSync() })
+
+        expect(result.current.mssqlUpdateStatus).toBe("success")
+        expect(result.current.mssqlUpdateMessage).toBe("✓ Imported 1, updated 2 employees")
+
+        act(() => {
+            vi.advanceTimersByTime(10000)
+        })
+        expect(result.current.mssqlUpdateMessage).toBeNull()
+        expect(result.current.mssqlUpdateStatus).toBe("idle")
+        vi.useRealTimers()
     })
 
     it("refreshes the displayed EE List after approved local apply", async () => {

@@ -160,9 +160,10 @@ describe("Config Sync settings collapsible panel", () => {
         ))
 
         fireEvent.click(screen.getByRole("button", { name: "Test Connection" }))
-        const status = await screen.findByRole("status")
-        expect(status.textContent).toContain("PASS")
-        expect(screen.getByText(/12 source rows/i)).toBeTruthy()
+        const connectedBtn = await screen.findByRole("button", { name: "✓ Connected" })
+        expect(connectedBtn).toBeTruthy()
+        expect(connectedBtn.className).toContain("bg-emerald-600")
+        expect(screen.queryByRole("status")).toBeNull()
     })
 
     it("supports admin account rotation directly through Save Settings", async () => {
@@ -221,5 +222,24 @@ describe("Config Sync settings collapsible panel", () => {
         expect(advanced).toBeTruthy()
         expect(screen.getByLabelText("Database")).toBeTruthy()
         expect(screen.getByLabelText("Port")).toBeTruthy()
+    })
+
+    it("resets Connected button state to Test Connection when server or credentials change", async () => {
+        render(<RemoteEeSyncSettings />)
+        const header = screen.getByRole("button", { name: /config sync/i })
+        fireEvent.click(header)
+
+        // Test connection successfully
+        const testBtn = await screen.findByRole("button", { name: "Test Connection" })
+        fireEvent.click(testBtn)
+        expect(await screen.findByRole("button", { name: "✓ Connected" })).toBeTruthy()
+
+        // Change server field
+        const serverInput = screen.getByLabelText("Server")
+        fireEvent.change(serverInput, { target: { value: "sql-updated.example" } })
+
+        // Button should reset to Test Connection
+        expect(screen.getByRole("button", { name: "Test Connection" })).toBeTruthy()
+        expect(screen.queryByRole("button", { name: "✓ Connected" })).toBeNull()
     })
 })

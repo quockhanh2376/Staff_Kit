@@ -317,7 +317,8 @@ export function useEmployeeState({
             }
 
             setMssqlSyncPreview(preview)
-            setMssqlUpdateMessage(`Preview ready: ${preview.counts.new} new, ${preview.counts.changed} changed, ${preview.counts.unchanged} unchanged, ${preview.counts.missing} missing.`)
+            setMssqlUpdateMessage(null)
+            setMssqlUpdateStatus("idle")
         } catch (error) {
             console.error("[Staff Kit] MSSQL employee update failed")
             const message = getMssqlEmployeeUpdateErrorMessage(error)
@@ -345,7 +346,18 @@ export function useEmployeeState({
             const result = await staffApi.applyEmployeeListMssqlSync(mssqlSyncPreview.previewId)
             setMssqlSyncPreview(null)
             setMssqlUpdateStatus("success")
-            setMssqlUpdateMessage(`Updated ${result.counts.changed}, imported ${result.counts.new}, unchanged ${result.counts.unchanged}, missing ${result.counts.missing}. Completed ${new Date(result.completedAt).toLocaleString()}.`)
+
+            const parts: string[] = []
+            if (result.counts.new > 0) parts.push(`Imported ${result.counts.new}`)
+            if (result.counts.changed > 0) parts.push(`updated ${result.counts.changed}`)
+            const summary = parts.length > 0 ? parts.join(", ") : "Sync completed"
+            setMssqlUpdateMessage(`✓ ${summary} ${summary.toLowerCase().includes("employee") ? "" : "employees"}`.trim())
+
+            mssqlAutoDismissTimerRef.current = setTimeout(() => {
+                setMssqlUpdateMessage(null)
+                setMssqlUpdateStatus("idle")
+            }, 10000)
+
             setStaffGroupFilter("employee_list")
             setTeamFilter(ALL_TEAMS_OPTION)
             setTeamFilterSearchTerm("")
