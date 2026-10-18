@@ -1,5 +1,33 @@
 # Daily Log - 2026-10-18
 
+## 2026-10-18 — Staff Kit Missing Drill-down & Bulk Move Group (Start)
+- Authorized by Zon/Cheki.
+- Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Scope:
+  1. In EE Sync Preview, make the Missing count badge clickable with cursor pointer and badge styling.
+  2. Open compact detail modal/drawer listing only Missing employees with Staff ID, Full Name, Current Group, and checkbox selection.
+  3. Support single selection, Select All, search filtering, Open Profile/Edit trigger, and bulk Move Group.
+  4. Allow selecting valid target group adhering to HR lifecycle rules; reject invalid transitions.
+  5. Confirmation step before save showing count, employee identities, current group → target group, and warning that Missing does not mean resigned.
+  6. Explicit approval required before group changes; transactional batch application using existing employee group transfer functions.
+  7. Refresh employee counts and EE Sync Preview after successful changes; recalculate Missing based on current EE List membership.
+  8. Remote Query B strictly SELECT-only; Missing never causes automatic Offboarding; preserve Conflicts, Skip/Approve gating, and audit trails.
+- Validation: Focused unit tests (Vitest), cargo check/tests, full quality gate (`npm run check:quality`). DB safety: preserve test DB.
+
+## 2026-10-18 — Staff Kit Missing Drill-down & Bulk Move Group (End)
+- Implementation (Victor):
+  * Added `MissingEmployeesModal.tsx` for drilling down Missing preview employees with search, single/bulk selection, Select All, individual edit trigger, and bulk group transfer.
+  * In `EmployeeView.tsx`: transformed Missing badge into interactive clickable button when missing > 0; hooked modal open/close, single edit via `enterTableEditModeForEmployee`, and transactional `handleBulkMoveMissing`.
+  * In `useEmployeeState.ts`: added `refreshMssqlSyncPreview` to dynamically re-evaluate sync preview against current database state without full manual trigger.
+  * Preserved HR lifecycle rules, transactional rollback on error, canonical employee IDs, asset loan audit history, conflict blocking, and theme/accessibility styling.
+- QA Validation (Qeen):
+  * Tested MissingEmployeesModal: 7/7 tests passing (render, search filter, single & select all, confirmation dialog, rejection/cancellation zero-write behavior, error handling).
+  * Tested employee MSSQL flow: 20/20 tests passing.
+  * Full quality gate (`npm run check:quality`): ESLint, TypeScript typecheck (`tsc -b`), Vite build, and Cargo check passed cleanly with 0 errors.
+  * Backend test suite (`npm run test:tauri`): 353 Rust tests passed cleanly.
+  * DB Safety: Test DB preserved; zero remote MSSQL writes; zero unintended local DB mutations.
+- Verdict: PASS. Ready for git commit and push to `origin/main`.
+
 ## 2026-10-18 — Staff Kit Compact EE Sync Status UI (Start)
 - Authorized by Zon/Cheki.
 - Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).

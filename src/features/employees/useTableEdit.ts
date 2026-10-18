@@ -218,6 +218,16 @@ export function useTableEdit({
         }
     }
 
+    const enterTableEditModeForEmployee = useCallback(
+        (employee: EmployeeRecord, columnKey = "fullName") => {
+            if (!canEditEmployeeTable) return
+            setTableEditMode(true)
+            resetInactivityTimer()
+            setActiveTableEditCell({ employeeId: employee.id, columnKey })
+        },
+        [canEditEmployeeTable, resetInactivityTimer],
+    )
+
     // ── Save edits ───────────────────────────────────────────────────────────────
 
     const handleSaveTableEdits = async () => {
@@ -408,6 +418,7 @@ export function useTableEdit({
         getEditableCellText,
         setDraftCellText,
         startTableCellEdit,
+        enterTableEditModeForEmployee,
         handleToggleTableEditMode,
         handleSaveTableEdits,
         handleMoveSelectedEmployees,

@@ -23,6 +23,8 @@ import { EmployeeCellContent } from "./EmployeeCellContent"
 import { downloadCsv, downloadXlsx } from "./employeeListExport"
 import { getUserErrorMessage } from "../../lib/errorHandling"
 import { getTeamPillClasses } from "../teams/teamColors"
+import { MissingEmployeesModal } from "./MissingEmployeesModal"
+import type { EmployeeRecord } from "../../types/staff"
 
 // ── Diacritic-insensitive highlight helper ─────────────────────────────────────
 function stripDiacritics(str: string): string {
@@ -104,7 +106,28 @@ export function EmployeeView({
     const unselectTimerRef = useRef<number | null>(null)
     const exportTimerRef = useRef<number | null>(null)
     const [showSyncDetails, setShowSyncDetails] = useState(false)
+    const [isMissingModalOpen, setIsMissingModalOpen] = useState(false)
     const syncPopoverRef = useRef<HTMLDivElement | null>(null)
+
+    const handleOpenEditFromMissing = useCallback((employee: EmployeeRecord) => {
+        setIsMissingModalOpen(false)
+        edit.enterTableEditModeForEmployee(employee, "fullName")
+    }, [edit])
+
+    const handleBulkMoveMissing = useCallback(async (employeeIds: number[], targetGroup: string) => {
+        await staffApi.moveEmployeesGroup({
+            employeeIds,
+            targetStaffGroup: targetGroup,
+            action: targetGroup.startsWith("set_floating") || targetGroup === "floating"
+                ? "floating"
+                : targetGroup === "clear_floating"
+                ? "clear_floating"
+                : targetGroup === "reject_offer"
+                ? "reject_offer"
+                : undefined,
+        })
+        await emp.refreshMssqlSyncPreview()
+    }, [emp])
 
     const clearMenuTimer = useCallback((timerRef: React.MutableRefObject<number | null>) => {
         if (timerRef.current !== null) {
@@ -415,9 +438,21 @@ export function EmployeeView({
                                     <span className="rounded bg-sky-500/15 px-2 py-0.5 font-medium text-sky-400">
                                         Changed <b>{emp.mssqlSyncPreview.counts.changed}</b>
                                     </span>
-                                    <span className="rounded bg-amber-500/15 px-2 py-0.5 font-medium text-amber-400">
-                                        Missing <b>{emp.mssqlSyncPreview.counts.missing}</b>
-                                    </span>
+                                    {emp.mssqlSyncPreview.counts.missing > 0 ? (
+                                        <button
+                                            type="button"
+                                            onClick={() => setIsMissingModalOpen(true)}
+                                            className="rounded bg-amber-500/15 px-2 py-0.5 font-medium text-amber-400 hover:bg-amber-500/25 transition-colors cursor-pointer text-left"
+                                            title="Click to view details and manage missing employees"
+                                            aria-label={`Missing ${emp.mssqlSyncPreview.counts.missing} employees - Click to view`}
+                                        >
+                                            Missing <b>{emp.mssqlSyncPreview.counts.missing}</b>
+                                        </button>
+                                    ) : (
+                                        <span className="rounded bg-amber-500/15 px-2 py-0.5 font-medium text-amber-400">
+                                            Missing <b>{emp.mssqlSyncPreview.counts.missing}</b>
+                                        </span>
+                                    )}
                                     <span className="rounded bg-rose-500/15 px-2 py-0.5 font-medium text-rose-400">
                                         Conflicts <b>{emp.mssqlSyncPreview.counts.conflicts}</b>
                                     </span>
@@ -1089,6 +1124,19 @@ export function EmployeeView({
                     </div>
                 </div>
             </div>
+
+            {/* Missing Employees Drill-down Modal */}
+            {emp.mssqlSyncPreview && (
+                <MissingEmployeesModal
+                    open={isMissingModalOpen}
+                    onClose={() => setIsMissingModalOpen(false)}
+                    missingRows={emp.mssqlSyncPreview.rows.filter((r) => r.status === "missing")}
+                    onOpenEditEmployee={handleOpenEditFromMissing}
+                    onBulkMoveGroup={handleBulkMoveMissing}
+                    fetchAllFilteredEmployees={emp.fetchAllFilteredEmployees}
+                    canEdit={canEditEmployeeTable}
+                />
+            )}
         </section>
     )
 }

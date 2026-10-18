@@ -271,5 +271,9 @@ describe("employee MSSQL feedback rendering contract", () => {
         // Mobile card renders team pill
         expect(source).toContain("getTeamPillClasses")
         expect(source).toContain("employee.teamName")
+
+        // Missing count clickable button and MissingEmployeesModal
+        expect(source).toContain('onClick={() => setIsMissingModalOpen(true)}')
+        expect(source).toContain("<MissingEmployeesModal")
     })
 })

@@ -375,6 +375,31 @@ export function useEmployeeState({
         }
     }
 
+    const refreshMssqlSyncPreview = async () => {
+        try {
+            const preview = await staffApi.previewEmployeeListMssqlSync()
+            const hasAnyChanges =
+                preview.counts.new > 0 ||
+                preview.counts.changed > 0 ||
+                preview.counts.missing > 0 ||
+                preview.counts.conflicts > 0
+
+            if (!hasAnyChanges) {
+                setMssqlSyncPreview(null)
+                setMssqlUpdateStatus("success")
+                setMssqlUpdateMessage("✓ No changes")
+                mssqlAutoDismissTimerRef.current = setTimeout(() => {
+                    setMssqlUpdateMessage(null)
+                    setMssqlUpdateStatus("idle")
+                }, 10000)
+            } else {
+                setMssqlSyncPreview(preview)
+            }
+        } catch (error) {
+            console.error("[Staff Kit] MSSQL employee preview refresh failed", error)
+        }
+    }
+
     const skipEmployeeListMssqlSync = () => {
         if (mssqlAutoDismissTimerRef.current) {
             clearTimeout(mssqlAutoDismissTimerRef.current)
@@ -428,6 +453,7 @@ export function useEmployeeState({
         commitTypedTeamSelection,
         toggleColumnSort,
         updateEmployeeListFromMssql,
+        refreshMssqlSyncPreview,
         applyEmployeeListMssqlSync,
         skipEmployeeListMssqlSync,
         cancelEmployeeListMssqlSync,
