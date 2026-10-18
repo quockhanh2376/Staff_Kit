@@ -1,5 +1,28 @@
 # Daily Log - 2026-10-18
 
+## 2026-10-18 — Staff Kit HR Lifecycle UI Label Cleanup (Start)
+- Authorized by Zon/Cheki.
+- Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Scope:
+  1. Remove visible "Rehired" badge beneath employee names in Employee List (desktop table and mobile card view). Preserve `lifecycle_status`, audit history, and rehire behavior in backend/DB.
+  2. Rename dropdown option "Rehire to Employee List" to "Employee List".
+  3. Keep existing group-transfer confirmation, permissions, and database logic unchanged.
+  4. Update focused UI tests, run quality gate, commit and push.
+- Validation: Focused unit tests (Vitest), full quality gate (`npm run check:quality`). DB safety: preserve test DB.
+
+## 2026-10-18 — Staff Kit HR Lifecycle UI Label Cleanup (End)
+- Implementation (Victor):
+  * Removed desktop table and mobile card visible "Rehired" badges in `EmployeeView.tsx`. Backend lifecycle status, audit trail, and rehire handling remain untouched.
+  * Renamed dropdown option in `EmployeeView.tsx` from "Rehire to Employee List" to "Employee List".
+  * Retained action button rehire logic, confirmation dialogues, permissions, and database logic completely unchanged.
+  * Added focused unit test suite `EmployeeView.lifecycleLabels.test.tsx` verifying absence of "Rehired" badge and proper dropdown option text/value.
+- QA Validation (Qeen):
+  * Verified unit tests: 59 passed across employee test suite (`EmployeeView.lifecycleLabels.test.tsx`, `MissingEmployeesModal.test.tsx`, etc.).
+  * Full quality gate (`npm run check:quality`): ESLint, TypeScript (`tsc -b`), Vite build, and Cargo check passed with 0 errors.
+  * Verified dark/light mode compatibility (uses standard CSS variables and tokens).
+  * Confirmed zero DB schema, migration, or backend query changes.
+- Verdict: PASS. Ready for git commit and push to `origin/main`.
+
 ## 2026-10-18 — Staff Kit Missing Drill-down & Bulk Move Group (Start)
 - Authorized by Zon/Cheki.
 - Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).

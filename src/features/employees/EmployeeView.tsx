@@ -765,11 +765,6 @@ export function EmployeeView({
                                                                                 Offer Rejected
                                                                             </span>
                                                                         )}
-                                                                        {column.key === "fullName" && employee.lifecycleStatus === "rehired" && (
-                                                                            <span className="ml-2 inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
-                                                                                Rehired
-                                                                            </span>
-                                                                        )}
                                                                     </span>
                                                                 )
                                                             })()}
@@ -803,11 +798,6 @@ export function EmployeeView({
                                             {employee.lifecycleStatus === "offer_rejected" && (
                                                 <span className="rounded-full border border-rose-500/30 bg-rose-500/15 px-1.5 py-0.5 text-[10px] text-rose-400">
                                                     Offer Rejected
-                                                </span>
-                                            )}
-                                            {employee.lifecycleStatus === "rehired" && (
-                                                <span className="rounded-full border border-emerald-500/30 bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-400">
-                                                    Rehired
                                                 </span>
                                             )}
                                         </div>
@@ -923,7 +913,7 @@ export function EmployeeView({
                                         )}
                                         {emp.staffGroupFilter === "offboarding" && (
                                             <>
-                                                <option value="employee_list">Rehire to Employee List</option>
+                                                <option value="employee_list">Employee List</option>
                                                 <option value="internal_movement">Move to Internal Movement</option>
                                                 <option value="onboarding">Move to Onboarding</option>
                                             </>
