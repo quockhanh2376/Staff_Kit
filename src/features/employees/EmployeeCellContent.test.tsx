@@ -159,4 +159,26 @@ describe("EmployeeCellContent", () => {
         fireEvent.click(screen.getByText("Engineering"))
         expect(onClick).toHaveBeenCalledTimes(1)
     })
+
+    it("renders team name as a styled pill for non-editable teamName column", () => {
+        const teamColumn: UiColumnDefinition = { key: "teamName", label: "Team", source: "core" }
+        renderCell(teamColumn, "Engineering")
+        const pill = screen.getByText("Engineering")
+        expect(pill).toHaveClass("rounded-full", "border", "font-semibold")
+        expect(pill.className).toContain("text-emerald-800")
+    })
+
+    it("renders neutral pill for unknown teams", () => {
+        const teamColumn: UiColumnDefinition = { key: "teamName", label: "Team", source: "core" }
+        renderCell(teamColumn, "Mystery Squad")
+        const pill = screen.getByText("Mystery Squad")
+        expect(pill).toHaveClass("rounded-full", "border", "font-semibold")
+        expect(pill.className).toContain("text-slate-300")
+    })
+
+    it("renders em-dash for empty teamName", () => {
+        const teamColumn: UiColumnDefinition = { key: "teamName", label: "Team", source: "core" }
+        renderCell(teamColumn, "")
+        expect(screen.getByText("—")).toBeInTheDocument()
+    })
 })

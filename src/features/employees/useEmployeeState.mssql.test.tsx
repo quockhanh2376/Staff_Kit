@@ -143,7 +143,8 @@ describe("employee MSSQL update flow", () => {
         expect(api.applyEmployeeListMssqlSync).not.toHaveBeenCalled()
     })
 
-    it("does not invoke apply API when all previewed records are unchanged", async () => {
+    it("suppresses preview and shows 10-second no-change message when all records are unchanged", async () => {
+        vi.useFakeTimers()
         api.previewEmployeeListMssqlSync.mockResolvedValueOnce({
             previewId: "preview-unchanged",
             createdAt: "2026-10-15T00:00:00Z",
@@ -153,10 +154,18 @@ describe("employee MSSQL update flow", () => {
         })
         const { result } = renderHook(() => useEmployeeState(baseOptions))
         await act(async () => { await result.current.updateEmployeeListFromMssql() })
-        expect(result.current.mssqlSyncPreview?.counts.unchanged).toBe(10)
 
-        await act(async () => { await result.current.applyEmployeeListMssqlSync() })
+        expect(result.current.mssqlSyncPreview).toBeNull()
+        expect(result.current.mssqlUpdateStatus).toBe("success")
+        expect(result.current.mssqlUpdateMessage).toBe("✓ No changes")
         expect(api.applyEmployeeListMssqlSync).not.toHaveBeenCalled()
+
+        act(() => {
+            vi.advanceTimersByTime(10000)
+        })
+        expect(result.current.mssqlUpdateMessage).toBeNull()
+        expect(result.current.mssqlUpdateStatus).toBe("idle")
+        vi.useRealTimers()
     })
 
     it("does not invoke apply API when records are missing-only (report-only)", async () => {
@@ -225,5 +234,26 @@ describe("employee MSSQL feedback rendering contract", () => {
         expect(source).toContain("onClick={emp.skipEmployeeListMssqlSync}")
         expect(source).toContain("const hasImportableChanges =")
         expect(source).toContain("const canApprove = hasImportableChanges && !hasConflicts")
+    })
+
+    it("anchors the preview as a floating popover and eliminates unchanged rows UI", () => {
+        const source = readFileSync(resolve(process.cwd(), "src/features/employees/EmployeeView.tsx"), "utf8")
+
+        // Floating popover anchored to Update button
+        expect(source).toContain("absolute left-0 top-full z-40 mt-2")
+        expect(source).toContain('role="dialog"')
+        expect(source).toContain('aria-label="EE List sync preview"')
+
+        // Unchanged rows UI completely removed
+        expect(source).not.toContain("Unchanged rows (")
+        expect(source).not.toContain("unchangedRows")
+
+        // View details toggle
+        expect(source).toContain("View details")
+        expect(source).toContain("Hide details")
+
+        // Mobile card renders team pill
+        expect(source).toContain("getTeamPillClasses")
+        expect(source).toContain("employee.teamName")
     })
 })

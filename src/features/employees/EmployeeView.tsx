@@ -22,6 +22,7 @@ import { collectDuplicateComputerEmployeeIds } from "./employeeTableRules"
 import { EmployeeCellContent } from "./EmployeeCellContent"
 import { downloadCsv, downloadXlsx } from "./employeeListExport"
 import { getUserErrorMessage } from "../../lib/errorHandling"
+import { getTeamPillClasses } from "../teams/teamColors"
 
 // ── Diacritic-insensitive highlight helper ─────────────────────────────────────
 function stripDiacritics(str: string): string {
@@ -102,6 +103,8 @@ export function EmployeeView({
     const exportMenuRef = useRef<HTMLDetailsElement | null>(null)
     const unselectTimerRef = useRef<number | null>(null)
     const exportTimerRef = useRef<number | null>(null)
+    const [showSyncDetails, setShowSyncDetails] = useState(false)
+    const syncPopoverRef = useRef<HTMLDivElement | null>(null)
 
     const clearMenuTimer = useCallback((timerRef: React.MutableRefObject<number | null>) => {
         if (timerRef.current !== null) {
@@ -340,22 +343,170 @@ export function EmployeeView({
                         Clear Filters
                     </button>
 
-                    <button
-                        className="inline-flex h-8 items-center rounded-[8px] border border-emerald-500/70 bg-emerald-500/10 px-3 text-sm font-bold text-emerald-300 shadow-[0_0_0_1px_rgba(16,185,129,0.2)] transition hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-60"
-                        onClick={() => void emp.updateEmployeeListFromMssql()}
-                        type="button"
-                        disabled={emp.isUpdatingEmployeeListFromMssql}
-                        title="Update Employee list from MSSQL"
-                    >
-                        {emp.isUpdatingEmployeeListFromMssql ? (
-                            <span className="inline-flex items-center gap-2">
-                                <LoaderCircle className="animate-spin" size={14} />
-                                updating
-                            </span>
-                        ) : (
-                            "update"
+                    <div className="relative inline-flex items-center">
+                        <button
+                            className="inline-flex h-8 items-center rounded-[8px] border border-emerald-500/70 bg-emerald-500/10 px-3 text-sm font-bold text-emerald-300 shadow-[0_0_0_1px_rgba(16,185,129,0.2)] transition hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                            onClick={() => void emp.updateEmployeeListFromMssql()}
+                            type="button"
+                            disabled={emp.isUpdatingEmployeeListFromMssql}
+                            title="Update Employee list from MSSQL"
+                        >
+                            {emp.isUpdatingEmployeeListFromMssql ? (
+                                <span className="inline-flex items-center gap-2">
+                                    <LoaderCircle className="animate-spin" size={14} />
+                                    updating
+                                </span>
+                            ) : (
+                                "update"
+                            )}
+                        </button>
+
+                        {/* Anchored floating sync popover */}
+                        {emp.mssqlSyncPreview && (
+                            <div
+                                ref={syncPopoverRef}
+                                className="absolute left-0 top-full z-40 mt-2 w-[440px] rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-2xl"
+                                role="dialog"
+                                aria-label="EE List sync preview"
+                            >
+                                <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                        <h2 className="text-sm font-bold text-[var(--text-primary)]">EE List sync preview</h2>
+                                        <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
+                                            Previewed {new Date(emp.mssqlSyncPreview.createdAt).toLocaleTimeString()}
+                                        </p>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <button
+                                            className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-hover)] disabled:opacity-50"
+                                            onClick={emp.skipEmployeeListMssqlSync}
+                                            type="button"
+                                            disabled={emp.isApplyingMssqlSync}
+                                        >Skip</button>
+                                        {(() => {
+                                            const hasImportableChanges =
+                                                emp.mssqlSyncPreview.counts.new > 0 || emp.mssqlSyncPreview.counts.changed > 0
+                                            const hasConflicts = emp.mssqlSyncPreview.counts.conflicts > 0
+                                            const canApprove = hasImportableChanges && !hasConflicts
+
+                                            return (
+                                                <button
+                                                    className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+                                                    onClick={() => void emp.applyEmployeeListMssqlSync()}
+                                                    type="button"
+                                                    disabled={emp.isApplyingMssqlSync || !canApprove}
+                                                    title={
+                                                        hasConflicts
+                                                            ? "Resolve Staff Code group conflicts before approving"
+                                                            : !hasImportableChanges
+                                                              ? "No new or changed records to approve"
+                                                              : undefined
+                                                    }
+                                                >{emp.isApplyingMssqlSync ? "Applying…" : "Approve"}</button>
+                                            )
+                                        })()}
+                                    </div>
+                                </div>
+
+                                <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                                    <span className="rounded bg-emerald-500/15 px-2 py-0.5 font-medium text-emerald-400">
+                                        New <b>{emp.mssqlSyncPreview.counts.new}</b>
+                                    </span>
+                                    <span className="rounded bg-sky-500/15 px-2 py-0.5 font-medium text-sky-400">
+                                        Changed <b>{emp.mssqlSyncPreview.counts.changed}</b>
+                                    </span>
+                                    <span className="rounded bg-amber-500/15 px-2 py-0.5 font-medium text-amber-400">
+                                        Missing <b>{emp.mssqlSyncPreview.counts.missing}</b>
+                                    </span>
+                                    <span className="rounded bg-rose-500/15 px-2 py-0.5 font-medium text-rose-400">
+                                        Conflicts <b>{emp.mssqlSyncPreview.counts.conflicts}</b>
+                                    </span>
+                                </div>
+
+                                {emp.mssqlSyncPreview.conflicts.length > 0 && (
+                                    <div className="mt-2 rounded-md border border-rose-500/30 bg-rose-500/10 p-2 text-xs text-rose-300">
+                                        <div className="font-semibold">Sync Blocked: Conflicts detected</div>
+                                        <div className="mt-0.5 space-y-0.5">
+                                            {emp.mssqlSyncPreview.conflicts.map((item) => (
+                                                <div key={item.code}>{item.code}: {item.reason}</div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {emp.mssqlSyncPreview.counts.missing > 0 &&
+                                    emp.mssqlSyncPreview.counts.new === 0 &&
+                                    emp.mssqlSyncPreview.counts.changed === 0 &&
+                                    emp.mssqlSyncPreview.counts.conflicts === 0 && (
+                                    <div className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-xs text-amber-300">
+                                        Missing rows are report-only. No records to approve.
+                                    </div>
+                                )}
+
+                                {(() => {
+                                    const hasDetailsRows =
+                                        emp.mssqlSyncPreview.counts.new > 0 ||
+                                        emp.mssqlSyncPreview.counts.changed > 0 ||
+                                        emp.mssqlSyncPreview.counts.conflicts > 0
+
+                                    if (!hasDetailsRows) return null
+
+                                    const relevantRows = emp.mssqlSyncPreview.rows.filter(
+                                        (row) => row.status === "new" || row.status === "changed" || row.status === "conflict"
+                                    )
+
+                                    const getStatusBadge = (status: string) => {
+                                        switch (status) {
+                                            case "new":
+                                                return <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase text-emerald-400">New</span>
+                                            case "changed":
+                                                return <span className="rounded bg-sky-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase text-sky-400">Changed</span>
+                                            case "conflict":
+                                                return <span className="rounded bg-rose-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase text-rose-400">Conflict</span>
+                                            default:
+                                                return <span className="rounded bg-gray-500/20 px-1.5 py-0.5 text-[10px] font-medium text-gray-400">{status}</span>
+                                        }
+                                    }
+
+                                    return (
+                                        <div className="mt-3 border-t border-[var(--border)] pt-2">
+                                            <button
+                                                className="text-xs font-semibold text-[var(--primary)] hover:underline"
+                                                onClick={() => setShowSyncDetails((v) => !v)}
+                                                type="button"
+                                            >
+                                                {showSyncDetails ? "Hide details" : "View details"}
+                                            </button>
+                                            {showSyncDetails && (
+                                                <div className="mt-2 max-h-56 overflow-auto rounded-md border border-[var(--border)]">
+                                                    <table className="w-full text-left text-xs">
+                                                        <thead className="sticky top-0 bg-[var(--surface)] text-[var(--text-secondary)] shadow-sm">
+                                                            <tr>
+                                                                <th className="px-2.5 py-1.5">Staff Code</th>
+                                                                <th className="px-2.5 py-1.5">Result</th>
+                                                                <th className="px-2.5 py-1.5">Local Name</th>
+                                                                <th className="px-2.5 py-1.5">Source Name</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {relevantRows.map((row, index) => (
+                                                                <tr key={`diff-${row.code}-${row.status}-${index}`} className="border-t border-[var(--border)]">
+                                                                    <td className="px-2.5 py-1 font-mono font-medium text-[var(--text-primary)]">{row.code}</td>
+                                                                    <td className="px-2.5 py-1">{getStatusBadge(row.status)}</td>
+                                                                    <td className="px-2.5 py-1 text-[var(--text-secondary)]">{row.localName ?? "—"}</td>
+                                                                    <td className="px-2.5 py-1 text-[var(--text-secondary)]">{row.sourceName ?? "—"}</td>
+                                                                </tr>
+                                                            ))}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )
+                                })()}
+                            </div>
                         )}
-                    </button>
+                    </div>
 
                     {emp.mssqlUpdateMessage && (
                         <span
@@ -372,149 +523,6 @@ export function EmployeeView({
                     )}
                 </div>
             </div>
-
-            {emp.mssqlSyncPreview && (
-                <div className="mx-4 mt-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 md:mx-8">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                            <h2 className="text-sm font-bold">EE List sync preview</h2>
-                            <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                                Query B includes non-resigned Staff with an AspNetUsers account. Missing rows are report-only; nothing is written until you approve.
-                            </p>
-                            <p className="mt-1 text-xs text-[var(--text-secondary)]">Previewed {new Date(emp.mssqlSyncPreview.createdAt).toLocaleString()}</p>
-                        </div>
-                        <div className="flex gap-2">
-                            <button
-                                className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs hover:bg-[var(--surface-hover)] disabled:opacity-50"
-                                onClick={emp.skipEmployeeListMssqlSync}
-                                type="button"
-                                disabled={emp.isApplyingMssqlSync}
-                            >Skip</button>
-                            {(() => {
-                                const hasImportableChanges =
-                                    emp.mssqlSyncPreview.counts.new > 0 || emp.mssqlSyncPreview.counts.changed > 0
-                                const hasConflicts = emp.mssqlSyncPreview.counts.conflicts > 0
-                                const canApprove = hasImportableChanges && !hasConflicts
-
-                                return (
-                                    <button
-                                        className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
-                                        onClick={() => void emp.applyEmployeeListMssqlSync()}
-                                        type="button"
-                                        disabled={emp.isApplyingMssqlSync || !canApprove}
-                                        title={
-                                            hasConflicts
-                                                ? "Resolve Staff Code group conflicts before approving"
-                                                : !hasImportableChanges
-                                                  ? "No new or changed records to approve"
-                                                  : undefined
-                                        }
-                                    >{emp.isApplyingMssqlSync ? "Applying…" : "Approve"}</button>
-                                )
-                            })()}
-                        </div>
-                    </div>
-                    <div className="mt-3 flex flex-wrap gap-3 text-xs">
-                        <span>New <b>{emp.mssqlSyncPreview.counts.new}</b></span>
-                        <span>Changed <b>{emp.mssqlSyncPreview.counts.changed}</b></span>
-                        <span>Unchanged <b>{emp.mssqlSyncPreview.counts.unchanged}</b></span>
-                        <span>Missing <b>{emp.mssqlSyncPreview.counts.missing}</b></span>
-                        <span>Conflicts <b>{emp.mssqlSyncPreview.counts.conflicts}</b></span>
-                    </div>
-                    {emp.mssqlSyncPreview.conflicts.length > 0 && (
-                        <p className="mt-2 text-xs text-red-300">{emp.mssqlSyncPreview.conflicts.map((item) => `${item.code}: ${item.reason}`).join("; ")}</p>
-                    )}
-                    {(() => {
-                        const diffRows = emp.mssqlSyncPreview.rows.filter((row) => row.status !== "unchanged")
-                        const unchangedRows = emp.mssqlSyncPreview.rows.filter((row) => row.status === "unchanged")
-
-                        const getStatusBadge = (status: string) => {
-                            switch (status) {
-                                case "new":
-                                    return <span className="rounded bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-400">New</span>
-                                case "changed":
-                                    return <span className="rounded bg-sky-500/20 px-2 py-0.5 text-[10px] font-bold uppercase text-sky-400">Changed</span>
-                                case "missing":
-                                    return <span className="rounded bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-400">Missing (Report-only)</span>
-                                case "conflict":
-                                    return <span className="rounded bg-rose-500/20 px-2 py-0.5 text-[10px] font-bold uppercase text-rose-400">Conflict</span>
-                                default:
-                                    return <span className="rounded bg-gray-500/20 px-2 py-0.5 text-[10px] font-medium text-gray-400">{status}</span>
-                            }
-                        }
-
-                        const getRowHighlight = (status: string) => {
-                            switch (status) {
-                                case "new":
-                                    return "bg-emerald-500/5 hover:bg-emerald-500/10"
-                                case "changed":
-                                    return "bg-sky-500/5 hover:bg-sky-500/10"
-                                case "missing":
-                                    return "bg-amber-500/5 hover:bg-amber-500/10"
-                                case "conflict":
-                                    return "bg-rose-500/5 hover:bg-rose-500/10"
-                                default:
-                                    return ""
-                            }
-                        }
-
-                        return (
-                            <div className="mt-3 space-y-3">
-                                {diffRows.length > 0 ? (
-                                    <div className="max-h-64 overflow-auto rounded-md border border-[var(--border)]">
-                                        <table className="w-full text-left text-xs">
-                                            <thead className="sticky top-0 bg-[var(--surface)] text-[var(--text-secondary)] shadow-sm">
-                                                <tr>
-                                                    <th className="px-3 py-2">Staff Code</th>
-                                                    <th className="px-3 py-2">Result</th>
-                                                    <th className="px-3 py-2">Local Name</th>
-                                                    <th className="px-3 py-2">Source Name</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {diffRows.map((row, index) => (
-                                                    <tr key={`diff-${row.code}-${row.status}-${index}`} className={`border-t border-[var(--border)] transition ${getRowHighlight(row.status)}`}>
-                                                        <td className="px-3 py-1.5 font-mono font-medium">{row.code}</td>
-                                                        <td className="px-3 py-1.5">{getStatusBadge(row.status)}</td>
-                                                        <td className="px-3 py-1.5">{row.localName ?? "—"}</td>
-                                                        <td className="px-3 py-1.5">{row.sourceName ?? "—"}</td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                ) : (
-                                    <div className="rounded-md border border-[var(--border)] bg-[var(--surface-hover)]/20 px-3 py-2 text-xs text-[var(--text-secondary)]">
-                                        No diff rows detected. All employee records match HRMS.
-                                    </div>
-                                )}
-
-                                {unchangedRows.length > 0 && (
-                                    <details className="rounded-md border border-[var(--border)] bg-[var(--surface-hover)]/20 text-xs">
-                                        <summary className="cursor-pointer px-3 py-2 font-medium text-[var(--text-secondary)] select-none hover:text-[var(--text-primary)]">
-                                            Unchanged rows ({unchangedRows.length}) — Click to expand
-                                        </summary>
-                                        <div className="max-h-48 overflow-auto border-t border-[var(--border)]">
-                                            <table className="w-full text-left text-xs">
-                                                <tbody>
-                                                    {unchangedRows.map((row, index) => (
-                                                        <tr key={`unchanged-${row.code}-${index}`} className="border-b border-[var(--border)]/30 hover:bg-[var(--surface-hover)]/40">
-                                                            <td className="px-3 py-1 font-mono text-[var(--text-secondary)]">{row.code}</td>
-                                                            <td className="px-3 py-1 text-[var(--text-secondary)]">Unchanged</td>
-                                                            <td className="px-3 py-1 text-[var(--text-secondary)]">{row.localName ?? "—"}</td>
-                                                            <td className="px-3 py-1 text-[var(--text-secondary)]">{row.sourceName ?? "—"}</td>
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    </details>
-                                )}
-                            </div>
-                        )
-                    })()}
-                </div>
-            )}
 
             {/* Table area */}
             <div className="px-4 py-6 md:px-8">
@@ -775,7 +783,19 @@ export function EmployeeView({
                                     </span>
                                 </div>
                                 <div className="mt-3 space-y-1 text-xs text-[var(--text-secondary)]">
-                                    <div>{employee.teamName ?? "-"}</div>
+                                    <div>
+                                        {employee.teamName ? (
+                                            <span
+                                                className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${getTeamPillClasses(
+                                                    employee.teamName,
+                                                )}`}
+                                            >
+                                                {employee.teamName}
+                                            </span>
+                                        ) : (
+                                            "-"
+                                        )}
+                                    </div>
                                     <div>{employee.project ?? "-"}</div>
                                     <div>{employee.email ?? "-"}</div>
                                 </div>

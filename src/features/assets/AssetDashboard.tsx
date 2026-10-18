@@ -182,13 +182,13 @@ const DEFAULT_CATEGORY_LIST_COLUMN_ORDER: CategoryListColumnKey[] = [
 const DEFAULT_VISIBLE_CATEGORY_LIST_COLUMN_KEYS = DEFAULT_CATEGORY_LIST_COLUMN_ORDER.slice()
 
 const dashboardShellClass =
-  "mt-4 rounded-[18px] border border-[#222938] bg-[#151921] px-5 py-5 text-slate-300 shadow-[0_16px_38px_rgba(0,0,0,0.24)]"
+  "mt-4 rounded-[18px] border border-[var(--border)] bg-[var(--surface)] px-5 py-5 text-[var(--text-primary)] shadow-sm"
 const dashboardShellPrimaryButtonClass =
-  "inline-flex h-10 items-center gap-2 rounded-md border border-transparent bg-[#00d68f] px-5 text-sm font-semibold text-[#08130f] transition hover:bg-[#17e29a] disabled:cursor-not-allowed disabled:opacity-50"
+  "inline-flex h-10 items-center gap-2 rounded-md border border-transparent bg-emerald-500 px-5 text-sm font-semibold text-white transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
 const dashboardShellSecondaryButtonClass =
-  "inline-flex h-10 items-center gap-2 rounded-md border border-[#283140] bg-[#1a202b] px-4 text-sm font-medium text-slate-100 transition hover:bg-[#202737] disabled:cursor-not-allowed disabled:opacity-50"
+  "inline-flex h-10 items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--surface)] px-4 text-sm font-medium text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)] disabled:cursor-not-allowed disabled:opacity-50"
 const dashboardShellLabelClass =
-  "text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8a93a4]"
+  "text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--text-secondary)]"
 
 const SERIALIZED_OVERVIEW_CARD_VISUALS = {
   laptop: {
@@ -502,7 +502,7 @@ export function AssetDashboard({
     <label className="relative min-w-0 flex-1 max-sm:w-full sm:w-[320px] xl:w-[280px] 2xl:w-[360px]">
         <Search
           size={15}
-          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#8f98a8]"
+          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-secondary)]"
         />
         <input
           aria-label="Search serialized assets"
@@ -514,7 +514,7 @@ export function AssetDashboard({
         />
         <button
           aria-label="Clear serialized search and filters"
-          className={`absolute right-2 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-[#8f98a8] transition hover:bg-[#202737] hover:text-slate-100 disabled:cursor-default disabled:hover:bg-transparent ${
+          className={`absolute right-2 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-[var(--text-secondary)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] disabled:cursor-default disabled:hover:bg-transparent ${
             hasActiveSerializedFilters ? "opacity-100" : "opacity-35"
           }`}
           disabled={!hasActiveSerializedFilters}
@@ -551,8 +551,8 @@ export function AssetDashboard({
           key={tab}
           className={
             activeTab === tab
-              ? "rounded-full border border-[#00d68f] bg-[#0d1f18] px-4 py-2 text-[13px] font-semibold text-[#00d68f] xl:px-3.5"
-              : "rounded-full border border-[#293244] bg-[#1a202b] px-4 py-2 text-[13px] font-semibold text-[#8f98a8] transition hover:border-[#354055] hover:bg-[#202737] hover:text-slate-100 xl:px-3.5"
+              ? "rounded-full border border-emerald-500 bg-emerald-500/15 px-4 py-2 text-[13px] font-semibold text-emerald-500 xl:px-3.5"
+              : "rounded-full border border-[var(--border)] bg-[var(--surface)] px-4 py-2 text-[13px] font-semibold text-[var(--text-secondary)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] xl:px-3.5"
           }
           onClick={() => setActiveTab(tab)}
           type="button"
@@ -690,8 +690,8 @@ export function AssetDashboard({
         <div className="flex flex-col gap-2">
           <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
             <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 xl:flex-nowrap">
-              <div className="flex shrink-0 items-center gap-2 text-sm font-semibold text-white">
-                <Boxes size={16} className="text-[#00d68f]" />
+              <div className="flex shrink-0 items-center gap-2 text-sm font-semibold text-[var(--text-primary)]">
+                <Boxes size={16} className="text-emerald-500" />
                 <span className="text-[17px] font-bold tracking-[0.01em]">Asset Dashboard</span>
               </div>
               {searchControl}
@@ -728,21 +728,21 @@ export function AssetDashboard({
           )}
 
           {activeTab === "serialized" ? (
-            <div className="w-full overflow-x-auto rounded-[12px] border border-[#273041] bg-[#171c24]">
+            <div className="w-full overflow-x-auto rounded-[12px] border border-[var(--border)] bg-[var(--surface)]">
               <div className="flex min-w-max items-stretch">
                 {assetDashboard.isLoadingDashboard && assetDashboard.serializedRows.length === 0
                   ? Array.from({ length: 11 }, (_, index) => (
                       <div
                         key={index}
-                        className={`flex shrink-0 flex-col border-r border-[#273041] ${index === 10 ? "w-[150px]" : "w-[118px]"}`}
+                        className={`flex shrink-0 flex-col border-r border-[var(--border)] ${index === 10 ? "w-[150px]" : "w-[118px]"}`}
                       >
-                        <div className="border-b border-[#273041] px-3 py-2.5">
+                        <div className="border-b border-[var(--border)] px-3 py-2.5">
                           <div
-                            className={`h-3 animate-pulse rounded bg-[#243041] ${index === 10 ? "w-24" : "w-16"}`}
+                            className={`h-3 animate-pulse rounded bg-[var(--surface-hover)] ${index === 10 ? "w-24" : "w-16"}`}
                           />
                         </div>
                         <div className="flex flex-1 items-center justify-center px-4 py-3.5">
-                          <div className="h-7 w-9 animate-pulse rounded bg-[#243041]" />
+                          <div className="h-7 w-9 animate-pulse rounded bg-[var(--surface-hover)]" />
                         </div>
                       </div>
                     ))
@@ -753,9 +753,9 @@ export function AssetDashboard({
                         return (
                           <div
                             key={card.key}
-                            className={`group flex shrink-0 flex-col border-r border-[#273041]/70 transition-all duration-300 last:border-r-0 ${card.isWide ? "w-[150px]" : "w-[118px]"}`}
+                            className={`group flex shrink-0 flex-col border-r border-[var(--border)]/70 transition-all duration-300 last:border-r-0 ${card.isWide ? "w-[150px]" : "w-[118px]"}`}
                           >
-                            <div className="border-b border-[#273041]/20 px-3 py-2.5">
+                            <div className="border-b border-[var(--border)]/30 px-3 py-2.5">
                               <div className="flex items-center justify-between gap-2">
                                 <span
                                   className={`truncate pr-1 text-[12.5px] font-bold uppercase tracking-tight ${visual.accentTextClass}`}
@@ -769,9 +769,9 @@ export function AssetDashboard({
                               </div>
                             </div>
                             <div className={`h-[3px] w-full bg-current opacity-50 transition-all group-hover:opacity-100 ${visual.accentTextClass}`} />
-                            <div className="flex flex-1 items-center justify-center px-4 py-3.5 transition-colors duration-300 group-hover:bg-white/[0.04]">
+                            <div className="flex flex-1 items-center justify-center px-4 py-3.5 transition-colors duration-300 group-hover:bg-[var(--surface-hover)]">
                               <span
-                                className={`text-[19px] font-black leading-none tracking-tight text-white transition-transform duration-300 group-hover:scale-110 ${visual.glowClass}`}
+                                className={`text-[19px] font-black leading-none tracking-tight text-[var(--text-primary)] transition-transform duration-300 group-hover:scale-110 ${visual.glowClass}`}
                               >
                                 {card.value}
                               </span>
@@ -788,19 +788,19 @@ export function AssetDashboard({
                 ? Array.from({ length: 5 }, (_, index) => (
                     <div
                       key={index}
-                      className="flex min-h-[98px] flex-col justify-between rounded-[10px] border border-[#252d3b] bg-[#0b0f15] px-5 py-4"
+                      className="flex min-h-[98px] flex-col justify-between rounded-[10px] border border-[var(--border)] bg-[var(--surface)] px-5 py-4"
                     >
-                      <div className="h-3 w-24 animate-pulse rounded bg-[#1c2430]" />
-                      <div className="mt-4 h-8 w-14 animate-pulse rounded bg-[#1c2430]" />
+                      <div className="h-3 w-24 animate-pulse rounded bg-[var(--surface-hover)]" />
+                      <div className="mt-4 h-8 w-14 animate-pulse rounded bg-[var(--surface-hover)]" />
                     </div>
                   ))
                 : summaryCards.map((card) => (
                     <div
                       key={card.key}
-                      className="flex min-h-[98px] flex-col justify-between rounded-[10px] border border-[#252d3b] bg-[#0b0f15] px-5 py-4"
+                      className="flex min-h-[98px] flex-col justify-between rounded-[10px] border border-[var(--border)] bg-[var(--surface)] px-5 py-4"
                     >
                       <div className={dashboardShellLabelClass}>{card.label}</div>
-                      <div className="mt-4 text-[28px] font-bold leading-none text-white">{card.value}</div>
+                      <div className="mt-4 text-[28px] font-bold leading-none text-[var(--text-primary)]">{card.value}</div>
                     </div>
                   ))}
             </div>
@@ -852,22 +852,22 @@ export function AssetDashboard({
 }
 
 const dashboardSurfaceClass =
-  "rounded-[12px] border border-slate-800 bg-[#1c2128]"
+  "rounded-[12px] border border-[var(--border)] bg-[var(--surface)]"
 const dashboardInnerSurfaceClass =
-  "rounded-[10px] border border-slate-800 bg-[#0d1117]"
+  "rounded-[10px] border border-[var(--border)] bg-[var(--bg)]"
 const dashboardPrimaryButtonClass =
-  "inline-flex items-center gap-2 rounded-[10px] border border-emerald-500/70 bg-emerald-500 px-3 py-2 text-xs font-semibold text-[#03130d] transition hover:bg-emerald-400 disabled:opacity-50"
+  "inline-flex items-center gap-2 rounded-[10px] border border-emerald-500/70 bg-emerald-500 px-3 py-2 text-xs font-semibold text-white transition hover:bg-emerald-400 disabled:opacity-50"
 const dashboardSecondaryButtonClass =
-  "inline-flex items-center gap-2 rounded-[10px] border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-100 transition hover:bg-slate-700 disabled:opacity-50"
-const dashboardMutedTextClass = "text-slate-400"
+  "inline-flex items-center gap-2 rounded-[10px] border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)] disabled:opacity-50"
+const dashboardMutedTextClass = "text-[var(--text-secondary)]"
 const dashboardInputClass =
-  "w-full rounded-[10px] border border-slate-800 bg-[#0d1117] px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 outline-none transition focus:border-emerald-500/45"
+  "w-full rounded-[10px] border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] outline-none transition focus:border-emerald-500/45"
 const dashboardTableShellClass =
-  "overflow-hidden rounded-[12px] border border-slate-800 bg-[#0d1117]"
+  "overflow-hidden rounded-[12px] border border-[var(--border)] bg-[var(--surface)]"
 const dashboardTableHeadClass =
-  "bg-[#1c2128] text-[13px] uppercase tracking-[0.06em] text-emerald-400/90"
+  "bg-[var(--table-header-bg)] text-[13px] uppercase tracking-[0.06em] text-[var(--primary)]"
 const dashboardTableHeaderButtonClass =
-  "flex min-w-0 flex-1 items-center gap-2 text-left text-[13px] font-black uppercase tracking-wider text-emerald-400/90 transition-colors hover:text-emerald-400"
+  "flex min-w-0 flex-1 items-center gap-2 text-left text-[13px] font-black uppercase tracking-wider text-[var(--primary)] transition-colors hover:opacity-80"
 
 function stripDiacriticsForSearch(str: string): string {
   return str.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase()
@@ -971,7 +971,7 @@ function SerializedDashboardTable({
 
   if (assetDashboard.serializedRows.length === 0) {
     return (
-      <div className="rounded-[12px] border border-dashed border-[#31394a] bg-[#0b0f15] px-4 py-8 text-center text-sm text-[#8f98a8]">
+      <div className="rounded-[12px] border border-dashed border-[var(--border)] bg-[var(--surface)] px-4 py-8 text-center text-sm text-[var(--text-secondary)]">
         {getAssetDashboardEmptyStateLabel("serialized")}
       </div>
     )
@@ -981,7 +981,7 @@ function SerializedDashboardTable({
     <div className="space-y-3">
       {filteredRows.length === 0 ? (
         <div className="space-y-3">
-          <div className="rounded-[12px] border border-dashed border-[#31394a] bg-[#0b0f15] px-4 py-8 text-center text-sm text-[#8f98a8]">
+          <div className="rounded-[12px] border border-dashed border-[var(--border)] bg-[var(--surface)] px-4 py-8 text-center text-sm text-[var(--text-secondary)]">
             No serialized assets match the current filters.
           </div>
         </div>
@@ -999,7 +999,7 @@ function SerializedDashboardTable({
                         className={`transition-colors ${
                           sort.key === column.key
                             ? "text-emerald-400/70"
-                            : "text-slate-600 group-hover:text-emerald-500/50"
+                            : "text-[var(--text-secondary)] group-hover:text-emerald-500/50"
                         }`}
                       />
                     )
@@ -1007,8 +1007,8 @@ function SerializedDashboardTable({
                     return (
                       <th
                         key={column.key}
-                        className={`group relative border-r border-slate-800 last:border-r-0 ${
-                          draggingColumnKey === column.key ? "bg-slate-800/85" : ""
+                        className={`group relative border-r border-[var(--border)] last:border-r-0 ${
+                          draggingColumnKey === column.key ? "bg-[var(--surface-hover)]" : ""
                         }`}
                         style={{
                           minWidth: column.minWidth,
@@ -1023,7 +1023,7 @@ function SerializedDashboardTable({
                         <div className="flex items-center gap-2 px-3 py-2.5 pr-5">
                           {column.key === firstVisibleColumnKey ? (
                             <button
-                              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] border border-[#283140] bg-[#151b26] text-slate-400 transition hover:bg-[#1b2230] hover:text-slate-200"
+                              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] border border-[var(--border)] bg-[var(--surface)] text-[var(--text-secondary)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
                               onClick={() => setColumnsDrawerOpen(true)}
                               type="button"
                               aria-label="Open column settings"
@@ -1047,7 +1047,7 @@ function SerializedDashboardTable({
                           className="absolute inset-y-0 right-0 flex w-3 cursor-col-resize items-center justify-center"
                           onMouseDown={(event) => beginColumnResize(column.key, event)}
                         >
-                          <span className="h-5 w-px bg-slate-700 transition group-hover:bg-emerald-400/60" />
+                          <span className="h-5 w-px bg-[var(--border)] transition group-hover:bg-emerald-400/60" />
                         </span>
                       </th>
                     )
@@ -1056,7 +1056,7 @@ function SerializedDashboardTable({
               </thead>
               <tbody>
                 {sortedRows.map((row) => (
-                  <tr key={row.assetId} className="border-t border-[#202736] align-top">
+                  <tr key={row.assetId} className="border-t border-[var(--border)] align-top">
                     {orderedColumns.map((column) => {
                       const cellText = getCellSearchText(column.key, row)
                       const isCellMatch = !!searchTerm.trim() && hasSerializedSearchMatch(cellText, searchTerm)
@@ -1065,7 +1065,7 @@ function SerializedDashboardTable({
                           key={`${row.assetId}-${column.key}`}
                           className={`px-3 py-2.5 align-top ${
                             column.key === "id" || column.key === "assetName"
-                              ? "font-semibold text-slate-100"
+                              ? "font-semibold text-[var(--text-primary)]"
                               : dashboardMutedTextClass
                           } ${isCellMatch ? "search-highlight-cell" : ""}`}
                           style={{
@@ -1116,7 +1116,7 @@ function renderSerializedCellValue(
     case "computerName": {
       const cn = resolveSerializedAssetComputerName(row.assetCode, row.computerName) || "\u2014"
       return (
-        <span className="whitespace-nowrap text-slate-100">
+        <span className="whitespace-nowrap text-[var(--text-primary)]">
           <HighlightText text={cn} query={searchTerm} />
         </span>
       )
@@ -1145,7 +1145,7 @@ function renderSerializedCellValue(
     }
     case "status":
       return (
-        <span className="rounded-[999px] border border-slate-700 bg-slate-900/70 px-2 py-0.5 text-[11px] font-semibold capitalize text-slate-100">
+        <span className="rounded-[999px] border border-[var(--border)] bg-[var(--surface-hover)] px-2 py-0.5 text-[11px] font-semibold capitalize text-[var(--text-primary)]">
           {formatAssetDashboardStatusLabel(row.status)}
         </span>
       )
@@ -1155,7 +1155,7 @@ function renderSerializedCellValue(
       return (
         <div className="flex min-w-0 flex-col gap-1">
           {holderName && (
-            <span className="truncate font-semibold leading-tight text-slate-100" title={holderName}>
+            <span className="truncate font-semibold leading-tight text-[var(--text-primary)]" title={holderName}>
               <HighlightText text={holderName} query={searchTerm} />
             </span>
           )}
@@ -1256,7 +1256,7 @@ function renderCategoryListCellValue(
       return detail.categoryCode
     case "trackingMode":
       return (
-        <span className="rounded-[999px] border border-[#31394a] bg-[#141a23] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.05em] text-[#8f98a8]">
+        <span className="rounded-[999px] border border-[var(--border)] bg-[var(--surface-hover)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.05em] text-[var(--text-secondary)]">
           {detail.trackingMode}
         </span>
       )
@@ -1265,8 +1265,8 @@ function renderCategoryListCellValue(
         <span
           className={`rounded-[999px] border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.05em] ${
             detail.isActive
-              ? "border-[#00d68f]/30 bg-[#0d1f18] text-[#55d8a5]"
-              : "border-[#31394a] text-[#8f98a8]"
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-500"
+              : "border-[var(--border)] text-[var(--text-secondary)]"
           }`}
         >
           {detail.isActive ? "Active" : "Inactive"}
@@ -1334,7 +1334,7 @@ function QuantityDashboardTable({
 
   if (assetDashboard.quantityRows.length === 0) {
     return (
-      <div className="rounded-[12px] border border-dashed border-[#31394a] bg-[#0b0f15] px-4 py-8 text-center text-sm text-[#8f98a8]">
+      <div className="rounded-[12px] border border-dashed border-[var(--border)] bg-[var(--surface)] px-4 py-8 text-center text-sm text-[var(--text-secondary)]">
         {getAssetDashboardEmptyStateLabel("quantity")}
       </div>
     )
@@ -1350,8 +1350,8 @@ function QuantityDashboardTable({
                 {orderedColumns.map((column) => (
                   <th
                     key={column.key}
-                    className={`group relative border-r border-slate-800 last:border-r-0 ${
-                      draggingColumnKey === column.key ? "bg-slate-800/85" : ""
+                    className={`group relative border-r border-[var(--border)] last:border-r-0 ${
+                      draggingColumnKey === column.key ? "bg-[var(--surface-hover)]" : ""
                     }`}
                     style={{
                       minWidth: column.minWidth,
@@ -1366,7 +1366,7 @@ function QuantityDashboardTable({
                     <div className="flex items-center gap-2 px-3 py-2.5 pr-5">
                       {column.key === firstVisibleColumnKey ? (
                         <button
-                          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] border border-[#283140] bg-[#151b26] text-slate-400 transition hover:bg-[#1b2230] hover:text-slate-200"
+                          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] border border-[var(--border)] bg-[var(--surface)] text-[var(--text-secondary)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
                           onClick={() => setColumnsDrawerOpen(true)}
                           type="button"
                           aria-label="Open column settings"
@@ -1375,7 +1375,7 @@ function QuantityDashboardTable({
                           <Settings size={14} />
                         </button>
                       ) : null}
-                      <span className="truncate text-[13px] font-black uppercase tracking-wider text-emerald-400/90">
+                      <span className="truncate text-[13px] font-black uppercase tracking-wider text-[var(--primary)]">
                         {column.label}
                       </span>
                     </div>
@@ -1383,11 +1383,11 @@ function QuantityDashboardTable({
                       className="absolute inset-y-0 right-0 flex w-3 cursor-col-resize items-center justify-center"
                       onMouseDown={(event) => beginColumnResize(column.key, event)}
                     >
-                      <span className="h-5 w-px bg-slate-700 transition group-hover:bg-emerald-400/60" />
+                      <span className="h-5 w-px bg-[var(--border)] transition group-hover:bg-emerald-400/60" />
                     </span>
                   </th>
                 ))}
-                <th className="px-3 py-2.5 text-[13px] font-black uppercase tracking-wider text-emerald-400/90">
+                <th className="px-3 py-2.5 text-[13px] font-black uppercase tracking-wider text-[var(--primary)]">
                   Action
                 </th>
               </tr>
@@ -1407,12 +1407,12 @@ function QuantityDashboardTable({
                 const isSaving = assetDashboard.isUpdatingStockItemId === row.stockItemId
 
                 return (
-                  <tr key={row.stockItemId} className="border-t border-[#202736] align-top">
+                  <tr key={row.stockItemId} className="border-t border-[var(--border)] align-top">
                     {orderedColumns.map((column) => (
                       <td
                         key={`${row.stockItemId}-${column.key}`}
                         className={`px-3 py-2.5 align-top ${
-                          column.key === "itemName" ? "font-semibold text-slate-100" : dashboardMutedTextClass
+                          column.key === "itemName" ? "font-semibold text-[var(--text-primary)]" : dashboardMutedTextClass
                         }`}
                         style={{
                           minWidth: column.minWidth,
@@ -1538,7 +1538,7 @@ function CategoryManagementPanel({
         <div className="p-4">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <div className="text-sm font-semibold text-slate-100">
+            <div className="text-sm font-semibold text-[var(--text-primary)]">
               Category List
             </div>
             <div className={`mt-1 text-xs ${dashboardMutedTextClass}`}>
@@ -1562,11 +1562,11 @@ function CategoryManagementPanel({
             Loading categories...
           </div>
         ) : assetDashboard.categoryDetails.length === 0 ? (
-          <div className={`mt-4 rounded-[12px] border border-dashed border-slate-700 bg-[#0d1117] px-4 py-8 text-center text-sm ${dashboardMutedTextClass}`}>
+          <div className={`mt-4 rounded-[12px] border border-dashed border-[var(--border)] bg-[var(--surface)] px-4 py-8 text-center text-sm ${dashboardMutedTextClass}`}>
             {getAssetDashboardEmptyStateLabel("categories")}
           </div>
         ) : (
-          <div className="mt-4 overflow-hidden rounded-[12px] border border-slate-800 bg-[#0d1117]">
+          <div className="mt-4 overflow-hidden rounded-[12px] border border-[var(--border)] bg-[var(--surface)]">
             <div className="overflow-x-auto">
               <table className="min-w-max text-left text-[13px]">
                 <thead className={dashboardTableHeadClass}>
@@ -1574,8 +1574,8 @@ function CategoryManagementPanel({
                     {orderedColumns.map((column) => (
                       <th
                         key={column.key}
-                        className={`group relative border-r border-slate-800 last:border-r-0 ${
-                          draggingColumnKey === column.key ? "bg-slate-800/85" : ""
+                        className={`group relative border-r border-[var(--border)] last:border-r-0 ${
+                          draggingColumnKey === column.key ? "bg-[var(--surface-hover)]" : ""
                         }`}
                         style={{
                           minWidth: column.minWidth,
@@ -1590,7 +1590,7 @@ function CategoryManagementPanel({
                         <div className="flex items-center gap-2 px-3 py-2.5 pr-5">
                           {column.key === firstVisibleColumnKey ? (
                             <button
-                              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] border border-[#283140] bg-[#151b26] text-slate-400 transition hover:bg-[#1b2230] hover:text-slate-200"
+                              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] border border-[var(--border)] bg-[var(--surface)] text-[var(--text-secondary)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
                               onClick={() => setColumnsDrawerOpen(true)}
                               type="button"
                               aria-label="Open column settings"
@@ -1599,7 +1599,7 @@ function CategoryManagementPanel({
                               <Settings size={14} />
                             </button>
                           ) : null}
-                          <span className="truncate text-[13px] font-black uppercase tracking-wider text-emerald-400/90">
+                          <span className="truncate text-[13px] font-black uppercase tracking-wider text-[var(--primary)]">
                             {column.label}
                           </span>
                         </div>
@@ -1607,7 +1607,7 @@ function CategoryManagementPanel({
                           className="absolute inset-y-0 right-0 flex w-3 cursor-col-resize items-center justify-center"
                           onMouseDown={(event) => beginColumnResize(column.key, event)}
                         >
-                          <span className="h-5 w-px bg-slate-700 transition group-hover:bg-emerald-400/60" />
+                          <span className="h-5 w-px bg-[var(--border)] transition group-hover:bg-emerald-400/60" />
                         </span>
                       </th>
                     ))}
@@ -1620,8 +1620,8 @@ function CategoryManagementPanel({
                     return (
                       <tr
                         key={detail.id}
-                        className={`cursor-pointer border-t border-[#202736] align-top transition ${
-                          isSelected ? "bg-[#0d1f18]" : "hover:bg-[#151b25]"
+                        className={`cursor-pointer border-t border-[var(--border)] align-top transition ${
+                          isSelected ? "bg-emerald-500/10" : "hover:bg-[var(--surface-hover)]"
                         }`}
                         onClick={() => openExistingCategoryDraft(detail)}
                       >
@@ -1629,7 +1629,7 @@ function CategoryManagementPanel({
                           <td
                             key={`${detail.id}-${column.key}`}
                             className={`px-3 py-2.5 align-top ${
-                              column.key === "categoryName" ? "font-semibold text-slate-100" : dashboardMutedTextClass
+                              column.key === "categoryName" ? "font-semibold text-[var(--text-primary)]" : dashboardMutedTextClass
                             }`}
                             style={{
                               minWidth: column.minWidth,
@@ -1656,10 +1656,10 @@ function CategoryManagementPanel({
         />
       </div>
 
-      <div className="rounded-[12px] border border-[#252d3b] bg-[#11161f] p-4">
+      <div className="rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div>
-            <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
+            <div className="flex items-center gap-2 text-sm font-semibold text-[var(--text-primary)]">
               <PencilLine size={16} />
               {categoryDraft.id == null ? "Create Category" : "Edit Category"}
             </div>
@@ -1758,10 +1758,10 @@ function CategoryManagementPanel({
           </div>
         )}
 
-        <div className="mt-5 rounded-[12px] border border-[#252d3b] bg-[#11161f] p-4">
+        <div className="mt-5 rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-4">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <div className="text-sm font-semibold text-slate-100">Prefixes</div>
+              <div className="text-sm font-semibold text-[var(--text-primary)]">Prefixes</div>
               <div className={`mt-1 text-xs ${dashboardMutedTextClass}`}>
                 Add every workbook prefix that should map into this category.
               </div>
@@ -1780,7 +1780,7 @@ function CategoryManagementPanel({
             {categoryDraft.prefixes.map((prefix, index) => (
               <div
                 key={`${categoryDraft.id ?? "new"}-${index}`}
-                className="grid gap-3 rounded-[10px] border border-[#283140] bg-[#0f141c] px-3 py-3 md:grid-cols-[minmax(0,1fr)_120px_52px]"
+                className="grid gap-3 rounded-[10px] border border-[var(--border)] bg-[var(--bg)] px-3 py-3 md:grid-cols-[minmax(0,1fr)_120px_52px]"
               >
                 <label className={`flex flex-col gap-1 text-xs ${dashboardMutedTextClass}`}>
                   Prefix Value
@@ -1805,7 +1805,7 @@ function CategoryManagementPanel({
                 </label>
                 <div className="flex items-end justify-end">
                   <button
-                    className="inline-flex h-10 w-10 items-center justify-center rounded-[8px] border border-[#31394a] bg-[#141a23] text-[#8f98a8] transition hover:bg-[#1b2230] disabled:opacity-50"
+                    className="inline-flex h-10 w-10 items-center justify-center rounded-[8px] border border-[var(--border)] bg-[var(--surface)] text-[var(--text-secondary)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] disabled:opacity-50"
                     onClick={() => removeCategoryPrefix(index)}
                     type="button"
                     disabled={!auth.isAdminAccount || categoryDraft.prefixes.length === 1}
@@ -1820,7 +1820,7 @@ function CategoryManagementPanel({
 
         {selectedCategoryDetail && (
           <div className={`mt-4 p-4 text-xs ${dashboardInnerSurfaceClass} ${dashboardMutedTextClass}`}>
-            <div className="font-semibold text-slate-100">Current usage</div>
+            <div className="font-semibold text-[var(--text-primary)]">Current usage</div>
             <div className="mt-2 flex flex-wrap gap-4">
               <span>Assets: {selectedCategoryDetail.assetCount}</span>
               <span>Stock items: {selectedCategoryDetail.stockItemCount}</span>

@@ -51,6 +51,16 @@ export function useEmployeeState({
     const [mssqlRefreshToken, setMssqlRefreshToken] = useState(0)
 
     const teamFilterMenuRef = useRef<HTMLDivElement | null>(null)
+    const mssqlAutoDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+    // Cleanup auto-dismiss timer on unmount
+    useEffect(() => {
+        return () => {
+            if (mssqlAutoDismissTimerRef.current) {
+                clearTimeout(mssqlAutoDismissTimerRef.current)
+            }
+        }
+    }, [])
 
     // Load teams
     useEffect(() => {
@@ -276,6 +286,11 @@ export function useEmployeeState({
     const updateEmployeeListFromMssql = async () => {
         if (isUpdatingEmployeeListFromMssql) return
 
+        if (mssqlAutoDismissTimerRef.current) {
+            clearTimeout(mssqlAutoDismissTimerRef.current)
+            mssqlAutoDismissTimerRef.current = null
+        }
+
         try {
             setUpdatingEmployeeListFromMssql(true)
             setMssqlUpdateMessage(null)
@@ -283,6 +298,24 @@ export function useEmployeeState({
             setMssqlSyncPreview(null)
             setGlobalError(null)
             const preview = await staffApi.previewEmployeeListMssqlSync()
+
+            const hasAnyChanges =
+                preview.counts.new > 0 ||
+                preview.counts.changed > 0 ||
+                preview.counts.missing > 0 ||
+                preview.counts.conflicts > 0
+
+            if (!hasAnyChanges) {
+                setMssqlSyncPreview(null)
+                setMssqlUpdateStatus("success")
+                setMssqlUpdateMessage("✓ No changes")
+                mssqlAutoDismissTimerRef.current = setTimeout(() => {
+                    setMssqlUpdateMessage(null)
+                    setMssqlUpdateStatus("idle")
+                }, 10000)
+                return
+            }
+
             setMssqlSyncPreview(preview)
             setMssqlUpdateMessage(`Preview ready: ${preview.counts.new} new, ${preview.counts.changed} changed, ${preview.counts.unchanged} unchanged, ${preview.counts.missing} missing.`)
         } catch (error) {
@@ -301,6 +334,10 @@ export function useEmployeeState({
         const hasImportableChanges = mssqlSyncPreview.counts.new > 0 || mssqlSyncPreview.counts.changed > 0
         const hasConflicts = mssqlSyncPreview.counts.conflicts > 0
         if (!hasImportableChanges || hasConflicts) return
+        if (mssqlAutoDismissTimerRef.current) {
+            clearTimeout(mssqlAutoDismissTimerRef.current)
+            mssqlAutoDismissTimerRef.current = null
+        }
         try {
             setApplyingMssqlSync(true)
             setMssqlUpdateStatus("idle")
@@ -327,6 +364,10 @@ export function useEmployeeState({
     }
 
     const skipEmployeeListMssqlSync = () => {
+        if (mssqlAutoDismissTimerRef.current) {
+            clearTimeout(mssqlAutoDismissTimerRef.current)
+            mssqlAutoDismissTimerRef.current = null
+        }
         setMssqlSyncPreview(null)
         setMssqlUpdateMessage("Preview dismissed. No local data was changed.")
         setMssqlUpdateStatus("idle")

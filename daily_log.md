@@ -2453,3 +2453,30 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
   - Read-only permission gate PASSED (Ok(())).
   - Canonical Query B fetched exactly 397 rows with all 5 required fields verified (ASWCVN01: Brendan Cunningham, Brendan, Brendan@consulting.aswhiteglobal.com, Brendan@consulting.aswhiteglobal.com).
 - Full regression verification: 338 Rust unit tests passed (38/38 in mssql_import), npm run check:quality passed (lint, strict typecheck, vite build, cargo check). Zero writes performed on remote DB; local employee list remains untouched prior to user approval. Ready for Zon acceptance testing.
+
+## 2026-10-18 UI Polish: Themes, Team Colors & EE Sync Popover — Start
+
+- Branch: `feat/ui-polish-themes-sync-popover`
+- Objectives:
+  1. Fix Asset Dashboard light-mode styling bug across all sections, tables, category tabs, filters, buttons, badges, and popovers using global CSS theme variables; preserve dark appearance.
+  2. Add distinct, deterministic Team pill colors in Employee List (table and mobile cards) across dark/light themes without modifying DB schema or team records; unrecognized teams fall back to neutral style.
+  3. Replace the wide EE List Sync Preview panel with a compact popover anchored to the Update button; float over employee table without table layout shift; show New, Changed, Missing, and Conflicts counts; keep Skip and Approve actions.
+  4. Show "View details" only when New/Changed or Conflicts exist, displaying relevant rows and never Unchanged rows; eliminate Unchanged rows UI while preserving internal diff classification.
+  5. Implement No-change behavior: when New/Changed/Missing/Conflicts are 0, suppress popover, display "✓ No changes" badge next to Update with 10s auto-hide, 0 IPC apply calls, 0 DB writes.
+  6. Missing-only sync shows warning popover (report-only, Approve disabled); Conflicts show blocking popover (Approve disabled); Approve enabled only when New/Changed > 0 with 0 conflicts.
+
+## 2026-10-18 UI Polish: Themes, Team Colors & EE Sync Popover — End
+
+- Implementation:
+  1. `AssetDashboard.tsx` & `AssetDashboardColumnsDrawer.tsx`: Replaced hardcoded dark hex codes (`#151921`, `#0d1117`, `#0b0f15`, `#11161f`, etc.) and slate classes with CSS variables (`var(--border)`, `var(--surface)`, `var(--surface-hover)`, `var(--bg)`, `var(--text-primary)`, `var(--text-secondary)`, `var(--primary)`). Added `AssetDashboard.theme.test.ts`.
+  2. `src/features/teams/teamColors.ts`: Created canonical team color styling mapping (`engineering`, `design`, `marketing`, `hr`, `it`, `sales`, `management`, `delivery`, `support`, `examworks`, `floating`/`zz_floating`) and neutral fallback. Added `teamColors.test.ts`.
+  3. `EmployeeCellContent.tsx` & `EmployeeView.tsx`: Applied `getTeamPillClasses` to table team column and mobile employee cards.
+  4. `EmployeeView.tsx`: Replaced wide sync preview panel with compact anchored popover (`absolute left-0 top-full z-40 mt-2 w-[440px]`). Preserved exact test contract strings and buttons (`Skip`, `Approve`). Added New/Changed/Missing/Conflict counts and "View details" toggle showing only actionable rows. Removed unchanged rows table and details element.
+  5. `useEmployeeState.ts`: Added `mssqlAutoDismissTimerRef` (10s auto-dismiss). If `hasAnyChanges === false`, preview popover is suppressed and `mssqlUpdateMessage = "✓ No changes"` is shown with status `success`.
+  6. `scripts/action-icon-ui.test.ts`: Updated line 74 regex to match theme-compliant `border-emerald-500`.
+- Verification:
+  - `npm run check:quality`: PASSED (0 lint errors, tsc typecheck clean, vite build clean, cargo check clean)
+  - `npm run test:unit`: PASSED (33 files, 259/259 tests passed)
+  - `npm run test:tauri`: PASSED (353/353 tests passed)
+  - `npm run test:supplemental`: PASSED (borrow-lan-autofill & action-icon-ui tests passed)
+  - Invariants: 0 DB schema changes, 0 live DB writes, 0 MSSQL writes, all worktrees and untracked files preserved.
