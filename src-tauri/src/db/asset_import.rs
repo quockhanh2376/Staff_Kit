@@ -2607,6 +2607,26 @@ fn create_owner_aware_import_loan_tx(
     )
     .map_err(humanize_sqlite_error)?;
 
+    // Apply H Phone default usage_location = 'Tại nhà' on assignment ONLY if location is currently unset
+    tx.execute(
+        r#"
+        UPDATE assets
+        SET usage_location = 'Tại nhà'
+        WHERE id = ?
+          AND (usage_location IS NULL OR trim(usage_location) = '')
+          AND (
+            category_id IN (
+              SELECT id FROM asset_categories
+              WHERE lower(replace(category_name, ' ', '')) = 'hphone'
+                 OR lower(replace(category_code, '_', '')) = 'hphone'
+            )
+            OR lower(replace(asset_type, ' ', '')) = 'hphone'
+          )
+        "#,
+        params![asset_id],
+    )
+    .map_err(humanize_sqlite_error)?;
+
     Ok(())
 }
 
