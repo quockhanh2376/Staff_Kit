@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { AlertCircle, Laptop, LoaderCircle, MapPin, Package, X } from "lucide-react"
 import type { EmployeeAssignedAssetRecord, EmployeeRecord } from "../../types/staff"
 import { staffApi } from "../../services/staff-api"
@@ -53,6 +53,22 @@ export function AssignedAssetsModal({
             disposed = true
         }
     }, [open, employee])
+
+    const groupedAssets = useMemo(() => {
+        const groups: { categoryName: string; items: EmployeeAssignedAssetRecord[] }[] = []
+        const map = new Map<string, EmployeeAssignedAssetRecord[]>()
+        for (const item of assets) {
+            const cat = item.categoryName?.trim() || "Uncategorized"
+            let list = map.get(cat)
+            if (!list) {
+                list = []
+                map.set(cat, list)
+                groups.push({ categoryName: cat, items: list })
+            }
+            list.push(item)
+        }
+        return groups
+    }, [assets])
 
     // Keyboard navigation (Esc to close)
     useEffect(() => {
@@ -139,57 +155,63 @@ export function AssignedAssetsModal({
                     )}
 
                     {!isLoading && !errorMessage && assets.length > 0 && (
-                        <div className="overflow-hidden rounded-lg border border-[var(--border)]">
-                            <table className="w-full text-left text-xs">
-                                <thead className="border-b border-[var(--border)] bg-[var(--surface)] text-[var(--muted)]">
-                                    <tr>
-                                        <th className="px-3 py-2.5 font-medium">#</th>
-                                        <th className="px-3 py-2.5 font-medium">Asset Code</th>
-                                        <th className="px-3 py-2.5 font-medium">Asset Name</th>
-                                        <th className="px-3 py-2.5 font-medium">Category</th>
-                                        <th className="px-3 py-2.5 font-medium">Serial Number</th>
-                                        <th className="px-3 py-2.5 font-medium">Location</th>
-                                        <th className="px-3 py-2.5 font-medium">Assigned Date</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-[var(--border)]">
-                                    {assets.map((item, idx) => (
-                                        <tr
-                                            key={`${item.assetId}-${item.assetCode}`}
-                                            className="transition hover:bg-[var(--surface-hover)]"
-                                        >
-                                            <td className="px-3 py-2.5 text-[var(--muted)]">{idx + 1}</td>
-                                            <td className="px-3 py-2.5 font-mono font-semibold text-[var(--primary)]">
-                                                {item.assetCode}
-                                            </td>
-                                            <td className="px-3 py-2.5 font-medium text-[var(--foreground)]">
-                                                {item.assetName}
-                                            </td>
-                                            <td className="px-3 py-2.5">
-                                                <span className="inline-flex items-center rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-0.5 text-[11px] font-medium text-[var(--foreground)]">
-                                                    {item.categoryName}
-                                                </span>
-                                            </td>
-                                            <td className="px-3 py-2.5 font-mono text-[var(--muted)]">
-                                                {item.serialNumber || "-"}
-                                            </td>
-                                            <td className="px-3 py-2.5 text-[var(--foreground)]">
-                                                {item.usageLocation ? (
-                                                    <span className="inline-flex items-center gap-1">
-                                                        <MapPin size={12} className="text-[var(--muted)]" />
-                                                        {item.usageLocation}
-                                                    </span>
-                                                ) : (
-                                                    <span className="text-[var(--muted)]">-</span>
-                                                )}
-                                            </td>
-                                            <td className="px-3 py-2.5 text-[var(--muted)]">
-                                                {formatDate(item.borrowedAt)}
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
+                        <div className="space-y-4">
+                            {groupedAssets.map((group) => (
+                                <div
+                                    key={group.categoryName}
+                                    className="overflow-hidden rounded-lg border border-[var(--border)]"
+                                >
+                                    <div className="flex items-center justify-between border-b border-[var(--border)] bg-[var(--surface-hover)]/60 px-3.5 py-2">
+                                        <h3 className="text-xs font-semibold text-[var(--foreground)]">
+                                            {group.categoryName} ({group.items.length})
+                                        </h3>
+                                    </div>
+                                    <table className="w-full text-left text-xs">
+                                        <thead className="border-b border-[var(--border)] bg-[var(--surface)] text-[var(--muted)]">
+                                            <tr>
+                                                <th className="px-3 py-2 font-medium">#</th>
+                                                <th className="px-3 py-2 font-medium">Asset Code</th>
+                                                <th className="px-3 py-2 font-medium">Asset Name</th>
+                                                <th className="px-3 py-2 font-medium">Serial Number</th>
+                                                <th className="px-3 py-2 font-medium">Location</th>
+                                                <th className="px-3 py-2 font-medium">Assigned Date</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-[var(--border)]">
+                                            {group.items.map((item, idx) => (
+                                                <tr
+                                                    key={`${item.assetId}-${item.assetCode}`}
+                                                    className="transition hover:bg-[var(--surface-hover)]"
+                                                >
+                                                    <td className="px-3 py-2.5 text-[var(--muted)]">{idx + 1}</td>
+                                                    <td className="px-3 py-2.5 font-mono font-semibold text-[var(--primary)]">
+                                                        {item.assetCode}
+                                                    </td>
+                                                    <td className="px-3 py-2.5 font-medium text-[var(--foreground)]">
+                                                        {item.assetName}
+                                                    </td>
+                                                    <td className="px-3 py-2.5 font-mono text-[var(--muted)]">
+                                                        {item.serialNumber || "-"}
+                                                    </td>
+                                                    <td className="px-3 py-2.5 text-[var(--foreground)]">
+                                                        {item.usageLocation ? (
+                                                            <span className="inline-flex items-center gap-1">
+                                                                <MapPin size={12} className="text-[var(--muted)]" />
+                                                                {item.usageLocation}
+                                                            </span>
+                                                        ) : (
+                                                            <span className="text-[var(--muted)]">-</span>
+                                                        )}
+                                                    </td>
+                                                    <td className="px-3 py-2.5 text-[var(--muted)]">
+                                                        {formatDate(item.borrowedAt)}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            ))}
                         </div>
                     )}
                 </div>

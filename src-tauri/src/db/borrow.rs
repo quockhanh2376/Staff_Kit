@@ -1332,6 +1332,26 @@ pub(crate) fn approve_borrow_request_conn(
                 ],
             )
             .map_err(humanize_sqlite_error)?;
+
+            // Apply H Phone default usage_location = 'Tại nhà' on assignment ONLY if location is currently unset
+            tx.execute(
+                r#"
+                UPDATE assets
+                SET usage_location = 'Tại nhà'
+                WHERE id = ?
+                  AND (usage_location IS NULL OR trim(usage_location) = '')
+                  AND (
+                    category_id IN (
+                      SELECT id FROM asset_categories
+                      WHERE lower(replace(category_name, ' ', '')) = 'hphone'
+                         OR lower(replace(category_code, '_', '')) = 'hphone'
+                    )
+                    OR lower(replace(asset_type, ' ', '')) = 'hphone'
+                  )
+                "#,
+                params![item.asset_id],
+            )
+            .map_err(humanize_sqlite_error)?;
         }
     }
 
@@ -3535,5 +3555,123 @@ mod tests {
         let updated_settings =
             read_borrow_lan_settings(&conn).expect("read updated borrow lan settings");
         assert!(updated_settings.enabled);
+    }
+
+    #[test]
+    fn test_unlimited_devices_and_hphone_location_rules() {
+        let mut conn = open_test_connection();
+        let emp_id = seed_employee(&conn, "EE-MULTI", "Multi Device Employee");
+
+        let cat_laptop: i64 = conn.query_row(
+            "SELECT id FROM asset_categories WHERE category_code = 'laptop'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        let cat_monitor: i64 = conn.query_row(
+            "SELECT id FROM asset_categories WHERE category_code = 'monitor'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO asset_categories(category_code, category_name, tracking_mode, has_computer_name) VALUES ('hphone', 'H Phone', 'serialized', 0)",
+            [],
+        ).unwrap();
+        let cat_phone: i64 = conn.query_row(
+            "SELECT id FROM asset_categories WHERE category_code = 'hphone'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+
+        for i in 1..=3 {
+            conn.execute(
+                "INSERT INTO assets(asset_code, category_id, asset_type, display_name, status) VALUES (?, ?, 'Laptop', ?, 'in_stock')",
+                params![format!("LT-MUL-{}", i), cat_laptop, format!("Laptop {}", i)],
+            ).unwrap();
+        }
+
+        for i in 1..=4 {
+            let loc = if i <= 2 { "Tại nhà" } else { "Tại công ty" };
+            conn.execute(
+                "INSERT INTO assets(asset_code, category_id, asset_type, display_name, usage_location, status) VALUES (?, ?, 'Monitor', ?, ?, 'in_stock')",
+                params![format!("MN-MUL-{}", i), cat_monitor, format!("Monitor {}", i), loc],
+            ).unwrap();
+        }
+
+        conn.execute(
+            "INSERT INTO assets(asset_code, category_id, asset_type, display_name, status) VALUES ('HP-UNSET', ?, 'H Phone', 'H Phone Unset', 'in_stock')",
+            params![cat_phone],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO assets(asset_code, category_id, asset_type, display_name, usage_location, status) VALUES ('HP-EXPLICIT', ?, 'H Phone', 'H Phone Office', 'Tại công ty', 'in_stock')",
+            params![cat_phone],
+        ).unwrap();
+
+        let asset_codes = vec![
+            "LT-MUL-1", "LT-MUL-2", "LT-MUL-3",
+            "MN-MUL-1", "MN-MUL-2", "MN-MUL-3", "MN-MUL-4",
+            "HP-UNSET", "HP-EXPLICIT"
+        ];
+        let req = submit_borrow_request_conn(&mut conn, BorrowRequestSubmitInput {
+            submitted_employee_id: "EE-MULTI".to_string(),
+            submitted_full_name: "Multi Device Employee".to_string(),
+            asset_codes: asset_codes.iter().map(|s| s.to_string()).collect(),
+            request_type: Some(REQUEST_TYPE_BORROW.to_string()),
+            manual_employee_email: None,
+            manual_employee_team: None,
+        }).expect("submit borrow for 9 assets");
+
+        approve_borrow_request_conn(&mut conn, req.id, 1).expect("approve borrow for 9 assets");
+
+        let active_loans: i64 = conn.query_row(
+            "SELECT count(*) FROM asset_loans WHERE employee_id_fk = ? AND returned_at IS NULL",
+            params![emp_id],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(active_loans, 9, "All 9 assets should be actively loaned to employee");
+
+        let hp_unset_loc: Option<String> = conn.query_row(
+            "SELECT usage_location FROM assets WHERE asset_code = 'HP-UNSET'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(hp_unset_loc.as_deref(), Some("Tại nhà"), "H Phone with unset location must default to 'Tại nhà' on assignment");
+
+        let hp_explicit_loc: Option<String> = conn.query_row(
+            "SELECT usage_location FROM assets WHERE asset_code = 'HP-EXPLICIT'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(hp_explicit_loc.as_deref(), Some("Tại công ty"), "Explicit location must not be overwritten by default");
+
+        let mn1_loc: Option<String> = conn.query_row(
+            "SELECT usage_location FROM assets WHERE asset_code = 'MN-MUL-1'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        let mn3_loc: Option<String> = conn.query_row(
+            "SELECT usage_location FROM assets WHERE asset_code = 'MN-MUL-3'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(mn1_loc.as_deref(), Some("Tại nhà"));
+        assert_eq!(mn3_loc.as_deref(), Some("Tại công ty"));
+
+        let return_req = submit_borrow_request_conn(&mut conn, BorrowRequestSubmitInput {
+            submitted_employee_id: "EE-MULTI".to_string(),
+            submitted_full_name: "Multi Device Employee".to_string(),
+            asset_codes: vec!["MN-MUL-1".to_string()],
+            request_type: Some(REQUEST_TYPE_RETURN.to_string()),
+            manual_employee_email: None,
+            manual_employee_team: None,
+        }).expect("submit return request");
+
+        approve_borrow_request_conn(&mut conn, return_req.id, 1).expect("approve return request");
+
+        let mn1_after_return: Option<String> = conn.query_row(
+            "SELECT usage_location FROM assets WHERE asset_code = 'MN-MUL-1'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(mn1_after_return.as_deref(), Some("Tại nhà"), "Return must not clear or alter location without confirmed destination");
     }
 }

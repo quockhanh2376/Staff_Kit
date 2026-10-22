@@ -54,6 +54,37 @@
   * Gate: Full `npm run check:quality` passed cleanly.
 - Verdict: PASS.
 
+## 2026-10-22 — Staff Kit Additional Approved Asset Business Rules (Start)
+- Authorized by Zon/Cheki clarification.
+- Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Scope:
+  * Verification: Confirm Borrow/Assign workflow handles unlimited devices (0/1/many per category, e.g. 3 laptops, 4 monitors) without artificial caps.
+  * H Phone default location: Apply default usage_location "Tại nhà" on assignment when usage_location is NULL/empty; preserve existing explicit locations without overwriting; preserve locations on Return.
+  * UI grouping: In AssignedAssetsModal, group active assigned assets by category (e.g. Laptop (3), Monitor (4), H Phone (1)) for high readability, displaying individual asset code, name, serial, and canonical usage location.
+  * Safety: Preserve original test DB untouched (test on isolated copy); keep legacy dynamic fields and loans intact; full quality gate.
+
+## 2026-10-22 — Staff Kit Additional Approved Asset Business Rules (End)
+- Author: Victor (Implementation), Qeen (Independent QA).
+- Outcome: Completed with focused TDD and strict legacy safety.
+- Implementation Summary:
+  * Backend (`src-tauri/src/db/borrow.rs` & `src-tauri/src/db/asset_import.rs`):
+    - Added rule in borrow approval and asset import assignment: when H Phone is assigned with NULL/empty `usage_location`, default to "Tại nhà".
+    - Preserved existing explicit locations without overwriting.
+    - Verified Return retains the asset's existing location.
+    - Verified employee can hold unlimited devices across categories (0/1/many: tested 3 laptops, 4 monitors with mixed locations, 2 H Phones simultaneously = 9 active loans) with zero artificial caps.
+  * Frontend (`src/features/employees/AssignedAssetsModal.tsx`):
+    - Grouped assigned assets by category (e.g. Laptop (1), H Phone (1), Monitor (2)) with category headers and count badges.
+    - Cleaned table rows to display individual asset code, name, serial number, canonical usage location ("Tại nhà", "Tại công ty", etc.), and assigned date.
+  * Tests:
+    - Added Rust integration test `test_unlimited_devices_and_hphone_location_rules` in `src-tauri/src/db/borrow.rs`.
+    - Added category grouping and mixed-locations unit tests in `src/features/employees/AssignedAssetsModal.test.tsx`.
+- Quality Gate & QA Verification:
+  * Backend: `cargo test` passed (358 passed, 0 failed).
+  * Frontend: Vitest passed (all employee suites passed, 67 tests).
+  * Gate: Full `npm run check:quality` passed cleanly (lint 0 errors, typecheck 0 errors, build successful, cargo check passed).
+  * Safety: Original test DB `data/test_db/staff_kit.sqlite3` preserved untouched.
+- Verdict: PASS.
+
 
 # Daily Log - 2026-10-18
 
