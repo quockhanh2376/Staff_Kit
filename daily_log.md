@@ -85,6 +85,39 @@
   * Safety: Original test DB `data/test_db/staff_kit.sqlite3` preserved untouched.
 - Verdict: PASS.
 
+## 2026-10-22 — Staff Kit Fix AssetList.xlsx Import Failure (Start)
+- Authorized by Zon/Cheki.
+- Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Scope:
+  1. Reproduce actual import failure using Zon's latest AssetList.xlsx (20 assets); capture failed stage and root error.
+  2. Inspect sheet/header offset (headers start at column B), trailing blank/whitespace rows, numeric Samsung serials, and category resolution.
+  3. Confirm Asset Tag → asset_code; Asset Name → display_name; Category → asset_categories; Brand/Model/Serial → canonical asset fields.
+  4. Verify missing categories are auto-created ONLY on Approve, in the same transaction.
+  5. Preserve valid blank serials for Monitors; H Phone must not derive a PC Computer Name.
+  6. Distinguish New / Existing-Skipped / Error accurately. Reimport must be idempotent.
+  7. Protect test DB (data/test_db) and production DB. No DB reset or direct import into original DB.
+  8. Fix confirmed parser/UI/validation defects with focused TDD; do not relax asset identity safeguards.
+- Validation: Focused tests + full quality gate; Qeen verification on isolated DB copy.
+
+## 2026-10-22 — Staff Kit Fix AssetList.xlsx Import Failure (End)
+- Author: Victor (Implementation), Qeen (Independent QA).
+- Outcome: Completed with focused TDD and strict database protection.
+- Investigation & Diagnostic Findings:
+  * Workbook analysis (`00_ExSource/AssetList.xlsx`): Sheet `Asset`, 20 rows, headers `["Asset Tag", "Asset Name", "Category", "Brand", "Computer Name", "Model", "Serrial Number"]`.
+  * Column mapping verified: `Asset Tag` → `asset_code`, `Asset Name` → `display_name`, `Category` → `asset_type`, `Serrial Number` → `serial_number`.
+  * Database state: 6 Laptops already exist in DB (`VNLAP504`, `505`, `506`, `523`, `526`, `536`); 4 H Phones (`VNHPH001`–`004`) have numeric serials and category `H Phone` which is missing from DB; 10 Monitors (`VNMON761`, etc.) have empty/null serials.
+  * Preview stage: 20 total rows recognized (0 phantom rows), 14 valid (new), 6 existing-skipped, 0 errors. Auto-detected 1 missing category: `H Phone (4 assets)`. Zero-writes invariant verified (0 DB changes on preview/cancel).
+  * Approve stage: `H Phone` category created atomically in the same transaction (`tracking_mode = Serialized`, `has_computer_name = 0`). 14 assets imported cleanly with canonical types, models, brands. Samsung numeric serials preserved as strings (`359545150098862`), Monitor empty serials preserved as NULL.
+  * Reimport stage: Idempotent (Total: 20, New: 0, Existing-Skipped: 20, Error: 0).
+  * Column B offset & trailing whitespace: Added tests verifying headers offset to column B and trailing empty/whitespace rows are cleanly skipped without producing phantom rows or field misalignment.
+- Tests & Verification:
+  * Added `test_diagnose_zon_asset_list_import` in `src-tauri/src/db/asset_import.rs`.
+  * Added `test_excel_header_offset_and_trailing_whitespace_rows` in `src-tauri/src/db/asset_import.rs`.
+  * Ran full backend test suite: 360 passed, 0 failed.
+  * Quality Gate: `npm run check:quality` (ESLint 0 errors, tsc 0 errors, build OK, cargo check OK).
+  * Database safety: Original test DB `data/test_db/staff_kit.sqlite3` strictly untouched.
+- Verdict: PASS.
+
 
 # Daily Log - 2026-10-18
 
