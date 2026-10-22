@@ -1850,7 +1850,7 @@ where
     Ok((sheet_name, header_row_index, headers))
 }
 
-fn detect_excel_header_row(
+pub(crate) fn detect_excel_header_row(
     range: &calamine::Range<Data>,
 ) -> Result<(usize, Vec<String>, i64), String> {
     let mut best_match: Option<(usize, Vec<String>, i64)> = None;
@@ -3492,7 +3492,7 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use rusqlite::{params, Connection};
+    use rusqlite::{params, Connection, OptionalExtension};
 
     use crate::db::{apply_migrations, configure_connection};
 
@@ -5650,5 +5650,186 @@ mod tests {
             )
             .expect("check asset");
         assert!(!asset_exists);
+    }
+
+    #[test]
+    fn test_diagnose_zon_asset_list_import() {
+        let original_db = std::path::Path::new(r"D:\Staff_Kit\data\test_db\staff_kit.sqlite3");
+        let temp_db = temp_db_path("diagnose-zon-full-lifecycle");
+        assert!(original_db.exists(), "original test db must exist");
+
+        std::fs::copy(original_db, &temp_db).expect("copy test db to temp");
+        let mut conn = crate::db::open_encrypted_connection(&temp_db).expect("open encrypted temp db");
+
+        let workbook_path = std::path::Path::new(r"D:\Staff_Kit\00_ExSource\AssetList.xlsx");
+        assert!(workbook_path.exists(), "AssetList.xlsx must exist");
+
+        // 1. Stage 1: File inspection / header mapping
+        let parsed = parse_asset_import_source(
+            workbook_path,
+            AssetImportMode::Serialized,
+            None,
+            None,
+        ).expect("parse asset import source");
+
+        assert_eq!(parsed.sheet_name.as_deref(), Some("Asset"));
+        assert_eq!(parsed.header_row, 1);
+        assert_eq!(parsed.rows.len(), 20, "Exact 20 rows must be recognized");
+        assert_eq!(
+            parsed.headers,
+            vec!["Asset Tag", "Asset Name", "Category", "Brand", "Computer Name", "Model", "Serrial Number"]
+        );
+        assert_eq!(parsed.auto_mapping.asset_code.as_deref(), Some("Asset Tag"));
+        assert_eq!(parsed.auto_mapping.display_name.as_deref(), Some("Asset Name"));
+        assert_eq!(parsed.auto_mapping.asset_type.as_deref(), Some("Category"));
+        assert_eq!(parsed.auto_mapping.brand.as_deref(), Some("Brand"));
+        assert_eq!(parsed.auto_mapping.model.as_deref(), Some("Model"));
+        assert_eq!(parsed.auto_mapping.serial_number.as_deref(), Some("Serrial Number"));
+
+        // Baseline counts in DB before preview
+        let initial_asset_count: i64 = conn.query_row("SELECT count(*) FROM assets", [], |r| r.get(0)).unwrap();
+        let hphone_cat_before: Option<i64> = conn.query_row(
+            "SELECT id FROM asset_categories WHERE category_code = 'h_phone' OR category_name = 'H Phone'",
+            [],
+            |r| r.get(0),
+        ).optional().unwrap();
+        assert!(hphone_cat_before.is_none(), "H Phone category must NOT exist before import");
+
+        // 2. Stage 2: Preview
+        let seed = super::asset_import_seed_from_parsed(parsed.clone(), AssetImportMode::Serialized);
+        let preview = preview_asset_import_seed_conn(&mut conn, seed.clone()).expect("preview asset import");
+
+        assert_eq!(preview.total_rows, 20);
+        assert_eq!(preview.valid_rows, 14, "14 new rows (4 H Phone + 10 Monitor)");
+        assert_eq!(preview.skipped_rows, 6, "6 existing laptops skipped");
+        assert_eq!(preview.error_rows, 0, "Zero errors");
+        assert_eq!(preview.new_categories.len(), 1);
+        assert_eq!(preview.new_categories[0].category_name, "H Phone");
+        assert_eq!(preview.new_categories[0].asset_count, 4);
+
+        // Preview = zero writes check
+        let asset_count_after_preview: i64 = conn.query_row("SELECT count(*) FROM assets", [], |r| r.get(0)).unwrap();
+        assert_eq!(initial_asset_count, asset_count_after_preview, "Preview must perform ZERO writes to assets");
+        let hphone_cat_after_preview: Option<i64> = conn.query_row(
+            "SELECT id FROM asset_categories WHERE category_code = 'h_phone' OR category_name = 'H Phone'",
+            [],
+            |r| r.get(0),
+        ).optional().unwrap();
+        assert!(hphone_cat_after_preview.is_none(), "Preview must NOT create missing categories");
+
+        // 3. Stage 3: Approve / Import
+        let report = import_asset_import_seed_conn(&mut conn, seed.clone()).expect("import asset import");
+        assert_eq!(report.total_rows, 20);
+        assert_eq!(report.imported, 14);
+        assert_eq!(report.skipped, 6);
+        assert_eq!(report.failed, 0);
+
+        // Verify categories and assets in DB
+        let hphone_cat_after_import: (i64, String, i64) = conn.query_row(
+            "SELECT id, tracking_mode, has_computer_name FROM asset_categories WHERE category_name = 'H Phone'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).expect("H Phone category must be created on approve");
+        assert_eq!(hphone_cat_after_import.1, "serialized");
+        assert_eq!(hphone_cat_after_import.2, 0, "H Phone has_computer_name must be 0");
+
+        // Verify Samsung serials are string numbers (not float or sci notation)
+        let samsung_serial: String = conn.query_row(
+            "SELECT serial_number FROM assets WHERE asset_code = 'VNHPH001'",
+            [],
+            |r| r.get(0),
+        ).expect("load VNHPH001");
+        assert_eq!(samsung_serial, "359545150098862");
+
+        // Verify Monitor has valid NULL serial
+        let monitor_serial: Option<String> = conn.query_row(
+            "SELECT serial_number FROM assets WHERE asset_code = 'VNMON761'",
+            [],
+            |r| r.get(0),
+        ).expect("load VNMON761");
+        assert_eq!(monitor_serial, None, "Monitor serial must be preserved as NULL/None");
+
+        // 4. Stage 4: Reimport must be idempotent (Existing-Skipped)
+        let reimport_preview = preview_asset_import_seed_conn(&mut conn, seed.clone()).expect("reimport preview");
+        assert_eq!(reimport_preview.total_rows, 20);
+        assert_eq!(reimport_preview.valid_rows, 0, "All rows already exist");
+        assert_eq!(reimport_preview.skipped_rows, 20, "All 20 rows skipped");
+        assert_eq!(reimport_preview.error_rows, 0);
+        assert_eq!(reimport_preview.new_categories.len(), 0);
+
+        let reimport_report = import_asset_import_seed_conn(&mut conn, seed).expect("reimport execute");
+        assert_eq!(reimport_report.total_rows, 20);
+        assert_eq!(reimport_report.imported, 0);
+        assert_eq!(reimport_report.skipped, 20);
+        assert_eq!(reimport_report.failed, 0);
+
+        let _ = std::fs::remove_file(&temp_db);
+    }
+
+    #[test]
+    fn test_excel_header_offset_and_trailing_whitespace_rows() {
+        use calamine::{Cell, Data, Range};
+
+        // Construct sparse range with:
+        // Row 0: Sheet title / blank
+        // Row 1: Headers starting at Column B (col 0 = STT, col 1 = Asset Tag, col 2 = Asset Name, col 3 = Category, col 4 = Serrial Number)
+        // Row 2: Data row 1 (Samsung numeric float serial)
+        // Row 3: Data row 2 (Monitor with empty serial)
+        // Row 4: Whitespace-only trailing row (should be skipped)
+        // Row 5: Empty trailing row (should be skipped)
+        let cells = vec![
+            Cell::new((0, 0), Data::String("Inventory Title".to_string())),
+            Cell::new((1, 0), Data::String("STT".to_string())),
+            Cell::new((1, 1), Data::String("Asset Tag".to_string())),
+            Cell::new((1, 2), Data::String("Asset Name".to_string())),
+            Cell::new((1, 3), Data::String("Category".to_string())),
+            Cell::new((1, 4), Data::String("Serrial Number".to_string())),
+            Cell::new((2, 0), Data::Int(1)),
+            Cell::new((2, 1), Data::String("VNHPH001".to_string())),
+            Cell::new((2, 2), Data::String("Galaxy A17".to_string())),
+            Cell::new((2, 3), Data::String("H Phone".to_string())),
+            Cell::new((2, 4), Data::Float(359545150098862.0)),
+            Cell::new((3, 0), Data::Int(2)),
+            Cell::new((3, 1), Data::String("VNMON761".to_string())),
+            Cell::new((3, 2), Data::String("Dell 24".to_string())),
+            Cell::new((3, 3), Data::String("Monitor".to_string())),
+            Cell::new((3, 4), Data::Empty),
+            Cell::new((4, 0), Data::String("   ".to_string())),
+            Cell::new((4, 1), Data::String("".to_string())),
+            Cell::new((5, 0), Data::Empty),
+        ];
+
+        let range = Range::from_sparse(cells);
+        let (header_row_index, headers, score) = super::detect_excel_header_row(&range).expect("detect header");
+        assert_eq!(header_row_index, 1);
+        assert!(score > 0);
+        assert_eq!(headers[0], "STT");
+        assert_eq!(headers[1], "Asset Tag");
+
+        let resolved = super::resolve_mapping(&headers, AssetImportMode::Serialized, None).expect("resolve mapping");
+        assert_eq!(resolved.asset_code_index, Some(1));
+        assert_eq!(resolved.display_name_index, 2);
+        assert_eq!(resolved.asset_type_index, 3);
+        assert_eq!(resolved.serial_number_index, Some(4));
+
+        let mut data_rows = Vec::new();
+        for (row_index, row) in range.rows().enumerate().skip(header_row_index + 1) {
+            if super::excel_row_is_empty(row) {
+                continue;
+            }
+            data_rows.push(super::build_row_seed_from_excel_row(
+                &headers,
+                row,
+                (row_index + 1) as i64,
+                &resolved,
+            ));
+        }
+
+        // Must recognize exactly 2 rows; trailing whitespace and empty rows must NOT produce phantom rows
+        assert_eq!(data_rows.len(), 2, "Trailing whitespace and empty rows must be filtered out");
+        assert_eq!(data_rows[0].asset_code.as_deref(), Some("VNHPH001"));
+        assert_eq!(data_rows[0].serial_number.as_deref(), Some("359545150098862"));
+        assert_eq!(data_rows[1].asset_code.as_deref(), Some("VNMON761"));
+        assert_eq!(data_rows[1].serial_number, None);
     }
 }
