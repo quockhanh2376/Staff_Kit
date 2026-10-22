@@ -3,6 +3,7 @@ import {
     ArrowUpDown,
     Check,
     ChevronDown,
+    Laptop,
     LoaderCircle,
     Search,
     Settings,
@@ -24,6 +25,7 @@ import { downloadCsv, downloadXlsx } from "./employeeListExport"
 import { getUserErrorMessage } from "../../lib/errorHandling"
 import { getTeamPillClasses } from "../teams/teamColors"
 import { MissingEmployeesModal } from "./MissingEmployeesModal"
+import { AssignedAssetsModal } from "./AssignedAssetsModal"
 import type { EmployeeRecord } from "../../types/staff"
 
 // ── Diacritic-insensitive highlight helper ─────────────────────────────────────
@@ -107,6 +109,7 @@ export function EmployeeView({
     const exportTimerRef = useRef<number | null>(null)
     const [showSyncDetails, setShowSyncDetails] = useState(false)
     const [isMissingModalOpen, setIsMissingModalOpen] = useState(false)
+    const [assignedAssetsEmployee, setAssignedAssetsEmployee] = useState<EmployeeRecord | null>(null)
     const syncPopoverRef = useRef<HTMLDivElement | null>(null)
 
     const handleOpenEditFromMissing = useCallback((employee: EmployeeRecord) => {
@@ -741,6 +744,28 @@ export function EmployeeView({
                                                                     )
                                                                 }
 
+                                                                if (column.key === "assignedAssets") {
+                                                                    const count = employee.assignedAssetsCount ?? 0
+                                                                    return (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation()
+                                                                                setAssignedAssetsEmployee(employee)
+                                                                            }}
+                                                                            className={`inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs font-medium transition cursor-pointer ${
+                                                                                count > 0
+                                                                                    ? "bg-[var(--primary)]/15 text-[var(--primary)] hover:bg-[var(--primary)]/25"
+                                                                                    : "text-[var(--muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--foreground)]"
+                                                                            }`}
+                                                                            title={`View assigned assets for ${employee.fullName}`}
+                                                                        >
+                                                                            <Laptop size={12} className={count > 0 ? "text-[var(--primary)]" : "text-[var(--muted)]"} />
+                                                                            <span>{count > 0 ? `${count} asset${count === 1 ? "" : "s"}` : "0"}</span>
+                                                                        </button>
+                                                                    )
+                                                                }
+
                                                                 const displayCellValue =
                                                                     column.key === "employeeId" && typeof rawCellValue === "string"
                                                                         ? formatEmployeeIdForDisplay(rawCellValue)
@@ -1127,6 +1152,13 @@ export function EmployeeView({
                     canEdit={canEditEmployeeTable}
                 />
             )}
+
+            {/* Assigned Assets Detail Modal */}
+            <AssignedAssetsModal
+                open={assignedAssetsEmployee !== null}
+                employee={assignedAssetsEmployee}
+                onClose={() => setAssignedAssetsEmployee(null)}
+            />
         </section>
     )
 }

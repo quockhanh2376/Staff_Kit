@@ -91,6 +91,17 @@ fn search_employees(
     db::search_employees(&app, filters)
 }
 
+#[tauri::command]
+fn get_employee_assigned_assets(
+    app: tauri::AppHandle,
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    session_token: String,
+    employee_id: i64,
+) -> Result<Vec<db::EmployeeAssignedAssetRecord>, String> {
+    let _ctx = auth_session::require_authenticated(&session_store, &session_token)?;
+    db::get_employee_assigned_assets(&app, employee_id)
+}
+
 // ── Employee asset seed (admin; actor from SessionContext) ───────────────────
 
 #[tauri::command]
@@ -1131,6 +1142,7 @@ pub fn run() {
             cancel_borrow_request,
             list_employees,
             search_employees,
+            get_employee_assigned_assets,
             preview_employee_asset_seed,
             import_employee_asset_seed,
             list_employee_group_counts,
@@ -1278,6 +1290,7 @@ mod tests {
     const AUTHENTICATED_COMMANDS: &[&str] = &[
         "list_employees",
         "search_employees",
+        "get_employee_assigned_assets",
         "list_employee_group_counts",
         "change_local_account_password",
         "list_employee_columns",

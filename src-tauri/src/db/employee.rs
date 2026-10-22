@@ -53,8 +53,22 @@ pub struct EmployeeRecord {
     pub staff_group: String,
     pub is_floating: bool,
     pub lifecycle_status: Option<String>,
+    pub assigned_assets_count: i64,
     pub dynamic_fields: HashMap<String, String>,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EmployeeAssignedAssetRecord {
+    pub asset_id: i64,
+    pub asset_code: String,
+    pub asset_name: String,
+    pub category_name: String,
+    pub category_code: Option<String>,
+    pub serial_number: Option<String>,
+    pub usage_location: Option<String>,
+    pub borrowed_at: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -219,6 +233,15 @@ LEFT JOIN (
 ) lc ON lc.employee_id_fk = e.id
 "#;
 
+const EMPLOYEE_ASSIGNED_ASSETS_COUNT_JOIN_SQL: &str = r#"
+LEFT JOIN (
+    SELECT employee_id_fk, count(*) AS active_count
+    FROM asset_loans
+    WHERE returned_at IS NULL
+    GROUP BY employee_id_fk
+) al_counts ON al_counts.employee_id_fk = e.id
+"#;
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 pub fn list_employees(
@@ -235,6 +258,61 @@ pub fn search_employees(
 ) -> Result<EmployeeListResponse, String> {
     let conn = open_runtime_connection(app)?;
     query_employees(&conn, filters)
+}
+
+pub fn get_employee_assigned_assets(
+    app: &AppHandle,
+    employee_id: i64,
+) -> Result<Vec<EmployeeAssignedAssetRecord>, String> {
+    let conn = open_runtime_connection(app)?;
+    get_employee_assigned_assets_conn(&conn, employee_id)
+}
+
+pub(crate) fn get_employee_assigned_assets_conn(
+    conn: &Connection,
+    employee_id: i64,
+) -> Result<Vec<EmployeeAssignedAssetRecord>, String> {
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT
+              a.id AS asset_id,
+              a.asset_code,
+              a.display_name AS asset_name,
+              COALESCE(c.category_name, a.asset_type) AS category_name,
+              c.category_code,
+              a.serial_number,
+              a.usage_location,
+              al.borrowed_at
+            FROM asset_loans al
+            INNER JOIN assets a ON a.id = al.asset_id
+            LEFT JOIN asset_categories c ON c.id = a.category_id
+            WHERE al.employee_id_fk = ? AND al.returned_at IS NULL
+            ORDER BY al.borrowed_at ASC, a.asset_code ASC
+            "#,
+        )
+        .map_err(|err| format!("failed to prepare assigned assets query: {err}"))?;
+
+    let rows = stmt
+        .query_map(params![employee_id], |row| {
+            Ok(EmployeeAssignedAssetRecord {
+                asset_id: row.get(0)?,
+                asset_code: row.get(1)?,
+                asset_name: row.get(2)?,
+                category_name: row.get(3)?,
+                category_code: row.get(4)?,
+                serial_number: row.get(5)?,
+                usage_location: row.get(6)?,
+                borrowed_at: row.get(7)?,
+            })
+        })
+        .map_err(|err| format!("failed to query assigned assets: {err}"))?;
+
+    let mut records = Vec::new();
+    for row in rows {
+        records.push(row.map_err(|err| format!("failed to read assigned asset row: {err}"))?);
+    }
+    Ok(records)
 }
 
 pub(crate) fn query_all_employees_for_filters(
@@ -605,7 +683,7 @@ pub(crate) fn load_employee_by_employee_id(
     employee_id: &str,
 ) -> Result<Option<EmployeeRecord>, String> {
     let sql = format!(
-        "SELECT {EMPLOYEE_SELECT_COLUMNS} FROM employees e LEFT JOIN teams t ON t.id = e.team_id {EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL} WHERE e.employee_id = ?"
+        "SELECT {EMPLOYEE_SELECT_COLUMNS} FROM employees e LEFT JOIN teams t ON t.id = e.team_id {EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL} {EMPLOYEE_ASSIGNED_ASSETS_COUNT_JOIN_SQL} WHERE e.employee_id = ?"
     );
 
     let maybe_employee = conn
@@ -627,7 +705,7 @@ pub(crate) fn load_employees_by_email_normalized(
     email: &str,
 ) -> Result<Vec<EmployeeRecord>, String> {
     let sql = format!(
-        "SELECT {EMPLOYEE_SELECT_COLUMNS} FROM employees e LEFT JOIN teams t ON t.id = e.team_id {EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL} WHERE lower(trim(COALESCE(e.email, ''))) = lower(trim(?))"
+        "SELECT {EMPLOYEE_SELECT_COLUMNS} FROM employees e LEFT JOIN teams t ON t.id = e.team_id {EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL} {EMPLOYEE_ASSIGNED_ASSETS_COUNT_JOIN_SQL} WHERE lower(trim(COALESCE(e.email, ''))) = lower(trim(?))"
     );
 
     let mut stmt = conn
@@ -946,7 +1024,7 @@ fn query_employees(
 
 fn load_employee_by_id(conn: &Connection, id: i64) -> Result<EmployeeRecord, String> {
     let sql = format!(
-        "SELECT {EMPLOYEE_SELECT_COLUMNS} FROM employees e LEFT JOIN teams t ON t.id = e.team_id {EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL} WHERE e.id = ?"
+        "SELECT {EMPLOYEE_SELECT_COLUMNS} FROM employees e LEFT JOIN teams t ON t.id = e.team_id {EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL} {EMPLOYEE_ASSIGNED_ASSETS_COUNT_JOIN_SQL} WHERE e.id = ?"
     );
 
     let mut employee = conn
@@ -1120,6 +1198,7 @@ fn map_employee_row(row: &Row<'_>) -> rusqlite::Result<EmployeeRecord> {
         updated_at: row.get(23)?,
         is_floating: row.get::<_, i64>(24)? != 0,
         lifecycle_status: row.get(25)?,
+        assigned_assets_count: row.get(26)?,
     })
 }
 
@@ -1174,7 +1253,7 @@ fn same_computer_name(left: Option<&str>, right: &str) -> bool {
 
 fn build_employee_from_clause(include_active_laptop_join: bool) -> String {
     if include_active_laptop_join {
-        format!(" FROM employees e LEFT JOIN teams t ON t.id = e.team_id {EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL} ")
+        format!(" FROM employees e LEFT JOIN teams t ON t.id = e.team_id {EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL} {EMPLOYEE_ASSIGNED_ASSETS_COUNT_JOIN_SQL} ")
     } else {
         " FROM employees e LEFT JOIN teams t ON t.id = e.team_id ".to_string()
     }
@@ -1217,6 +1296,9 @@ fn resolve_core_sort_expression(sort_key: &str) -> Option<&'static str> {
         "clientyearofservices" => "COALESCE(e.client_year_of_services, '') COLLATE NOCASE",
         "computername" => {
             "COALESCE(NULLIF(e.computername, ''), NULLIF(lc.computer_name_1, ''), '') COLLATE NOCASE"
+        }
+        "assignedassets" | "assignedassetscount" | "assets" => {
+            "COALESCE(al_counts.active_count, 0)"
         }
         "notes" => "COALESCE(e.notes, '') COLLATE NOCASE",
         _ => return None,
@@ -1371,10 +1453,10 @@ mod tests {
     use crate::db::{apply_migrations, configure_connection, COMPUTER_NAME_2_FIELD_KEY};
 
     use super::{
-        build_employee_from_clause, delete_employee_conn, list_employee_group_counts_conn,
-        move_employees_group_conn, query_employees, update_employee_tx,
-        upsert_employee_from_payload, EmployeePayload, EmployeeQuery, MoveEmployeesGroupInput,
-        EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL,
+        build_employee_from_clause, delete_employee_conn, get_employee_assigned_assets_conn,
+        list_employee_group_counts_conn, move_employees_group_conn, query_employees,
+        update_employee_tx, upsert_employee_from_payload, EmployeePayload, EmployeeQuery,
+        MoveEmployeesGroupInput, EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL,
     };
 
     fn open_test_connection() -> Connection {
@@ -2249,5 +2331,170 @@ mod tests {
             |row| row.get(0),
         ).expect("check loan after missing check");
         assert_eq!(loan_count, 1, "Asset loans must remain intact");
+    }
+
+    #[test]
+    fn test_assigned_assets_count_and_details() {
+        let conn = open_test_connection();
+        let emp1_id = seed_employee(&conn, "EE-100", "Alice Worker");
+        let emp2_id = seed_employee(&conn, "EE-200", "Bob NoAssets");
+
+        let cat_laptop: i64 = conn.query_row(
+            "SELECT id FROM asset_categories WHERE category_code = 'laptop'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+
+        conn.execute(
+            "INSERT OR IGNORE INTO asset_categories(category_code, category_name, tracking_mode, has_computer_name) VALUES ('hphone', 'H Phone', 'serialized', 0)",
+            [],
+        ).unwrap();
+        let cat_phone: i64 = conn.query_row(
+            "SELECT id FROM asset_categories WHERE category_code = 'hphone'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+
+        conn.execute(
+            "INSERT INTO assets(asset_code, category_id, asset_type, display_name, serial_number, usage_location, status) VALUES ('LT-01', ?, 'Laptop', 'Dell Latitude', 'SN-DELL-1', 'Floor 3', 'borrowed')",
+            params![cat_laptop],
+        ).unwrap();
+        let asset1 = conn.last_insert_rowid();
+
+        conn.execute(
+            "INSERT INTO assets(asset_code, category_id, asset_type, display_name, serial_number, usage_location, status) VALUES ('HP-01', ?, 'H Phone', 'Samsung Galaxy', 'SN-SAM-1', 'Remote', 'borrowed')",
+            params![cat_phone],
+        ).unwrap();
+        let asset2 = conn.last_insert_rowid();
+
+        conn.execute(
+            "INSERT INTO assets(asset_code, category_id, asset_type, display_name, serial_number, usage_location, status) VALUES ('LT-02', ?, 'Laptop', 'Lenovo ThinkPad', 'SN-LEN-1', 'Floor 2', 'in_stock')",
+            params![cat_laptop],
+        ).unwrap();
+        let asset3 = conn.last_insert_rowid();
+
+        conn.execute(
+            "INSERT INTO borrow_requests(request_key, employee_id_fk, submitted_employee_id, submitted_full_name, status) VALUES ('REQ-1', ?, 'EE-100', 'Alice Worker', 'approved')",
+            params![emp1_id],
+        ).unwrap();
+        let req_id = conn.last_insert_rowid();
+
+        conn.execute(
+            "INSERT INTO asset_loans(asset_id, employee_id_fk, borrow_request_id, borrowed_at) VALUES (?, ?, ?, '2026-10-01 10:00:00')",
+            params![asset1, emp1_id, req_id],
+        ).unwrap();
+
+        conn.execute(
+            "INSERT INTO asset_loans(asset_id, employee_id_fk, borrow_request_id, borrowed_at) VALUES (?, ?, ?, '2026-10-02 11:00:00')",
+            params![asset2, emp1_id, req_id],
+        ).unwrap();
+
+        conn.execute(
+            "INSERT INTO asset_loans(asset_id, employee_id_fk, borrow_request_id, borrowed_at, returned_at) VALUES (?, ?, ?, '2026-09-01 10:00:00', '2026-09-15 10:00:00')",
+            params![asset3, emp1_id, req_id],
+        ).unwrap();
+
+        let res = query_employees(&conn, EmployeeQuery {
+            query: None,
+            team_name: None,
+            staff_group: None,
+            is_floating: None,
+            sort_key: None,
+            sort_direction: None,
+            start_date_from: None,
+            start_date_to: None,
+            limit: Some(10),
+            offset: Some(0),
+        }).unwrap();
+
+        let emp1 = res.items.iter().find(|e| e.id == emp1_id).unwrap();
+        assert_eq!(emp1.assigned_assets_count, 2, "Alice should have 2 active assigned assets");
+
+        let emp2 = res.items.iter().find(|e| e.id == emp2_id).unwrap();
+        assert_eq!(emp2.assigned_assets_count, 0, "Bob should have 0 active assigned assets");
+
+        let assets_emp1 = get_employee_assigned_assets_conn(&conn, emp1_id).unwrap();
+        assert_eq!(assets_emp1.len(), 2);
+        assert_eq!(assets_emp1[0].asset_code, "LT-01");
+        assert_eq!(assets_emp1[0].asset_name, "Dell Latitude");
+        assert_eq!(assets_emp1[0].category_name, "Laptop");
+        assert_eq!(assets_emp1[0].serial_number.as_deref(), Some("SN-DELL-1"));
+        assert_eq!(assets_emp1[0].usage_location.as_deref(), Some("Floor 3"));
+        assert_eq!(assets_emp1[0].borrowed_at, "2026-10-01 10:00:00");
+
+        assert_eq!(assets_emp1[1].asset_code, "HP-01");
+        assert_eq!(assets_emp1[1].asset_name, "Samsung Galaxy");
+        assert_eq!(assets_emp1[1].category_name, "H Phone");
+        assert_eq!(assets_emp1[1].usage_location.as_deref(), Some("Remote"));
+
+        let assets_emp2 = get_employee_assigned_assets_conn(&conn, emp2_id).unwrap();
+        assert_eq!(assets_emp2.len(), 0);
+
+        let res_sorted_desc = query_employees(&conn, EmployeeQuery {
+            query: None,
+            team_name: None,
+            staff_group: None,
+            is_floating: None,
+            sort_key: Some("assignedAssets".to_string()),
+            sort_direction: Some("desc".to_string()),
+            start_date_from: None,
+            start_date_to: None,
+            limit: Some(10),
+            offset: Some(0),
+        }).unwrap();
+        assert_eq!(res_sorted_desc.items[0].id, emp1_id);
+    }
+
+    #[test]
+    fn test_phase0_legacy_safety_gate() {
+        let candidates = ["data/phase0_safety_db/staff_kit.sqlite3", "../data/phase0_safety_db/staff_kit.sqlite3"];
+        let db_path = candidates.iter().map(std::path::Path::new).find(|p| p.exists());
+        let Some(db_path) = db_path else {
+            println!("phase0_safety_db not found, skipping");
+            return;
+        };
+
+        let conn = crate::db::open_encrypted_read_only_connection(db_path)
+            .expect("open read only safety db");
+
+        let asset_name_count: i64 = conn.query_row(
+            "SELECT count(*) FROM employee_dynamic_values WHERE field_key = 'asset_name'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        let cateagory_count: i64 = conn.query_row(
+            "SELECT count(*) FROM employee_dynamic_values WHERE field_key = 'cateagory'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        let location_count: i64 = conn.query_row(
+            "SELECT count(*) FROM employee_dynamic_values WHERE field_key = 'location'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        let distinct_legacy_employees: i64 = conn.query_row(
+            "SELECT count(DISTINCT employee_id) FROM employee_dynamic_values WHERE field_key IN ('asset_name', 'cateagory', 'location')",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+
+        let total_employees: i64 = conn.query_row("SELECT count(*) FROM employees", [], |r| r.get(0)).unwrap();
+        let total_assets: i64 = conn.query_row("SELECT count(*) FROM assets", [], |r| r.get(0)).unwrap();
+        let active_loans: i64 = conn.query_row("SELECT count(*) FROM asset_loans WHERE returned_at IS NULL", [], |r| r.get(0)).unwrap();
+
+        println!("--- PHASE 0 BASELINE COUNTS ---");
+        println!("Total employees: {total_employees}");
+        println!("Distinct legacy asset employees: {distinct_legacy_employees}");
+        println!("asset_name entries: {asset_name_count}");
+        println!("cateagory entries: {cateagory_count}");
+        println!("location entries: {location_count}");
+        println!("Total assets: {total_assets}");
+        println!("Active loans: {active_loans}");
+
+        assert_eq!(asset_name_count, 92);
+        assert_eq!(cateagory_count, 91);
+        assert_eq!(location_count, 92);
+        assert_eq!(distinct_legacy_employees, 92);
+        assert_eq!(total_employees, 442);
     }
 }

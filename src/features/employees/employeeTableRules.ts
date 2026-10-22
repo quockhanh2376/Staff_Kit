@@ -2,6 +2,7 @@ import type { EmployeePayload, EmployeeRecord } from "../../types/staff"
 
 export function readEmployeeCellText(employee: EmployeeRecord, key: string): string {
     if (key === "rowNumber") return ""
+    if (key === "assignedAssets") return String(employee.assignedAssetsCount ?? 0)
     const record = employee as Record<string, unknown>
     const value = key in record ? record[key] : (employee.dynamicFields?.[key] ?? undefined)
     if (value === null || value === undefined) return ""
@@ -68,6 +69,7 @@ export function isEmployeeTableEditableColumn(
 ): boolean {
     if (key === "rowNumber") return false
     if (key === "employeeId") return false
+    if (key === "assignedAssets") return false
     if (key === "computerName") return canEditComputerName
     return true
 }

@@ -1,4 +1,4 @@
-﻿import { invoke } from "@tauri-apps/api/core"
+import { invoke } from "@tauri-apps/api/core"
 import {
   AUTH_REQUIRED,
   AUTH_SESSION_EXPIRED,
@@ -51,6 +51,7 @@ import type {
   EmployeePayload,
   EmployeeQueryInput,
   EmployeeRecord,
+  EmployeeAssignedAssetRecord,
   MoveEmployeesGroupInput,
   LocalAccountLoginInput,
   LocalAccountLoginResult,
@@ -425,6 +426,11 @@ export const staffApi = {
   searchEmployees: (filters: EmployeeQueryInput) =>
     call<EmployeeListResponse>("search_employees", {
       filters,
+    }),
+
+  getEmployeeAssignedAssets: (employeeId: number) =>
+    call<EmployeeAssignedAssetRecord[]>("get_employee_assigned_assets", {
+      employeeId,
     }),
 
   previewEmployeeAssetSeed: (payload: EmployeeAssetSeedInput) =>

@@ -100,6 +100,7 @@ pub(crate) const CORE_COLUMN_DEFINITIONS: &[(&str, &str)] = &[
     ("clientYearOfServices", "Client Year Of Services"),
     ("computerName", "Computer Name"),
     ("computer_2", "Computer (2)"),
+    ("assignedAssets", "Assigned Assets"),
     ("notes", "Notes"),
 ];
 
@@ -136,7 +137,8 @@ pub(super) const EMPLOYEE_SELECT_COLUMNS: &str = r#"
   END AS staff_group,
   e.updated_at,
   COALESCE(e.is_floating, 0) AS is_floating,
-  e.lifecycle_status
+  e.lifecycle_status,
+  COALESCE(al_counts.active_count, 0) AS assigned_assets_count
 "#;
 
 // ── Additional columns added via migration ────────────────────────────────────

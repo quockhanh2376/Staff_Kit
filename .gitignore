@@ -53,6 +53,8 @@ imports/
 exports/
 data/local/
 data/runtime/
+data/test_db/
+data/phase0_safety_db/
 ExSource/
 00_ExSource/
 

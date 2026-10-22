@@ -31,6 +31,29 @@
   * Full quality gate (`npm run check:quality`): lint, typecheck, build, and cargo check all passed (0 errors).
 - Verdict: PASS.
 
+## 2026-10-22 — Staff Kit Approved Canonical Asset Display (Start)
+- Authorized by Zon/Cheki (approved D1=A, D2=A, D3=A, D4=A).
+- Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Scope:
+  * Phase 0: Mandatory legacy safety gate on isolated copy of test DB, baseline count verification for 92 legacy records, confirm 0 overwrites/deletions.
+  * Phase 1: Canonical "Assigned Assets (N)" column in Employee List; click opens popover/drawer showing asset code, name, category, serial, usage location from assets + asset_categories + asset_loans (read-only).
+  * Phase 2: Preserve COMPUTER NAME / COMPUTER (2) PC-only derivation (has_computer_name=1); keep legacy dynamic fields untouched; hide legacy asset columns by default for NEW column profiles only; use assets.usage_location as canonical.
+- Validation: Focused unit tests (Rust + Vitest), full quality gate (`npm run check:quality`). DB safety: preserve test DB, validate against isolated test DB copy.
+
+## 2026-10-22 — Staff Kit Approved Canonical Asset Display (End)
+- Author: Victor (Implementation), Qeen (Independent QA).
+- Outcome: Completed with focused TDD and strict legacy safety.
+- Implementation Summary:
+  * Phase 0 (Legacy Safety Gate): Verified 92 legacy records in employee_dynamic_values untouched (asset_name: 92, cateagory: 91, location: 92 across 442 employees). Zero overwrites/migrations.
+  * Backend: Added `assigned_assets_count` join in `src-tauri/src/db/employee.rs` and `schema.rs`. Implemented `get_employee_assigned_assets` Tauri command and core column `assignedAssets` with deterministic ordering (`borrowed_at ASC, asset_code ASC`). Added IPC classification in `src-tauri/src/lib.rs`.
+  * Frontend: Added `AssignedAssetsModal` component displaying canonical assets, category, serial, and usage location. Connected clickable badge in `EmployeeView.tsx`.
+  * Business Rules Verified: D1=A (canonical assigned assets display), D2=A (legacy fields preserved untouched, hidden by default for NEW profiles only), D3=A (has_computer_name=1 restricted to PCs, no phone/monitor computer name derivation), D4=A (assets.usage_location is canonical, no two-way sync with employee LOCATION).
+- Quality Gate Verification:
+  * Backend: `cargo test` passed (357 passed, 0 failed).
+  * Frontend: Vitest passed (283 passed across 38 files), `npm run lint` passed (0 errors), `npm run typecheck` passed (0 errors), `npm run build` passed.
+  * Gate: Full `npm run check:quality` passed cleanly.
+- Verdict: PASS.
+
 
 # Daily Log - 2026-10-18
 

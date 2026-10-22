@@ -33,6 +33,7 @@ export const DEFAULT_VISIBLE_COLUMN_KEYS = [
     "email",
     "computerName",
     "computer_2",
+    "assignedAssets",
 ]
 
 export const DATE_COLUMN_KEYS = new Set([
@@ -63,5 +64,6 @@ export const DEFAULT_COLUMN_WIDTHS: ColumnWidthMap = {
     contractEndDate: 140,
     clientYearOfServices: 176,
     computerName: 170,
+    assignedAssets: 150,
     notes: 220,
 }

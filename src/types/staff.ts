@@ -466,8 +466,20 @@ export type EmployeeRecord = {
   staffGroup: string
   isFloating: boolean
   lifecycleStatus: string | null
+  assignedAssetsCount?: number
   dynamicFields: Record<string, string>
   updatedAt: string
+}
+
+export type EmployeeAssignedAssetRecord = {
+  assetId: number
+  assetCode: string
+  assetName: string
+  categoryName: string
+  categoryCode: string | null
+  serialNumber: string | null
+  usageLocation: string | null
+  borrowedAt: string
 }
 
 export type EmployeeListResponse = {
