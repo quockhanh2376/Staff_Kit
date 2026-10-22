@@ -68,6 +68,10 @@ function ImportPanel({ assetImport }: AssetImportWizardProps) {
                               { label: "New Rows", value: preview.validRows },
                               { label: "Existing / Skipped", value: preview.skippedRows },
                               { label: "Error Rows", value: preview.errorRows },
+                              ...(preview.newCategories?.map((cat) => ({
+                                  label: `New Category: ${cat.categoryName}`,
+                                  value: `${cat.assetCount} assets`,
+                              })) ?? []),
                           ],
                           rows: preview.rows,
                           errors: preview.errors,

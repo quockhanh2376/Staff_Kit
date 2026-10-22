@@ -354,6 +354,92 @@ pub(crate) fn load_asset_category_by_code_or_name_tx(
     .map_err(|err| format!("failed to load asset category '{normalized}': {err}"))
 }
 
+pub(crate) fn generate_unique_category_code_tx(
+    tx: &Transaction<'_>,
+    category_name: &str,
+) -> Result<String, String> {
+    let trimmed = category_name.trim();
+    if trimmed.is_empty() {
+        return Err("category name cannot be empty".to_string());
+    }
+
+    let mut base_code = String::new();
+    let mut prev_was_sep = false;
+    for ch in trimmed.chars() {
+        if ch.is_ascii_alphanumeric() {
+            base_code.push(ch.to_ascii_lowercase());
+            prev_was_sep = false;
+        } else if !prev_was_sep && !base_code.is_empty() {
+            base_code.push('_');
+            prev_was_sep = true;
+        }
+    }
+    let base_code = base_code.trim_matches('_');
+    let base_code = if base_code.is_empty() {
+        "cat".to_string()
+    } else {
+        base_code.to_string()
+    };
+
+    let mut candidate = base_code.clone();
+    let mut counter = 1_u32;
+    loop {
+        let exists: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM asset_categories WHERE category_code = ? COLLATE NOCASE)",
+                params![candidate],
+                |row| row.get(0),
+            )
+            .map_err(|err| format!("failed to check category code uniqueness: {err}"))?;
+        if !exists {
+            return Ok(candidate);
+        }
+        counter += 1;
+        candidate = format!("{base_code}_{counter}");
+    }
+}
+
+pub(crate) fn ensure_category_exists_or_create_tx(
+    tx: &Transaction<'_>,
+    category_name: &str,
+    default_tracking_mode: &str,
+) -> Result<AssetCategoryLookupRecord, String> {
+    if let Some(existing) = load_asset_category_by_code_or_name_tx(tx, category_name)? {
+        return Ok(existing);
+    }
+
+    let category_name_trimmed = category_name.trim();
+    if category_name_trimmed.is_empty() {
+        return Err("category name cannot be empty".to_string());
+    }
+
+    let category_code = generate_unique_category_code_tx(tx, category_name_trimmed)?;
+    tx.execute(
+        r#"
+        INSERT INTO asset_categories(
+          category_code,
+          category_name,
+          tracking_mode,
+          prefix_code,
+          qr_required,
+          has_computer_name,
+          is_active,
+          created_at,
+          updated_at
+        )
+        VALUES(?, ?, ?, NULL, 0, 0, 1, datetime('now'), datetime('now'))
+        "#,
+        params![category_code, category_name_trimmed, default_tracking_mode],
+    )
+    .map_err(humanize_sqlite_error)?;
+
+    let id = tx.last_insert_rowid();
+    Ok(AssetCategoryLookupRecord {
+        id,
+        tracking_mode: default_tracking_mode.to_string(),
+    })
+}
+
 fn normalize_asset_category_prefix(value: &str) -> Option<String> {
     let normalized = value.trim().to_ascii_uppercase();
     if normalized.is_empty() {

@@ -353,6 +353,11 @@ export type AssetDirectImportPreviewRow = {
   validationErrors: string[]
 }
 
+export type AssetDirectImportNewCategorySummary = {
+  categoryName: string
+  assetCount: number
+}
+
 export type AssetDirectImportPreview = {
   fileName: string
   sheetName: string | null
@@ -361,6 +366,7 @@ export type AssetDirectImportPreview = {
   validRows: number
   errorRows: number
   skippedRows: number
+  newCategories: AssetDirectImportNewCategorySummary[]
   rows: AssetDirectImportPreviewRow[]
   errors: AssetDirectImportErrorItem[]
 }

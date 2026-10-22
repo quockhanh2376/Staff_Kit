@@ -1,3 +1,37 @@
+# Daily Log - 2026-10-22
+
+## 2026-10-22 — Staff Kit Auto-Create Asset Category During Import (Start)
+- Authorized by Zon/Cheki.
+- Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Scope:
+  1. During Asset Import Preview, detect Category values missing from the local database.
+  2. Show "New Category: H Phone (4 assets)" and similar summaries in preview (read-only).
+  3. On user Approve, atomically create missing Categories, then import their assets in the same transaction.
+  4. For serialized rows, new Categories use tracking_mode = Serialized. Respect existing category configuration; never silently change tracking_mode.
+  5. Match existing Categories case-insensitively and avoid duplicates. Generate unique category codes using existing conventions.
+  6. Allow optional fields to remain empty. Require valid unique Asset Code and preserve duplicate/conflict safeguards.
+  7. Any validation/import failure rolls back both newly created Categories and asset changes.
+  8. Do not automatically assign employees, create loans, or overwrite existing assets.
+- Validation: Focused unit tests (Rust + Vitest), full quality gate (`npm run check:quality`). DB safety: preserve test DB, validate against isolated test DB copy.
+
+## 2026-10-22 — Staff Kit Auto-Create Asset Category During Import (End)
+- Implementation (Victor):
+  * Backend (`src-tauri/src/db/asset.rs`): Added `generate_unique_category_code_tx` and `ensure_category_exists_or_create_tx` to atomically look up or create missing asset categories within active transaction with unique code slugs and appropriate tracking modes.
+  * Backend (`src-tauri/src/db/asset_import.rs`): Added `AssetDirectImportNewCategorySummary` struct and `new_categories` field to `AssetDirectImportPreview`. Extended preview inspection to count missing categories case-insensitively (`NOCASE`). Updated quantity and serialized import pipelines to atomically ensure categories exist. Added unit tests for preview detection, atomic creation, and transaction rollback.
+  * Frontend (`src/types/staff.ts`): Added `AssetDirectImportNewCategorySummary` type and `newCategories` to `AssetDirectImportPreview`.
+  * Frontend (`src/features/assets/AssetImportWizard.tsx`): Rendered compact preview summary cards for newly detected categories ("New Category: <Name>" with "<Count> assets").
+  * Test suites: Added component test `AssetImportWizard.newCategory.test.tsx` and updated `useAssetDirectImportState.approval.test.tsx`.
+- QA Validation (Qeen):
+  * Verified "H Phone" missing creates exactly one category and imports 4 Samsung assets.
+  * Verified reimport produces no duplicate category or assets.
+  * Verified preview and cancel perform 0 writes (read-only).
+  * Verified validation/import failures trigger full rollback of both category and assets.
+  * Preserved original test DB (`data/test_db/staff_kit.sqlite3`).
+  * Unit tests: Rust unit tests passed (355 passed); Vitest asset suite passed (14 passed across 6 test files).
+  * Full quality gate (`npm run check:quality`): lint, typecheck, build, and cargo check all passed (0 errors).
+- Verdict: PASS.
+
+
 # Daily Log - 2026-10-18
 
 ## 2026-10-18 — Staff Kit HR Lifecycle UI Label Cleanup (Start)

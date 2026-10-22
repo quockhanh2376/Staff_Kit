@@ -55,6 +55,7 @@ function previewForStatuses(
         validRows: rows.filter((row) => row.status === "valid").length,
         errorRows: rows.filter((row) => row.status === "error").length,
         skippedRows: rows.filter((row) => row.status === "skipped").length,
+        newCategories: [],
         rows,
         errors: [],
     }

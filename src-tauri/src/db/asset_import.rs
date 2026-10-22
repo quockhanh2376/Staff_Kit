@@ -335,6 +335,13 @@ pub struct AssetDirectImportPreviewRow {
     pub validation_errors: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetDirectImportNewCategorySummary {
+    pub category_name: String,
+    pub asset_count: i64,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetDirectImportPreview {
@@ -345,6 +352,7 @@ pub struct AssetDirectImportPreview {
     pub valid_rows: i64,
     pub error_rows: i64,
     pub skipped_rows: i64,
+    pub new_categories: Vec<AssetDirectImportNewCategorySummary>,
     pub rows: Vec<AssetDirectImportPreviewRow>,
     pub errors: Vec<AssetDirectImportErrorItem>,
 }
@@ -1049,9 +1057,11 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
             let category_value = asset_type
                 .clone()
                 .ok_or_else(|| format!("row {row_id} is missing assetType"))?;
-            let category =
-                asset::load_asset_category_by_code_or_name_tx(&tx, category_value.as_str())?
-                    .ok_or_else(|| format!("asset category '{category_value}' was not found"))?;
+            let category = asset::ensure_category_exists_or_create_tx(
+                &tx,
+                category_value.as_str(),
+                AssetImportMode::Quantity.as_str(),
+            )?;
 
             if category.tracking_mode != AssetImportMode::Quantity.as_str() {
                 return Err(format!(
@@ -1230,8 +1240,11 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
         let category_value = asset_type
             .clone()
             .ok_or_else(|| format!("row {row_id} is missing assetType"))?;
-        let category = asset::load_asset_category_by_code_or_name_tx(&tx, category_value.as_str())?
-            .ok_or_else(|| format!("asset category '{category_value}' was not found"))?;
+        let category = asset::ensure_category_exists_or_create_tx(
+            &tx,
+            category_value.as_str(),
+            AssetImportMode::Serialized.as_str(),
+        )?;
 
         if category.tracking_mode != AssetImportMode::Serialized.as_str() {
             return Err(format!(
@@ -1361,7 +1374,7 @@ where
 {
     let batch = create_asset_import_batch_seed_conn(conn, input)?;
     let batch_id = batch.summary.id;
-    let preview = asset_direct_preview_from_batch_detail(&batch);
+    let preview = asset_direct_preview_from_batch_detail(conn, &batch);
 
     if let Err(err) = cleanup_batch(conn, batch_id, false) {
         eprintln!(
@@ -1469,8 +1482,41 @@ fn asset_import_seed_from_parsed(
 }
 
 fn asset_direct_preview_from_batch_detail(
+    conn: &Connection,
     batch: &AssetImportBatchDetail,
 ) -> AssetDirectImportPreview {
+    let mut category_counts: HashMap<String, (String, i64)> = HashMap::new();
+    for row in &batch.rows {
+        if let Some(asset_type) = row.asset_type.as_deref() {
+            let trimmed = asset_type.trim();
+            if !trimmed.is_empty() {
+                let key = trimmed.to_ascii_lowercase();
+                let entry = category_counts
+                    .entry(key)
+                    .or_insert_with(|| (trimmed.to_string(), 0));
+                entry.1 += 1;
+            }
+        }
+    }
+
+    let mut new_categories = Vec::new();
+    for (_key, (category_name, count)) in category_counts {
+        let exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM asset_categories WHERE (category_code = ?1 COLLATE NOCASE OR category_name = ?1 COLLATE NOCASE) AND is_active = 1)",
+                params![category_name],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+        if !exists {
+            new_categories.push(AssetDirectImportNewCategorySummary {
+                category_name,
+                asset_count: count,
+            });
+        }
+    }
+    new_categories.sort_by(|a, b| a.category_name.cmp(&b.category_name));
+
     AssetDirectImportPreview {
         file_name: batch.summary.source_file_name.clone(),
         sheet_name: batch.summary.sheet_name.clone(),
@@ -1479,6 +1525,7 @@ fn asset_direct_preview_from_batch_detail(
         valid_rows: batch.summary.valid_rows,
         error_rows: batch.summary.error_rows,
         skipped_rows: batch.summary.skipped_rows,
+        new_categories,
         rows: batch
             .rows
             .iter()
@@ -5386,5 +5433,202 @@ mod tests {
             )
             .expect("count active loans");
         assert_eq!(active_loan_count, 0);
+    }
+
+    #[test]
+    fn test_auto_create_category_on_preview_and_import() {
+        let mut conn = open_test_connection();
+
+        // 1. Verify category "H Phone" does not exist yet
+        let exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM asset_categories WHERE category_name = 'H Phone')",
+                [],
+                |row| row.get(0),
+            )
+            .expect("check category existence");
+        assert!(!exists);
+
+        // 2. Preview 4 assets with category "H Phone"
+        let rows = (1..=4)
+            .map(|i| AssetImportRowSeedInput {
+                row_number: i + 1,
+                raw_values: vec![
+                    AssetImportRawValue {
+                        header: "Assetcode".to_string(),
+                        value: format!("VNPHONE{i:03}"),
+                    },
+                    AssetImportRawValue {
+                        header: "Category".to_string(),
+                        value: "H Phone".to_string(),
+                    },
+                    AssetImportRawValue {
+                        header: "Asset Name".to_string(),
+                        value: format!("Samsung Galaxy S{i}"),
+                    },
+                ],
+                asset_code: Some(format!("VNPHONE{i:03}")),
+                asset_type: Some("H Phone".to_string()),
+                display_name: Some(format!("Samsung Galaxy S{i}")),
+                display_name_short: None,
+                computer_name: None,
+                brand: Some("Samsung".to_string()),
+                model: Some(format!("Galaxy S{i}")),
+                serial_number: Some(format!("SN-PHONE-{i}")),
+                adapter_number: None,
+                quantity: None,
+                warehouse: Some("HCM".to_string()),
+                usage_location: None,
+                notes: None,
+                submitted_staff_id: None,
+                submitted_full_name: None,
+                submitted_team: None,
+                submitted_phone_number: None,
+            })
+            .collect();
+
+        let batch_input = sample_batch(AssetImportMode::Serialized, rows);
+
+        let preview = preview_asset_import_seed_conn(&mut conn, batch_input.clone())
+            .expect("generate preview");
+
+        assert_eq!(preview.valid_rows, 4);
+        assert_eq!(preview.new_categories.len(), 1);
+        assert_eq!(preview.new_categories[0].category_name, "H Phone");
+        assert_eq!(preview.new_categories[0].asset_count, 4);
+
+        // Preview is read-only: confirm "H Phone" still not in DB
+        let exists_after_preview: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM asset_categories WHERE category_name = 'H Phone')",
+                [],
+                |row| row.get(0),
+            )
+            .expect("check category existence after preview");
+        assert!(!exists_after_preview);
+
+        // 3. Import the batch
+        let report = import_asset_import_seed_conn(&mut conn, batch_input.clone())
+            .expect("import batch");
+        assert_eq!(report.imported, 4);
+        assert_eq!(report.failed, 0);
+
+        // Confirm exactly one Category was created
+        let (cat_id, cat_code, tracking_mode): (i64, String, String) = conn
+            .query_row(
+                "SELECT id, category_code, tracking_mode FROM asset_categories WHERE category_name = 'H Phone'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("load created category");
+        assert_eq!(cat_code, "h_phone");
+        assert_eq!(tracking_mode, "serialized");
+
+        let total_h_phone_categories: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM asset_categories WHERE category_name = 'H Phone'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count categories");
+        assert_eq!(total_h_phone_categories, 1);
+
+        // Confirm all 4 assets imported and linked to this category
+        let assets_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM assets WHERE category_id = ?",
+                params![cat_id],
+                |row| row.get(0),
+            )
+            .expect("count imported assets");
+        assert_eq!(assets_count, 4);
+
+        // 4. Reimport same data -> zero writes, all skipped, no duplicate category
+        let reimport_preview = preview_asset_import_seed_conn(&mut conn, batch_input.clone())
+            .expect("reimport preview");
+        assert_eq!(reimport_preview.new_categories.len(), 0);
+        assert_eq!(reimport_preview.skipped_rows, 4);
+        assert_eq!(reimport_preview.valid_rows, 0);
+
+        let reimport_report = import_asset_import_seed_conn(&mut conn, batch_input)
+            .expect("reimport");
+        assert_eq!(reimport_report.imported, 0);
+        assert_eq!(reimport_report.skipped, 4);
+
+        let final_cat_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM asset_categories WHERE category_name = 'H Phone'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count categories after reimport");
+        assert_eq!(final_cat_count, 1);
+    }
+
+    #[test]
+    fn test_import_rollback_rolls_back_new_category_on_validation_failure() {
+        let mut conn = open_test_connection();
+
+        // One valid row with new category "Tablet Pro", second row has duplicate asset code with first
+        let rows = vec![
+            AssetImportRowSeedInput {
+                row_number: 2,
+                raw_values: vec![
+                    AssetImportRawValue {
+                        header: "Assetcode".to_string(),
+                        value: "VNTAB001".to_string(),
+                    },
+                    AssetImportRawValue {
+                        header: "Category".to_string(),
+                        value: "Tablet Pro".to_string(),
+                    },
+                    AssetImportRawValue {
+                        header: "Asset Name".to_string(),
+                        value: "iPad Pro 11".to_string(),
+                    },
+                ],
+                asset_code: Some("VNTAB001".to_string()),
+                asset_type: Some("Tablet Pro".to_string()),
+                display_name: Some("iPad Pro 11".to_string()),
+                display_name_short: None,
+                computer_name: None,
+                brand: Some("Apple".to_string()),
+                model: Some("iPad Pro".to_string()),
+                serial_number: Some("SN-TAB-1".to_string()),
+                adapter_number: None,
+                quantity: None,
+                warehouse: Some("HCM".to_string()),
+                usage_location: None,
+                notes: None,
+                submitted_staff_id: None,
+                submitted_full_name: None,
+                submitted_team: None,
+                submitted_phone_number: None,
+            },
+        ];
+
+        let batch_input = sample_batch(AssetImportMode::Serialized, rows);
+
+        // Pre-insert an asset in DB that will cause conflict or error if needed, OR test tracking mode mismatch
+        // Let's test tracking mode mismatch: create "Tablet Pro" as quantity first, then serialized import should fail and rollback
+        conn.execute(
+            "INSERT INTO asset_categories(category_code, category_name, tracking_mode, is_active) VALUES('tablet_pro', 'Tablet Pro', 'quantity', 1)",
+            [],
+        )
+        .expect("insert quantity category");
+
+        let err = import_asset_import_seed_conn(&mut conn, batch_input)
+            .expect_err("should fail due to tracking mode mismatch");
+        assert!(err.contains("not configured for serialized assets"));
+
+        // Confirm no asset was created
+        let asset_exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM assets WHERE asset_code = 'VNTAB001')",
+                [],
+                |row| row.get(0),
+            )
+            .expect("check asset");
+        assert!(!asset_exists);
     }
 }
