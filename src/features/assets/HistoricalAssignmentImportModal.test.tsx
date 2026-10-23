@@ -113,6 +113,8 @@ describe("HistoricalAssignmentImportModal", () => {
         expect(screen.getByText("ASWVN30")).toBeInTheDocument()
         expect(screen.getByText("ASWVN214")).toBeInTheDocument()
         expect(screen.getByText("ASWVN1229")).toBeInTheDocument()
+        expect(screen.getByText("DB: Trần Nhật Phong (ASWVN214)")).toBeInTheDocument()
+        expect(screen.getByText("Not found in DB")).toBeInTheDocument()
         expect(screen.getByText("Quarantined Conflict")).toBeInTheDocument()
         expect(screen.getByText("Missing Employee")).toBeInTheDocument()
         expect(screen.getByText("New Asset & Assign")).toBeInTheDocument()

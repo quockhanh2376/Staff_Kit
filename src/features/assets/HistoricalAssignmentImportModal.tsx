@@ -383,7 +383,17 @@ export function HistoricalAssignmentImportModal({
                                                 {item.rawStaffId}
                                             </td>
                                             <td className="px-3 py-2 text-[var(--text-primary)]">
-                                                {item.canonicalEmployeeName ?? item.rawEmployeeName}
+                                                <div>{item.rawEmployeeName}</div>
+                                                {item.canonicalEmployeeName && item.canonicalEmployeeName.toUpperCase() !== item.rawEmployeeName.toUpperCase() && (
+                                                    <div className="text-[10px] font-medium text-amber-500">
+                                                        DB: {item.canonicalEmployeeName} ({item.canonicalStaffId})
+                                                    </div>
+                                                )}
+                                                {item.status === "missingEmployee" && (
+                                                    <div className="text-[10px] font-medium text-red-400">
+                                                        Not found in DB
+                                                    </div>
+                                                )}
                                             </td>
                                             <td className="px-3 py-2 font-mono text-[var(--text-primary)]">
                                                 <span>{item.canonicalAssetCode ?? item.rawAssetCode}</span>

@@ -237,11 +237,11 @@ function App() {
         if (disposed) return
         setDbStatus(status)
         setDbReady(true)
-        void staffApi.showMainWindow().catch(() => {})
       } catch (error) {
         if (!disposed) setGlobalError(getUserErrorMessage(error))
       } finally {
         if (!disposed) setBootstrapping(false)
+        void staffApi.showMainWindow().catch(() => {})
       }
     })()
 

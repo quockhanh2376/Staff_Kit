@@ -1,5 +1,59 @@
 # Daily Log - 2026-10-23
 
+## 2026-10-23 — Staff Kit Window Regression & Historical Import Conflict Review (Start)
+- Authorized by Zon/Cheki.
+- Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Scope:
+  1. Priority 1 (Window Regression):
+     - Investigate why `staff-kit.exe` runs while the window remains hidden.
+     - Inspect foreground Windows session, existing processes, port 5173, WebView2 readiness, and visibility fallback.
+     - Implement root-cause fix across backend setup (`src-tauri/src/lib.rs`), frontend initialization (`src/main.tsx`), and error boundary (`src/App.tsx`).
+     - Verify actual visible HWND on user's foreground desktop session (`WinSta0\Default`).
+     - Terminate all zombie background dev processes cleanly.
+  2. Priority 2 (Conflict Review — read-only):
+     - Use exact latest `00_ExSource/Asigned_Asset.xlsx`.
+     - Re-run Preview against an isolated COPY of the current test DB (`data/test_db/staff_kit.sqlite3`).
+     - Review all 7 exceptions (`ASWVN214` (2), `ASWVN1261`, `ASWVN958`, `ASWVN1119`, `ASWVN30`, `ASWN1323`).
+     - Verify whether missing employees are absent, in another lifecycle group, or represented by different Staff IDs.
+     - Surface conflicting DB identities and missing-employee warnings in the Import Preview UI.
+     - Zero writes to original test DB or production DB.
+
+## 2026-10-23 — Staff Kit Window Regression & Historical Import Conflict Review (End)
+- Implementation (Victor):
+  * Priority 1 (Window Regression Fix):
+    - Root Cause Analysis:
+      1. Orphaned background processes (stale Vite node server and cargo) from previous sessions locked port 5173 and hung incoming HTTP connections.
+      2. When `staff-kit.exe` started in dev mode with `devUrl: http://localhost:5173`, WebView2 stalled indefinitely waiting on the hung port.
+      3. The backend visibility loop in `src-tauri/src/lib.rs` had a strict 5-second cap (20 * 250ms); once WebView2 navigation stalled past 5s, the thread terminated without showing the window.
+      4. In `src/App.tsx`, `staffApi.showMainWindow()` was only called in `try` after `initDatabase()`; any error or delay bypassed the UI visibility trigger.
+    - Fix:
+      1. `src-tauri/src/lib.rs`: Called `window.show()`, `unminimize()`, and `set_focus()` immediately upon setup completion, combined with a persistent 30-second visibility supervisor.
+      2. `src/main.tsx`: Dispatched `staffApi.showMainWindow()` immediately at the start of bundle execution.
+      3. `src/App.tsx`: Moved `showMainWindow()` into `finally` block of database bootstrapping to guarantee window presentation even on error states.
+      4. Terminated all orphaned background node/cargo/vite processes and freed port 5173.
+  * Priority 2 (Conflict Review & UI):
+    - Re-ran Preview against isolated copy of `data/test_db/staff_kit.sqlite3`: parsed 157 rows, 200 monitor assignments.
+    - Verified 7 quarantined exceptions: 5 identity conflicts (ASWVN214 x2, ASWVN958, ASWVN1119, ASWVN1261) and 2 missing employees (ASWVN30, ASWN1323).
+    - Investigated DB identities:
+      * ASWVN30 (Row 2): Missing leading zero padding for canonical ASWVN030 (Nguyễn Trần Quang Vinh).
+      * ASWVN214 (Row 7, x2): Belongs to active employee Trần Nhật Phong; Lê Minh Duy's canonical ID in DB is ASWVN1328.
+      * ASWVN958 (Row 64): Belongs to resigned employee Nguyễn Quốc Trọng Nghĩa (offboarding); Nguyễn Công Thiện's canonical ID is ASWVN027.
+      * ASWVN1119 (Row 101): Belongs to resigned employee NGUYỄN THỊ THUÝ (offboarding); Lê Minh Tiến's canonical ID is ASWVN910.
+      * ASWVN1261 (Row 138): Belongs to resigned employee NGUYỄN CHÍ THÀNH (offboarding); Lê Tuấn Anh's canonical ID is ASWVN377.
+      * ASWN1323 (Row 152): Prefix typo missing 'V' (ASWN1323 vs canonical ASWVN1323: Trương Vĩnh Phước).
+    - `HistoricalAssignmentImportModal.tsx`: Updated table cell to explicitly display both Excel name and DB mismatched identity (`DB: <Name> (<ID>)`) and red badge for unmapped employees.
+- Validation (Qeen):
+  * Foreground Desktop Window Verification:
+    - Spawned interactive process on `WinSta0\Default` desktop: verified HWND (0x2903A6), `Vis=True`, `Style=0x14CF0000` (`WS_VISIBLE`), class `Tauri Window`, title `Staff Kit`.
+    - Cleaned up test process with 0 lingering background tasks.
+  * 7-Assignment Exception Table verified against isolated DB copy.
+  * Preview/Cancel verified zero writes; 7 exceptions remain quarantined; 193 remainder valid for approval.
+  * Unit tests: `npm run test:unit` (39 files, 292/292 PASS).
+  * Backend tests: `npm run test:tauri` (366/366 PASS).
+  * Quality gate: `npm run check:quality` (lint, strict typecheck, vite build, cargo check — 0 errors PASS).
+  * Original test DB (`data/test_db/staff_kit.sqlite3`) and production DB untouched.
+- Verdict: PASS.
+
 ## 2026-10-23 — Staff Kit Historical Assignment Import Finalization (Start)
 - Authorized by Zon/Cheki (approved D1=A, D2=A, D3=A).
 - Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).

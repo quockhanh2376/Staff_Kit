@@ -1110,9 +1110,15 @@ pub fn run() {
                 // LAN is intentionally manual-only. The QR card owns the
                 // serialized start/stop lifecycle after the app is ready.
                 let app_handle = app.handle().clone();
+                // 1. Immediate show attempt upon setup completion
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.unminimize();
+                    let _ = window.set_focus();
+                }
+                // 2. Persistent visibility supervisor until visible
                 std::thread::spawn(move || {
-                    for _ in 0..20 {
-                        std::thread::sleep(std::time::Duration::from_millis(250));
+                    for _ in 0..120 {
                         if let Some(window) = app_handle.get_webview_window("main") {
                             let _ = window.show();
                             if window.is_visible().unwrap_or(false) {
@@ -1121,6 +1127,7 @@ pub fn run() {
                                 break;
                             }
                         }
+                        std::thread::sleep(std::time::Duration::from_millis(250));
                     }
                 });
                 Ok(())

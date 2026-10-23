@@ -1413,4 +1413,79 @@ mod tests {
         drop(conn);
         let _ = std::fs::remove_file(&copy_path);
     }
+
+    #[test]
+    fn test_print_7_row_exception_table() {
+        use crate::db::open_encrypted_read_only_connection;
+
+        let isolated_db_path = if Path::new("scratch/isolated_test.sqlite3").exists() {
+            Path::new("scratch/isolated_test.sqlite3").to_path_buf()
+        } else if Path::new("../scratch/isolated_test.sqlite3").exists() {
+            Path::new("../scratch/isolated_test.sqlite3").to_path_buf()
+        } else {
+            return;
+        };
+
+        let read_conn = open_encrypted_read_only_connection(&isolated_db_path).expect("open read-only isolated db");
+        let file_path = if Path::new("00_ExSource/Asigned_Asset.xlsx").exists() {
+            "00_ExSource/Asigned_Asset.xlsx".to_string()
+        } else {
+            "../00_ExSource/Asigned_Asset.xlsx".to_string()
+        };
+
+        let preview = preview_historical_assignment_import_conn(
+            &read_conn,
+            &HistoricalAssignmentImportInput {
+                file_path,
+                sheet_name: None,
+            },
+        ).expect("preview historical assignment import");
+
+        let exceptions: Vec<&HistoricalAssignmentItem> = preview
+            .items
+            .iter()
+            .filter(|i| {
+                i.status == HistoricalAssignmentRowStatus::Conflict
+                    || i.status == HistoricalAssignmentRowStatus::Error
+                    || i.status == HistoricalAssignmentRowStatus::MissingEmployee
+            })
+            .collect();
+
+        println!("=== 7-ASSIGNMENT EXCEPTION DETAILS ===");
+        println!("Found {} exceptions in preview", exceptions.len());
+        assert_eq!(exceptions.len(), 7, "Must find exactly 7 quarantined/error exceptions");
+
+        for item in &exceptions {
+            // Check DB for raw_staff_id
+            let db_staff: Option<(i64, String, String, Option<String>, Option<String>)> = read_conn
+                .query_row(
+                    "SELECT id, employee_id, full_name, lifecycle_status, staff_group FROM employees WHERE employee_id = ?",
+                    params![item.raw_staff_id],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+                )
+                .optional()
+                .unwrap();
+
+            // Search DB by name
+            let name_matches: Vec<(String, String, Option<String>)> = {
+                let mut stmt = read_conn.prepare("SELECT employee_id, full_name, lifecycle_status FROM employees WHERE UPPER(full_name) LIKE UPPER(?) OR employee_id LIKE ?").unwrap();
+                let last_word = item.raw_employee_name.split_whitespace().last().unwrap_or("");
+                let rows = stmt.query_map(params![format!("%{}%", last_word), format!("%{}%", item.raw_staff_id.replace("ASWN", "ASWVN"))], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap();
+                rows.filter_map(|r| r.ok()).collect()
+            };
+
+            println!(
+                "EXCEL_ROW={} | STAFF_ID={} | NAME={} | ASSET={} | LOC={} | STATUS={:?} | REASON={:?} | DB_MATCH={:?} | NAME_MATCHES={:?}",
+                item.row_number,
+                item.raw_staff_id,
+                item.raw_employee_name,
+                item.raw_asset_code,
+                item.location,
+                item.status,
+                item.status_reason,
+                db_staff,
+                name_matches
+            );
+        }
+    }
 }
