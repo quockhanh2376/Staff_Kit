@@ -50,6 +50,7 @@ import {
   normalizeSerializedAssetFilterText,
 } from "./serializedAssetFilters"
 import { AssetDashboardColumnsDrawer } from "./AssetDashboardColumnsDrawer"
+import { HistoricalAssignmentImportModal } from "./HistoricalAssignmentImportModal"
 import { useAssetDashboardColumnPrefs } from "./useAssetDashboardColumnPrefs"
 import { useSerializedAssetGridState } from "./useSerializedAssetGridState"
 
@@ -276,6 +277,7 @@ export function AssetDashboard({
   assetImport,
 }: AssetDashboardProps) {
   const [activeTab, setActiveTab] = useState<AssetDashboardTabKey>("serialized")
+  const [isHistoricalImportOpen, setIsHistoricalImportOpen] = useState(false)
   const [serializedSearchTerm, setSerializedSearchTerm] = useState("")
   const [serializedCategoryFilter, setSerializedCategoryFilter] = useState(
     ALL_SERIALIZED_ASSET_CATEGORY_FILTER,
@@ -710,6 +712,16 @@ export function AssetDashboard({
               </button>
               <button
                 className={dashboardShellSecondaryButtonClass}
+                onClick={() => setIsHistoricalImportOpen(true)}
+                type="button"
+                disabled={!auth.canImportData}
+                title="Historical Monitor Assignment Import"
+              >
+                <Layers size={16} />
+                Assign Import
+              </button>
+              <button
+                className={dashboardShellSecondaryButtonClass}
                 onClick={assetImport.openManualAssetPanel}
                 type="button"
                 disabled={!auth.isAdminAccount}
@@ -847,6 +859,13 @@ export function AssetDashboard({
           />
         )}
       </div>
+      <HistoricalAssignmentImportModal
+        open={isHistoricalImportOpen}
+        onClose={() => setIsHistoricalImportOpen(false)}
+        onSuccess={() => {
+          void assetDashboard.refreshDashboard()
+        }}
+      />
     </div>
   )
 }

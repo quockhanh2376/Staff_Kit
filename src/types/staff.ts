@@ -866,11 +866,13 @@ export type EmployeeListSyncResult = {
 }
 
 export type HistoricalAssignmentRowStatus =
+  | "newAsset"
   | "newAssignment"
   | "alreadyAssigned"
   | "missingAsset"
   | "missingEmployee"
   | "conflict"
+  | "error"
 
 export type HistoricalAssignmentItem = {
   rowNumber: number
@@ -892,12 +894,12 @@ export type HistoricalAssignmentItem = {
 export type HistoricalAssignmentPreviewSummary = {
   totalRows: number
   totalAssignments: number
+  newAssets: number
   newAssignments: number
-  alreadyAssigned: number
-  missingAssets: number
-  missingEmployees: number
-  conflicts: number
-  hasBlockingConflicts: boolean
+  existingSkipped: number
+  excludedConflicts: number
+  errors: number
+  canApproveRemainder: boolean
 }
 
 export type HistoricalAssignmentPreview = {
@@ -913,8 +915,10 @@ export type HistoricalAssignmentImportInput = {
 
 export type HistoricalAssignmentImportReport = {
   totalProcessed: number
+  createdAssets: number
   createdAssignments: number
   skippedAlreadyAssigned: number
+  excludedConflicts: number
   errors: string[]
 }
 

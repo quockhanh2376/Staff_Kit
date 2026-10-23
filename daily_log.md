@@ -1,5 +1,40 @@
 # Daily Log - 2026-10-23
 
+## 2026-10-23 — Staff Kit Historical Assignment Import Finalization (Start)
+- Authorized by Zon/Cheki (approved D1=A, D2=A, D3=A).
+- Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Scope:
+  1. Parse 157 Excel rows from `00_ExSource/Asigned_Asset.xlsx` into 200 unique Monitor assignments (support Vietnamese diacritics in headers "Nhân viên", "Tại NHÀ").
+  2. D1: On explicit Approve, auto-create missing Monitor assets with canonical codes (e.g. `VNMON...`), Category=Monitor, tracking_mode=serialized, minimal metadata, then assign atomically. Preview/Cancel performs zero writes.
+  3. D2: Quarantine identity-conflict rows (`ASWVN214`, `ASWVN1261`, `ASWVN958`, `ASWVN1119`). Show exact excluded assignment counts and reasons. Require manual correction before assignment. Allow approval of independently validated remainder.
+  4. D3: Mark historical imports as `verified_inventory_import` + `pending_signature`. No fabricated signatures, handover dates, or IP metadata.
+  5. Preserve existing assets, active loans, employee IDs, and audit history. Already assigned to same holder = Skip; different holder = Conflict.
+  6. Respect per-monitor Home/Office locations ("Tại công ty", "Tại nhà"). Do not overwrite verified locations on skip.
+  7. Idempotent reimport: revalidate approved subset before commit; atomic transaction rollback on error; zero duplicate assets or loans.
+  8. UI Preview displaying New Assets, New Assignments, Existing/Skipped, Excluded Conflicts, and Errors.
+- Safety & Rails: Development exclusively on isolated copy `scratch/isolated_test.sqlite3`; zero writes to original test DB or production DB. Focused TDD + quality gate.
+
+## 2026-10-23 — Staff Kit Historical Assignment Import Finalization (End)
+- Implementation (Victor):
+  * Domain Engine (`src-tauri/src/db/historical_assignment_import.rs`):
+    - D1 auto-creation: canonicalizes monitor codes (`MON...` -> `VNMON...`), creates missing Monitor assets (`Category=Monitor`, `tracking_mode=serialized`, `has_computer_name=0`) on Approve inside atomic transaction with minimal metadata; Preview/Cancel performs zero writes.
+    - D2 conflict quarantine: isolates identity mismatches (`ASWVN214`, `ASWVN1261`, `ASWVN958`, `ASWVN1119`) and multi-claimant rows; excludes them from approval while allowing approval of the independently validated remainder (193 assignments).
+    - D3 signature and audit preservation: marks historical imports as `verified_inventory_import` with `signature_status = 'pending_signature'`, `submit_source_ip = NULL`, `handover_date = NULL`, preserving genuine signing boundaries.
+    - Idempotent reimport: revalidates active loans before committing; repeated approval skips already-assigned items without duplicate assets or loans.
+  * UI Preview Component (`src/features/assets/HistoricalAssignmentImportModal.tsx`):
+    - 5 badge summary cards: New Assets, New Assignments, Existing/Skipped, Excluded Conflicts, Errors.
+    - Visual quarantine banner explaining excluded conflicts.
+    - Detailed items table with filter tabs, location badges, and row-level status reasons.
+    - Hooked "Assign Import" action into `AssetDashboard.tsx`.
+- QA Validation (Qeen):
+  * Parsed exact workbook `00_ExSource/Asigned_Asset.xlsx`: 157 data rows, 200 total assignments (141 CTY, 59 NHA), 200 unique monitor codes.
+  * Confirmed preview counts: 193 New Assets, 0 New Assignments, 0 Existing/Skipped, 5 Excluded Conflicts, 2 Errors (Missing Employees).
+  * Validated atomic approval on isolated DB: created 193 assets and 193 loans; 5 conflicts quarantined; 2 missing employees excluded.
+  * Validated reimport idempotency: 0 assets created, 0 loans created, 193 skipped as already assigned.
+  * Unit tests: `npm run test:tauri -- --lib db::historical_assignment_import` (5/5 PASS), Vitest `npm run test:unit` (292/292 PASS).
+  * Full quality gate: `npm run check:quality` (0 errors across lint, typecheck, build, and cargo check).
+- Verdict: PASS.
+
 ## 2026-10-23 — Staff Kit Verified Historical Asset Assignment Import (Start)
 - Authorized by Zon/Cheki.
 - Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
