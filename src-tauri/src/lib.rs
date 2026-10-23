@@ -13,6 +13,16 @@ fn ping() -> &'static str {
 }
 
 #[tauri::command]
+fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        window.show().map_err(|e| e.to_string())?;
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+    Ok(())
+}
+
+#[tauri::command]
 fn write_export_file(
     session_store: tauri::State<'_, auth_session::SessionStore>,
     session_token: String,
@@ -1068,14 +1078,16 @@ pub fn run() {
                 // serialized start/stop lifecycle after the app is ready.
                 let app_handle = app.handle().clone();
                 std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_millis(500));
-                    match app_handle.get_webview_window("main") {
-                        Some(window) => {
-                            if let Err(error) = window.show() {
-                                eprintln!("[Staff Kit] failed to show main window: {error}");
+                    for _ in 0..20 {
+                        std::thread::sleep(std::time::Duration::from_millis(250));
+                        if let Some(window) = app_handle.get_webview_window("main") {
+                            let _ = window.show();
+                            if window.is_visible().unwrap_or(false) {
+                                let _ = window.unminimize();
+                                let _ = window.set_focus();
+                                break;
                             }
                         }
-                        None => eprintln!("[Staff Kit] main window is unavailable"),
                     }
                 });
                 Ok(())
@@ -1084,6 +1096,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // ── Public (bootstrap/login/diagnostics) ───────────────────────────
             ping,
+            show_main_window,
             init_database,
             get_database_status,
             login_local_account,
@@ -1212,6 +1225,7 @@ mod tests {
 
     const PUBLIC_COMMANDS: &[&str] = &[
         "ping",
+        "show_main_window",
         "init_database",
         "get_database_status",
         "login_local_account",

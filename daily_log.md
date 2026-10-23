@@ -1,3 +1,35 @@
+# Daily Log - 2026-10-23
+
+## 2026-10-23 — Staff Kit Tauri Window Not Visible (Start)
+- Authorized by Zon/Cheki.
+- Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Scope:
+  1. Investigate why Staff Kit window is not visible after `npm run tauri:dev` reaches `Running target\debug\staff-kit.exe`.
+  2. Root cause analysis: inspect window station and thread desktop inheritance, `visible: false` in `tauri.conf.json`, WebView2 initialization and window show timing.
+  3. Implement fix:
+     - Add robust window show, unminimize, and focus fallback retry loop in Tauri backend.
+     - Restore `show_main_window` public Tauri command and hook into React frontend on mount and theme ready.
+  4. Verify actual visible, interactive window on user's foreground Windows desktop session.
+  5. Protect test/production DB. Focused TDD + full quality gate (`npm run check:quality`).
+
+## 2026-10-23 — Staff Kit Tauri Window Not Visible (End)
+- Implementation (Victor):
+  * Root Cause:
+    1. In `src-tauri/tauri.conf.json`, `visible: false` keeps the main window hidden initially to eliminate white/black startup flash.
+    2. Commit `9bcb573` had removed the `show_main_window` IPC command and frontend trigger, replacing it with a single one-shot `std::thread::sleep(500ms)` followed by `window.show()`. If WebView2 initialization or the Vite dev server took longer than 500ms, or if Tao dropped the early show call without unminimize/focus, the window remained permanently hidden (`Style: 0x04CF0000`, `Vis: False`).
+  * Fix:
+    1. `src-tauri/src/lib.rs`: Restored public `show_main_window` command calling `window.show()`, `window.unminimize()`, and `window.set_focus()`. Registered in `invoke_handler!` and categorized in `PUBLIC_COMMANDS`.
+    2. `src-tauri/src/lib.rs`: Updated background window shower in `setup` to retry every 250ms for up to 5 seconds with `unminimize()` and `set_focus()` until visibility is confirmed.
+    3. `src/services/staff-api.ts`: Restored `staffApi.showMainWindow()` public IPC method.
+    4. `src/services/staff-api.test.ts`: Added unit test confirming `showMainWindow` is public and invokes `show_main_window`.
+    5. `src/App.tsx`: Triggered `staffApi.showMainWindow()` upon initial theme mount and database ready.
+- Verification (Qeen):
+  * Window visibility verified: HWND verified with `Vis: True`, `Style: 0x14CF0000` (`WS_VISIBLE`), class `Tauri Window`, title `"Staff Kit"`.
+  * Unit tests: `npm run test:unit -- src/services/staff-api.test.ts` (19/19 PASS).
+  * Tauri backend tests: `npm run test:tauri` (360/360 PASS, including `every_registered_command_is_classified` and `classification_counts_are_non_empty_and_disjoint`).
+  * Full quality gate: `npm run check:quality` (lint, typecheck, build, cargo check — 0 errors PASS).
+  * Database integrity: Zero writes or modifications to test/production DB.
+
 # Daily Log - 2026-10-22
 
 ## 2026-10-22 — Staff Kit Auto-Create Asset Category During Import (Start)

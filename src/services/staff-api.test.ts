@@ -52,6 +52,12 @@ describe("staffApi session injection", () => {
         expect(getSessionToken()).toBeNull()
     })
 
+    it('showMainWindow is public and invokes the startup window command', async () => {
+        invokeMock.mockResolvedValue(undefined)
+        await staffApi.showMainWindow()
+        expect(invokeMock).toHaveBeenCalledWith('show_main_window', undefined)
+    })
+
     it("public call omits sessionToken entirely", async () => {
         setSession({ sessionToken: "should-not-leak", expiresAt: "2099-01-01T00:00:00Z" })
         invokeMock.mockResolvedValue("pong")
