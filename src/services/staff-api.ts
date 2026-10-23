@@ -47,6 +47,10 @@ import type {
   EmployeeAssetSeedPreview,
   EmployeeAssetSeedReport,
   EmployeeColumnUpsertInput,
+  HistoricalAssignmentImportInput,
+  HistoricalAssignmentPreview,
+  HistoricalAssignmentImportReport,
+  SignHistoricalBorrowRequestInput,
   EmployeeListResponse,
   EmployeePayload,
   EmployeeQueryInput,
@@ -256,6 +260,27 @@ export const staffApi = {
         filePath: payload.filePath,
         sheetName: payload.sheetName ?? null,
       },
+    }),
+
+  previewHistoricalAssignmentImport: (payload: HistoricalAssignmentImportInput) =>
+    call<HistoricalAssignmentPreview>("preview_historical_assignment_import", {
+      payload: {
+        filePath: payload.filePath,
+        sheetName: payload.sheetName ?? null,
+      },
+    }),
+
+  applyHistoricalAssignmentImport: (payload: HistoricalAssignmentImportInput) =>
+    call<HistoricalAssignmentImportReport>("apply_historical_assignment_import", {
+      payload: {
+        filePath: payload.filePath,
+        sheetName: payload.sheetName ?? null,
+      },
+    }),
+
+  signHistoricalBorrowRequest: (payload: SignHistoricalBorrowRequestInput) =>
+    call<void>("sign_historical_borrow_request", {
+      payload,
     }),
 
   createAssetImportBatch: (payload: AssetImportBatchCreateInput) =>

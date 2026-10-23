@@ -249,4 +249,45 @@ describe("AssignedAssetsModal", () => {
         fireEvent.keyDown(window, { key: "Escape" })
         expect(mockOnClose).toHaveBeenCalledTimes(1)
     })
+
+    it("displays Pending Signature and Signed status badges", async () => {
+        const assetsWithSignatures: EmployeeAssignedAssetRecord[] = [
+            {
+                assetId: 201,
+                assetCode: "VNMON761",
+                assetName: "Dell P2419H",
+                categoryName: "Monitor",
+                categoryCode: "monitor",
+                serialNumber: "SN761",
+                usageLocation: "Tại nhà",
+                borrowedAt: "2026-10-23T10:00:00Z",
+                signatureStatus: "pending_signature",
+            },
+            {
+                assetId: 202,
+                assetCode: "VNMON762",
+                assetName: "Dell P2419H",
+                categoryName: "Monitor",
+                categoryCode: "monitor",
+                serialNumber: "SN762",
+                usageLocation: "Tại công ty",
+                borrowedAt: "2026-10-23T10:00:00Z",
+                signatureStatus: "signed",
+            },
+        ]
+        vi.mocked(staffApi.getEmployeeAssignedAssets).mockResolvedValue(assetsWithSignatures)
+
+        render(
+            <AssignedAssetsModal
+                open={true}
+                employee={mockEmployee}
+                onClose={mockOnClose}
+            />
+        )
+
+        await waitFor(() => {
+            expect(screen.getByText("Pending Signature")).toBeTruthy()
+            expect(screen.getByText("Signed")).toBeTruthy()
+        })
+    })
 })

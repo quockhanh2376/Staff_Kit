@@ -1,5 +1,41 @@
 # Daily Log - 2026-10-23
 
+## 2026-10-23 — Staff Kit Verified Historical Asset Assignment Import (Start)
+- Authorized by Zon/Cheki.
+- Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Scope:
+  1. Implement dedicated Historical Assignment Import workflow for existing assets without altering existing Asset Import semantics.
+  2. Parse Staff ID, Employee Name, and multiple Monitor codes in Tại CTY / Tại NHÀ columns from `Asigned_Asset.xlsx`.
+  3. Validate rows and generate read-only Preview categories: New Assignment, Already Assigned, Missing Asset, Missing Employee, Conflict (identity mismatches).
+  4. Block conflicting identities (`ASWVN214`, `ASWVN1261`) without guessing. Require canonical matching on Staff ID and Asset Code.
+  5. On explicit Approve: atomically create active loans, update asset status to assigned, update usage location safely without overwriting unrelated data.
+  6. Idempotent reimport: existing loans preserved, no duplicate loans or automatic returns.
+  7. Maintain explicit distinction between inventory import and signature status (`pending_signature` vs `signed`). Zero fabricated signatures or dates.
+  8. Safety & Quality: Isolated test DB copy verification, zero writes on Preview/Cancel, full quality gate.
+
+## 2026-10-23 — Staff Kit Verified Historical Asset Assignment Import (End)
+- Implementation (Victor):
+  * Schema & Migrations: Added `signature_status` ('pending_signature' | 'signed'), `imported_at`, and `handover_date` to `borrow_requests`; added `imported_at` and `handover_date` to `asset_loans`. Idempotent SQLite migrations applied in `src-tauri/src/db/mod.rs` and `schema.rs`.
+  * Domain Engine (`src-tauri/src/db/historical_assignment_import.rs`): Dedicated parser and import pipeline for `Asigned_Asset.xlsx`.
+    - Parses 157 rows into 200 monitor assignments across "Tại CTY" and "Tại NHÀ" locations.
+    - Read-only preview detects New Assignment, Already Assigned, Missing Asset, Missing Employee, and Conflict (intra-file and identity mismatches like ASWVN214 and ASWVN1261).
+    - Transactional approval hard-blocks on any conflict; creates approved `borrow_requests` with `signature_status = 'pending_signature'`, `submit_source_ip = NULL`, `handover_date = NULL`, updates asset status to `assigned` and `usage_location`, and inserts `asset_loans`.
+    - Genuine signature path `sign_historical_borrow_request_conn` transitions `signature_status` to `'signed'` with stored confirmation.
+  * Queries & UI:
+    - Updated `get_employee_assigned_assets_conn` and `list_asset_dashboard_serialized_conn` to surface `signature_status`.
+    - Registered IPC commands `preview_historical_assignment_import`, `apply_historical_assignment_import`, `sign_historical_borrow_request` in `src-tauri/src/lib.rs`.
+    - Updated `AssignedAssetsModal.tsx` with `Pending Signature` / `Signed` status badges.
+- QA Validation (Qeen):
+  * Tested with Zon's `00_ExSource/Asigned_Asset.xlsx`: 200 monitor assignment items parsed correctly.
+  * Detected identity conflicts ASWVN214 (LÊ MINH DUY vs TRẦN NHẬT PHONG) and ASWVN1261 (LÊ TUẤN ANH vs NGUYỄN CHÍ THÀNH).
+  * Verified transactional safety: conflicts strictly block import approval with zero partial writes.
+  * Verified signature invariants: new assignments start with `pending_signature`, zero fabricated signatures or handover dates (`submit_source_ip` preserved as NULL).
+  * Preserved original test DB (`data/test_db/staff_kit.sqlite3`) and production DB.
+  * Backend tests: `npm run test:tauri` (364 passed, 0 failed).
+  * Frontend tests: `npm run test:unit` (288 passed, 0 failed).
+  * Quality gate: `npm run check:quality` (0 errors across lint, typecheck, build, and cargo check).
+- Verdict: PASS.
+
 ## 2026-10-23 — Staff Kit Tauri Window Not Visible (Start)
 - Authorized by Zon/Cheki.
 - Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).

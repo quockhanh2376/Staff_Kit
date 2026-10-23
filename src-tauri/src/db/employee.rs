@@ -69,6 +69,9 @@ pub struct EmployeeAssignedAssetRecord {
     pub serial_number: Option<String>,
     pub usage_location: Option<String>,
     pub borrowed_at: String,
+    pub signature_status: Option<String>,
+    pub handover_date: Option<String>,
+    pub imported_at: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -283,10 +286,14 @@ pub(crate) fn get_employee_assigned_assets_conn(
               c.category_code,
               a.serial_number,
               a.usage_location,
-              al.borrowed_at
+              al.borrowed_at,
+              COALESCE(br.signature_status, 'signed') AS signature_status,
+              al.handover_date,
+              al.imported_at
             FROM asset_loans al
             INNER JOIN assets a ON a.id = al.asset_id
             LEFT JOIN asset_categories c ON c.id = a.category_id
+            LEFT JOIN borrow_requests br ON br.id = al.borrow_request_id
             WHERE al.employee_id_fk = ? AND al.returned_at IS NULL
             ORDER BY al.borrowed_at ASC, a.asset_code ASC
             "#,
@@ -304,6 +311,9 @@ pub(crate) fn get_employee_assigned_assets_conn(
                 serial_number: row.get(5)?,
                 usage_location: row.get(6)?,
                 borrowed_at: row.get(7)?,
+                signature_status: row.get(8)?,
+                handover_date: row.get(9)?,
+                imported_at: row.get(10)?,
             })
         })
         .map_err(|err| format!("failed to query assigned assets: {err}"))?;

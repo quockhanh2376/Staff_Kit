@@ -222,4 +222,22 @@ describe("staffApi Phase C command classification", () => {
         await expect(staffApi.writeExportFile("C:/tmp/x.csv", [65])).rejects.toThrow("AUTH_REQUIRED")
         expect(invokeMock).not.toHaveBeenCalled()
     })
+
+    it("previewHistoricalAssignmentImport requires session and passes payload", async () => {
+        setSession({ sessionToken: "adm-tok", expiresAt: "2099-01-01T00:00:00Z" })
+        invokeMock.mockResolvedValue({ fileName: "Asigned_Asset.xlsx", items: [] })
+        await staffApi.previewHistoricalAssignmentImport({ filePath: "test.xlsx" })
+        const [cmd, args] = invokeMock.mock.calls[0]
+        expect(cmd).toBe("preview_historical_assignment_import")
+        expect((args as Record<string, unknown>).sessionToken).toBe("adm-tok")
+    })
+
+    it("applyHistoricalAssignmentImport requires session and passes payload", async () => {
+        setSession({ sessionToken: "adm-tok", expiresAt: "2099-01-01T00:00:00Z" })
+        invokeMock.mockResolvedValue({ totalProcessed: 1, createdAssignments: 1, skippedAlreadyAssigned: 0, errors: [] })
+        await staffApi.applyHistoricalAssignmentImport({ filePath: "test.xlsx" })
+        const [cmd, args] = invokeMock.mock.calls[0]
+        expect(cmd).toBe("apply_historical_assignment_import")
+        expect((args as Record<string, unknown>).sessionToken).toBe("adm-tok")
+    })
 })

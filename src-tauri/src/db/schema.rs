@@ -397,7 +397,10 @@ CREATE TABLE IF NOT EXISTS borrow_requests (
   submitted_by_staff_id_snapshot TEXT,
   submitted_by_name_snapshot TEXT,
   submitted_at TEXT NOT NULL DEFAULT (datetime('now')),
-  decided_at TEXT
+  decided_at TEXT,
+  signature_status TEXT NOT NULL DEFAULT 'signed',
+  imported_at TEXT,
+  handover_date TEXT
 );
 
 CREATE TABLE IF NOT EXISTS borrow_request_items (
@@ -417,7 +420,9 @@ CREATE TABLE IF NOT EXISTS asset_loans (
   approved_by_account_id INTEGER REFERENCES app_local_accounts(id) ON UPDATE CASCADE ON DELETE SET NULL,
   returned_by_employee_id_fk INTEGER REFERENCES employees(id) ON UPDATE CASCADE ON DELETE RESTRICT,
   borrowed_at TEXT NOT NULL DEFAULT (datetime('now')),
-  returned_at TEXT
+  returned_at TEXT,
+  imported_at TEXT,
+  handover_date TEXT
 );
 
 CREATE TABLE IF NOT EXISTS asset_pending_claims (

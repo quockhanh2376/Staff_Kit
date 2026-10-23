@@ -37,10 +37,12 @@ pub mod import_detector;
 pub mod mssql_import;
 mod schema;
 pub mod team;
+pub mod historical_assignment_import;
 
 // ── Re-exports (all public types bubble up to `db::`) ─────────────────────────
 pub use asset::*;
 pub use asset_import::*;
+pub use historical_assignment_import::*;
 pub use auth::*;
 pub use backup::*;
 pub use borrow::*;
@@ -890,6 +892,9 @@ fn ensure_borrow_request_columns(conn: &Connection) -> Result<(), String> {
         ("submitted_by_employee_id_fk", "ALTER TABLE borrow_requests ADD COLUMN submitted_by_employee_id_fk INTEGER REFERENCES employees(id) ON UPDATE CASCADE ON DELETE SET NULL"),
         ("submitted_by_staff_id_snapshot", "ALTER TABLE borrow_requests ADD COLUMN submitted_by_staff_id_snapshot TEXT"),
         ("submitted_by_name_snapshot", "ALTER TABLE borrow_requests ADD COLUMN submitted_by_name_snapshot TEXT"),
+        ("signature_status", "ALTER TABLE borrow_requests ADD COLUMN signature_status TEXT NOT NULL DEFAULT 'signed'"),
+        ("imported_at", "ALTER TABLE borrow_requests ADD COLUMN imported_at TEXT"),
+        ("handover_date", "ALTER TABLE borrow_requests ADD COLUMN handover_date TEXT"),
     ];
 
     for (column, sql) in additions {
@@ -958,6 +963,9 @@ fn ensure_phase_c_borrow_schema_inner(
             ("submitted_by_employee_id_fk", "ALTER TABLE borrow_requests ADD COLUMN submitted_by_employee_id_fk INTEGER REFERENCES employees(id) ON UPDATE CASCADE ON DELETE SET NULL"),
             ("submitted_by_staff_id_snapshot", "ALTER TABLE borrow_requests ADD COLUMN submitted_by_staff_id_snapshot TEXT"),
             ("submitted_by_name_snapshot", "ALTER TABLE borrow_requests ADD COLUMN submitted_by_name_snapshot TEXT"),
+        ("signature_status", "ALTER TABLE borrow_requests ADD COLUMN signature_status TEXT NOT NULL DEFAULT 'signed'"),
+        ("imported_at", "ALTER TABLE borrow_requests ADD COLUMN imported_at TEXT"),
+        ("handover_date", "ALTER TABLE borrow_requests ADD COLUMN handover_date TEXT"),
         ];
         for (column, sql) in additions {
             if !existing.iter().any(|(name, _)| name == column) {
@@ -981,6 +989,14 @@ fn ensure_phase_c_borrow_schema_inner(
                 [],
             )
             .map_err(|err| format!("failed to add asset_loans.returned_by_employee_id_fk: {err}"))?;
+        }
+        if !loan_columns.iter().any(|name| name == "imported_at") {
+            conn.execute("ALTER TABLE asset_loans ADD COLUMN imported_at TEXT", [])
+                .map_err(|err| format!("failed to add asset_loans.imported_at: {err}"))?;
+        }
+        if !loan_columns.iter().any(|name| name == "handover_date") {
+            conn.execute("ALTER TABLE asset_loans ADD COLUMN handover_date TEXT", [])
+                .map_err(|err| format!("failed to add asset_loans.handover_date: {err}"))?;
         }
         if fail_after_additions {
             return Err("injected Phase C migration failure".to_string());

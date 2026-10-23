@@ -174,6 +174,7 @@ export function AssignedAssetsModal({
                                                 <th className="px-3 py-2 font-medium">Asset Name</th>
                                                 <th className="px-3 py-2 font-medium">Serial Number</th>
                                                 <th className="px-3 py-2 font-medium">Location</th>
+                                                <th className="px-3 py-2 font-medium">Status</th>
                                                 <th className="px-3 py-2 font-medium">Assigned Date</th>
                                             </tr>
                                         </thead>
@@ -201,6 +202,17 @@ export function AssignedAssetsModal({
                                                             </span>
                                                         ) : (
                                                             <span className="text-[var(--muted)]">-</span>
+                                                        )}
+                                                    </td>
+                                                    <td className="px-3 py-2.5">
+                                                        {item.signatureStatus === "pending_signature" ? (
+                                                            <span className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-400">
+                                                                Pending Signature
+                                                            </span>
+                                                        ) : (
+                                                            <span className="inline-flex items-center rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-400">
+                                                                Signed
+                                                            </span>
                                                         )}
                                                     </td>
                                                     <td className="px-3 py-2.5 text-[var(--muted)]">

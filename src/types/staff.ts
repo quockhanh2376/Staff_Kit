@@ -161,6 +161,7 @@ export type AssetDashboardSerializedRecord = {
   status: string
   holderEmployeeId: string | null
   holderFullName: string | null
+  signatureStatus?: string | null
 }
 
 export type AssetDashboardQuantityRecord = {
@@ -480,6 +481,9 @@ export type EmployeeAssignedAssetRecord = {
   serialNumber: string | null
   usageLocation: string | null
   borrowedAt: string
+  signatureStatus?: string | null
+  handoverDate?: string | null
+  importedAt?: string | null
 }
 
 export type EmployeeListResponse = {
@@ -859,4 +863,63 @@ export type EmployeeListSyncPreview = {
 export type EmployeeListSyncResult = {
   counts: EmployeeSyncCounts
   completedAt: string
+}
+
+export type HistoricalAssignmentRowStatus =
+  | "newAssignment"
+  | "alreadyAssigned"
+  | "missingAsset"
+  | "missingEmployee"
+  | "conflict"
+
+export type HistoricalAssignmentItem = {
+  rowNumber: number
+  rawStaffId: string
+  rawEmployeeName: string
+  rawAssetCode: string
+  location: string
+  status: HistoricalAssignmentRowStatus
+  statusReason: string | null
+  employeeId: number | null
+  canonicalStaffId: string | null
+  canonicalEmployeeName: string | null
+  assetId: number | null
+  canonicalAssetCode: string | null
+  currentHolderStaffId: string | null
+  currentHolderName: string | null
+}
+
+export type HistoricalAssignmentPreviewSummary = {
+  totalRows: number
+  totalAssignments: number
+  newAssignments: number
+  alreadyAssigned: number
+  missingAssets: number
+  missingEmployees: number
+  conflicts: number
+  hasBlockingConflicts: boolean
+}
+
+export type HistoricalAssignmentPreview = {
+  fileName: string
+  summary: HistoricalAssignmentPreviewSummary
+  items: HistoricalAssignmentItem[]
+}
+
+export type HistoricalAssignmentImportInput = {
+  filePath: string
+  sheetName?: string | null
+}
+
+export type HistoricalAssignmentImportReport = {
+  totalProcessed: number
+  createdAssignments: number
+  skippedAlreadyAssigned: number
+  errors: string[]
+}
+
+export type SignHistoricalBorrowRequestInput = {
+  requestId: number
+  signaturePngBlob?: number[] | null
+  typedName?: string | null
 }

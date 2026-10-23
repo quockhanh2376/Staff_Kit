@@ -774,6 +774,39 @@ fn import_asset_import_file(
 }
 
 #[tauri::command]
+fn preview_historical_assignment_import(
+    app: tauri::AppHandle,
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    session_token: String,
+    payload: db::HistoricalAssignmentImportInput,
+) -> Result<db::HistoricalAssignmentPreview, String> {
+    let _ctx = auth_session::require_admin(&session_store, &session_token)?;
+    db::preview_historical_assignment_import(&app, payload)
+}
+
+#[tauri::command]
+fn apply_historical_assignment_import(
+    app: tauri::AppHandle,
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    session_token: String,
+    payload: db::HistoricalAssignmentImportInput,
+) -> Result<db::HistoricalAssignmentImportReport, String> {
+    let ctx = auth_session::require_admin(&session_store, &session_token)?;
+    db::apply_historical_assignment_import(&app, payload, Some(ctx.account_id))
+}
+
+#[tauri::command]
+fn sign_historical_borrow_request(
+    app: tauri::AppHandle,
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    session_token: String,
+    payload: db::SignHistoricalBorrowRequestInput,
+) -> Result<(), String> {
+    let _ctx = auth_session::require_authenticated(&session_store, &session_token)?;
+    db::sign_historical_borrow_request(&app, payload)
+}
+
+#[tauri::command]
 fn create_asset_import_batch(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -1127,6 +1160,9 @@ pub fn run() {
             inspect_asset_import_file,
             preview_asset_import_file,
             import_asset_import_file,
+            preview_historical_assignment_import,
+            apply_historical_assignment_import,
+            sign_historical_borrow_request,
             create_asset_import_batch,
             list_asset_import_batches,
             get_asset_import_batch_detail,
@@ -1267,6 +1303,8 @@ mod tests {
         "inspect_asset_import_file",
         "preview_asset_import_file",
         "import_asset_import_file",
+        "preview_historical_assignment_import",
+        "apply_historical_assignment_import",
         "create_asset_import_batch",
         "import_asset_import_batch_valid_rows",
         "delete_asset_import_batch",
@@ -1324,6 +1362,7 @@ mod tests {
         "get_asset_dashboard_summary",
         "list_asset_dashboard_serialized",
         "list_asset_dashboard_quantity",
+        "sign_historical_borrow_request",
     ];
 
     /// Commands that must NOT be registered for IPC (internal-only or removed).

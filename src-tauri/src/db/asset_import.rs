@@ -5677,7 +5677,7 @@ mod tests {
         assert_eq!(parsed.rows.len(), 20, "Exact 20 rows must be recognized");
         assert_eq!(
             parsed.headers,
-            vec!["Asset Tag", "Asset Name", "Category", "Brand", "Computer Name", "Model", "Serrial Number"]
+            vec!["Asset Tag", "Asset Name", "Category", "Brand", "Computer Name", "Model", "Serrial Number", "Location"]
         );
         assert_eq!(parsed.auto_mapping.asset_code.as_deref(), Some("Asset Tag"));
         assert_eq!(parsed.auto_mapping.display_name.as_deref(), Some("Asset Name"));
@@ -5685,6 +5685,16 @@ mod tests {
         assert_eq!(parsed.auto_mapping.brand.as_deref(), Some("Brand"));
         assert_eq!(parsed.auto_mapping.model.as_deref(), Some("Model"));
         assert_eq!(parsed.auto_mapping.serial_number.as_deref(), Some("Serrial Number"));
+
+        // Ensure clean test baseline in temp_db for the 14 new assets from AssetList.xlsx
+        conn.execute(
+            "DELETE FROM assets WHERE asset_code IN (
+                'VNHPH001', 'VNHPH002', 'VNHPH003', 'VNHPH004',
+                'VNMON761', 'VNMON758', 'VNMON769', 'VNMON755', 'VNMON754', 'VNMON753', 'VNMON597', 'VNMON762', 'VNMON763', 'VNMON764'
+            )",
+            [],
+        ).unwrap();
+        conn.execute("DELETE FROM asset_categories WHERE category_code = 'h_phone' OR category_name = 'H Phone'", []).unwrap();
 
         // Baseline counts in DB before preview
         let initial_asset_count: i64 = conn.query_row("SELECT count(*) FROM assets", [], |r| r.get(0)).unwrap();
