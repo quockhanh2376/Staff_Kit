@@ -1,5 +1,37 @@
 # Daily Log - 2026-10-23
 
+## 2026-10-23 — Staff Kit Revalidate Corrected Assignment Workbook (Start)
+- Authorized by Zon/Cheki.
+- Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Business Rule: Staff ID is canonical employee identity. Identical names with different Staff IDs are separate employees, NOT conflicts.
+- Scope:
+  1. Re-run read-only Preview using latest workbook (`00_ExSource/Asigned_Asset.xlsx`).
+  2. Verify canonical matching on Staff ID; ensure ASWVN405 and ASWVN1266 (both Lê Thanh Đạt) remain distinct employees.
+  3. Recheck 7 exceptions against isolated copy of test DB: ASWVN214 (2), ASWVN1261, ASWVN958, ASWVN1119, ASWVN30, ASWN1323.
+  4. Protect original test DB and production DB (zero writes).
+
+## 2026-10-23 — Staff Kit Revalidate Corrected Assignment Workbook (End)
+- Implementation (Victor):
+  * Re-ran Preview on isolated DB copy (`scratch/isolated_test.sqlite3`):
+    - Parsed exact workbook: 157 data rows (rows 2-158), 200 Monitor assignments (141 CTY, 59 NHÀ), 200 unique Asset Tags.
+    - Verified canonical Staff ID matching: `ASWVN405` (row 20 -> ID 39) and `ASWVN1266` (row 142 -> ID 366) both named 'Lê Thanh Đạt' are mapped to distinct employee IDs as valid NewAssets without conflict.
+    - Added regression test `test_revalidate_against_isolated_db` in `src-tauri/src/db/historical_assignment_import.rs`.
+- Validation (Qeen):
+  * Verified 7 remaining exceptions across 6 rows:
+    - Row 2: `ASWVN30` (`MON540` CTY) -> `MissingEmployee` (DB canonical: `ASWVN030`, Nguyễn Trần Quang Vinh).
+    - Row 7: `ASWVN214` (`MON770` CTY, `MON768` NHÀ) -> `Conflict` (belongs to active Trần Nhật Phong; Lê Minh Duy DB canonical: `ASWVN1328`).
+    - Row 64: `ASWVN958` (`MON667` CTY) -> `Conflict` (belongs to resigned Nguyễn Quốc Trọng Nghĩa; Nguyễn Công Thiện DB canonical: `ASWVN027`).
+    - Row 101: `ASWVN1119` (`MON738` CTY) -> `Conflict` (belongs to resigned NGUYỄN THỊ THUÝ; Lê Minh Tiến DB canonical: `ASWVN910`).
+    - Row 138: `ASWVN1261` (`MON749` NHÀ) -> `Conflict` (belongs to resigned NGUYỄN CHÍ THÀNH; Lê Tuấn Anh DB canonical: `ASWVN377`).
+    - Row 152: `ASWN1323` (`MON556` CTY) -> `MissingEmployee` (prefix typo missing 'V'; DB canonical: `ASWVN1323`, Trương Vĩnh Phước).
+  * Valid remainder: 193 assignments can be approved atomically; 0 writes on Preview/Cancel.
+  * Quality Gates:
+    - Backend: `npm run test:tauri -- historical_assignment_import` (7/7 PASS).
+    - Frontend: `npm run test:unit` (39 files, 292/292 PASS).
+    - Full quality gate: `npm run check:quality` (0 errors PASS).
+  * Original test DB (`data/test_db/staff_kit.sqlite3`) and production DB untouched.
+- Verdict: PASS.
+
 ## 2026-10-23 — Staff Kit Window Regression & Historical Import Conflict Review (Start)
 - Authorized by Zon/Cheki.
 - Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).

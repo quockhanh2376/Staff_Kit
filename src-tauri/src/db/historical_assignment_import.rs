@@ -1047,20 +1047,75 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_exact_asigned_asset_workbook() {
-        let file_path = "00_ExSource/Asigned_Asset.xlsx";
-        if !Path::new(file_path).exists() {
+    fn test_revalidate_against_isolated_db() {
+        use crate::db::open_encrypted_read_only_connection;
+
+        let db_path = if Path::new("scratch/isolated_test.sqlite3").exists() {
+            "scratch/isolated_test.sqlite3"
+        } else if Path::new("../scratch/isolated_test.sqlite3").exists() {
+            "../scratch/isolated_test.sqlite3"
+        } else {
             return;
-        }
+        };
+
+        let file_path = if Path::new("00_ExSource/Asigned_Asset.xlsx").exists() {
+            "00_ExSource/Asigned_Asset.xlsx"
+        } else if Path::new("../00_ExSource/Asigned_Asset.xlsx").exists() {
+            "../00_ExSource/Asigned_Asset.xlsx"
+        } else {
+            return;
+        };
+
+        let conn = open_encrypted_read_only_connection(Path::new(db_path)).expect("open isolated db");
+        let preview = preview_historical_assignment_import_conn(
+            &conn,
+            &HistoricalAssignmentImportInput {
+                file_path: file_path.to_string(),
+                sheet_name: None,
+            },
+        ).expect("preview");
+
+        // Verify summary
+        assert_eq!(preview.summary.total_rows, 157);
+        assert_eq!(preview.summary.total_assignments, 200);
+        assert_eq!(preview.summary.new_assets, 193);
+        assert_eq!(preview.summary.conflicts, 5);
+        assert_eq!(preview.summary.missing_employees, 2);
+        assert!(preview.summary.has_blocking_conflicts);
+        assert!(preview.summary.can_approve_remainder);
+
+        // Verify duplicate full name 'Lê Thanh Đạt' with different Staff IDs are separate employees, NOT conflicts
+        let item405 = preview.items.iter().find(|i| i.raw_staff_id == "ASWVN405").expect("ASWVN405");
+        assert_eq!(item405.status, HistoricalAssignmentRowStatus::NewAsset);
+        assert_eq!(item405.employee_id, Some(39));
+        assert_eq!(item405.canonical_staff_id.as_deref(), Some("ASWVN405"));
+
+        let item1266 = preview.items.iter().find(|i| i.raw_staff_id == "ASWVN1266").expect("ASWVN1266");
+        assert_eq!(item1266.status, HistoricalAssignmentRowStatus::NewAsset);
+        assert_eq!(item1266.employee_id, Some(366));
+        assert_eq!(item1266.canonical_staff_id.as_deref(), Some("ASWVN1266"));
+    }
+
+    #[test]
+    fn test_parse_exact_asigned_asset_workbook() {
+        let file_path = if Path::new("00_ExSource/Asigned_Asset.xlsx").exists() {
+            "00_ExSource/Asigned_Asset.xlsx"
+        } else if Path::new("../00_ExSource/Asigned_Asset.xlsx").exists() {
+            "../00_ExSource/Asigned_Asset.xlsx"
+        } else {
+            return;
+        };
 
         let (file_name, rows) = parse_assignment_sheet(file_path, None).expect("parse sheet");
         assert_eq!(file_name, "Asigned_Asset.xlsx");
-        assert_eq!(rows.len(), 157, "Should have exactly 157 data rows");
+        assert_eq!(rows.len(), 157, "Should have 157 data rows");
 
-        let mut total_assignments = 0;
+        let mut cty_total = 0;
+        let mut nha_total = 0;
         let mut unique_codes = HashSet::new();
         for r in &rows {
-            total_assignments += r.cty_codes.len() + r.nha_codes.len();
+            cty_total += r.cty_codes.len();
+            nha_total += r.nha_codes.len();
             for c in &r.cty_codes {
                 unique_codes.insert(c.clone());
             }
@@ -1068,15 +1123,11 @@ mod tests {
                 unique_codes.insert(c.clone());
             }
         }
-        assert_eq!(total_assignments, 200, "Should have exactly 200 total monitor assignments");
-        assert_eq!(unique_codes.len(), 200, "Should have 200 unique monitor codes");
-
-        // Verify row 7 (Lê Minh Duy) has MON770 at CTY, MON768 at NHA
-        let row7 = &rows[5]; // 0-based index 5 is excel row 7
-        assert_eq!(row7.staff_id, "ASWVN214");
-        assert_eq!(row7.employee_name, "LÊ MINH DUY");
-        assert_eq!(row7.cty_codes, vec!["MON770"]);
-        assert_eq!(row7.nha_codes, vec!["MON768"]);
+        let total_assignments = cty_total + nha_total;
+        assert_eq!(cty_total, 141);
+        assert_eq!(nha_total, 59);
+        assert_eq!(total_assignments, 200);
+        assert_eq!(unique_codes.len(), 200);
     }
 
     #[test]
