@@ -43,6 +43,9 @@ pub enum HistoricalAssignmentRowStatus {
     NewAsset,
     NewAssignment,
     AlreadyAssigned,
+    LocationChanged,
+    DifferentHolder,
+    ExistingLoanMissingFromWorkbook,
     MissingAsset,
     MissingEmployee,
     Conflict,
@@ -66,6 +69,16 @@ pub struct HistoricalAssignmentItem {
     pub canonical_asset_code: Option<String>,
     pub current_holder_staff_id: Option<String>,
     pub current_holder_name: Option<String>,
+    #[serde(default)]
+    pub current_holder_employee_id: Option<i64>,
+    #[serde(default)]
+    pub current_location: Option<String>,
+    #[serde(default)]
+    pub current_loan_id: Option<i64>,
+    #[serde(default)]
+    pub suggested_action: Option<String>,
+    #[serde(default)]
+    pub selected_action: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,6 +89,12 @@ pub struct HistoricalAssignmentPreviewSummary {
     pub new_assets: usize,
     pub new_assignments: usize,
     pub existing_skipped: usize,
+    #[serde(default)]
+    pub location_changed: usize,
+    #[serde(default)]
+    pub different_holders: usize,
+    #[serde(default)]
+    pub existing_loans_missing: usize,
     pub excluded_conflicts: usize,
     pub errors: usize,
     pub can_approve_remainder: bool,
@@ -101,9 +120,32 @@ pub struct HistoricalAssignmentPreview {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct HistoricalAssignmentRowOverride {
+    pub row_number: usize,
+    pub raw_asset_code: String,
+    pub corrected_staff_id: Option<String>,
+    pub corrected_asset_code: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoricalAssignmentActionDecision {
+    pub row_number: usize,
+    pub raw_asset_code: String,
+    pub action: String, // "approve" | "update_location" | "confirm_transfer" | "quarantine" | "skip"
+    pub corrected_staff_id: Option<String>,
+    pub corrected_asset_code: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct HistoricalAssignmentImportInput {
     pub file_path: String,
     pub sheet_name: Option<String>,
+    #[serde(default)]
+    pub row_overrides: Option<Vec<HistoricalAssignmentRowOverride>>,
+    #[serde(default)]
+    pub row_actions: Option<Vec<HistoricalAssignmentActionDecision>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -113,6 +155,10 @@ pub struct HistoricalAssignmentImportReport {
     pub created_assets: usize,
     pub created_assignments: usize,
     pub skipped_already_assigned: usize,
+    #[serde(default)]
+    pub updated_locations: usize,
+    #[serde(default)]
+    pub transferred_assignments: usize,
     pub excluded_conflicts: usize,
     pub errors: Vec<String>,
 }
@@ -262,6 +308,17 @@ fn normalize_header_token(s: &str) -> String {
     out
 }
 
+pub fn normalize_location(loc: &str) -> &'static str {
+    let lower = loc.trim().to_lowercase();
+    if lower.contains("nhà") || lower.contains("nha") || lower.contains("home") {
+        "home"
+    } else if lower.contains("cty") || lower.contains("công ty") || lower.contains("cong ty") || lower.contains("office") {
+        "office"
+    } else {
+        "unknown"
+    }
+}
+
 pub fn parse_assignment_sheet(
     file_path: &str,
     sheet_name: Option<&str>,
@@ -378,6 +435,15 @@ pub fn preview_historical_assignment_import_conn(
 
     let mut items = Vec::new();
 
+    // Map overrides by (row_number, canonical_asset_code)
+    let mut overrides: HashMap<(usize, String), (Option<String>, Option<String>)> = HashMap::new();
+    if let Some(ovs) = &payload.row_overrides {
+        for ov in ovs {
+            let canon = canonicalize_monitor_code(&ov.raw_asset_code);
+            overrides.insert((ov.row_number, canon.to_uppercase()), (ov.corrected_staff_id.clone(), ov.corrected_asset_code.clone()));
+        }
+    }
+
     // Map to check intra-file duplicate asset assignment across different staff IDs
     let mut file_asset_claimants: HashMap<String, (String, usize)> = HashMap::new();
 
@@ -392,17 +458,25 @@ pub fn preview_historical_assignment_import_conn(
         }
 
         for (asset_code, location) in row_assignments {
-            let canonical_code = canonicalize_monitor_code(&asset_code);
+            let initial_canon = canonicalize_monitor_code(&asset_code);
+            let (ov_staff, ov_asset) = overrides
+                .get(&(row.row_number, initial_canon.to_uppercase()))
+                .cloned()
+                .unwrap_or((None, None));
+
+            let effective_staff_id = ov_staff.unwrap_or_else(|| row.staff_id.clone());
+            let effective_asset_code = ov_asset.unwrap_or_else(|| asset_code.clone());
+            let canonical_code = canonicalize_monitor_code(&effective_asset_code);
 
             // 1. Resolve Employee by canonical Staff ID
             let emp_info: Option<(i64, String, String)> = conn
                 .query_row(
                     "SELECT id, employee_id, full_name FROM employees WHERE UPPER(TRIM(employee_id)) = UPPER(TRIM(?))",
-                    params![row.staff_id],
+                    params![effective_staff_id],
                     |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
                 )
                 .optional()
-                .map_err(|err| format!("Error querying employee for '{}': {err}", row.staff_id))?;
+                .map_err(|err| format!("Error querying employee for '{effective_staff_id}': {err}"))?;
 
             // 2. Resolve Asset by canonical Asset Code
             let asset_info: Option<(i64, String)> = {
@@ -420,19 +494,19 @@ pub fn preview_historical_assignment_import_conn(
                 } else {
                     conn.query_row(
                         "SELECT id, asset_code FROM assets WHERE asset_code = ? COLLATE NOCASE",
-                        params![asset_code],
+                        params![effective_asset_code],
                         |r| Ok((r.get(0)?, r.get(1)?)),
                     )
                     .optional()
-                    .map_err(|err| format!("Error querying asset '{asset_code}': {err}"))?
+                    .map_err(|err| format!("Error querying asset '{effective_asset_code}': {err}"))?
                 }
             };
 
             let mut item = HistoricalAssignmentItem {
                 row_number: row.row_number,
-                raw_staff_id: row.staff_id.clone(),
+                raw_staff_id: effective_staff_id.clone(),
                 raw_employee_name: row.employee_name.clone(),
-                raw_asset_code: asset_code.clone(),
+                raw_asset_code: effective_asset_code.clone(),
                 location: location.to_string(),
                 status: HistoricalAssignmentRowStatus::NewAssignment,
                 status_reason: None,
@@ -443,6 +517,11 @@ pub fn preview_historical_assignment_import_conn(
                 canonical_asset_code: asset_info.as_ref().map(|a| a.1.clone()).or_else(|| Some(canonical_code.clone())),
                 current_holder_staff_id: None,
                 current_holder_name: None,
+                current_holder_employee_id: None,
+                current_location: None,
+                current_loan_id: None,
+                suggested_action: Some("approve".to_string()),
+                selected_action: Some("approve".to_string()),
             };
 
             // Check Employee validity and identity match
@@ -451,16 +530,18 @@ pub fn preview_historical_assignment_import_conn(
                     item.status = HistoricalAssignmentRowStatus::MissingEmployee;
                     item.status_reason = Some(format!(
                         "Employee Staff ID '{}' not found in database",
-                        row.staff_id
+                        effective_staff_id
                     ));
+                    item.suggested_action = Some("quarantine".to_string());
                 }
                 Some((_, _, db_full_name)) => {
                     if !name_matches(db_full_name, &row.employee_name) {
                         item.status = HistoricalAssignmentRowStatus::Conflict;
                         item.status_reason = Some(format!(
                             "Staff ID '{}' belongs to '{}' in database, but row lists '{}'",
-                            row.staff_id, db_full_name, row.employee_name
+                            effective_staff_id, db_full_name, row.employee_name
                         ));
+                        item.suggested_action = Some("quarantine".to_string());
                     }
                 }
             }
@@ -468,15 +549,16 @@ pub fn preview_historical_assignment_import_conn(
             // Check intra-file duplicate asset claim
             let canon_key = canonical_code.to_uppercase();
             if let Some((prior_staff_id, prior_row)) = file_asset_claimants.get(&canon_key) {
-                if prior_staff_id.to_uppercase() != row.staff_id.to_uppercase() {
+                if prior_staff_id.to_uppercase() != effective_staff_id.to_uppercase() {
                     item.status = HistoricalAssignmentRowStatus::Conflict;
                     item.status_reason = Some(format!(
                         "Asset '{}' claimed by multiple employees in file (row {} and row {})",
                         canonical_code, prior_row, row.row_number
                     ));
+                    item.suggested_action = Some("quarantine".to_string());
                 }
             } else {
-                file_asset_claimants.insert(canon_key, (row.staff_id.clone(), row.row_number));
+                file_asset_claimants.insert(canon_key, (effective_staff_id.clone(), row.row_number));
             }
 
             // Check asset status if employee did not already have a blocking error/conflict
@@ -488,43 +570,63 @@ pub fn preview_historical_assignment_import_conn(
                             "Asset '{}' will be auto-created as Monitor on approval",
                             canonical_code
                         ));
+                        item.suggested_action = Some("approve".to_string());
                     }
                 }
                 Some((asset_id, db_asset_code)) => {
                     // Check active loan in asset_loans
-                    let active_loan: Option<(i64, String, String)> = conn
+                    let active_loan: Option<(i64, String, String, Option<String>, i64)> = conn
                         .query_row(
                             r#"
-                            SELECT al.employee_id_fk, e.employee_id, e.full_name
+                            SELECT al.employee_id_fk, e.employee_id, e.full_name, a.usage_location, al.id
                             FROM asset_loans al
                             INNER JOIN employees e ON e.id = al.employee_id_fk
+                            INNER JOIN assets a ON a.id = al.asset_id
                             WHERE al.asset_id = ? AND al.returned_at IS NULL
                             "#,
                             params![asset_id],
-                            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
                         )
                         .optional()
                         .map_err(|err| format!("Error checking active loan for asset '{db_asset_code}': {err}"))?;
 
-                    if let Some((holder_emp_fk, holder_staff_id, holder_full_name)) = active_loan {
+                    if let Some((holder_emp_fk, holder_staff_id, holder_full_name, db_loc, loan_id)) = active_loan {
                         item.current_holder_staff_id = Some(holder_staff_id.clone());
                         item.current_holder_name = Some(holder_full_name.clone());
+                        item.current_holder_employee_id = Some(holder_emp_fk);
+                        item.current_location = db_loc.clone();
+                        item.current_loan_id = Some(loan_id);
 
                         if let Some((target_emp_id, _, _)) = &emp_info {
                             if *target_emp_id == holder_emp_fk {
                                 if item.status == HistoricalAssignmentRowStatus::NewAssignment {
-                                    item.status = HistoricalAssignmentRowStatus::AlreadyAssigned;
-                                    item.status_reason = Some(format!(
-                                        "Asset '{}' is already assigned to this employee",
-                                        db_asset_code
-                                    ));
+                                    let db_norm = normalize_location(db_loc.as_deref().unwrap_or(""));
+                                    let item_norm = normalize_location(&item.location);
+                                    if db_norm == item_norm && !db_loc.as_deref().unwrap_or("").is_empty() {
+                                        item.status = HistoricalAssignmentRowStatus::AlreadyAssigned;
+                                        item.status_reason = Some(format!(
+                                            "Asset '{}' is already assigned to this employee at the same location ({})",
+                                            db_asset_code, item.location
+                                        ));
+                                        item.suggested_action = Some("skip".to_string());
+                                    } else {
+                                        item.status = HistoricalAssignmentRowStatus::LocationChanged;
+                                        item.status_reason = Some(format!(
+                                            "Asset '{}' is already assigned to this employee, but location changed from '{}' to '{}'",
+                                            db_asset_code,
+                                            db_loc.as_deref().unwrap_or("Unspecified"),
+                                            item.location
+                                        ));
+                                        item.suggested_action = Some("update_location".to_string());
+                                    }
                                 }
                             } else {
-                                item.status = HistoricalAssignmentRowStatus::Conflict;
+                                item.status = HistoricalAssignmentRowStatus::DifferentHolder;
                                 item.status_reason = Some(format!(
-                                    "Asset '{}' is currently assigned to another employee: '{} ({})'",
-                                    db_asset_code, holder_full_name, holder_staff_id
+                                    "Asset '{}' is currently assigned in DB to '{} ({})', but workbook assigns to '{} ({})'",
+                                    db_asset_code, holder_full_name, holder_staff_id, row.employee_name, effective_staff_id
                                 ));
+                                item.suggested_action = Some("quarantine".to_string());
                             }
                         }
                     }
@@ -535,11 +637,90 @@ pub fn preview_historical_assignment_import_conn(
         }
     }
 
+    // Query active monitor loans in DB to detect any missing from the workbook
+    let mut workbook_canonical_codes = std::collections::HashSet::new();
+    for item in &items {
+        if let Some(canon) = &item.canonical_asset_code {
+            workbook_canonical_codes.insert(canon.to_uppercase());
+        }
+    }
+
+    let mut stmt_missing = conn
+        .prepare(
+            r#"
+            SELECT al.id, a.id, a.asset_code, a.usage_location, e.id, e.employee_id, e.full_name
+            FROM asset_loans al
+            JOIN assets a ON a.id = al.asset_id
+            JOIN employees e ON e.id = al.employee_id_fk
+            WHERE al.returned_at IS NULL
+              AND (
+                EXISTS (
+                  SELECT 1 FROM asset_categories ac
+                  WHERE ac.id = a.category_id
+                    AND (ac.category_code = 'monitor' COLLATE NOCASE OR ac.category_name = 'Monitor' COLLATE NOCASE)
+                )
+                OR a.asset_type = 'Monitor' COLLATE NOCASE
+                OR a.asset_code LIKE 'VNMON%'
+                OR a.asset_code LIKE 'MON%'
+              )
+            "#,
+        )
+        .map_err(|err| format!("Error preparing active monitor query: {err}"))?;
+
+    let missing_loans = stmt_missing
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, Option<String>>(3)?,
+                r.get::<_, i64>(4)?,
+                r.get::<_, String>(5)?,
+                r.get::<_, String>(6)?,
+            ))
+        })
+        .map_err(|err| format!("Error querying active monitor loans: {err}"))?;
+
+    for loan_res in missing_loans {
+        let (loan_id, asset_id, asset_code, usage_loc, emp_fk, staff_id, full_name) =
+            loan_res.map_err(|e| e.to_string())?;
+        let canon = canonicalize_monitor_code(&asset_code);
+        if !workbook_canonical_codes.contains(&canon.to_uppercase()) {
+            items.push(HistoricalAssignmentItem {
+                row_number: 0,
+                raw_staff_id: staff_id.clone(),
+                raw_employee_name: full_name.clone(),
+                raw_asset_code: asset_code.clone(),
+                location: usage_loc.clone().unwrap_or_else(|| "Tại công ty".to_string()),
+                status: HistoricalAssignmentRowStatus::ExistingLoanMissingFromWorkbook,
+                status_reason: Some(format!(
+                    "Active monitor loan for asset '{}' held by '{} ({})' is not present in verified workbook",
+                    asset_code, full_name, staff_id
+                )),
+                employee_id: Some(emp_fk),
+                canonical_staff_id: Some(staff_id.clone()),
+                canonical_employee_name: Some(full_name.clone()),
+                asset_id: Some(asset_id),
+                canonical_asset_code: Some(canon),
+                current_holder_staff_id: Some(staff_id),
+                current_holder_name: Some(full_name),
+                current_holder_employee_id: Some(emp_fk),
+                current_location: usage_loc,
+                current_loan_id: Some(loan_id),
+                suggested_action: Some("review".to_string()),
+                selected_action: Some("review".to_string()),
+            });
+        }
+    }
+
     let total_rows = raw_rows.len();
-    let total_assignments = items.len();
+    let total_assignments = items.iter().filter(|i| i.row_number > 0).count();
     let mut new_assets = 0;
     let mut new_assignments = 0;
     let mut existing_skipped = 0;
+    let mut location_changed = 0;
+    let mut different_holders = 0;
+    let mut existing_loans_missing = 0;
     let mut excluded_conflicts = 0;
     let mut errors = 0;
     let mut missing_employees = 0;
@@ -550,6 +731,9 @@ pub fn preview_historical_assignment_import_conn(
             HistoricalAssignmentRowStatus::NewAsset => new_assets += 1,
             HistoricalAssignmentRowStatus::NewAssignment => new_assignments += 1,
             HistoricalAssignmentRowStatus::AlreadyAssigned => existing_skipped += 1,
+            HistoricalAssignmentRowStatus::LocationChanged => location_changed += 1,
+            HistoricalAssignmentRowStatus::DifferentHolder => different_holders += 1,
+            HistoricalAssignmentRowStatus::ExistingLoanMissingFromWorkbook => existing_loans_missing += 1,
             HistoricalAssignmentRowStatus::Conflict => excluded_conflicts += 1,
             HistoricalAssignmentRowStatus::MissingEmployee => {
                 errors += 1;
@@ -565,21 +749,25 @@ pub fn preview_historical_assignment_import_conn(
         }
     }
 
-    let can_approve_remainder = (new_assets + new_assignments) > 0;
+    let can_approve_remainder = (new_assets + new_assignments + location_changed) > 0;
+    let total_conflicts_and_diff = excluded_conflicts + different_holders;
     let summary = HistoricalAssignmentPreviewSummary {
         total_rows,
         total_assignments,
         new_assets,
         new_assignments,
         existing_skipped,
-        excluded_conflicts,
+        location_changed,
+        different_holders,
+        existing_loans_missing,
+        excluded_conflicts: total_conflicts_and_diff,
         errors,
         can_approve_remainder,
         already_assigned: existing_skipped,
         missing_assets,
         missing_employees,
-        conflicts: excluded_conflicts,
-        has_blocking_conflicts: excluded_conflicts > 0,
+        conflicts: total_conflicts_and_diff,
+        has_blocking_conflicts: total_conflicts_and_diff > 0,
     };
 
     Ok(HistoricalAssignmentPreview {
@@ -596,7 +784,10 @@ pub fn apply_historical_assignment_import_conn(
 ) -> Result<HistoricalAssignmentImportReport, String> {
     let preview = preview_historical_assignment_import_conn(conn, payload)?;
 
-    let valid_count = preview.summary.new_assets + preview.summary.new_assignments;
+    let valid_count = preview.summary.new_assets
+        + preview.summary.new_assignments
+        + preview.summary.location_changed
+        + preview.summary.different_holders;
     if valid_count == 0 {
         let mut errors = Vec::new();
         for item in &preview.items {
@@ -620,6 +811,8 @@ pub fn apply_historical_assignment_import_conn(
             created_assets: 0,
             created_assignments: 0,
             skipped_already_assigned: preview.summary.existing_skipped,
+            updated_locations: 0,
+            transferred_assignments: 0,
             excluded_conflicts: preview.summary.excluded_conflicts,
             errors,
         });
@@ -634,13 +827,144 @@ pub fn apply_historical_assignment_import_conn(
     let mut created_assets = 0;
     let mut created_assignments = 0;
     let mut skipped_already_assigned = 0;
+    let mut updated_locations = 0;
+    let mut transferred_assignments = 0;
     let mut excluded_conflicts = 0;
     let mut errors = Vec::new();
+
+    let mut decisions: HashMap<(usize, String), String> = HashMap::new();
+    if let Some(actions) = &payload.row_actions {
+        for act in actions {
+            let canon = canonicalize_monitor_code(&act.raw_asset_code);
+            decisions.insert((act.row_number, canon.to_uppercase()), act.action.to_lowercase());
+        }
+    }
 
     for item in &preview.items {
         match item.status {
             HistoricalAssignmentRowStatus::AlreadyAssigned => {
                 skipped_already_assigned += 1;
+            }
+            HistoricalAssignmentRowStatus::ExistingLoanMissingFromWorkbook => {
+                // Informational only: do not automatically return or transfer
+            }
+            HistoricalAssignmentRowStatus::LocationChanged => {
+                let canonical_code = item.canonical_asset_code.as_deref().unwrap_or(&item.raw_asset_code);
+                let decision = decisions
+                    .get(&(item.row_number, canonical_code.to_uppercase()))
+                    .map(|s| s.as_str())
+                    .unwrap_or("update_location");
+
+                if decision == "update_location" || decision == "approve" {
+                    let asset_id = item.asset_id.ok_or_else(|| {
+                        format!("Missing asset ID for location update on row {}", item.row_number)
+                    })?;
+                    let employee_row_id = item.employee_id.ok_or_else(|| {
+                        format!("Missing employee ID for row {}", item.row_number)
+                    })?;
+                    let staff_id = item.canonical_staff_id.as_deref().unwrap_or(&item.raw_staff_id);
+
+                    tx.execute(
+                        "UPDATE assets SET usage_location = ?, updated_at = datetime('now') WHERE id = ?",
+                        params![item.location, asset_id],
+                    )
+                    .map_err(|err| format!("Failed to update location for '{canonical_code}': {err}"))?;
+
+                    let audit_payload = json!({
+                        "action": "historical_assignment_reconciliation.update_location",
+                        "assetId": asset_id,
+                        "assetCode": canonical_code,
+                        "employeeId": employee_row_id,
+                        "staffId": staff_id,
+                        "oldLocation": item.current_location,
+                        "newLocation": item.location,
+                    })
+                    .to_string();
+
+                    audit::insert_audit_log_tx(
+                        &tx,
+                        "historical_assignment_reconciliation.update_location",
+                        "account",
+                        reviewer_account_id.map(|id| id.to_string()).as_deref(),
+                        "assets",
+                        &asset_id.to_string(),
+                        Some(&audit_payload),
+                    )?;
+                    updated_locations += 1;
+                } else {
+                    skipped_already_assigned += 1;
+                }
+            }
+            HistoricalAssignmentRowStatus::DifferentHolder => {
+                let canonical_code = item.canonical_asset_code.as_deref().unwrap_or(&item.raw_asset_code);
+                let decision = decisions
+                    .get(&(item.row_number, canonical_code.to_uppercase()))
+                    .map(|s| s.as_str())
+                    .unwrap_or("quarantine");
+
+                if decision == "confirm_transfer" {
+                    let asset_id = item.asset_id.ok_or_else(|| {
+                        format!("Missing asset ID for transfer on row {}", item.row_number)
+                    })?;
+                    let employee_row_id = item.employee_id.ok_or_else(|| {
+                        format!("Missing employee ID for transfer on row {}", item.row_number)
+                    })?;
+                    let staff_id = item.canonical_staff_id.as_deref().unwrap_or(&item.raw_staff_id);
+                    let full_name = item.canonical_employee_name.as_deref().unwrap_or(&item.raw_employee_name);
+
+                    // 1. Close old active loan
+                    tx.execute(
+                        r#"
+                        UPDATE asset_loans
+                        SET returned_at = datetime('now')
+                        WHERE asset_id = ? AND returned_at IS NULL
+                        "#,
+                        params![asset_id],
+                    )
+                    .map_err(|err| format!("Failed to close active loan for transfer on '{canonical_code}': {err}"))?;
+
+                    // 2. Update asset status & location
+                    tx.execute(
+                        "UPDATE assets SET status = 'assigned', usage_location = ?, updated_at = datetime('now') WHERE id = ?",
+                        params![item.location, asset_id],
+                    )
+                    .map_err(|err| format!("Failed to update asset location on '{canonical_code}': {err}"))?;
+
+                    // 3. Create new loan for verified holder
+                    apply_single_historical_assignment_tx(
+                        &tx,
+                        asset_id,
+                        canonical_code,
+                        employee_row_id,
+                        staff_id,
+                        full_name,
+                        &item.location,
+                        reviewer_account_id,
+                    )?;
+
+                    let audit_payload = json!({
+                        "action": "historical_assignment_reconciliation.transfer",
+                        "assetId": asset_id,
+                        "assetCode": canonical_code,
+                        "previousHolderStaffId": item.current_holder_staff_id,
+                        "newHolderStaffId": staff_id,
+                        "newLocation": item.location,
+                    })
+                    .to_string();
+
+                    audit::insert_audit_log_tx(
+                        &tx,
+                        "historical_assignment_reconciliation.transfer",
+                        "account",
+                        reviewer_account_id.map(|id| id.to_string()).as_deref(),
+                        "assets",
+                        &asset_id.to_string(),
+                        Some(&audit_payload),
+                    )?;
+                    transferred_assignments += 1;
+                } else {
+                    excluded_conflicts += 1;
+                }
             }
             HistoricalAssignmentRowStatus::Conflict => {
                 excluded_conflicts += 1;
@@ -796,6 +1120,8 @@ pub fn apply_historical_assignment_import_conn(
         created_assets,
         created_assignments,
         skipped_already_assigned,
+        updated_locations,
+        transferred_assignments,
         excluded_conflicts,
         errors,
     })
@@ -1072,6 +1398,7 @@ mod tests {
             &HistoricalAssignmentImportInput {
                 file_path: file_path.to_string(),
                 sheet_name: None,
+                ..Default::default()
             },
         ).expect("preview");
 
@@ -1156,6 +1483,7 @@ mod tests {
             &HistoricalAssignmentImportInput {
                 file_path: file_path.to_string(),
                 sheet_name: None,
+                ..Default::default()
             },
         ).unwrap();
 
@@ -1175,6 +1503,7 @@ mod tests {
             &HistoricalAssignmentImportInput {
                 file_path: file_path.to_string(),
                 sheet_name: None,
+                ..Default::default()
             },
             None,
         ).unwrap();
@@ -1309,6 +1638,7 @@ mod tests {
             &HistoricalAssignmentImportInput {
                 file_path,
                 sheet_name: None,
+                ..Default::default()
             },
         ).expect("preview historical assignment import");
 
@@ -1423,6 +1753,7 @@ mod tests {
             &HistoricalAssignmentImportInput {
                 file_path: file_path.clone(),
                 sheet_name: None,
+                ..Default::default()
             },
             Some(1),
         ).expect("apply first historical assignment import");
@@ -1445,6 +1776,7 @@ mod tests {
             &HistoricalAssignmentImportInput {
                 file_path,
                 sheet_name: None,
+                ..Default::default()
             },
             Some(1),
         ).expect("reimport should succeed idempotently");
@@ -1489,6 +1821,7 @@ mod tests {
             &HistoricalAssignmentImportInput {
                 file_path,
                 sheet_name: None,
+                ..Default::default()
             },
         ).expect("preview historical assignment import");
 
@@ -1539,4 +1872,394 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_reconcile_new_asigned_asset_corrected_full_validation() {
+        use crate::db::open_encrypted_read_only_connection;
+
+        let db_path = if Path::new("scratch/isolated_reconcile.sqlite3").exists() {
+            "scratch/isolated_reconcile.sqlite3"
+        } else if Path::new("../scratch/isolated_reconcile.sqlite3").exists() {
+            "../scratch/isolated_reconcile.sqlite3"
+        } else {
+            return;
+        };
+
+        let file_path = if Path::new("00_ExSource/New_Asigned_Asset_Corrected.xlsx").exists() {
+            "00_ExSource/New_Asigned_Asset_Corrected.xlsx"
+        } else if Path::new("../00_ExSource/New_Asigned_Asset_Corrected.xlsx").exists() {
+            "../00_ExSource/New_Asigned_Asset_Corrected.xlsx"
+        } else {
+            return;
+        };
+
+        let conn = open_encrypted_read_only_connection(Path::new(db_path)).expect("open isolated db");
+        let preview = preview_historical_assignment_import_conn(
+            &conn,
+            &HistoricalAssignmentImportInput {
+                file_path: file_path.to_string(),
+                sheet_name: None,
+                row_overrides: None,
+                row_actions: None,
+            },
+        ).expect("preview");
+
+        // Verify summary on the corrected workbook
+        assert_eq!(preview.summary.total_rows, 156, "Must have exactly 156 rows");
+        assert_eq!(preview.summary.total_assignments, 199, "Must have exactly 199 assignments");
+        assert_eq!(preview.summary.new_assets, 199, "All 199 valid assignments without prior monitor loans");
+        assert_eq!(preview.summary.conflicts, 0, "Zero conflicts on corrected workbook");
+        assert_eq!(preview.summary.missing_employees, 0, "Zero missing employees");
+        assert_eq!(preview.summary.errors, 0, "Zero errors");
+        assert!(preview.summary.can_approve_remainder);
+        assert!(!preview.summary.has_blocking_conflicts);
+
+        // Verify Vũ Tuấn Khang (ASWVN1112) has both MON700 and MON644 mapped validly
+        let khang_items: Vec<&HistoricalAssignmentItem> = preview.items.iter().filter(|i| i.raw_staff_id == "ASWVN1112").collect();
+        assert_eq!(khang_items.len(), 2, "ASWVN1112 must hold exactly 2 monitors");
+        let khang_codes: HashSet<String> = khang_items.iter().map(|i| i.raw_asset_code.clone()).collect();
+        assert!(khang_codes.contains("MON700"));
+        assert!(khang_codes.contains("MON644"));
+        for item in khang_items {
+            assert_eq!(item.status, HistoricalAssignmentRowStatus::NewAsset);
+            assert_eq!(item.location, "Tại công ty");
+        }
+
+        // Verify Nguyễn Công Thiện (ASWVN027) holds MON667
+        let thien_item = preview.items.iter().find(|i| i.raw_staff_id == "ASWVN027").expect("ASWVN027");
+        assert_eq!(thien_item.raw_asset_code, "MON667");
+        assert_eq!(thien_item.status, HistoricalAssignmentRowStatus::NewAsset);
+    }
+
+    #[test]
+    fn test_reconcile_mon667_transfer_requires_explicit_confirmation() {
+        let mut conn = open_test_conn();
+
+        // 1. Seed existing holder A: ASWVN958 (Nguyễn Quốc Trọng Nghĩa)
+        let emp_a_id: i64 = conn.query_row(
+            "INSERT INTO employees(employee_id, full_name, email, is_floating) VALUES('ASWVN958', 'NGUYỄN QUỐC TRỌNG NGHĨA', 'nghia@example.com', 0) RETURNING id",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+
+        // 2. Seed verified holder B: ASWVN027 (Nguyễn Công Thiện)
+        let emp_b_id: i64 = conn.query_row(
+            "INSERT INTO employees(employee_id, full_name, email, is_floating) VALUES('ASWVN027', 'NGUYỄN CÔNG THIỆN', 'thien@example.com', 0) RETURNING id",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+
+        // 3. Seed asset VNMON667 with an active loan to employee A
+        let cat_id = get_or_create_monitor_category(&conn.transaction().unwrap()).unwrap();
+        let mon667_id: i64 = conn.query_row(
+            r#"
+            INSERT INTO assets(asset_code, category_id, asset_type, display_name, status, usage_location)
+            VALUES('VNMON667', ?, 'Monitor', 'Dell 24', 'assigned', 'Tại công ty')
+            RETURNING id
+            "#,
+            params![cat_id],
+            |r| r.get(0),
+        ).unwrap();
+
+        let req_a_id: i64 = conn.query_row(
+            r#"
+            INSERT INTO borrow_requests(request_key, employee_id_fk, submitted_employee_id, submitted_full_name, status, request_type, signature_status)
+            VALUES('REQ-A-667', ?, 'ASWVN958', 'NGUYỄN QUỐC TRỌNG NGHĨA', 'approved', 'borrow', 'signed')
+            RETURNING id
+            "#,
+            params![emp_a_id],
+            |r| r.get(0),
+        ).unwrap();
+
+        conn.execute(
+            r#"
+            INSERT INTO asset_loans(asset_id, employee_id_fk, borrow_request_id, borrowed_at)
+            VALUES(?, ?, ?, datetime('now', '-30 days'))
+            "#,
+            params![mon667_id, emp_a_id, req_a_id],
+        ).unwrap();
+
+        let file_path = if Path::new("00_ExSource/New_Asigned_Asset_Corrected.xlsx").exists() {
+            "00_ExSource/New_Asigned_Asset_Corrected.xlsx"
+        } else {
+            "../00_ExSource/New_Asigned_Asset_Corrected.xlsx"
+        };
+
+        // Run Preview
+        let preview = preview_historical_assignment_import_conn(
+            &conn,
+            &HistoricalAssignmentImportInput {
+                file_path: file_path.to_string(),
+                sheet_name: None,
+                row_overrides: None,
+                row_actions: None,
+            },
+        ).unwrap();
+
+        // MON667 is assigned to ASWVN027 in the workbook, but actively held by ASWVN958 in DB
+        let item_667 = preview.items.iter().find(|i| i.canonical_asset_code.as_deref() == Some("VNMON667")).expect("VNMON667 in preview");
+        assert_eq!(item_667.status, HistoricalAssignmentRowStatus::DifferentHolder);
+        assert_eq!(item_667.raw_staff_id, "ASWVN027");
+        assert_eq!(item_667.current_holder_staff_id.as_deref(), Some("ASWVN958"));
+        assert_eq!(item_667.suggested_action.as_deref(), Some("quarantine"));
+        assert!(item_667.status_reason.as_ref().unwrap().contains("currently assigned in DB to 'NGUYỄN QUỐC TRỌNG NGHĨA (ASWVN958)'"));
+
+        // Case A: Apply without confirmation -> MON667 is quarantined, NO writes to DB
+        let report_unconfirmed = apply_historical_assignment_import_conn(
+            &mut conn,
+            &HistoricalAssignmentImportInput {
+                file_path: file_path.to_string(),
+                sheet_name: None,
+                row_overrides: None,
+                row_actions: None, // No confirm_transfer
+            },
+            Some(1),
+        ).unwrap();
+
+        assert_eq!(report_unconfirmed.transferred_assignments, 0);
+        // Verify active loan for employee A remains unchanged
+        let loan_a_active: bool = conn.query_row(
+            "SELECT returned_at IS NULL FROM asset_loans WHERE asset_id = ? AND employee_id_fk = ?",
+            params![mon667_id, emp_a_id],
+            |r| r.get(0),
+        ).unwrap();
+        assert!(loan_a_active, "Without explicit confirmation, old loan must NEVER be closed");
+
+        // Case B: Apply WITH explicit IT confirmation: action = "confirm_transfer"
+        let report_confirmed = apply_historical_assignment_import_conn(
+            &mut conn,
+            &HistoricalAssignmentImportInput {
+                file_path: file_path.to_string(),
+                sheet_name: None,
+                row_overrides: None,
+                row_actions: Some(vec![HistoricalAssignmentActionDecision {
+                    row_number: item_667.row_number,
+                    raw_asset_code: "MON667".to_string(),
+                    action: "confirm_transfer".to_string(),
+                    corrected_staff_id: None,
+                    corrected_asset_code: None,
+                }]),
+            },
+            Some(1),
+        ).unwrap();
+
+        assert_eq!(report_confirmed.transferred_assignments, 1, "Transfer must be recorded");
+
+        // Verify old loan for A is now closed
+        let returned_at: Option<String> = conn.query_row(
+            "SELECT returned_at FROM asset_loans WHERE asset_id = ? AND employee_id_fk = ?",
+            params![mon667_id, emp_a_id],
+            |r| r.get(0),
+        ).unwrap();
+        assert!(returned_at.is_some(), "Old loan must have returned_at set");
+
+        // Verify new loan exists for verified holder B (ASWVN027)
+        let (new_loan_id, new_borrowed): (i64, String) = conn.query_row(
+            "SELECT id, borrowed_at FROM asset_loans WHERE asset_id = ? AND employee_id_fk = ? AND returned_at IS NULL",
+            params![mon667_id, emp_b_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        assert!(new_loan_id > 0);
+        assert!(!new_borrowed.is_empty());
+
+        // Verify borrow_request has pending_signature
+        let sig_status: String = conn.query_row(
+            "SELECT br.signature_status FROM borrow_requests br JOIN asset_loans al ON al.borrow_request_id = br.id WHERE al.id = ?",
+            params![new_loan_id],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(sig_status, SIGNATURE_STATUS_PENDING);
+    }
+
+    #[test]
+    fn test_same_holder_skip_and_location_update() {
+        let mut conn = open_test_conn();
+
+        let emp_id: i64 = conn.query_row(
+            "INSERT INTO employees(employee_id, full_name, email, is_floating) VALUES('ASWVN1112', 'VŨ TUẤN KHANG', 'khang@example.com', 0) RETURNING id",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+
+        let cat_id = get_or_create_monitor_category(&conn.transaction().unwrap()).unwrap();
+        let mon700_id: i64 = conn.query_row(
+            "INSERT INTO assets(asset_code, category_id, asset_type, display_name, status, usage_location) VALUES('VNMON700', ?, 'Monitor', 'Dell', 'assigned', 'Tại nhà') RETURNING id",
+            params![cat_id],
+            |r| r.get(0),
+        ).unwrap();
+
+        let req_id: i64 = conn.query_row(
+            "INSERT INTO borrow_requests(request_key, employee_id_fk, submitted_employee_id, submitted_full_name, status, request_type, signature_status) VALUES('REQ-700', ?, 'ASWVN1112', 'VŨ TUẤN KHANG', 'approved', 'borrow', 'signed') RETURNING id",
+            params![emp_id],
+            |r| r.get(0),
+        ).unwrap();
+
+        conn.execute(
+            "INSERT INTO asset_loans(asset_id, employee_id_fk, borrow_request_id, borrowed_at) VALUES(?, ?, ?, datetime('now'))",
+            params![mon700_id, emp_id, req_id],
+        ).unwrap();
+
+        let file_path = if Path::new("00_ExSource/New_Asigned_Asset_Corrected.xlsx").exists() {
+            "00_ExSource/New_Asigned_Asset_Corrected.xlsx"
+        } else {
+            "../00_ExSource/New_Asigned_Asset_Corrected.xlsx"
+        };
+
+        // Preview: DB is 'Tại nhà', workbook is 'Tại công ty' (Tại CTY)
+        let preview = preview_historical_assignment_import_conn(
+            &conn,
+            &HistoricalAssignmentImportInput {
+                file_path: file_path.to_string(),
+                sheet_name: None,
+                row_overrides: None,
+                row_actions: None,
+            },
+        ).unwrap();
+
+        let item700 = preview.items.iter().find(|i| i.canonical_asset_code.as_deref() == Some("VNMON700")).expect("VNMON700");
+        assert_eq!(item700.status, HistoricalAssignmentRowStatus::LocationChanged);
+        assert_eq!(item700.suggested_action.as_deref(), Some("update_location"));
+        assert!(item700.status_reason.as_ref().unwrap().contains("location changed from 'Tại nhà' to 'Tại công ty'"));
+
+        // Apply with default update_location: updates location, preserves active loan
+        let report = apply_historical_assignment_import_conn(
+            &mut conn,
+            &HistoricalAssignmentImportInput {
+                file_path: file_path.to_string(),
+                sheet_name: None,
+                row_overrides: None,
+                row_actions: None,
+            },
+            Some(1),
+        ).unwrap();
+
+        assert_eq!(report.updated_locations, 1);
+        let updated_loc: String = conn.query_row("SELECT usage_location FROM assets WHERE id = ?", params![mon700_id], |r| r.get(0)).unwrap();
+        assert_eq!(updated_loc, "Tại công ty");
+
+        // Verify active loan was NOT closed
+        let active_loan_exists: bool = conn.query_row(
+            "SELECT count(*) = 1 FROM asset_loans WHERE asset_id = ? AND employee_id_fk = ? AND returned_at IS NULL",
+            params![mon700_id, emp_id],
+            |r| r.get(0),
+        ).unwrap();
+        assert!(active_loan_exists, "Existing loan must be preserved on location update");
+
+        // Re-run Preview now that location matches: status is AlreadyAssigned (Skip)
+        let preview2 = preview_historical_assignment_import_conn(
+            &conn,
+            &HistoricalAssignmentImportInput {
+                file_path: file_path.to_string(),
+                sheet_name: None,
+                row_overrides: None,
+                row_actions: None,
+            },
+        ).unwrap();
+        let item700_after = preview2.items.iter().find(|i| i.canonical_asset_code.as_deref() == Some("VNMON700")).expect("VNMON700");
+        assert_eq!(item700_after.status, HistoricalAssignmentRowStatus::AlreadyAssigned);
+        assert_eq!(item700_after.suggested_action.as_deref(), Some("skip"));
+    }
+
+    #[test]
+    fn test_existing_loan_missing_from_workbook_detected() {
+        let mut conn = open_test_conn();
+
+        let emp_id: i64 = conn.query_row(
+            "INSERT INTO employees(employee_id, full_name, email, is_floating) VALUES('ASWVN9999', 'TEST USER', 'test@example.com', 0) RETURNING id",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+
+        let cat_id = get_or_create_monitor_category(&conn.transaction().unwrap()).unwrap();
+        let mon999_id: i64 = conn.query_row(
+            "INSERT INTO assets(asset_code, category_id, asset_type, display_name, status, usage_location) VALUES('VNMON999', ?, 'Monitor', 'Dell 27', 'assigned', 'Tại công ty') RETURNING id",
+            params![cat_id],
+            |r| r.get(0),
+        ).unwrap();
+
+        let req_id: i64 = conn.query_row(
+            "INSERT INTO borrow_requests(request_key, employee_id_fk, submitted_employee_id, submitted_full_name, status, request_type, signature_status) VALUES('REQ-999', ?, 'ASWVN9999', 'TEST USER', 'approved', 'borrow', 'signed') RETURNING id",
+            params![emp_id],
+            |r| r.get(0),
+        ).unwrap();
+
+        conn.execute(
+            "INSERT INTO asset_loans(asset_id, employee_id_fk, borrow_request_id, borrowed_at) VALUES(?, ?, ?, datetime('now'))",
+            params![mon999_id, emp_id, req_id],
+        ).unwrap();
+
+        let file_path = if Path::new("00_ExSource/New_Asigned_Asset_Corrected.xlsx").exists() {
+            "00_ExSource/New_Asigned_Asset_Corrected.xlsx"
+        } else {
+            "../00_ExSource/New_Asigned_Asset_Corrected.xlsx"
+        };
+
+        let preview = preview_historical_assignment_import_conn(
+            &conn,
+            &HistoricalAssignmentImportInput {
+                file_path: file_path.to_string(),
+                sheet_name: None,
+                row_overrides: None,
+                row_actions: None,
+            },
+        ).unwrap();
+
+        assert_eq!(preview.summary.existing_loans_missing, 1);
+        let missing_item = preview.items.iter().find(|i| i.raw_asset_code == "VNMON999").expect("VNMON999 in preview");
+        assert_eq!(missing_item.status, HistoricalAssignmentRowStatus::ExistingLoanMissingFromWorkbook);
+        assert_eq!(missing_item.suggested_action.as_deref(), Some("review"));
+        assert!(missing_item.status_reason.as_ref().unwrap().contains("not present in verified workbook"));
+
+        // Apply must NOT modify or return this loan
+        let _ = apply_historical_assignment_import_conn(
+            &mut conn,
+            &HistoricalAssignmentImportInput {
+                file_path: file_path.to_string(),
+                sheet_name: None,
+                row_overrides: None,
+                row_actions: None,
+            },
+            Some(1),
+        ).unwrap();
+
+        let is_still_active: bool = conn.query_row(
+            "SELECT returned_at IS NULL FROM asset_loans WHERE asset_id = ?",
+            params![mon999_id],
+            |r| r.get(0),
+        ).unwrap();
+        assert!(is_still_active, "Existing loan missing from workbook must remain active and untouched");
+    }
+
+    #[test]
+    fn test_preview_row_overrides_preview_only() {
+        let conn = open_test_conn();
+
+        let file_path = if Path::new("00_ExSource/New_Asigned_Asset_Corrected.xlsx").exists() {
+            "00_ExSource/New_Asigned_Asset_Corrected.xlsx"
+        } else {
+            "../00_ExSource/New_Asigned_Asset_Corrected.xlsx"
+        };
+
+        // Row 2 is ASWVN030 MON540
+        // Override row 2 with an unseeded staff id ASWVN9999
+        let preview = preview_historical_assignment_import_conn(
+            &conn,
+            &HistoricalAssignmentImportInput {
+                file_path: file_path.to_string(),
+                sheet_name: None,
+                row_overrides: Some(vec![HistoricalAssignmentRowOverride {
+                    row_number: 2,
+                    raw_asset_code: "MON540".to_string(),
+                    corrected_staff_id: Some("ASWVN9999".to_string()),
+                    corrected_asset_code: None,
+                }]),
+                row_actions: None,
+            },
+        ).unwrap();
+
+        let row2_item = preview.items.iter().find(|i| i.row_number == 2).unwrap();
+        assert_eq!(row2_item.raw_staff_id, "ASWVN9999");
+        assert_eq!(row2_item.status, HistoricalAssignmentRowStatus::MissingEmployee);
+    }
 }
+

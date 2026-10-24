@@ -1,22 +1,36 @@
 import { useState } from "react"
 import {
     AlertTriangle,
+    ArrowRightLeft,
     CheckCircle2,
     Clock,
     FileSpreadsheet,
+    HelpCircle,
     Layers,
+    MapPin,
+    RotateCcw,
     ShieldAlert,
     XCircle,
 } from "lucide-react"
 import { Drawer } from "../../components/Drawer"
 import { staffApi } from "../../services/staff-api"
 import type {
+    HistoricalAssignmentActionDecision,
     HistoricalAssignmentImportReport,
     HistoricalAssignmentItem,
     HistoricalAssignmentPreview,
+    HistoricalAssignmentRowOverride,
 } from "../../types/staff"
 
-type FilterTab = "all" | "valid" | "conflicts" | "errors" | "skipped"
+type FilterTab =
+    | "all"
+    | "valid"
+    | "locationChanged"
+    | "differentHolder"
+    | "missingWorkbook"
+    | "conflicts"
+    | "errors"
+    | "skipped"
 
 export function HistoricalAssignmentImportModal({
     open,
@@ -35,6 +49,18 @@ export function HistoricalAssignmentImportModal({
     const [errorMessage, setErrorMessage] = useState<string | null>(null)
     const [activeTab, setActiveTab] = useState<FilterTab>("all")
 
+    // Per-asset conflict decisions: key = `${rowNumber}:${canonicalAssetCode ?? rawAssetCode}`
+    const [decisions, setDecisions] = useState<Record<string, "confirm_transfer" | "quarantine" | "update_location" | "skip">>({})
+
+    // In-memory row mapping corrections for Preview
+    const [editingKey, setEditingKey] = useState<string | null>(null)
+    const [editStaffId, setEditStaffId] = useState<string>("")
+    const [editAssetCode, setEditAssetCode] = useState<string>("")
+    const [overrides, setOverrides] = useState<HistoricalAssignmentRowOverride[]>([])
+
+    const getItemKey = (item: HistoricalAssignmentItem) =>
+        `${item.rowNumber}:${(item.canonicalAssetCode ?? item.rawAssetCode).toUpperCase()}`
+
     const handlePickFile = async () => {
         try {
             const { open: openFileDialog } = await import("@tauri-apps/plugin-dialog")
@@ -47,13 +73,15 @@ export function HistoricalAssignmentImportModal({
                 setPreview(null)
                 setReport(null)
                 setErrorMessage(null)
+                setDecisions({})
+                setOverrides([])
             }
         } catch (err) {
             setErrorMessage(err instanceof Error ? err.message : String(err))
         }
     }
 
-    const handlePreview = async () => {
+    const runPreview = async (currentOverrides?: HistoricalAssignmentRowOverride[]) => {
         if (!filePath) return
         setIsLoading(true)
         setErrorMessage(null)
@@ -61,8 +89,20 @@ export function HistoricalAssignmentImportModal({
         try {
             const result = await staffApi.previewHistoricalAssignmentImport({
                 filePath,
+                rowOverrides: currentOverrides ?? overrides,
             })
             setPreview(result)
+            // Initialize default decisions for locationChanged items
+            const initDecisions: Record<string, "confirm_transfer" | "quarantine" | "update_location" | "skip"> = {}
+            for (const item of result.items) {
+                const k = getItemKey(item)
+                if (item.status === "locationChanged") {
+                    initDecisions[k] = "update_location"
+                } else if (item.status === "differentHolder") {
+                    initDecisions[k] = "quarantine"
+                }
+            }
+            setDecisions((prev) => ({ ...initDecisions, ...prev }))
         } catch (err) {
             setErrorMessage(err instanceof Error ? err.message : String(err))
         } finally {
@@ -70,13 +110,46 @@ export function HistoricalAssignmentImportModal({
         }
     }
 
+    const handlePreview = () => runPreview(overrides)
+
+    const handleSaveMappingEdit = (item: HistoricalAssignmentItem) => {
+        const newOverrides = overrides.filter(
+            (o) => !(o.rowNumber === item.rowNumber && o.rawAssetCode === item.rawAssetCode)
+        )
+        if (editStaffId.trim() || editAssetCode.trim()) {
+            newOverrides.push({
+                rowNumber: item.rowNumber,
+                rawAssetCode: item.rawAssetCode,
+                correctedStaffId: editStaffId.trim() || undefined,
+                correctedAssetCode: editAssetCode.trim() || undefined,
+            })
+        }
+        setOverrides(newOverrides)
+        setEditingKey(null)
+        runPreview(newOverrides)
+    }
+
     const handleApprove = async () => {
         if (!filePath || !preview) return
         setIsApproving(true)
         setErrorMessage(null)
+
+        const rowActions: HistoricalAssignmentActionDecision[] = Object.entries(decisions).map(
+            ([key, action]) => {
+                const [rowStr, assetCode] = key.split(":")
+                return {
+                    rowNumber: Number(rowStr),
+                    rawAssetCode: assetCode,
+                    action,
+                }
+            }
+        )
+
         try {
             const result = await staffApi.applyHistoricalAssignmentImport({
                 filePath,
+                rowOverrides: overrides.length > 0 ? overrides : undefined,
+                rowActions: rowActions.length > 0 ? rowActions : undefined,
             })
             setReport(result)
             onSuccess?.()
@@ -91,6 +164,9 @@ export function HistoricalAssignmentImportModal({
         setPreview(null)
         setReport(null)
         setErrorMessage(null)
+        setDecisions({})
+        setOverrides([])
+        setEditingKey(null)
     }
 
     const summary = preview?.summary
@@ -99,8 +175,17 @@ export function HistoricalAssignmentImportModal({
         if (activeTab === "valid") {
             return item.status === "newAsset" || item.status === "newAssignment"
         }
+        if (activeTab === "locationChanged") {
+            return item.status === "locationChanged"
+        }
+        if (activeTab === "differentHolder") {
+            return item.status === "differentHolder"
+        }
+        if (activeTab === "missingWorkbook") {
+            return item.status === "existingLoanMissingFromWorkbook"
+        }
         if (activeTab === "conflicts") {
-            return item.status === "conflict"
+            return item.status === "conflict" || item.status === "differentHolder"
         }
         if (activeTab === "errors") {
             return (
@@ -119,8 +204,8 @@ export function HistoricalAssignmentImportModal({
         <Drawer
             open={open}
             onClose={onClose}
-            title="Historical Monitor Assignment Import"
-            widthClass="w-[1100px]"
+            title="Historical Monitor Assignment Import & Reconciliation"
+            widthClass="w-[1180px]"
         >
             <div className="flex h-full flex-col space-y-5 p-6">
                 {/* File picker section */}
@@ -132,11 +217,11 @@ export function HistoricalAssignmentImportModal({
                             </div>
                             <div>
                                 <h4 className="text-sm font-semibold text-[var(--text-primary)]">
-                                    Select Historical Monitor Workbook
+                                    Select Historical Monitor Reconciliation Workbook
                                 </h4>
                                 <p className="text-xs text-[var(--text-secondary)]">
-                                    Imports verified monitor assignments (e.g. Asigned_Asset.xlsx)
-                                    with dual-location Home/Office tracking and pending signatures.
+                                    Reconciles verified monitor assignments against existing loans with dual-location
+                                    Home/Office tracking, conflict resolution, confirmed transfers, and pending signatures.
                                 </p>
                             </div>
                         </div>
@@ -181,9 +266,9 @@ export function HistoricalAssignmentImportModal({
                     <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-6 space-y-4">
                         <div className="flex items-center gap-2 text-sm font-bold text-emerald-600 dark:text-emerald-400">
                             <CheckCircle2 size={20} />
-                            <span>Import Completed Successfully</span>
+                            <span>Reconciliation Completed Successfully</span>
                         </div>
-                        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                        <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
                             <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 text-center">
                                 <div className="text-xs text-[var(--text-secondary)]">Assets Created</div>
                                 <div className="text-lg font-bold text-[var(--text-primary)]">
@@ -197,15 +282,21 @@ export function HistoricalAssignmentImportModal({
                                 </div>
                             </div>
                             <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 text-center">
-                                <div className="text-xs text-[var(--text-secondary)]">Skipped (Already Assigned)</div>
-                                <div className="text-lg font-bold text-[var(--text-secondary)]">
-                                    {report.skippedAlreadyAssigned}
+                                <div className="text-xs text-[var(--text-secondary)]">Locations Updated</div>
+                                <div className="text-lg font-bold text-purple-600">
+                                    {report.updatedLocations ?? 0}
                                 </div>
                             </div>
                             <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 text-center">
-                                <div className="text-xs text-[var(--text-secondary)]">Excluded Conflicts</div>
+                                <div className="text-xs text-[var(--text-secondary)]">Transfers Completed</div>
+                                <div className="text-lg font-bold text-blue-600">
+                                    {report.transferredAssignments ?? 0}
+                                </div>
+                            </div>
+                            <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 text-center">
+                                <div className="text-xs text-[var(--text-secondary)]">Skipped / Excluded</div>
                                 <div className="text-lg font-bold text-amber-500">
-                                    {report.excludedConflicts}
+                                    {report.skippedAlreadyAssigned + report.excludedConflicts}
                                 </div>
                             </div>
                         </div>
@@ -239,49 +330,58 @@ export function HistoricalAssignmentImportModal({
                 {preview && summary && !report && (
                     <div className="flex flex-1 flex-col space-y-4 overflow-hidden">
                         {/* Summary Badges Cards */}
-                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-                            <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-center">
+                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-6">
+                            <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-2.5 text-center">
                                 <div className="flex items-center justify-center gap-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
                                     <Layers size={13} /> New Assets
                                 </div>
-                                <div className="text-xl font-bold text-emerald-600 dark:text-emerald-400">
+                                <div className="text-lg font-bold text-emerald-600 dark:text-emerald-400">
                                     {summary.newAssets}
                                 </div>
                             </div>
 
-                            <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-3 text-center">
+                            <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-2.5 text-center">
                                 <div className="flex items-center justify-center gap-1 text-[11px] font-semibold text-blue-600 dark:text-blue-400">
-                                    <Clock size={13} /> New Assignments
+                                    <Clock size={13} /> New Assigns
                                 </div>
-                                <div className="text-xl font-bold text-blue-600 dark:text-blue-400">
+                                <div className="text-lg font-bold text-blue-600 dark:text-blue-400">
                                     {summary.newAssignments}
                                 </div>
                             </div>
 
-                            <div className="rounded-lg border border-gray-500/30 bg-gray-500/5 p-3 text-center">
-                                <div className="flex items-center justify-center gap-1 text-[11px] font-semibold text-gray-500">
-                                    <CheckCircle2 size={13} /> Existing / Skipped
+                            <div className="rounded-lg border border-purple-500/30 bg-purple-500/5 p-2.5 text-center">
+                                <div className="flex items-center justify-center gap-1 text-[11px] font-semibold text-purple-600 dark:text-purple-400">
+                                    <MapPin size={13} /> Location Changed
                                 </div>
-                                <div className="text-xl font-bold text-gray-600 dark:text-gray-300">
-                                    {summary.existingSkipped}
+                                <div className="text-lg font-bold text-purple-600 dark:text-purple-400">
+                                    {summary.locationChanged ?? 0}
                                 </div>
                             </div>
 
-                            <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-center">
+                            <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5 text-center">
                                 <div className="flex items-center justify-center gap-1 text-[11px] font-semibold text-amber-600 dark:text-amber-400">
-                                    <ShieldAlert size={13} /> Excluded Conflicts
+                                    <ShieldAlert size={13} /> Conflicts / Diff Holder
                                 </div>
-                                <div className="text-xl font-bold text-amber-600 dark:text-amber-400">
+                                <div className="text-lg font-bold text-amber-600 dark:text-amber-400">
                                     {summary.excludedConflicts}
                                 </div>
                             </div>
 
-                            <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-center">
-                                <div className="flex items-center justify-center gap-1 text-[11px] font-semibold text-red-500">
-                                    <XCircle size={13} /> Errors
+                            <div className="rounded-lg border border-indigo-500/30 bg-indigo-500/5 p-2.5 text-center">
+                                <div className="flex items-center justify-center gap-1 text-[11px] font-semibold text-indigo-600 dark:text-indigo-400">
+                                    <HelpCircle size={13} /> Not in Workbook
                                 </div>
-                                <div className="text-xl font-bold text-red-500">
-                                    {summary.errors}
+                                <div className="text-lg font-bold text-indigo-600 dark:text-indigo-400">
+                                    {summary.existingLoansMissing ?? 0}
+                                </div>
+                            </div>
+
+                            <div className="rounded-lg border border-gray-500/30 bg-gray-500/5 p-2.5 text-center">
+                                <div className="flex items-center justify-center gap-1 text-[11px] font-semibold text-gray-500">
+                                    <CheckCircle2 size={13} /> Skipped
+                                </div>
+                                <div className="text-lg font-bold text-gray-600 dark:text-gray-300">
+                                    {summary.existingSkipped}
                                 </div>
                             </div>
                         </div>
@@ -295,15 +395,15 @@ export function HistoricalAssignmentImportModal({
                                         Quarantine Active: {summary.excludedConflicts} conflicting assignment(s) excluded
                                     </div>
                                     <div className="text-[11px] opacity-90">
-                                        Identity mismatches (e.g. ASWVN214, ASWVN1261) and duplicate claims are quarantined and will NOT be assigned.
-                                        You may safely approve the remaining {summary.newAssets + summary.newAssignments} verified assignment(s).
+                                        Identity mismatches and unconfirmed holder transfers are quarantined and will NOT be assigned.
+                                        You may safely approve the remaining {summary.newAssets + summary.newAssignments + (summary.locationChanged ?? 0)} verified assignment(s).
                                     </div>
                                 </div>
                             </div>
                         )}
 
                         {/* Filter Tabs */}
-                        <div className="flex items-center gap-1 border-b border-[var(--border)] pb-2 text-xs">
+                        <div className="flex flex-wrap items-center gap-1 border-b border-[var(--border)] pb-2 text-xs">
                             <button
                                 type="button"
                                 onClick={() => setActiveTab("all")}
@@ -313,7 +413,7 @@ export function HistoricalAssignmentImportModal({
                                         : "text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"
                                 }`}
                             >
-                                All ({summary.totalAssignments})
+                                All ({preview.items.length})
                             </button>
                             <button
                                 type="button"
@@ -326,6 +426,45 @@ export function HistoricalAssignmentImportModal({
                             >
                                 Valid to Assign ({summary.newAssets + summary.newAssignments})
                             </button>
+                            {(summary.locationChanged ?? 0) > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={() => setActiveTab("locationChanged")}
+                                    className={`rounded px-3 py-1 font-medium transition ${
+                                        activeTab === "locationChanged"
+                                            ? "bg-purple-600 text-white"
+                                            : "text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"
+                                    }`}
+                                >
+                                    Location Changed ({summary.locationChanged})
+                                </button>
+                            )}
+                            {(summary.differentHolders ?? 0) > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={() => setActiveTab("differentHolder")}
+                                    className={`rounded px-3 py-1 font-medium transition ${
+                                        activeTab === "differentHolder"
+                                            ? "bg-amber-600 text-white"
+                                            : "text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"
+                                    }`}
+                                >
+                                    Different Holder ({summary.differentHolders})
+                                </button>
+                            )}
+                            {(summary.existingLoansMissing ?? 0) > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={() => setActiveTab("missingWorkbook")}
+                                    className={`rounded px-3 py-1 font-medium transition ${
+                                        activeTab === "missingWorkbook"
+                                            ? "bg-indigo-600 text-white"
+                                            : "text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"
+                                    }`}
+                                >
+                                    Not in Workbook ({summary.existingLoansMissing})
+                                </button>
+                            )}
                             <button
                                 type="button"
                                 onClick={() => setActiveTab("conflicts")}
@@ -368,60 +507,172 @@ export function HistoricalAssignmentImportModal({
                                     <tr>
                                         <th className="px-3 py-2">Row</th>
                                         <th className="px-3 py-2">Staff ID</th>
-                                        <th className="px-3 py-2">Name</th>
+                                        <th className="px-3 py-2">Workbook Holder</th>
                                         <th className="px-3 py-2">Asset Code</th>
                                         <th className="px-3 py-2">Location</th>
                                         <th className="px-3 py-2">Status</th>
+                                        <th className="px-3 py-2">Action / Resolution</th>
                                         <th className="px-3 py-2">Details</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-[var(--border)]">
-                                    {filteredItems.map((item, idx) => (
-                                        <tr key={idx} className="hover:bg-[var(--surface-hover)]">
-                                            <td className="px-3 py-2 text-[var(--text-secondary)]">{item.rowNumber}</td>
-                                            <td className="px-3 py-2 font-mono font-medium text-[var(--text-primary)]">
-                                                {item.rawStaffId}
-                                            </td>
-                                            <td className="px-3 py-2 text-[var(--text-primary)]">
-                                                <div>{item.rawEmployeeName}</div>
-                                                {item.canonicalEmployeeName && item.canonicalEmployeeName.toUpperCase() !== item.rawEmployeeName.toUpperCase() && (
-                                                    <div className="text-[10px] font-medium text-amber-500">
-                                                        DB: {item.canonicalEmployeeName} ({item.canonicalStaffId})
-                                                    </div>
-                                                )}
-                                                {item.status === "missingEmployee" && (
-                                                    <div className="text-[10px] font-medium text-red-400">
-                                                        Not found in DB
-                                                    </div>
-                                                )}
-                                            </td>
-                                            <td className="px-3 py-2 font-mono text-[var(--text-primary)]">
-                                                <span>{item.canonicalAssetCode ?? item.rawAssetCode}</span>
-                                                {item.canonicalAssetCode && item.canonicalAssetCode !== item.rawAssetCode && (
-                                                    <span className="ml-1 text-[10px] text-[var(--text-secondary)]">
-                                                        ({item.rawAssetCode})
+                                    {filteredItems.map((item: HistoricalAssignmentItem, idx: number) => {
+                                        const k = getItemKey(item)
+                                        const currentDecision = decisions[k]
+                                        const isEditing = editingKey === k
+
+                                        return (
+                                            <tr key={idx} className="hover:bg-[var(--surface-hover)]">
+                                                <td className="px-3 py-2 text-[var(--text-secondary)]">
+                                                    {item.rowNumber > 0 ? item.rowNumber : "DB"}
+                                                </td>
+                                                <td className="px-3 py-2 font-mono font-medium text-[var(--text-primary)]">
+                                                    {item.rawStaffId}
+                                                </td>
+                                                <td className="px-3 py-2 text-[var(--text-primary)]">
+                                                    <div>{item.rawEmployeeName}</div>
+                                                    {item.canonicalEmployeeName &&
+                                                        item.canonicalEmployeeName.toUpperCase() !==
+                                                            item.rawEmployeeName.toUpperCase() && (
+                                                            <div className="text-[10px] font-medium text-amber-500">
+                                                                DB: {item.canonicalEmployeeName} ({item.canonicalStaffId})
+                                                            </div>
+                                                        )}
+                                                    {item.status === "missingEmployee" && (
+                                                        <div className="text-[10px] font-medium text-red-400">
+                                                            Not found in DB
+                                                        </div>
+                                                    )}
+                                                </td>
+                                                <td className="px-3 py-2 font-mono text-[var(--text-primary)]">
+                                                    <span>{item.canonicalAssetCode ?? item.rawAssetCode}</span>
+                                                    {item.canonicalAssetCode &&
+                                                        item.canonicalAssetCode !== item.rawAssetCode && (
+                                                            <span className="ml-1 text-[10px] text-[var(--text-secondary)]">
+                                                                ({item.rawAssetCode})
+                                                            </span>
+                                                        )}
+                                                </td>
+                                                <td className="px-3 py-2">
+                                                    <span
+                                                        className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                                                            item.location.toLowerCase().includes("nhà")
+                                                                ? "bg-purple-500/10 text-purple-600 dark:text-purple-400"
+                                                                : "bg-blue-500/10 text-blue-600 dark:text-blue-400"
+                                                        }`}
+                                                    >
+                                                        {item.location}
                                                     </span>
-                                                )}
-                                            </td>
-                                            <td className="px-3 py-2">
-                                                <span
-                                                    className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-medium ${
-                                                        item.location.includes("nhà") || item.location.includes("Nhà")
-                                                            ? "bg-purple-500/10 text-purple-600 dark:text-purple-400"
-                                                            : "bg-blue-500/10 text-blue-600 dark:text-blue-400"
-                                                    }`}
+                                                    {item.currentLocation &&
+                                                        item.currentLocation.toLowerCase() !==
+                                                            item.location.toLowerCase() && (
+                                                            <div className="mt-0.5 text-[10px] text-[var(--text-secondary)]">
+                                                                (DB: {item.currentLocation})
+                                                            </div>
+                                                        )}
+                                                </td>
+                                                <td className="px-3 py-2">
+                                                    <StatusBadge status={item.status} />
+                                                </td>
+                                                <td className="px-3 py-2">
+                                                    {item.status === "differentHolder" && (
+                                                        <select
+                                                            value={currentDecision ?? "quarantine"}
+                                                            onChange={(e) =>
+                                                                setDecisions((prev) => ({
+                                                                    ...prev,
+                                                                    [k]: e.target.value as "confirm_transfer" | "quarantine",
+                                                                }))
+                                                            }
+                                                            className="rounded border border-amber-500/40 bg-[var(--surface)] px-2 py-1 text-[11px] font-medium text-[var(--text-primary)]"
+                                                        >
+                                                            <option value="quarantine">Quarantine (Keep DB)</option>
+                                                            <option value="confirm_transfer">Confirm Transfer</option>
+                                                        </select>
+                                                    )}
+                                                    {item.status === "locationChanged" && (
+                                                        <select
+                                                            value={currentDecision ?? "update_location"}
+                                                            onChange={(e) =>
+                                                                setDecisions((prev) => ({
+                                                                    ...prev,
+                                                                    [k]: e.target.value as "update_location" | "skip",
+                                                                }))
+                                                            }
+                                                            className="rounded border border-purple-500/40 bg-[var(--surface)] px-2 py-1 text-[11px] font-medium text-[var(--text-primary)]"
+                                                        >
+                                                            <option value="update_location">Update Location</option>
+                                                            <option value="skip">Keep Current Loc</option>
+                                                        </select>
+                                                    )}
+                                                    {item.status === "existingLoanMissingFromWorkbook" && (
+                                                        <span className="text-[11px] text-[var(--text-secondary)]">
+                                                            Review only
+                                                        </span>
+                                                    )}
+                                                    {(item.status === "newAsset" || item.status === "newAssignment") && (
+                                                        <span className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                                                            Approve
+                                                        </span>
+                                                    )}
+                                                    {item.status === "alreadyAssigned" && (
+                                                        <span className="text-[11px] text-gray-500">
+                                                            Skip (0 writes)
+                                                        </span>
+                                                    )}
+                                                    {(item.status === "conflict" ||
+                                                        item.status === "missingEmployee" ||
+                                                        item.status === "error") && (
+                                                        <div className="flex items-center gap-1">
+                                                            {!isEditing ? (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => {
+                                                                        setEditingKey(k)
+                                                                        setEditStaffId(item.rawStaffId)
+                                                                        setEditAssetCode(item.rawAssetCode)
+                                                                    }}
+                                                                    className="rounded bg-[var(--surface-hover)] px-2 py-0.5 text-[10px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                                                                >
+                                                                    Correct...
+                                                                </button>
+                                                            ) : (
+                                                                <div className="flex items-center gap-1">
+                                                                    <input
+                                                                        type="text"
+                                                                        value={editStaffId}
+                                                                        onChange={(e) => setEditStaffId(e.target.value)}
+                                                                        placeholder="Staff ID"
+                                                                        className="w-16 rounded border px-1 py-0.5 text-[10px]"
+                                                                    />
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => handleSaveMappingEdit(item)}
+                                                                        className="rounded bg-emerald-600 px-1.5 py-0.5 text-[10px] text-white"
+                                                                    >
+                                                                        Apply
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => setEditingKey(null)}
+                                                                        className="rounded bg-gray-500 px-1.5 py-0.5 text-[10px] text-white"
+                                                                    >
+                                                                        X
+                                                                    </button>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </td>
+                                                <td
+                                                    className="max-w-xs truncate px-3 py-2 text-[11px] text-[var(--text-secondary)]"
+                                                    title={item.statusReason ?? ""}
                                                 >
-                                                    {item.location}
-                                                </span>
-                                            </td>
-                                            <td className="px-3 py-2">
-                                                <StatusBadge status={item.status} />
-                                            </td>
-                                            <td className="max-w-xs truncate px-3 py-2 text-[11px] text-[var(--text-secondary)]" title={item.statusReason ?? ""}>
-                                                {item.statusReason ?? "—"}
-                                            </td>
-                                        </tr>
-                                    ))}
+                                                    {item.statusReason ?? "—"}
+                                                </td>
+                                            </tr>
+                                        )
+                                    })}
                                 </tbody>
                             </table>
                         </div>
@@ -432,9 +683,10 @@ export function HistoricalAssignmentImportModal({
                                 type="button"
                                 onClick={handleCancel}
                                 disabled={isApproving}
-                                className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+                                className="flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
                             >
-                                Cancel (Zero Writes)
+                                <RotateCcw size={13} />
+                                <span>Cancel (Zero Writes)</span>
                             </button>
 
                             <button
@@ -444,7 +696,7 @@ export function HistoricalAssignmentImportModal({
                                 className="rounded-lg bg-emerald-600 px-5 py-2 text-xs font-semibold text-white shadow hover:bg-emerald-500 disabled:opacity-50"
                             >
                                 {isApproving
-                                    ? "Applying Assignments..."
+                                    ? "Applying Reconciliation..."
                                     : `Approve Valid Remainder (${summary.newAssets + summary.newAssignments})`}
                             </button>
                         </div>
@@ -467,6 +719,24 @@ function StatusBadge({ status }: { status: string }) {
             return (
                 <span className="inline-flex items-center gap-1 rounded bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-blue-600 dark:text-blue-400">
                     <Clock size={10} /> New Assign
+                </span>
+            )
+        case "locationChanged":
+            return (
+                <span className="inline-flex items-center gap-1 rounded bg-purple-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-purple-600 dark:text-purple-400">
+                    <MapPin size={10} /> Location Changed
+                </span>
+            )
+        case "differentHolder":
+            return (
+                <span className="inline-flex items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+                    <ArrowRightLeft size={10} /> Different Holder
+                </span>
+            )
+        case "existingLoanMissingFromWorkbook":
+            return (
+                <span className="inline-flex items-center gap-1 rounded bg-indigo-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-600 dark:text-indigo-400">
+                    <HelpCircle size={10} /> Not in Workbook
                 </span>
             )
         case "alreadyAssigned":

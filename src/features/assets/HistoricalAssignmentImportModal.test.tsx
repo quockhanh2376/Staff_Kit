@@ -82,7 +82,7 @@ describe("HistoricalAssignmentImportModal", () => {
 
     it("renders file selection when open without preview", () => {
         render(<HistoricalAssignmentImportModal open={true} onClose={vi.fn()} />)
-        expect(screen.getByText("Select Historical Monitor Workbook")).toBeInTheDocument()
+        expect(screen.getByText("Select Historical Monitor Reconciliation Workbook")).toBeInTheDocument()
         expect(screen.getByText("Preview Assignments")).toBeInTheDocument()
     })
 
@@ -157,7 +157,7 @@ describe("HistoricalAssignmentImportModal", () => {
         fireEvent.click(screen.getByText("Approve Valid Remainder (193)"))
 
         await waitFor(() => {
-            expect(screen.getByText("Import Completed Successfully")).toBeInTheDocument()
+            expect(screen.getByText("Reconciliation Completed Successfully")).toBeInTheDocument()
         })
 
         expect(screen.getByText("Assets Created")).toBeInTheDocument()
@@ -181,7 +181,7 @@ describe("HistoricalAssignmentImportModal", () => {
         fireEvent.click(screen.getByText("Cancel (Zero Writes)"))
 
         // Resets back to file selection
-        expect(screen.getByText("Select Historical Monitor Workbook")).toBeInTheDocument()
+        expect(screen.getByText("Select Historical Monitor Reconciliation Workbook")).toBeInTheDocument()
         expect(staffApi.applyHistoricalAssignmentImport).not.toHaveBeenCalled()
     })
 })

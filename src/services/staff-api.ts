@@ -267,6 +267,8 @@ export const staffApi = {
       payload: {
         filePath: payload.filePath,
         sheetName: payload.sheetName ?? null,
+        rowOverrides: payload.rowOverrides ?? null,
+        rowActions: payload.rowActions ?? null,
       },
     }),
 
@@ -275,6 +277,8 @@ export const staffApi = {
       payload: {
         filePath: payload.filePath,
         sheetName: payload.sheetName ?? null,
+        rowOverrides: payload.rowOverrides ?? null,
+        rowActions: payload.rowActions ?? null,
       },
     }),
 

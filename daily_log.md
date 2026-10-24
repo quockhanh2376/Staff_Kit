@@ -1,5 +1,54 @@
 # Daily Log - 2026-10-24
 
+## 2026-10-24 — Staff Kit Historical Asset Assignment Reconciliation (Start)
+- Authorized by Zon/Cheki.
+- Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Input: `00_ExSource/New_Asigned_Asset_Corrected.xlsx` (SHA-256: `B093C056352AD0DDF6E86CE663632EA8610BEF78DBB1454975D86C48633BEE61`).
+- Scope:
+  1. Reconcile existing loans: Compare active Monitor loans with workbook using canonical Asset Code + Staff ID.
+     Classify New Assignment, Already Assigned, Location Changed, Different Holder, Existing Loan Missing from Workbook, and Missing Asset/Employee.
+  2. Multiple assets allowed: Employees may legitimately hold multiple monitors across Home/Office locations (e.g. ASWVN1112 holds both MON700 & MON644 at office).
+  3. Same-holder rules:
+     - Same Asset + same Staff ID + same Location -> Skip, zero writes (`AlreadyAssigned`).
+     - Same Asset + same Staff ID + different Location -> allow confirmed Update Location (`LocationChanged`); preserve existing loan.
+     - Same employee + additional Asset -> `NewAssignment`.
+  4. Per-asset Conflict Review: Display Excel row, Asset Code, workbook holder, DB holder, Location and reason.
+  5. Correction vs Transfer:
+     - Correct Mapping: preview-only edit and revalidate; never silently modify Excel or Employee DB.
+     - Confirm Transfer: explicit IT approval closes old loan and creates new loan for verified holder within one transaction. Full audit preserved.
+  6. Verified cases review: MON667 -> Nguyễn Công Thiện (ASWVN027), MON668 / MON675 historical discrepancies, ASWVN1112 dual monitors.
+  7. Safety & Signatures: New assignments marked Verified / Pending Signature. No fabricated signatures, handover dates, or return evidence.
+  8. Approval behavior: Preview/Cancel = 0 writes. Quarantined conflicts remain excluded. Pre-commit revalidation with atomic rollback. Idempotent reimport.
+  9. Database safety: Work exclusively on isolated test DB copy (`scratch/isolated_reconcile.sqlite3`). Zero modifications or writes to original test or production DB.
+
+## 2026-10-24 — Staff Kit Historical Asset Assignment Reconciliation (End)
+- Implementation (Victor):
+  * Domain Engine (`src-tauri/src/db/historical_assignment_import.rs`):
+    - Extended reconciliation classifications: `NewAssignment`, `AlreadyAssigned`, `LocationChanged`, `DifferentHolder`, `ExistingLoanMissingFromWorkbook`, `MissingAsset`, `MissingEmployee`, `Conflict`.
+    - Added in-memory preview correction support (`row_overrides`) for IT review without modifying Excel source or Employee DB.
+    - Handled dual-location Home/Office tracking ("Tại công ty", "Tại nhà") with semantic normalization (`normalize_location`).
+    - Handled `LocationChanged`: preserves existing active loan without closing/recreating; updates `assets.usage_location` with audit logging.
+    - Handled `DifferentHolder` (e.g. MON667, MON668, MON675): defaults to quarantined; on explicit confirmed transfer (`confirm_transfer`), atomically closes former loan (`returned_at = datetime('now')`), updates asset metadata, creates new loan for verified holder with `signature_status = 'pending_signature'`, and logs audit trail.
+    - Detected active monitor loans in DB missing from workbook as `ExistingLoanMissingFromWorkbook` without modifying or auto-returning.
+    - Allowed multiple monitors per employee (e.g. ASWVN1112 holding MON700 and MON644 at office).
+  * Frontend & IPC (`src/types/staff.ts`, `src/services/staff-api.ts`, `src/features/assets/HistoricalAssignmentImportModal.tsx`):
+    - Added interactive reconciliation UI with tabbed filtering (All, Valid, Location Changed, Different Holder, Not in Workbook, Quarantined, Skipped, Errors).
+    - Per-asset resolution controls for Different Holder (`confirm_transfer` vs `quarantine`), Location Changed (`update_location` vs `skip`), and in-memory row overrides for mapping fixes.
+    - Updated summary metrics: Locations Updated, Transfers Completed, and Not in Workbook counts.
+- QA Validation (Qeen):
+  * Workbook SHA-256 verified: `B093C056352AD0DDF6E86CE663632EA8610BEF78DBB1454975D86C48633BEE61` (156 rows, 199 assignments: 140 CTY, 59 NHÀ).
+  * Isolated test DB validation: clean test DB has 30 laptops and 0 monitors; workbook previews 199 valid assignments with 0 conflicts.
+  * TDD test coverage (12/12 Rust tests passed):
+    - `test_reconcile_new_asigned_asset_corrected_full_validation`: 199 valid, 0 conflicts, ASWVN1112 holds MON700 & MON644 at CTY.
+    - `test_reconcile_mon667_transfer_requires_explicit_confirmation`: unconfirmed is quarantined; confirmed closes old loan and creates new loan with `pending_signature`.
+    - `test_same_holder_skip_and_location_update`: verifies `AlreadyAssigned` skips and `LocationChanged` updates location without touching loan.
+    - `test_existing_loan_missing_from_workbook_detected`: verifies loans not in workbook are detected and left active.
+    - `test_preview_row_overrides_preview_only`: verifies in-memory correction without file modification.
+  * Full quality gate: `npm run check:quality` (ESLint 0 errors, TypeScript `tsc -b` 0 errors, Vite build OK, Cargo check OK).
+  * Frontend Vitest unit tests: 39 test files, 292 tests passed.
+  * DB Safety: Original test DB `data/test_db/staff_kit.sqlite3` and production databases strictly untouched (0 writes).
+- Verdict: PASS. Ready for git commit and push to `origin/main`.
+
 ## 2026-10-24 — Staff Kit Recurring Invisible Window Teardown & Lifecycle Fix (Start)
 - Authorized by Zon/Cheki.
 - Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).

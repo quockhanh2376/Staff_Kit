@@ -869,6 +869,9 @@ export type HistoricalAssignmentRowStatus =
   | "newAsset"
   | "newAssignment"
   | "alreadyAssigned"
+  | "locationChanged"
+  | "differentHolder"
+  | "existingLoanMissingFromWorkbook"
   | "missingAsset"
   | "missingEmployee"
   | "conflict"
@@ -889,6 +892,11 @@ export type HistoricalAssignmentItem = {
   canonicalAssetCode: string | null
   currentHolderStaffId: string | null
   currentHolderName: string | null
+  currentHolderEmployeeId?: number | null
+  currentLocation?: string | null
+  currentLoanId?: number | null
+  suggestedAction?: string | null
+  selectedAction?: string | null
 }
 
 export type HistoricalAssignmentPreviewSummary = {
@@ -897,9 +905,17 @@ export type HistoricalAssignmentPreviewSummary = {
   newAssets: number
   newAssignments: number
   existingSkipped: number
+  locationChanged?: number
+  differentHolders?: number
+  existingLoansMissing?: number
   excludedConflicts: number
   errors: number
   canApproveRemainder: boolean
+  alreadyAssigned?: number
+  missingAssets?: number
+  missingEmployees?: number
+  conflicts?: number
+  hasBlockingConflicts?: boolean
 }
 
 export type HistoricalAssignmentPreview = {
@@ -908,9 +924,26 @@ export type HistoricalAssignmentPreview = {
   items: HistoricalAssignmentItem[]
 }
 
+export type HistoricalAssignmentRowOverride = {
+  rowNumber: number
+  rawAssetCode: string
+  correctedStaffId?: string | null
+  correctedAssetCode?: string | null
+}
+
+export type HistoricalAssignmentActionDecision = {
+  rowNumber: number
+  rawAssetCode: string
+  action: "approve" | "update_location" | "confirm_transfer" | "quarantine" | "skip"
+  correctedStaffId?: string | null
+  correctedAssetCode?: string | null
+}
+
 export type HistoricalAssignmentImportInput = {
   filePath: string
   sheetName?: string | null
+  rowOverrides?: HistoricalAssignmentRowOverride[] | null
+  rowActions?: HistoricalAssignmentActionDecision[] | null
 }
 
 export type HistoricalAssignmentImportReport = {
@@ -918,6 +951,8 @@ export type HistoricalAssignmentImportReport = {
   createdAssets: number
   createdAssignments: number
   skippedAlreadyAssigned: number
+  updatedLocations?: number
+  transferredAssignments?: number
   excludedConflicts: number
   errors: string[]
 }
