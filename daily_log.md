@@ -1,3 +1,42 @@
+# Daily Log - 2026-10-24
+
+## 2026-10-24 — Staff Kit Recurring Invisible Window Teardown & Lifecycle Fix (Start)
+- Authorized by Zon/Cheki.
+- Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Scope:
+  1. Priority 1 (Recurring Invisible Window on `.\dev.ps1`):
+     - Reproduce and inspect script behavior, stale Vite/Node processes, port 5173, Tauri/WebView2 startup, and `show_main_window` handshake.
+     - Identify root cause why previous fixes (`b946601`, `500baba`) recurred (zombie Vite process holding port 5173 with broken pipes while Tauri saw port open and launched `staff-kit.exe` to an unresponsive server).
+     - Fix the launcher and runner lifecycle so only one dev instance runs and window visibility is reliable across repeated stop/start cycles.
+     - Verify 3 consecutive foreground launches with visible HWND and interactive WebView.
+     - Ensure no background processes or port 5173 leaks remain.
+  2. Database & Asset Import Safety:
+     - Zero modifications to test DB (`data/test_db/staff_kit.sqlite3`), production DB, Asset Import, loans, signatures, or database settings.
+
+## 2026-10-24 — Staff Kit Recurring Invisible Window Teardown & Lifecycle Fix (End)
+- Implementation (Victor):
+  * Root Cause:
+    - Previous `lib.rs` 30s background supervisor checked `window.is_visible()`, which checks Win32 `WS_VISIBLE` style. Because `window.show()` in `setup()` sets this flag immediately, the supervisor loop exited after 0ms without waiting for WebView2 render.
+    - When `.\dev.ps1` or Node runner processes were stopped via Ctrl+C / terminal close on Windows, child process trees (`node.exe` Vite, `staff-kit.exe`) were orphaned in background holding port 5173 with broken pipes.
+    - On the subsequent launch, new Vite failed to bind to 5173 (`Port 5173 is already in use`), while Tauri CLI detected 5173 open (the zombie process) and launched `staff-kit.exe`. WebView2 navigation to the zombie server hung indefinitely, and the window never initialized.
+  * Lifecycle & Teardown Fixes:
+    - `dev.ps1`: Added `Stop-StaleStaffKitDevProcesses` targeting any lingering `staff-kit.exe` and any process holding port 5173. Enforced pre-launch hygiene and wrapped `npm run tauri:dev` in a `try { ... } finally { Stop-StaleStaffKitDevProcesses }` block to guarantee 100% clean teardown on exit/interrupt.
+    - `scripts/run-with-shared-cargo-target.mjs`: Added `cleanupChildTree()` using `taskkill /F /T /PID` on Windows for `SIGINT`, `SIGTERM`, and `process.exit` events to prevent orphaned child processes.
+- Validation (Qeen):
+  * 3 Consecutive Foreground Launches Verified:
+    - Launch 1: HWND=0x11049A, Title='Staff Kit', Visible=True, Style=0x14CF0000 (WS_VISIBLE), Size=1296x839, PID=14040, Ready=9.1s. Post-cleanup: Port 5173 open=False, staff-kit.exe running=False.
+    - Launch 2: HWND=0x5E01D8, Title='Staff Kit', Visible=True, Style=0x14CF0000 (WS_VISIBLE), Size=1296x839, PID=6544, Ready=9.0s. Post-cleanup: Port 5173 open=False, staff-kit.exe running=False.
+    - Launch 3: HWND=0x1CB0182, Title='Staff Kit', Visible=True, Style=0x14CF0000 (WS_VISIBLE), Size=1296x839, PID=12900, Ready=8.9s. Post-cleanup: Port 5173 open=False, staff-kit.exe running=False.
+  * Quality Gates:
+    - Unit tests: `npm run test:unit` (39 files, 292/292 PASS).
+    - Rust tests: `npm run test:tauri -- historical_assignment_import` (7/7 PASS).
+    - Quality gate: `npm run check:quality` (lint, typecheck, build, cargo check - 0 errors PASS).
+  * Hygiene & Safety:
+    - Port 5173 verified free (0 connections).
+    - No background `staff-kit` or `node` dev processes lingering.
+    - Original test DB and production DB completely untouched.
+- Verdict: PASS.
+
 # Daily Log - 2026-10-23
 
 ## 2026-10-23 — Staff Kit Revalidate Corrected Assignment Workbook (Start)

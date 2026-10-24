@@ -68,7 +68,46 @@ const child = spawn(command, args, {
   stdio: "inherit",
 });
 
+let cleanedUp = false;
+function cleanupChildTree() {
+  if (cleanedUp) return;
+  cleanedUp = true;
+  if (child && child.pid && !child.killed) {
+    if (process.platform === "win32") {
+      try {
+        execFileSync("taskkill", ["/F", "/T", "/PID", String(child.pid)], {
+          stdio: "ignore",
+          windowsHide: true,
+        });
+      } catch {
+        // Child or tree may have already exited
+      }
+    } else {
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // ignore
+      }
+    }
+  }
+}
+
+process.on("SIGINT", () => {
+  cleanupChildTree();
+  process.exit(130);
+});
+
+process.on("SIGTERM", () => {
+  cleanupChildTree();
+  process.exit(143);
+});
+
+process.on("exit", () => {
+  cleanupChildTree();
+});
+
 child.on("exit", (code, signal) => {
+  cleanedUp = true;
   if (signal) {
     process.kill(process.pid, signal);
     return;
