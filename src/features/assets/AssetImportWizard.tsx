@@ -1,4 +1,4 @@
-import { FileSpreadsheet } from "lucide-react"
+import { FileSpreadsheet, RefreshCw } from "lucide-react"
 import { Drawer } from "../../components/Drawer"
 import { SharedImportShell } from "../import/sharedImportShell"
 import type {
@@ -129,6 +129,25 @@ function ImportPanel({ assetImport }: AssetImportWizardProps) {
                         description="Import quantity stock rows directly into stock records after preview and approval."
                         onClick={() => assetImport.setSelectedImportMode("quantity")}
                     />
+                </div>
+
+                <div className="rounded-[12px] border border-emerald-500/25 bg-emerald-500/5 p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                    <div className="space-y-0.5">
+                        <div className="flex items-center gap-2 text-xs font-bold text-emerald-400">
+                            <RefreshCw size={14} />
+                            Update Existing Asset Metadata Mode
+                        </div>
+                        <p className="text-[11px] text-[var(--text-secondary)]">
+                            Enrich existing Monitor records with canonical Brand, Model, and Asset Name from Excel without skipping or altering assignments.
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        className="btn btn-secondary shrink-0 text-xs text-emerald-400 hover:text-emerald-300 hover:border-emerald-500/50"
+                        onClick={assetImport.openMetadataUpdate}
+                    >
+                        Launch Metadata Reimport →
+                    </button>
                 </div>
 
                 {inspection && (

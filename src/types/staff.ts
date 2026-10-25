@@ -990,3 +990,65 @@ export type SignHistoricalBorrowRequestInput = {
   signaturePngBlob?: number[] | null
   typedName?: string | null
 }
+
+export type AssetMetadataDiff = {
+  field: string
+  before: string | null
+  after: string | null
+}
+
+export type AssetMetadataRowStatus =
+  | "metadataChanged"
+  | "unchanged"
+  | "missingAsset"
+  | "outOfScope"
+  | "invalid"
+
+export type AssetMetadataPreviewRow = {
+  rowNumber: number
+  rawAssetTag: string
+  canonicalAssetCode: string
+  rawCategory: string
+  status: AssetMetadataRowStatus
+  statusReason?: string | null
+  assetId?: number | null
+  currentDisplayName?: string | null
+  currentBrand?: string | null
+  currentModel?: string | null
+  currentSerialNumber?: string | null
+  proposedDisplayName?: string | null
+  proposedBrand?: string | null
+  proposedModel?: string | null
+  proposedSerialNumber?: string | null
+  diffs: AssetMetadataDiff[]
+}
+
+export type AssetMetadataPreviewSummary = {
+  totalRows: number
+  monitorRows: number
+  metadataChanged: number
+  unchanged: number
+  missingAsset: number
+  outOfScope: number
+  invalid: number
+}
+
+export type AssetMetadataPreviewReport = {
+  fileName: string
+  sheetName: string
+  summary: AssetMetadataPreviewSummary
+  rows: AssetMetadataPreviewRow[]
+}
+
+export type AssetMetadataImportInput = {
+  filePath: string
+  sheetName?: string | null
+}
+
+export type AssetMetadataImportReport = {
+  totalProcessed: number
+  updatedCount: number
+  unchangedCount: number
+  skippedCount: number
+  errors: string[]
+}

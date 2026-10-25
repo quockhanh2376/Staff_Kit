@@ -796,6 +796,28 @@ fn apply_historical_assignment_import(
 }
 
 #[tauri::command]
+fn preview_asset_metadata_reimport(
+    app: tauri::AppHandle,
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    session_token: String,
+    payload: db::AssetMetadataImportInput,
+) -> Result<db::AssetMetadataPreviewReport, String> {
+    let _ctx = auth_session::require_admin(&session_store, &session_token)?;
+    db::preview_asset_metadata_reimport(&app, payload)
+}
+
+#[tauri::command]
+fn apply_asset_metadata_reimport(
+    app: tauri::AppHandle,
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    session_token: String,
+    payload: db::AssetMetadataImportInput,
+) -> Result<db::AssetMetadataImportReport, String> {
+    let ctx = auth_session::require_admin(&session_store, &session_token)?;
+    db::apply_asset_metadata_reimport(&app, payload, Some(ctx.account_id))
+}
+
+#[tauri::command]
 fn sign_historical_borrow_request(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -1179,6 +1201,8 @@ pub fn run() {
             import_asset_import_file,
             preview_historical_assignment_import,
             apply_historical_assignment_import,
+            preview_asset_metadata_reimport,
+            apply_asset_metadata_reimport,
             sign_historical_borrow_request,
             create_asset_import_batch,
             list_asset_import_batches,
@@ -1323,6 +1347,8 @@ mod tests {
         "import_asset_import_file",
         "preview_historical_assignment_import",
         "apply_historical_assignment_import",
+        "preview_asset_metadata_reimport",
+        "apply_asset_metadata_reimport",
         "create_asset_import_batch",
         "import_asset_import_batch_valid_rows",
         "delete_asset_import_batch",

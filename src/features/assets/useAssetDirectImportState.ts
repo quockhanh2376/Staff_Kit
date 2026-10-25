@@ -53,6 +53,7 @@ export function useAssetDirectImportState({
     triggerReload,
 }: UseAssetDirectImportStateOptions) {
     const [isWizardOpen, setWizardOpen] = useState(false)
+    const [isMetadataUpdateOpen, setMetadataUpdateOpen] = useState(false)
     const [panelMode, setPanelMode] = useState<AssetImportPanelMode>("import")
     const [selectedImportMode, setSelectedImportMode] =
         useState<AssetImportMode>(DEFAULT_ASSET_IMPORT_MODE)
@@ -108,6 +109,15 @@ export function useAssetDirectImportState({
         setManualAssetResult(null)
         void loadAssetCategories()
     }, [loadAssetCategories])
+
+    const openMetadataUpdate = useCallback(() => {
+        setWizardOpen(false)
+        setMetadataUpdateOpen(true)
+    }, [])
+
+    const closeMetadataUpdate = useCallback(() => {
+        setMetadataUpdateOpen(false)
+    }, [])
 
     const closeWizard = useCallback(() => {
         setWizardOpen(false)
@@ -290,6 +300,7 @@ export function useAssetDirectImportState({
 
     return {
         isWizardOpen,
+        isMetadataUpdateOpen,
         panelMode,
         selectedImportMode,
         isLoadingCategories,
@@ -311,6 +322,8 @@ export function useAssetDirectImportState({
         manualAssetMessage,
         setSelectedImportMode,
         openImportWizard,
+        openMetadataUpdate,
+        closeMetadataUpdate,
         openManualAssetPanel,
         closeWizard,
         handlePickImportFile,

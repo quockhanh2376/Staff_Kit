@@ -14,6 +14,7 @@ import {
   Mouse,
   PencilLine,
   PlusCircle,
+  RefreshCw,
   Search,
   Settings,
   Trash2,
@@ -51,6 +52,7 @@ import {
 } from "./serializedAssetFilters"
 import { AssetDashboardColumnsDrawer } from "./AssetDashboardColumnsDrawer"
 import { HistoricalAssignmentImportModal } from "./HistoricalAssignmentImportModal"
+import { AssetMetadataUpdateModal } from "./AssetMetadataUpdateModal"
 import { useAssetDashboardColumnPrefs } from "./useAssetDashboardColumnPrefs"
 import { useSerializedAssetGridState } from "./useSerializedAssetGridState"
 
@@ -724,6 +726,16 @@ export function AssetDashboard({
               </button>
               <button
                 className={dashboardShellSecondaryButtonClass}
+                onClick={assetImport.openMetadataUpdate}
+                type="button"
+                disabled={!auth.canImportData}
+                title="Update Existing Asset Metadata"
+              >
+                <RefreshCw size={16} />
+                Update Metadata
+              </button>
+              <button
+                className={dashboardShellSecondaryButtonClass}
                 onClick={assetImport.openManualAssetPanel}
                 type="button"
                 disabled={!auth.isAdminAccount}
@@ -864,6 +876,14 @@ export function AssetDashboard({
       <HistoricalAssignmentImportModal
         open={isHistoricalImportOpen}
         onClose={() => setIsHistoricalImportOpen(false)}
+        onSuccess={() => {
+          void assetDashboard.refreshDashboard()
+          triggerReload?.()
+        }}
+      />
+      <AssetMetadataUpdateModal
+        open={assetImport.isMetadataUpdateOpen}
+        onClose={assetImport.closeMetadataUpdate}
         onSuccess={() => {
           void assetDashboard.refreshDashboard()
           triggerReload?.()

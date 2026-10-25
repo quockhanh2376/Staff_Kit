@@ -1,5 +1,49 @@
 # Daily Log - 2026-10-25
 
+## 2026-10-25 — Staff Kit Safe Asset Metadata Reimport (Start)
+- Authorized by Zon/Cheki.
+- Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Scope:
+  1. Inspect existing Asset Import/reimport architecture. Add a separate explicit "Update Existing Asset Metadata" mode, preserving original import behavior (which skips existing codes).
+  2. Parse exact workbook: 219 assets, including 209 Monitors, 6 Laptops, 4 H Phones. Match records strictly by canonical Asset Code (case-insensitive).
+  3. Scope metadata update strictly to existing Monitor assets. Laptop/H Phone records are not updated in this run.
+  4. Preview each Monitor as: Metadata Changed, Unchanged, Missing Asset, Invalid/Conflict with before -> after field diffs.
+  5. Allow updates ONLY to: display_name, brand, model, and serial_number (when non-blank and valid). Blank Excel fields NEVER clear existing values.
+  6. Preserve category, asset_code, usage_location, status, and all unrelated metadata.
+  7. ZERO writes to: asset_loans, borrow_requests/confirmations, employee records/dynamic fields, assignment/holder/return/signature history.
+  8. No new asset creation, auto-assignment, or transfer in metadata update mode.
+  9. Approve updates only explicitly previewed valid metadata changes in a transaction with revalidation before apply. Preview/Cancel/Skip = zero writes. Idempotent reimport.
+  10. Refresh Asset Dashboard and Employee List canonical Asset Name display after success.
+- Validation: Focused tests (Rust + Vitest) on isolated test DB copy, full quality gate (`npm run check:quality`). Qeen verification of counts (209 Monitors), before/after diffs, exact preservation of loans/holders/locations/statuses/signatures, blank handling, and zero writes.
+
+## 2026-10-25 — Staff Kit Safe Asset Metadata Reimport (End)
+- Author: Victor (Implementation), Qeen (Independent QA Validation).
+- Outcome: Completed with focused TDD and strict data integrity protection.
+- Workbook & Preview Analysis (`00_ExSource/AssetList.xlsx`, SHA-256: `BC64F787D2B982C59DB341BB05873946B531C27468D341D1A6485B0EA58B3057`):
+  * Total workbook rows: 219 (209 Monitors, 6 Laptops, 4 H Phones).
+  * Category scoping: Non-Monitor assets (6 Laptops, 4 H Phones) classified as OutOfScope with 0 diffs and 0 writes.
+  * Monitor breakdown:
+    - 196 Metadata Changed (fields to update: display_name, brand, model, serial_number).
+    - 10 Unchanged (metadata in workbook matches DB record exactly).
+    - 3 Missing in DB: VNMON540 (row 31), VNMON667 (row 130), VNMON738 (row 179).
+    - 0 Invalid rows.
+- Implementation Details:
+  * Backend: Created `src-tauri/src/db/asset_metadata_reimport.rs` implementing `preview_asset_metadata_reimport_conn` and `apply_asset_metadata_reimport_conn`.
+  * Invariant & Safety Safeguards:
+    - Field restriction: updates ONLY `display_name`, `brand`, `model`, `serial_number`, and `updated_at`.
+    - Blank Excel values NEVER overwrite existing database values.
+    - Zero writes to `asset_loans`, `borrow_requests`, and `employees`.
+    - Non-monitor records (Laptop, H Phone) strictly preserved.
+    - Zero writes during preview/cancel; atomic transaction on apply; audit log recorded per updated asset.
+    - Idempotency verified: re-running immediately produces 0 changed rows and 0 updates.
+  * IPC & Frontend: Added Tauri IPC commands `preview_asset_metadata_reimport` and `apply_asset_metadata_reimport` registered under `COMMANDS_REQUIRING_ADMIN`. Built `src/features/assets/AssetMetadataUpdateModal.tsx` and integrated into `AssetDashboard.tsx` and `AssetImportWizard.tsx`.
+- Quality & Verification:
+  * Rust tests (`asset_metadata_reimport`): 2 passed, 0 failed.
+  * Unit tests (`vitest run`): 42 files, 310 tests passed, 0 failed.
+  * Quality Gate: `npm run check:quality` (lint OK, typecheck OK, build OK, cargo check OK).
+  * Safety: Original test DB `data/test_db/staff_kit.sqlite3` strictly untouched.
+- Verdict: PASS.
+
 ## 2026-10-25 — Staff Kit Extend Employee List Check to Asset/Monitor Integrity (Start)
 - Authorized by Zon/Cheki.
 - Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).

@@ -240,4 +240,22 @@ describe("staffApi Phase C command classification", () => {
         expect(cmd).toBe("apply_historical_assignment_import")
         expect((args as Record<string, unknown>).sessionToken).toBe("adm-tok")
     })
+
+    it("previewAssetMetadataReimport requires session and passes payload", async () => {
+        setSession({ sessionToken: "adm-tok", expiresAt: "2099-01-01T00:00:00Z" })
+        invokeMock.mockResolvedValue({ fileName: "AssetList.xlsx", summary: {}, rows: [] })
+        await staffApi.previewAssetMetadataReimport({ filePath: "00_ExSource/AssetList.xlsx" })
+        const [cmd, args] = invokeMock.mock.calls[0]
+        expect(cmd).toBe("preview_asset_metadata_reimport")
+        expect((args as Record<string, unknown>).sessionToken).toBe("adm-tok")
+    })
+
+    it("applyAssetMetadataReimport requires session and passes payload", async () => {
+        setSession({ sessionToken: "adm-tok", expiresAt: "2099-01-01T00:00:00Z" })
+        invokeMock.mockResolvedValue({ totalProcessed: 219, updatedCount: 196, unchangedCount: 10, skippedCount: 13, errors: [] })
+        await staffApi.applyAssetMetadataReimport({ filePath: "00_ExSource/AssetList.xlsx" })
+        const [cmd, args] = invokeMock.mock.calls[0]
+        expect(cmd).toBe("apply_asset_metadata_reimport")
+        expect((args as Record<string, unknown>).sessionToken).toBe("adm-tok")
+    })
 })

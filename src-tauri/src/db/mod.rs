@@ -38,11 +38,13 @@ pub mod mssql_import;
 mod schema;
 pub mod team;
 pub mod historical_assignment_import;
+pub mod asset_metadata_reimport;
 
 // ── Re-exports (all public types bubble up to `db::`) ─────────────────────────
 pub use asset::*;
 pub use asset_import::*;
 pub use historical_assignment_import::*;
+pub use asset_metadata_reimport::*;
 pub use auth::*;
 pub use backup::*;
 pub use borrow::*;

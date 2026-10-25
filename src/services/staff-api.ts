@@ -51,6 +51,9 @@ import type {
   HistoricalAssignmentImportInput,
   HistoricalAssignmentPreview,
   HistoricalAssignmentImportReport,
+  AssetMetadataImportInput,
+  AssetMetadataPreviewReport,
+  AssetMetadataImportReport,
   SignHistoricalBorrowRequestInput,
   EmployeeListResponse,
   EmployeePayload,
@@ -286,6 +289,22 @@ export const staffApi = {
   signHistoricalBorrowRequest: (payload: SignHistoricalBorrowRequestInput) =>
     call<void>("sign_historical_borrow_request", {
       payload,
+    }),
+
+  previewAssetMetadataReimport: (payload: AssetMetadataImportInput) =>
+    call<AssetMetadataPreviewReport>("preview_asset_metadata_reimport", {
+      payload: {
+        filePath: payload.filePath,
+        sheetName: payload.sheetName ?? null,
+      },
+    }),
+
+  applyAssetMetadataReimport: (payload: AssetMetadataImportInput) =>
+    call<AssetMetadataImportReport>("apply_asset_metadata_reimport", {
+      payload: {
+        filePath: payload.filePath,
+        sheetName: payload.sheetName ?? null,
+      },
     }),
 
   createAssetImportBatch: (payload: AssetImportBatchCreateInput) =>
