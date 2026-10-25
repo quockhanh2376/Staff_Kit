@@ -25,6 +25,7 @@ import type {
   AssetDashboardQuantityRecord,
   AssetDashboardSerializedRecord,
   AssetDashboardSummary,
+  AssetIntegrityCheckResult,
   SnapshotInfo,
   AssetDirectImportInput,
   AssetDirectImportPreview,
@@ -334,6 +335,9 @@ export const staffApi = {
 
   listAssetDashboardQuantity: () =>
     call<AssetDashboardQuantityRecord[]>("list_asset_dashboard_quantity"),
+
+  checkAssetIntegrity: () =>
+    call<AssetIntegrityCheckResult>("check_asset_integrity"),
 
   updateStockItemQuantity: (payload: StockItemQuantityUpdateInput) =>
     call<AssetDashboardQuantityRecord>("update_stock_item_quantity", {

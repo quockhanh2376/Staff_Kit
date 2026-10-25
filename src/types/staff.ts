@@ -135,6 +135,34 @@ export type AssetCategoryUpsertInput = {
   prefixes: AssetCategoryPrefixInput[]
 }
 
+export type AssetIntegrityEmployeeRef = {
+  id: number
+  employeeId: string
+  fullName: string
+  staffGroup: string | null
+}
+
+export type AssetIntegrityFinding = {
+  id: string
+  category: "duplicate_holder" | "multiple_active_loans" | "duplicate_asset_code" | "orphan_loan" | "status_mismatch" | "duplicate_computer_name"
+  severity: "error" | "warning"
+  assetCode: string | null
+  assetId: number | null
+  assetName: string | null
+  affectedEmployees: AssetIntegrityEmployeeRef[]
+  reason: string
+  recommendation: string
+}
+
+export type AssetIntegrityCheckResult = {
+  isClean: boolean
+  totalAssetsChecked: number
+  totalActiveLoansChecked: number
+  totalEmployeesChecked: number
+  affectedEmployeeIds: number[]
+  findings: AssetIntegrityFinding[]
+}
+
 /** Aggregate counts for the asset dashboard summary cards. */
 export type AssetDashboardSummary = {
   totalSerializedAssets: number

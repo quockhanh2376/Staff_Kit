@@ -994,6 +994,16 @@ fn list_asset_dashboard_quantity(
 }
 
 #[tauri::command]
+fn check_asset_integrity(
+    app: tauri::AppHandle,
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    session_token: String,
+) -> Result<db::AssetIntegrityCheckResult, String> {
+    let _ctx = auth_session::require_authenticated(&session_store, &session_token)?;
+    db::check_asset_integrity(&app)
+}
+
+#[tauri::command]
 fn update_stock_item_quantity(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -1187,6 +1197,7 @@ pub fn run() {
             get_asset_dashboard_summary,
             list_asset_dashboard_serialized,
             list_asset_dashboard_quantity,
+            check_asset_integrity,
             update_stock_item_quantity,
             get_borrow_policy,
             save_borrow_policy,
@@ -1369,6 +1380,7 @@ mod tests {
         "get_asset_dashboard_summary",
         "list_asset_dashboard_serialized",
         "list_asset_dashboard_quantity",
+        "check_asset_integrity",
         "sign_historical_borrow_request",
     ];
 

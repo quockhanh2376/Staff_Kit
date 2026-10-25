@@ -149,6 +149,40 @@ pub struct StockItemQuantityUpdateInput {
     pub assigned_quantity: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetIntegrityEmployeeRef {
+    pub id: i64,
+    pub employee_id: String,
+    pub full_name: String,
+    pub staff_group: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetIntegrityFinding {
+    pub id: String,
+    pub category: String,
+    pub severity: String,
+    pub asset_code: Option<String>,
+    pub asset_id: Option<i64>,
+    pub asset_name: Option<String>,
+    pub affected_employees: Vec<AssetIntegrityEmployeeRef>,
+    pub reason: String,
+    pub recommendation: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetIntegrityCheckResult {
+    pub is_clean: bool,
+    pub total_assets_checked: usize,
+    pub total_active_loans_checked: usize,
+    pub total_employees_checked: usize,
+    pub affected_employee_ids: Vec<i64>,
+    pub findings: Vec<AssetIntegrityFinding>,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct AssetCategoryLookupRecord {
     pub id: i64,
@@ -1667,6 +1701,517 @@ pub(crate) fn update_stock_item_quantity_conn(
     Ok(record)
 }
 
+pub fn canonicalize_asset_code(raw: &str) -> String {
+    let clean = raw.trim().to_ascii_uppercase();
+    let stripped = clean.strip_prefix("ASW").unwrap_or(&clean);
+    if stripped.starts_with("VN") {
+        stripped.to_string()
+    } else if stripped.starts_with("MON")
+        || stripped.starts_with("LAP")
+        || stripped.starts_with("MAC")
+        || stripped.starts_with("IMAC")
+        || stripped.starts_with("TABLET")
+    {
+        format!("VN{}", stripped)
+    } else {
+        stripped.to_string()
+    }
+}
+
+pub fn check_asset_integrity_conn(conn: &Connection) -> Result<AssetIntegrityCheckResult, String> {
+    let mut findings: Vec<AssetIntegrityFinding> = Vec::new();
+    let mut affected_employee_ids: HashSet<i64> = HashSet::new();
+
+    // 0. Base counts
+    let total_assets_checked: usize = conn
+        .query_row("SELECT COUNT(*) FROM assets", [], |r| r.get(0))
+        .map_err(|err| format!("failed to count assets: {err}"))?;
+
+    let total_active_loans_checked: usize = conn
+        .query_row(
+            "SELECT COUNT(*) FROM asset_loans WHERE returned_at IS NULL",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|err| format!("failed to count active loans: {err}"))?;
+
+    let total_employees_checked: usize = conn
+        .query_row("SELECT COUNT(*) FROM employees", [], |r| r.get(0))
+        .map_err(|err| format!("failed to count employees: {err}"))?;
+
+    // 1. Duplicate canonical Asset Codes in assets table (duplicate_asset_code)
+    {
+        let mut stmt = conn
+            .prepare("SELECT id, asset_code, display_name FROM assets ORDER BY id ASC")
+            .map_err(|err| format!("failed to prepare assets query: {err}"))?;
+
+        let mut canonical_to_assets: HashMap<String, Vec<(i64, String, String)>> = HashMap::new();
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|err| format!("failed to execute assets query: {err}"))?;
+
+        for row in rows {
+            let (id, code, name) = row.map_err(|err| format!("failed to read asset row: {err}"))?;
+            let canonical = canonicalize_asset_code(&code);
+            canonical_to_assets.entry(canonical).or_default().push((id, code, name));
+        }
+
+        let mut sorted_keys: Vec<_> = canonical_to_assets.keys().cloned().collect();
+        sorted_keys.sort();
+
+        for canonical in sorted_keys {
+            if let Some(list) = canonical_to_assets.get(&canonical) {
+                if list.len() > 1 {
+                    let ids: Vec<String> = list.iter().map(|(id, code, _)| format!("#{id} ({code})")).collect();
+                    let names: Vec<String> = list.iter().map(|(_, _, name)| name.clone()).collect();
+                    findings.push(AssetIntegrityFinding {
+                        id: format!("duplicate_asset_code_{canonical}"),
+                        category: "duplicate_asset_code".to_string(),
+                        severity: "error".to_string(),
+                        asset_code: Some(canonical.clone()),
+                        asset_id: Some(list[0].0),
+                        asset_name: Some(names.join(", ")),
+                        affected_employees: vec![],
+                        reason: format!(
+                            "Multiple asset records exist for canonical code '{canonical}': [{}]",
+                            ids.join(", ")
+                        ),
+                        recommendation: "Consolidate duplicate asset records to preserve single canonical asset identity.".to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    // 2. Active loan pointing to missing employee or missing asset (orphan_loan)
+    {
+        // 2a. Missing asset
+        let mut stmt = conn
+            .prepare(
+                r#"
+                SELECT al.id, al.asset_id, al.employee_id_fk
+                FROM asset_loans al
+                LEFT JOIN assets a ON a.id = al.asset_id
+                WHERE al.returned_at IS NULL AND a.id IS NULL
+                ORDER BY al.id ASC
+                "#,
+            )
+            .map_err(|err| format!("failed to prepare orphan loan (asset) query: {err}"))?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })
+            .map_err(|err| format!("failed to execute orphan loan (asset) query: {err}"))?;
+
+        for row in rows {
+            let (loan_id, asset_id, emp_id_fk) =
+                row.map_err(|err| format!("failed to read orphan loan: {err}"))?;
+            affected_employee_ids.insert(emp_id_fk);
+
+            let emp_info: Option<AssetIntegrityEmployeeRef> = conn
+                .query_row(
+                    "SELECT id, employee_id, full_name, staff_group FROM employees WHERE id = ?",
+                    params![emp_id_fk],
+                    |r| {
+                        Ok(AssetIntegrityEmployeeRef {
+                            id: r.get(0)?,
+                            employee_id: r.get(1)?,
+                            full_name: r.get(2)?,
+                            staff_group: r.get(3)?,
+                        })
+                    },
+                )
+                .optional()
+                .map_err(|err| format!("failed to query employee for orphan loan: {err}"))?;
+
+            findings.push(AssetIntegrityFinding {
+                id: format!("orphan_loan_asset_{loan_id}"),
+                category: "orphan_loan".to_string(),
+                severity: "error".to_string(),
+                asset_code: None,
+                asset_id: Some(asset_id),
+                asset_name: None,
+                affected_employees: emp_info.into_iter().collect(),
+                reason: format!("Active loan #{loan_id} references non-existent asset ID {asset_id}"),
+                recommendation: "Return or archive orphan loan or restore missing asset record.".to_string(),
+            });
+        }
+
+        // 2b. Missing employee
+        let mut stmt = conn
+            .prepare(
+                r#"
+                SELECT al.id, al.asset_id, al.employee_id_fk, a.asset_code, a.display_name
+                FROM asset_loans al
+                JOIN assets a ON a.id = al.asset_id
+                LEFT JOIN employees e ON e.id = al.employee_id_fk
+                WHERE al.returned_at IS NULL AND e.id IS NULL
+                ORDER BY al.id ASC
+                "#,
+            )
+            .map_err(|err| format!("failed to prepare orphan loan (employee) query: {err}"))?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            })
+            .map_err(|err| format!("failed to execute orphan loan (employee) query: {err}"))?;
+
+        for row in rows {
+            let (loan_id, asset_id, emp_id_fk, asset_code, asset_name) =
+                row.map_err(|err| format!("failed to read orphan loan: {err}"))?;
+
+            findings.push(AssetIntegrityFinding {
+                id: format!("orphan_loan_employee_{loan_id}"),
+                category: "orphan_loan".to_string(),
+                severity: "error".to_string(),
+                asset_code: Some(asset_code.clone()),
+                asset_id: Some(asset_id),
+                asset_name: Some(asset_name),
+                affected_employees: vec![],
+                reason: format!(
+                    "Active loan #{loan_id} for asset '{asset_code}' references non-existent employee ID {emp_id_fk}"
+                ),
+                recommendation: "Reassign loan to active employee or process return.".to_string(),
+            });
+        }
+    }
+
+    // 3. More than one active loan for the same Asset ID (multiple_active_loans)
+    {
+        let mut stmt = conn
+            .prepare(
+                r#"
+                SELECT al.asset_id, a.asset_code, a.display_name, COUNT(al.id) as loan_count, GROUP_CONCAT(al.id) as loan_ids
+                FROM asset_loans al
+                JOIN assets a ON a.id = al.asset_id
+                WHERE al.returned_at IS NULL
+                GROUP BY al.asset_id
+                HAVING COUNT(al.id) > 1
+                ORDER BY a.asset_code ASC
+                "#,
+            )
+            .map_err(|err| format!("failed to prepare multiple active loans query: {err}"))?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            })
+            .map_err(|err| format!("failed to execute multiple active loans query: {err}"))?;
+
+        for row in rows {
+            let (asset_id, asset_code, display_name, count, loan_ids) =
+                row.map_err(|err| format!("failed to read multiple active loans: {err}"))?;
+
+            let mut emp_stmt = conn
+                .prepare(
+                    r#"
+                    SELECT DISTINCT e.id, e.employee_id, e.full_name, e.staff_group
+                    FROM asset_loans al
+                    JOIN employees e ON e.id = al.employee_id_fk
+                    WHERE al.asset_id = ? AND al.returned_at IS NULL
+                    ORDER BY e.employee_id ASC
+                    "#,
+                )
+                .map_err(|err| format!("failed to prepare loan employee lookup: {err}"))?;
+
+            let emps: Vec<AssetIntegrityEmployeeRef> = emp_stmt
+                .query_map(params![asset_id], |r| {
+                    Ok(AssetIntegrityEmployeeRef {
+                        id: r.get(0)?,
+                        employee_id: r.get(1)?,
+                        full_name: r.get(2)?,
+                        staff_group: r.get(3)?,
+                    })
+                })
+                .map_err(|err| format!("failed to query loan employees: {err}"))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|err| format!("failed to collect loan employees: {err}"))?;
+
+            for e in &emps {
+                affected_employee_ids.insert(e.id);
+            }
+
+            findings.push(AssetIntegrityFinding {
+                id: format!("multiple_active_loans_{asset_id}"),
+                category: "multiple_active_loans".to_string(),
+                severity: "error".to_string(),
+                asset_code: Some(asset_code.clone()),
+                asset_id: Some(asset_id),
+                asset_name: Some(display_name),
+                affected_employees: emps,
+                reason: format!(
+                    "Asset '{asset_code}' (ID {asset_id}) has {count} simultaneous active loans (loan IDs: {loan_ids})"
+                ),
+                recommendation: "Verify physical possession and return duplicate active loans.".to_string(),
+            });
+        }
+    }
+
+    // 4. Same canonical Asset Code assigned to multiple active employees (duplicate_holder)
+    {
+        let mut stmt = conn
+            .prepare(
+                r#"
+                SELECT
+                    al.id,
+                    al.asset_id,
+                    a.asset_code,
+                    a.display_name,
+                    e.id AS emp_id,
+                    e.employee_id AS emp_code,
+                    e.full_name,
+                    e.staff_group
+                FROM asset_loans al
+                JOIN assets a ON a.id = al.asset_id
+                JOIN employees e ON e.id = al.employee_id_fk
+                WHERE al.returned_at IS NULL
+                ORDER BY a.asset_code ASC, al.id ASC
+                "#,
+            )
+            .map_err(|err| format!("failed to prepare active loans holders query: {err}"))?;
+
+        struct ActiveLoanEntry {
+            asset_id: i64,
+            raw_code: String,
+            display_name: String,
+            emp_ref: AssetIntegrityEmployeeRef,
+        }
+
+        let mut canonical_to_loans: HashMap<String, Vec<ActiveLoanEntry>> = HashMap::new();
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(ActiveLoanEntry {
+                    asset_id: row.get(1)?,
+                    raw_code: row.get(2)?,
+                    display_name: row.get(3)?,
+                    emp_ref: AssetIntegrityEmployeeRef {
+                        id: row.get(4)?,
+                        employee_id: row.get(5)?,
+                        full_name: row.get(6)?,
+                        staff_group: row.get(7)?,
+                    },
+                })
+            })
+            .map_err(|err| format!("failed to execute active loans holders query: {err}"))?;
+
+        for row in rows {
+            let entry = row.map_err(|err| format!("failed to read active loan holder: {err}"))?;
+            let canonical = canonicalize_asset_code(&entry.raw_code);
+            canonical_to_loans.entry(canonical).or_default().push(entry);
+        }
+
+        let mut sorted_keys: Vec<_> = canonical_to_loans.keys().cloned().collect();
+        sorted_keys.sort();
+
+        for canonical in sorted_keys {
+            if let Some(entries) = canonical_to_loans.get(&canonical) {
+                let mut unique_emps: HashMap<i64, AssetIntegrityEmployeeRef> = HashMap::new();
+                for entry in entries {
+                    unique_emps.insert(entry.emp_ref.id, entry.emp_ref.clone());
+                }
+
+                if unique_emps.len() > 1 {
+                    let mut emps_list: Vec<AssetIntegrityEmployeeRef> = unique_emps.into_values().collect();
+                    emps_list.sort_by(|a, b| a.employee_id.cmp(&b.employee_id));
+
+                    for e in &emps_list {
+                        affected_employee_ids.insert(e.id);
+                    }
+
+                    let emp_descs: Vec<String> = emps_list
+                        .iter()
+                        .map(|e| format!("{} ({})", e.full_name, e.employee_id))
+                        .collect();
+
+                    findings.push(AssetIntegrityFinding {
+                        id: format!("duplicate_holder_{canonical}"),
+                        category: "duplicate_holder".to_string(),
+                        severity: "error".to_string(),
+                        asset_code: Some(canonical.clone()),
+                        asset_id: Some(entries[0].asset_id),
+                        asset_name: Some(entries[0].display_name.clone()),
+                        affected_employees: emps_list,
+                        reason: format!(
+                            "Canonical asset '{canonical}' is actively assigned to {} different employees: {}",
+                            emp_descs.len(),
+                            emp_descs.join("; ")
+                        ),
+                        recommendation: "Perform physical inventory check to confirm true holder and return or transfer redundant active loans.".to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    // 5. Inconsistent asset status (In Stock vs Assigned) relative to active loans (status_mismatch)
+    {
+        // 5a. Has active loan, but status != 'assigned'
+        let mut stmt = conn
+            .prepare(
+                r#"
+                SELECT
+                    a.id,
+                    a.asset_code,
+                    a.display_name,
+                    a.status,
+                    al.id as loan_id,
+                    e.id as emp_id,
+                    e.employee_id as emp_code,
+                    e.full_name,
+                    e.staff_group
+                FROM assets a
+                JOIN asset_loans al ON al.asset_id = a.id AND al.returned_at IS NULL
+                LEFT JOIN employees e ON e.id = al.employee_id_fk
+                WHERE a.status != 'assigned'
+                ORDER BY a.asset_code ASC
+                "#,
+            )
+            .map_err(|err| format!("failed to prepare status mismatch (active loan) query: {err}"))?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, Option<i64>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                    row.get::<_, Option<String>>(8)?,
+                ))
+            })
+            .map_err(|err| format!("failed to execute status mismatch query: {err}"))?;
+
+        for row in rows {
+            let (asset_id, asset_code, display_name, status, loan_id, emp_id, emp_code, full_name, staff_group) =
+                row.map_err(|err| format!("failed to read status mismatch: {err}"))?;
+
+            let mut affected_emps = Vec::new();
+            if let (Some(id), Some(code), Some(name)) = (emp_id, emp_code, full_name) {
+                affected_employee_ids.insert(id);
+                affected_emps.push(AssetIntegrityEmployeeRef {
+                    id,
+                    employee_id: code,
+                    full_name: name,
+                    staff_group,
+                });
+            }
+
+            findings.push(AssetIntegrityFinding {
+                id: format!("status_mismatch_active_loan_{asset_id}"),
+                category: "status_mismatch".to_string(),
+                severity: "warning".to_string(),
+                asset_code: Some(asset_code.clone()),
+                asset_id: Some(asset_id),
+                asset_name: Some(display_name),
+                affected_employees: affected_emps,
+                reason: format!(
+                    "Asset '{asset_code}' has active loan #{loan_id} but its status is '{status}' instead of 'assigned'"
+                ),
+                recommendation: "Update asset status to 'assigned' to reflect active custody.".to_string(),
+            });
+        }
+
+        // 5b. Asset status == 'assigned', but no active loan exists
+        let mut stmt = conn
+            .prepare(
+                r#"
+                SELECT a.id, a.asset_code, a.display_name, a.status
+                FROM assets a
+                LEFT JOIN asset_loans al ON al.asset_id = a.id AND al.returned_at IS NULL
+                WHERE a.status = 'assigned' AND al.id IS NULL
+                ORDER BY a.asset_code ASC
+                "#,
+            )
+            .map_err(|err| format!("failed to prepare status mismatch (no loan) query: {err}"))?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })
+            .map_err(|err| format!("failed to execute status mismatch (no loan) query: {err}"))?;
+
+        for row in rows {
+            let (asset_id, asset_code, display_name, status) =
+                row.map_err(|err| format!("failed to read status mismatch (no loan): {err}"))?;
+
+            findings.push(AssetIntegrityFinding {
+                id: format!("status_mismatch_no_loan_{asset_id}"),
+                category: "status_mismatch".to_string(),
+                severity: "warning".to_string(),
+                asset_code: Some(asset_code.clone()),
+                asset_id: Some(asset_id),
+                asset_name: Some(display_name),
+                affected_employees: vec![],
+                reason: format!(
+                    "Asset '{asset_code}' is marked '{status}' but has no active loan in loan history"
+                ),
+                recommendation: "Assign asset to active borrower or set status to 'in_stock'.".to_string(),
+            });
+        }
+    }
+
+    // Sort findings: error before warning, then category, then asset_code, then id
+    findings.sort_by(|a, b| {
+        let sev_order = |s: &str| if s == "error" { 0 } else { 1 };
+        sev_order(&a.severity)
+            .cmp(&sev_order(&b.severity))
+            .then_with(|| a.category.cmp(&b.category))
+            .then_with(|| a.asset_code.cmp(&b.asset_code))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+
+    let is_clean = findings.is_empty();
+    let mut affected_employee_ids: Vec<i64> = affected_employee_ids.into_iter().collect();
+    affected_employee_ids.sort_unstable();
+
+    Ok(AssetIntegrityCheckResult {
+        is_clean,
+        total_assets_checked,
+        total_active_loans_checked,
+        total_employees_checked,
+        affected_employee_ids,
+        findings,
+    })
+}
+
+pub fn check_asset_integrity(app: &AppHandle) -> Result<AssetIntegrityCheckResult, String> {
+    let conn = open_runtime_connection(app)?;
+    check_asset_integrity_conn(&conn)
+}
+
 #[cfg(test)]
 mod tests {
     use rusqlite::{params, Connection};
@@ -2670,6 +3215,260 @@ mod tests {
             duplicate_error.to_lowercase().contains("prefix"),
             "expected duplicate prefix error, got: {duplicate_error}"
         );
+    }
+
+    #[test]
+    fn test_canonicalize_asset_code() {
+        assert_eq!(canonicalize_asset_code("MON614"), "VNMON614");
+        assert_eq!(canonicalize_asset_code("VNMON614"), "VNMON614");
+        assert_eq!(canonicalize_asset_code("ASWVNMON614"), "VNMON614");
+        assert_eq!(canonicalize_asset_code("LAP326"), "VNLAP326");
+        assert_eq!(canonicalize_asset_code("VNLAP326"), "VNLAP326");
+        assert_eq!(canonicalize_asset_code("ASWVNLAP326"), "VNLAP326");
+        assert_eq!(canonicalize_asset_code("vnmon540"), "VNMON540");
+        assert_eq!(canonicalize_asset_code("ASW123"), "123");
+    }
+
+    #[test]
+    fn test_check_asset_integrity_clean_pass() {
+        let conn = open_test_connection();
+        let team_id = seed_team(&conn, "Engineering");
+        let emp_id = seed_employee(&conn, "ASWVN1001", "Alice", team_id);
+        let monitor_cat_id = category_id(&conn, "monitor");
+        let laptop_cat_id = category_id(&conn, "laptop");
+
+        // In-stock monitor
+        conn.execute(
+            "INSERT INTO assets (id, asset_code, category_id, asset_type, display_name, status) VALUES (1, 'VNMON100', ?, 'Monitor', 'Dell 24', 'in_stock')",
+            params![monitor_cat_id],
+        ).expect("insert in-stock monitor");
+
+        // Assigned laptop with active loan
+        conn.execute(
+            "INSERT INTO assets (id, asset_code, category_id, asset_type, display_name, status) VALUES (2, 'VNLAP100', ?, 'Laptop', 'Dell Latitude', 'assigned')",
+            params![laptop_cat_id],
+        ).expect("insert assigned laptop");
+
+        let req_id = seed_borrow_request(&conn, emp_id, "ASWVN1001", "Alice");
+        conn.execute(
+            "INSERT INTO asset_loans (asset_id, employee_id_fk, borrow_request_id, borrowed_at) VALUES (2, ?, ?, datetime('now'))",
+            params![emp_id, req_id],
+        ).expect("insert active loan");
+
+        let result = check_asset_integrity_conn(&conn).expect("check asset integrity");
+        assert!(result.is_clean, "clean db must be clean");
+        assert_eq!(result.findings.len(), 0);
+        assert_eq!(result.affected_employee_ids.len(), 0);
+        assert_eq!(result.total_assets_checked, 2);
+        assert_eq!(result.total_active_loans_checked, 1);
+        assert_eq!(result.total_employees_checked, 1);
+    }
+
+    #[test]
+    fn test_check_asset_integrity_duplicate_holder_detected() {
+        let conn = open_test_connection();
+        let team_id = seed_team(&conn, "Engineering");
+        let emp1_id = seed_employee(&conn, "ASWVN1001", "Alice", team_id);
+        let emp2_id = seed_employee(&conn, "ASWVN1002", "Bob", team_id);
+        let monitor_cat_id = category_id(&conn, "monitor");
+
+        // Two assets that canonicalize to VNMON614
+        conn.execute(
+            "INSERT INTO assets (id, asset_code, category_id, asset_type, display_name, status) VALUES (1, 'VNMON614', ?, 'Monitor', 'LG 27', 'assigned')",
+            params![monitor_cat_id],
+        ).expect("insert asset 1");
+        conn.execute(
+            "INSERT INTO assets (id, asset_code, category_id, asset_type, display_name, status) VALUES (2, 'MON614', ?, 'Monitor', 'LG 27 Alternate', 'assigned')",
+            params![monitor_cat_id],
+        ).expect("insert asset 2");
+
+        let req1_id = seed_borrow_request(&conn, emp1_id, "ASWVN1001", "Alice");
+        let req2_id = seed_borrow_request(&conn, emp2_id, "ASWVN1002", "Bob");
+
+        conn.execute(
+            "INSERT INTO asset_loans (asset_id, employee_id_fk, borrow_request_id, borrowed_at) VALUES (1, ?, ?, datetime('now'))",
+            params![emp1_id, req1_id],
+        ).expect("insert loan 1");
+        conn.execute(
+            "INSERT INTO asset_loans (asset_id, employee_id_fk, borrow_request_id, borrowed_at) VALUES (2, ?, ?, datetime('now'))",
+            params![emp2_id, req2_id],
+        ).expect("insert loan 2");
+
+        let result = check_asset_integrity_conn(&conn).expect("check asset integrity");
+        assert!(!result.is_clean, "duplicate holder must not be clean");
+
+        let dup_holder = result.findings.iter().find(|f| f.category == "duplicate_holder");
+        assert!(dup_holder.is_some(), "duplicate_holder finding must exist");
+        let f = dup_holder.unwrap();
+        assert_eq!(f.severity, "error");
+        assert_eq!(f.asset_code.as_deref(), Some("VNMON614"));
+        assert_eq!(f.affected_employees.len(), 2);
+        assert!(result.affected_employee_ids.contains(&emp1_id));
+        assert!(result.affected_employee_ids.contains(&emp2_id));
+    }
+
+    #[test]
+    fn test_check_asset_integrity_multiple_active_loans_detected() {
+        let conn = open_test_connection();
+        let team_id = seed_team(&conn, "Engineering");
+        let emp1_id = seed_employee(&conn, "ASWVN1001", "Alice", team_id);
+        let emp2_id = seed_employee(&conn, "ASWVN1002", "Bob", team_id);
+        let laptop_cat_id = category_id(&conn, "laptop");
+
+        conn.execute(
+            "INSERT INTO assets (id, asset_code, category_id, asset_type, display_name, status) VALUES (1, 'VNLAP500', ?, 'Laptop', 'Dell', 'assigned')",
+            params![laptop_cat_id],
+        ).expect("insert asset");
+
+        let req1_id = seed_borrow_request(&conn, emp1_id, "ASWVN1001", "Alice");
+        let req2_id = seed_borrow_request(&conn, emp2_id, "ASWVN1002", "Bob");
+
+        // Temporarily drop partial unique index to simulate a corrupted state with duplicate active loans
+        conn.execute("DROP INDEX IF EXISTS idx_asset_loans_asset_active_unique", []).expect("drop index");
+
+        conn.execute(
+            "INSERT INTO asset_loans (asset_id, employee_id_fk, borrow_request_id, borrowed_at) VALUES (1, ?, ?, datetime('now'))",
+            params![emp1_id, req1_id],
+        ).expect("insert loan 1");
+        conn.execute(
+            "INSERT INTO asset_loans (asset_id, employee_id_fk, borrow_request_id, borrowed_at) VALUES (1, ?, ?, datetime('now'))",
+            params![emp2_id, req2_id],
+        ).expect("insert loan 2");
+
+        let result = check_asset_integrity_conn(&conn).expect("check asset integrity");
+        assert!(!result.is_clean);
+        let multi = result.findings.iter().find(|f| f.category == "multiple_active_loans");
+        assert!(multi.is_some(), "multiple_active_loans finding must exist");
+        assert_eq!(multi.unwrap().severity, "error");
+    }
+
+    #[test]
+    fn test_check_asset_integrity_duplicate_asset_code_detected() {
+        let conn = open_test_connection();
+        let monitor_cat_id = category_id(&conn, "monitor");
+
+        conn.execute(
+            "INSERT INTO assets (id, asset_code, category_id, asset_type, display_name, status) VALUES (1, 'VNMON777', ?, 'Monitor', 'Dell 1', 'in_stock')",
+            params![monitor_cat_id],
+        ).expect("insert asset 1");
+        conn.execute(
+            "INSERT INTO assets (id, asset_code, category_id, asset_type, display_name, status) VALUES (2, 'MON777', ?, 'Monitor', 'Dell 2', 'in_stock')",
+            params![monitor_cat_id],
+        ).expect("insert asset 2");
+
+        let result = check_asset_integrity_conn(&conn).expect("check asset integrity");
+        assert!(!result.is_clean);
+        let dup = result.findings.iter().find(|f| f.category == "duplicate_asset_code");
+        assert!(dup.is_some(), "duplicate_asset_code finding must exist");
+        assert_eq!(dup.unwrap().severity, "error");
+    }
+
+    #[test]
+    fn test_check_asset_integrity_orphan_loan_detected() {
+        let conn = open_test_connection();
+        let laptop_cat_id = category_id(&conn, "laptop");
+
+        conn.execute(
+            "INSERT INTO assets (id, asset_code, category_id, asset_type, display_name, status) VALUES (1, 'VNLAP888', ?, 'Laptop', 'Dell', 'assigned')",
+            params![laptop_cat_id],
+        ).expect("insert asset");
+
+        // Temporarily disable foreign keys to simulate orphaned loan
+        conn.execute("PRAGMA foreign_keys = OFF", []).expect("disable foreign keys");
+        conn.execute(
+            "INSERT INTO asset_loans (id, asset_id, employee_id_fk, borrow_request_id, borrowed_at) VALUES (10, 1, 9999, 1, datetime('now'))",
+            [],
+        ).expect("insert orphan loan");
+
+        let result = check_asset_integrity_conn(&conn).expect("check asset integrity");
+        assert!(!result.is_clean);
+        let orphan = result.findings.iter().find(|f| f.category == "orphan_loan");
+        assert!(orphan.is_some(), "orphan_loan finding must exist");
+        assert_eq!(orphan.unwrap().severity, "error");
+    }
+
+    #[test]
+    fn test_check_asset_integrity_status_mismatch_detected() {
+        let conn = open_test_connection();
+        let team_id = seed_team(&conn, "Engineering");
+        let emp_id = seed_employee(&conn, "ASWVN1001", "Alice", team_id);
+        let monitor_cat_id = category_id(&conn, "monitor");
+
+        // Case A: active loan exists, but status is 'in_stock'
+        conn.execute(
+            "INSERT INTO assets (id, asset_code, category_id, asset_type, display_name, status) VALUES (1, 'VNMON201', ?, 'Monitor', 'Mon 1', 'in_stock')",
+            params![monitor_cat_id],
+        ).expect("insert asset 1");
+        let req_id = seed_borrow_request(&conn, emp_id, "ASWVN1001", "Alice");
+        conn.execute(
+            "INSERT INTO asset_loans (asset_id, employee_id_fk, borrow_request_id, borrowed_at) VALUES (1, ?, ?, datetime('now'))",
+            params![emp_id, req_id],
+        ).expect("insert loan 1");
+
+        // Case B: status is 'assigned', but no active loan exists
+        conn.execute(
+            "INSERT INTO assets (id, asset_code, category_id, asset_type, display_name, status) VALUES (2, 'VNMON202', ?, 'Monitor', 'Mon 2', 'assigned')",
+            params![monitor_cat_id],
+        ).expect("insert asset 2");
+
+        let result = check_asset_integrity_conn(&conn).expect("check asset integrity");
+        assert!(!result.is_clean);
+        let mismatches: Vec<_> = result.findings.iter().filter(|f| f.category == "status_mismatch").collect();
+        assert_eq!(mismatches.len(), 2, "both status mismatches must be found");
+        assert_eq!(mismatches[0].severity, "warning");
+        assert_eq!(mismatches[1].severity, "warning");
+    }
+
+    #[test]
+    fn test_check_asset_integrity_multi_monitor_safe_pass() {
+        let conn = open_test_connection();
+        let team_id = seed_team(&conn, "Engineering");
+        let emp_id = seed_employee(&conn, "ASWVN1001", "Alice", team_id);
+        let monitor_cat_id = category_id(&conn, "monitor");
+
+        // Alice holds 2 distinct monitors: VNMON614 (office) and VNMON540 (home)
+        conn.execute(
+            "INSERT INTO assets (id, asset_code, category_id, asset_type, display_name, usage_location, status) VALUES (1, 'VNMON614', ?, 'Monitor', 'Dell Office', 'CTY', 'assigned')",
+            params![monitor_cat_id],
+        ).expect("insert monitor 1");
+        conn.execute(
+            "INSERT INTO assets (id, asset_code, category_id, asset_type, display_name, usage_location, status) VALUES (2, 'VNMON540', ?, 'Monitor', 'Dell Home', 'NHÀ', 'assigned')",
+            params![monitor_cat_id],
+        ).expect("insert monitor 2");
+
+        conn.execute(
+            r#"
+            INSERT INTO borrow_requests(request_key, employee_id_fk, submitted_employee_id, submitted_full_name, status, request_type, submitted_at)
+            VALUES ('REQ-MULTI-1', ?, 'ASWVN1001', 'Alice', 'approved', 'borrow', datetime('now'))
+            "#,
+            params![emp_id],
+        ).expect("insert req 1");
+        let req1_id = conn.last_insert_rowid();
+
+        conn.execute(
+            r#"
+            INSERT INTO borrow_requests(request_key, employee_id_fk, submitted_employee_id, submitted_full_name, status, request_type, submitted_at)
+            VALUES ('REQ-MULTI-2', ?, 'ASWVN1001', 'Alice', 'approved', 'borrow', datetime('now'))
+            "#,
+            params![emp_id],
+        ).expect("insert req 2");
+        let req2_id = conn.last_insert_rowid();
+
+        conn.execute(
+            "INSERT INTO asset_loans (asset_id, employee_id_fk, borrow_request_id, borrowed_at) VALUES (1, ?, ?, datetime('now'))",
+            params![emp_id, req1_id],
+        ).expect("insert loan 1");
+        conn.execute(
+            "INSERT INTO asset_loans (asset_id, employee_id_fk, borrow_request_id, borrowed_at) VALUES (2, ?, ?, datetime('now'))",
+            params![emp_id, req2_id],
+        ).expect("insert loan 2");
+
+        let result = check_asset_integrity_conn(&conn).expect("check asset integrity");
+        assert!(result.is_clean, "one employee with multiple distinct monitors MUST pass clean");
+        assert_eq!(result.findings.len(), 0);
+        assert_eq!(result.affected_employee_ids.len(), 0);
+        assert_eq!(result.total_assets_checked, 2);
+        assert_eq!(result.total_active_loans_checked, 2);
     }
 }
 

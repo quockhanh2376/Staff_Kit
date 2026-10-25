@@ -2,6 +2,7 @@ import {
     AlertTriangle,
     ArrowUpDown,
     Check,
+    CheckCircle2,
     ChevronDown,
     Laptop,
     LoaderCircle,
@@ -26,7 +27,8 @@ import { getUserErrorMessage } from "../../lib/errorHandling"
 import { getTeamPillClasses } from "../teams/teamColors"
 import { MissingEmployeesModal } from "./MissingEmployeesModal"
 import { AssignedAssetsModal } from "./AssignedAssetsModal"
-import type { EmployeeRecord } from "../../types/staff"
+import { AssetIntegrityModal } from "./AssetIntegrityModal"
+import type { AssetIntegrityCheckResult, EmployeeRecord } from "../../types/staff"
 
 // ── Diacritic-insensitive highlight helper ─────────────────────────────────────
 function stripDiacritics(str: string): string {
@@ -97,9 +99,12 @@ export function EmployeeView({
     const firstVisibleColumnKey = col.visibleColumns[0]?.key ?? ""
     const clearMoveSelection = edit.clearMoveSelection
 
-    // ── Duplicate computer check ─────────────────────────────────────────────────
+    // ── Duplicate computer & asset integrity check ───────────────────────────────
     const [duplicateEmpIds, setDuplicateEmpIds] = useState<Set<number>>(new Set())
     const [isCheckingDuplicates, setIsCheckingDuplicates] = useState(false)
+    const [integrityResult, setIntegrityResult] = useState<AssetIntegrityCheckResult | null>(null)
+    const [isIntegrityModalOpen, setIsIntegrityModalOpen] = useState(false)
+    const [computerDuplicatesCount, setComputerDuplicatesCount] = useState(0)
     const [isExporting, setIsExporting] = useState(false)
     const [isUnselectMenuOpen, setIsUnselectMenuOpen] = useState(false)
     const [isExportMenuOpen, setIsExportMenuOpen] = useState(false)
@@ -227,26 +232,49 @@ export function EmployeeView({
     const handleCheckDuplicates = useCallback(async () => {
         setIsCheckingDuplicates(true)
         try {
-            // Fetch all employees (no limit) to detect cross-page duplicates
-            const response = await staffApi.searchEmployees({ limit: 99999, offset: 0 })
-            const all = response.items
+            // 1. Run global DB asset integrity check (canonical assets, active loans, orphan loans, status mismatches)
+            const integrityPromise = staffApi.checkAssetIntegrity().catch(() => null)
 
-            // Identify computer-related column keys from visible columns
-            const computerKeys = col.visibleColumns
-                .filter(
-                    (c) =>
-                        c.key === "computerName" ||
-                        c.label.toLowerCase().includes("computer"),
-                )
-                .map((c) => c.key)
+            // 2. Fetch all employees to detect cross-page duplicate computer names
+            const employeePromise = staffApi.searchEmployees({ limit: 99999, offset: 0 }).catch(() => null)
 
-            if (computerKeys.length === 0) {
-                // Fallback: always include computerName
-                computerKeys.push("computerName")
+            const [integrityRes, employeeRes] = await Promise.all([integrityPromise, employeePromise])
+
+            const affectedIds = new Set<number>()
+
+            // Add asset integrity affected employee IDs
+            if (integrityRes?.affectedEmployeeIds) {
+                for (const id of integrityRes.affectedEmployeeIds) {
+                    affectedIds.add(id)
+                }
             }
 
-            // Build map: normalized computer value → list of employee IDs
-            setDuplicateEmpIds(collectDuplicateComputerEmployeeIds(all, computerKeys))
+            // Identify computer-related column keys from visible columns
+            let compDupsCount = 0
+            if (employeeRes?.items) {
+                const computerKeys = col.visibleColumns
+                    .filter(
+                        (c) =>
+                            c.key === "computerName" ||
+                            c.label.toLowerCase().includes("computer"),
+                    )
+                    .map((c) => c.key)
+
+                if (computerKeys.length === 0) {
+                    computerKeys.push("computerName")
+                }
+
+                const computerDupIds = collectDuplicateComputerEmployeeIds(employeeRes.items, computerKeys)
+                compDupsCount = computerDupIds.size
+                for (const id of computerDupIds) {
+                    affectedIds.add(id)
+                }
+            }
+
+            setDuplicateEmpIds(affectedIds)
+            setComputerDuplicatesCount(compDupsCount)
+            setIntegrityResult(integrityRes)
+            setIsIntegrityModalOpen(true)
         } catch {
             // ignore
         } finally {
@@ -255,7 +283,10 @@ export function EmployeeView({
     }, [col.visibleColumns])
 
     // Auto-clear highlight when all duplicates are resolved (re-check after save)
-    const clearDuplicates = useCallback(() => setDuplicateEmpIds(new Set()), [])
+    const clearDuplicates = useCallback(() => {
+        setDuplicateEmpIds(new Set())
+        setComputerDuplicatesCount(0)
+    }, [])
 
 
     return (
@@ -888,33 +919,46 @@ export function EmployeeView({
                             >
                                 {edit.isSavingTableEdits ? "Saving..." : "Save"}
                             </button>
-                            {/* ── Check Duplicates ── */}
+                            {/* ── Check Duplicates & Asset Integrity ── */}
                             <button
-                                className={`inline-flex items-center gap-1.5 rounded-[8px] border px-3 py-1.5 text-sm font-medium transition disabled:opacity-50 ${duplicateEmpIds.size > 0
-                                    ? "border-yellow-400/60 bg-yellow-400/15 text-yellow-300 hover:bg-yellow-400/25"
-                                    : "border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
-                                    }`}
+                                className={`inline-flex items-center gap-1.5 rounded-[8px] border px-3 py-1.5 text-sm font-medium transition disabled:opacity-50 ${
+                                    integrityResult && integrityResult.isClean && duplicateEmpIds.size === 0
+                                        ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20"
+                                        : duplicateEmpIds.size > 0
+                                        ? "border-yellow-400/60 bg-yellow-400/15 text-yellow-300 hover:bg-yellow-400/25"
+                                        : "border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+                                }`}
                                 onClick={() => {
-                                    if (duplicateEmpIds.size > 0) {
-                                        clearDuplicates()
+                                    if (integrityResult !== null || duplicateEmpIds.size > 0) {
+                                        setIsIntegrityModalOpen(true)
                                     } else {
                                         void handleCheckDuplicates()
                                     }
                                 }}
                                 type="button"
                                 disabled={isCheckingDuplicates}
-                                title={duplicateEmpIds.size > 0 ? `${duplicateEmpIds.size} employees with duplicate computer values — click to clear` : "Check Computer(1) & Computer(2) for duplicate values across all employees"}
+                                title={
+                                    duplicateEmpIds.size > 0
+                                        ? `${duplicateEmpIds.size} integrity issues / duplicate employees found — click to view report`
+                                        : integrityResult?.isClean
+                                        ? "Integrity Check: PASS (click to view report)"
+                                        : "Check database integrity across canonical assets, active loans, and employees"
+                                }
                             >
                                 {isCheckingDuplicates ? (
                                     <LoaderCircle className="animate-spin" size={14} />
+                                ) : integrityResult && integrityResult.isClean && duplicateEmpIds.size === 0 ? (
+                                    <CheckCircle2 size={14} />
                                 ) : duplicateEmpIds.size > 0 ? (
                                     <AlertTriangle size={14} />
                                 ) : null}
                                 {isCheckingDuplicates
                                     ? "Checking..."
                                     : duplicateEmpIds.size > 0
-                                        ? `${duplicateEmpIds.size} Duplicates`
-                                        : "Check"}
+                                    ? `${duplicateEmpIds.size} Issues`
+                                    : integrityResult?.isClean
+                                    ? "Check: PASS"
+                                    : "Check"}
                             </button>
 
                             {edit.isTableEditMode && (
@@ -1158,6 +1202,15 @@ export function EmployeeView({
                 open={assignedAssetsEmployee !== null}
                 employee={assignedAssetsEmployee}
                 onClose={() => setAssignedAssetsEmployee(null)}
+            />
+
+            {/* Asset Integrity Validation Modal */}
+            <AssetIntegrityModal
+                open={isIntegrityModalOpen}
+                result={integrityResult}
+                computerDuplicatesCount={computerDuplicatesCount}
+                onClose={() => setIsIntegrityModalOpen(false)}
+                onClearHighlights={duplicateEmpIds.size > 0 ? clearDuplicates : undefined}
             />
         </section>
     )

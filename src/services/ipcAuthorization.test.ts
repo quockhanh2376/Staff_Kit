@@ -200,6 +200,14 @@ describe("self-delete rule", () => {
     })
 })
 
+describe("check_asset_integrity guard", () => {
+    it("rejects without a token and never reaches IPC", async () => {
+        expect(getSessionToken()).toBeNull()
+        await expect(staffApi.checkAssetIntegrity()).rejects.toThrow("AUTH_REQUIRED")
+        expect(invokeMock).not.toHaveBeenCalled()
+    })
+})
+
 // ── 8. Exhaustive: no guarded staffApi method uses callPublic ────────────────
 
 describe("staffApi classification invariants", () => {

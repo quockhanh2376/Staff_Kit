@@ -1,5 +1,62 @@
 # Daily Log - 2026-10-25
 
+## 2026-10-25 — Staff Kit Extend Employee List Check to Asset/Monitor Integrity (Start)
+- Authorized by Zon/Cheki.
+- Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Scope:
+  1. Inspect existing Employee List "Check" behavior and reuse its current validation/results UI.
+  2. Extend Check to validate canonical assets + active asset_loans across the full database (global scope), not just filtered Employee List rows.
+  3. Detect:
+     - Same canonical Asset Code assigned to multiple active employees.
+     - More than one active loan for the same Asset ID.
+     - Duplicate canonical Asset Codes / identity collisions.
+     - Active loan pointing to missing employee/asset.
+     - Inconsistent asset status (In Stock vs Assigned) relative to active loans.
+  4. Include Monitor and all other serialized Asset categories, not just laptops.
+  5. Do NOT flag one employee holding multiple distinct Monitors or Home/Office mixed locations.
+  6. Display PASS or detailed findings: Asset Code, affected Staff IDs/names, reason and recommended manual review.
+  7. Check must be read-only: zero writes, no auto-Return, Transfer, Delete, correction or loan creation.
+  8. Preserve existing Employee List Check functionality, database unique constraints, historical loan records and Pending Signature rules.
+  9. Prefer extending existing Check service; no new DB schema or migration unless genuinely required.
+- Validation: Focused tests (Rust + Vitest) on isolated DB fixtures, full quality gate (`npm run check:quality`). Qeen verification of clean PASS, simulated violations, dark/light mode and zero-write safety.
+
+## 2026-10-25 — Staff Kit Extend Employee List Check to Asset/Monitor Integrity (End)
+- Implementation (Victor):
+  * Built `check_asset_integrity_conn` in `src-tauri/src/db/asset.rs`:
+    - Validates global DB integrity across all serialized assets, active loans (`returned_at IS NULL`), and employees.
+    - Canonicalizes asset codes (`canonicalize_asset_code`) across monitors (`VNMON`), laptops (`VNLAP`), and all other serialized categories.
+    - Detects `duplicate_holder` (same canonical asset actively assigned to multiple distinct employees).
+    - Detects `multiple_active_loans` (>1 simultaneous active loans on same asset ID).
+    - Detects `duplicate_asset_code` (multiple asset records canonicalizing to the same code).
+    - Detects `orphan_loan` (active loan pointing to missing asset or missing employee).
+    - Detects `status_mismatch` (asset with active loan marked In Stock, or asset marked Assigned with 0 active loans).
+    - Safely passes employees holding multiple distinct Monitors or Home/Office mixed locations (e.g. MON614 + MON540).
+    - Completely read-only: parameterized `SELECT` queries with zero database writes.
+  * Exposed Tauri IPC command `check_asset_integrity` with authenticated guard in `src-tauri/src/lib.rs` and typed bridge in `src/services/staff-api.ts`.
+  * Built `AssetIntegrityModal.tsx` in `src/features/employees/`:
+    - Clean state: Displays prominent `PASS` badge, metrics bar (assets, active loans, employees checked), and verified integrity invariants.
+    - Findings state: Displays filterable findings table with severity (error/warning), category, asset code/name, affected staff IDs/names, detailed reason, and recommended manual review action.
+    - Dark & light mode support, accessible dialog, Esc-to-close, and zero-write guarantee.
+  * Enhanced `EmployeeView.tsx`:
+    - Updated "Check" button to execute global `check_asset_integrity` in conjunction with cross-page computer duplicate detection.
+    - Dynamic button status: `Check` -> `Checking...` -> `Check: PASS` (green) or `${count} Issues` (amber badge).
+    - Connected `affectedEmployeeIds` to table row highlights so conflicting employees are highlighted.
+    - Added "Clear Table Highlights" action.
+- QA Validation (Qeen):
+  * Verified 7 comprehensive Rust unit tests covering:
+    - Clean database PASS with zero findings and zero writes.
+    - Simulated duplicate active holders (`duplicate_holder`).
+    - Simulated multiple active loans (`multiple_active_loans`).
+    - Simulated duplicate canonical asset codes (`duplicate_asset_code`).
+    - Simulated orphaned loan (`orphan_loan`).
+    - Simulated asset status mismatches (`status_mismatch`).
+    - Multi-monitor safe pass: Single employee holding multiple distinct monitors (e.g. MON614 at CTY + MON540 at NHÀ) passes clean with 0 findings.
+  * Frontend test suites:
+    - `AssetIntegrityModal.test.tsx` (6 unit tests passed).
+    - `EmployeeView.integrityCheck.test.tsx` (2 integration tests passed).
+    - Full frontend suite: 304 tests passed across 41 files.
+  * Full quality gate passed: `npm run check:quality` (lint, strict typecheck, vite build, cargo check all clean).
+
 ## 2026-10-25 — Staff Kit Employee List Asset Name Display Alignment (Start)
 - Authorized by Zon/Cheki.
 - Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
