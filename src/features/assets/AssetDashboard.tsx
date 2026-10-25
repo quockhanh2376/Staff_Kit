@@ -59,6 +59,7 @@ type AssetDashboardProps = {
   auth: Pick<AuthState, "canImportData" | "isAdminAccount">
   assetDashboard: AssetDashboardState
   assetImport: AssetImportState
+  triggerReload?: () => void
 }
 
 type QuantityDraftMap = Record<
@@ -275,6 +276,7 @@ export function AssetDashboard({
   auth,
   assetDashboard,
   assetImport,
+  triggerReload,
 }: AssetDashboardProps) {
   const [activeTab, setActiveTab] = useState<AssetDashboardTabKey>("serialized")
   const [isHistoricalImportOpen, setIsHistoricalImportOpen] = useState(false)
@@ -864,6 +866,7 @@ export function AssetDashboard({
         onClose={() => setIsHistoricalImportOpen(false)}
         onSuccess={() => {
           void assetDashboard.refreshDashboard()
+          triggerReload?.()
         }}
       />
     </div>

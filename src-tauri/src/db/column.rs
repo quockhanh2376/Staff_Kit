@@ -122,7 +122,7 @@ pub fn delete_employee_column(app: &AppHandle, key: String) -> Result<bool, Stri
         return Err("column key is invalid".to_string());
     }
 
-    if is_reserved_column_key(normalized.as_str()) {
+    if is_reserved_column_key(normalized.as_str()) || is_asset_name_key(normalized.as_str()) {
         return Err("cannot delete a reserved core/system column".to_string());
     }
 
@@ -176,6 +176,9 @@ pub(crate) fn upsert_dynamic_field_definitions_for_map(
     fields: &HashMap<String, String>,
 ) -> Result<(), String> {
     for key in fields.keys() {
+        if is_asset_name_key(key.as_str()) {
+            continue;
+        }
         let label = dynamic_key_to_label(key);
         tx.execute(
             r#"
@@ -197,6 +200,9 @@ pub(crate) fn upsert_dynamic_fields_tx(
     fields: &HashMap<String, String>,
 ) -> Result<(), String> {
     for (field_key, value) in fields {
+        if is_asset_name_key(field_key.as_str()) {
+            continue;
+        }
         if value.trim().is_empty() && !is_computer_name_2_key(field_key.as_str()) {
             tx.execute(
                 "DELETE FROM employee_dynamic_values WHERE employee_id = ? AND field_key = ?",
@@ -220,6 +226,10 @@ pub(crate) fn upsert_dynamic_fields_tx(
     }
 
     Ok(())
+}
+
+pub(crate) fn is_asset_name_key(field_key: &str) -> bool {
+    matches!(field_key, "asset_name" | "asset_name_2" | "aset_name_2")
 }
 
 fn is_computer_name_2_key(field_key: &str) -> bool {

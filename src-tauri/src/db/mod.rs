@@ -1619,7 +1619,7 @@ pub(crate) fn dynamic_key_to_label(key: &str) -> String {
 }
 
 pub(crate) fn is_reserved_column_key(key: &str) -> bool {
-    matches!(key, "rownumber" | "row_number" | "actions" | "action")
+    matches!(key, "rownumber" | "row_number" | "actions" | "action" | "aset_name_2")
         || CORE_COLUMN_DEFINITIONS
             .iter()
             .any(|(core_key, _)| normalize_dynamic_key(core_key) == key)

@@ -1,3 +1,43 @@
+# Daily Log - 2026-10-25
+
+## 2026-10-25 — Staff Kit Employee List Asset Name Display Alignment (Start)
+- Authorized by Zon/Cheki.
+- Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Scope:
+  1. Employee List ASSET NAME / ASSET NAME 2 alignment with Asset Dashboard (e.g. MON614).
+  2. For active assigned Monitors, display canonical assets.display_name in ASSET NAME / ASSET NAME 2 with deterministic ordering.
+  3. Keep Assigned Assets (N) as the complete list for unlimited devices; never truncate or discard actual assignments.
+  4. Preserve existing employee legacy values as read-only fallback where no corresponding canonical assignment exists.
+  5. Do not modify COMPUTER NAME / COMPUTER (2), which remain PC-only.
+  6. Ensure Borrow, Return, Transfer or Asset Name edits refresh employee display correctly.
+  7. No synchronization writes into employee_dynamic_values, no automatic loans, no DB migration.
+- Validation: Focused unit tests (Rust + Vitest), quality gate (`npm run check:quality`). DB safety: preserve test DB, develop exclusively against isolated test DB copy.
+
+## 2026-10-25 — Staff Kit Employee List Asset Name Display Alignment (End)
+- Implementation (Victor):
+  * Hydrated active monitor loans dynamically inside `hydrate_dynamic_fields(conn, items)` in `src-tauri/src/db/employee.rs` with deterministic ordering (`ORDER BY al.borrowed_at ASC, a.asset_code ASC, al.id ASC`).
+  * Displayed canonical `assets.display_name` (falling back to `asset_code`) in `asset_name` (Slot 1) and `asset_name_2` / `aset_name_2` (Slot 2).
+  * Preserved existing legacy values (92 records in `employee_dynamic_values`) in memory as read-only fallback when no active canonical monitor assignment exists.
+  * Maintained `Assigned Assets (N)` count and full modal list via `get_employee_assigned_assets_conn` for all devices without truncation.
+  * Verified PC-only computer invariant: `computer_name` and `computer_2` remain strictly filtered to categories where `has_computer_name = 1`.
+  * Added core columns `("asset_name", "Asset Name")` and `("asset_name_2", "Asset Name 2")` to `CORE_COLUMN_DEFINITIONS` in `src-tauri/src/db/schema.rs`, and protected them from deletion or re-creation via `is_reserved_column_key` and `is_asset_name_key` in `src-tauri/src/db/column.rs` and `mod.rs`.
+  * Guaranteed zero writes to DB: `upsert_dynamic_fields_tx` and `upsert_dynamic_field_definitions_for_map` explicitly skip `asset_name` and `asset_name_2`, preventing any dynamic value pollution.
+  * Frontend read-only safety: Enforced `isEmployeeTableEditableColumn` returns `false` and `buildEmployeePayloadForSave` drops drafts for `asset_name`, `asset_name_2`, and `aset_name_2` in `src/features/employees/employeeTableRules.ts`.
+  * Realtime refresh: Wired `triggerReload` in `src/features/settings/SettingsView.tsx` into `<AssetDashboard triggerReload={triggerReload} />` and `<HistoricalAssignmentImportModal onSuccess={...} />`.
+  * Search & Sort: Enhanced `query_employees` search clause with active asset loan display name / code matching, and added deterministic sorting for `asset_name` and `asset_name_2` in `resolve_core_sort_expression`.
+- QA Validation (Qeen):
+  * Verified 0, 1, 2, and 4 Monitors per employee:
+    - 0 monitors: displays legacy fallback if present, empty if absent.
+    - 1 monitor: displays Monitor 1 canonical display name (e.g. `MON614`).
+    - 2 monitors: displays Monitor 1 in slot 1 and Monitor 2 in slot 2.
+    - 4 monitors: displays first 2 monitors in slots 1 & 2; `Assigned Assets (N)` reports count 4 and lists all 4 devices.
+    - Return of monitor dynamically rolls remaining active monitors into slot 1 and 2.
+  * Verified zero unintended DB writes: `employee_dynamic_values` legacy values remain intact and no monitor slots are written to dynamic tables.
+  * Verified test suite: All 52 Rust/Tauri tests passed (`npm run test:tauri -- employee`), all 295 Vitest unit tests passed (`npm run test:unit`).
+  * Quality gate passed: `npm run check:quality` (lint 0 errors, tsc 0 errors, build OK, cargo check OK).
+  * Database safety: Original test DB and production DB strictly protected with zero schema migrations.
+- Verdict: PASS. Ready for git commit and push to `origin/main`.
+
 # Daily Log - 2026-10-24
 
 ## 2026-10-24 — Staff Kit Historical Asset Assignment Reconciliation (Start)

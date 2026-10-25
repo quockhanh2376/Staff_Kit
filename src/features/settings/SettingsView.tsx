@@ -901,6 +901,7 @@ export function SettingsView({
                 auth={auth}
                 assetDashboard={assetDashboard}
                 assetImport={assetImport}
+                triggerReload={triggerReload}
             />
             {/* Data Reset — admin only */}
             {auth.canResetData && (

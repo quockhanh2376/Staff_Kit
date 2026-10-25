@@ -8,7 +8,8 @@ use super::column::{
     dynamic_field_exists, upsert_dynamic_field_definitions_for_map, upsert_dynamic_fields_tx,
 };
 use super::schema::{
-    COMPUTER_NAME_2_FIELD_KEY, EMPLOYEE_SELECT_COLUMNS, STAFF_GROUP_EMPLOYEE_LIST,
+    ASSET_NAME_2_FIELD_KEY, ASSET_NAME_FIELD_KEY, COMPUTER_NAME_2_FIELD_KEY,
+    EMPLOYEE_SELECT_COLUMNS, STAFF_GROUP_EMPLOYEE_LIST,
     STAFF_GROUP_INTERNAL_MOVEMENT, STAFF_GROUP_OFFBOARDING, STAFF_GROUP_ONBOARDING,
 };
 use super::team::resolve_team_id_tx;
@@ -920,19 +921,23 @@ fn query_employees(
         let query_like = format!("%{}%", query.to_lowercase());
         if let Some(fts_query) = build_fts_query(&query) {
             where_clauses.push(
-                "(e.id IN (SELECT rowid FROM employees_fts WHERE employees_fts MATCH ?) OR lower(COALESCE(e.email, '')) LIKE ? OR lower(COALESCE(NULLIF(e.computername, ''), NULLIF(lc.computer_name_1, ''), '')) LIKE ? OR lower(COALESCE(lc.computer_name_2, '')) LIKE ? OR EXISTS (SELECT 1 FROM employee_dynamic_values edv WHERE edv.employee_id = e.id AND lower(COALESCE(edv.value, '')) LIKE ?))"
+                "(e.id IN (SELECT rowid FROM employees_fts WHERE employees_fts MATCH ?) OR lower(COALESCE(e.email, '')) LIKE ? OR lower(COALESCE(NULLIF(e.computername, ''), NULLIF(lc.computer_name_1, ''), '')) LIKE ? OR lower(COALESCE(lc.computer_name_2, '')) LIKE ? OR EXISTS (SELECT 1 FROM employee_dynamic_values edv WHERE edv.employee_id = e.id AND lower(COALESCE(edv.value, '')) LIKE ?) OR EXISTS (SELECT 1 FROM asset_loans al_s INNER JOIN assets a_s ON a_s.id = al_s.asset_id WHERE al_s.employee_id_fk = e.id AND al_s.returned_at IS NULL AND (lower(COALESCE(a_s.display_name, '')) LIKE ? OR lower(COALESCE(a_s.asset_code, '')) LIKE ?)))"
                     .to_string(),
             );
             filter_params.push(Value::Text(fts_query));
             filter_params.push(Value::Text(query_like.clone()));
             filter_params.push(Value::Text(query_like.clone()));
             filter_params.push(Value::Text(query_like.clone()));
+            filter_params.push(Value::Text(query_like.clone()));
+            filter_params.push(Value::Text(query_like.clone()));
             filter_params.push(Value::Text(query_like));
         } else {
             where_clauses.push(
-                "(lower(COALESCE(e.email, '')) LIKE ? OR lower(COALESCE(NULLIF(e.computername, ''), NULLIF(lc.computer_name_1, ''), '')) LIKE ? OR lower(COALESCE(lc.computer_name_2, '')) LIKE ? OR EXISTS (SELECT 1 FROM employee_dynamic_values edv WHERE edv.employee_id = e.id AND lower(COALESCE(edv.value, '')) LIKE ?))"
+                "(lower(COALESCE(e.email, '')) LIKE ? OR lower(COALESCE(NULLIF(e.computername, ''), NULLIF(lc.computer_name_1, ''), '')) LIKE ? OR lower(COALESCE(lc.computer_name_2, '')) LIKE ? OR EXISTS (SELECT 1 FROM employee_dynamic_values edv WHERE edv.employee_id = e.id AND lower(COALESCE(edv.value, '')) LIKE ?) OR EXISTS (SELECT 1 FROM asset_loans al_s INNER JOIN assets a_s ON a_s.id = al_s.asset_id WHERE al_s.employee_id_fk = e.id AND al_s.returned_at IS NULL AND (lower(COALESCE(a_s.display_name, '')) LIKE ? OR lower(COALESCE(a_s.asset_code, '')) LIKE ?)))"
                     .to_string(),
             );
+            filter_params.push(Value::Text(query_like.clone()));
+            filter_params.push(Value::Text(query_like.clone()));
             filter_params.push(Value::Text(query_like.clone()));
             filter_params.push(Value::Text(query_like.clone()));
             filter_params.push(Value::Text(query_like.clone()));
@@ -1103,7 +1108,59 @@ pub(crate) fn hydrate_dynamic_fields(
         }
     }
 
+    let monitor_sql = format!(
+        r#"
+        SELECT
+            al.employee_id_fk,
+            COALESCE(NULLIF(TRIM(a.display_name), ''), a.asset_code) AS display_name
+        FROM asset_loans al
+        INNER JOIN assets a ON a.id = al.asset_id
+        LEFT JOIN asset_categories c ON c.id = a.category_id
+        WHERE al.employee_id_fk IN ({placeholders})
+          AND al.returned_at IS NULL
+          AND (
+            c.category_code = 'monitor' COLLATE NOCASE
+            OR c.category_name = 'Monitor' COLLATE NOCASE
+            OR a.asset_type = 'Monitor' COLLATE NOCASE
+            OR a.asset_code LIKE 'VNMON%'
+          )
+        ORDER BY al.employee_id_fk ASC, al.borrowed_at ASC, a.asset_code ASC, al.id ASC
+        "#
+    );
+
+    let mut monitor_stmt = conn
+        .prepare(&monitor_sql)
+        .map_err(|err| format!("failed to prepare active monitor query: {err}"))?;
+    let monitor_rows = monitor_stmt
+        .query_map(rusqlite::params_from_iter(params.iter()), |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|err| format!("failed to query active monitors: {err}"))?;
+
+    let mut employee_monitors: HashMap<i64, Vec<String>> = HashMap::new();
+    for row in monitor_rows {
+        let (emp_id, monitor_name) =
+            row.map_err(|err| format!("failed to read active monitor row: {err}"))?;
+        employee_monitors
+            .entry(emp_id)
+            .or_default()
+            .push(monitor_name);
+    }
+
     for item in items.iter_mut() {
+        if let Some(monitors) = employee_monitors.get(&item.id) {
+            if let Some(first_monitor) = monitors.first() {
+                item.dynamic_fields
+                    .insert(ASSET_NAME_FIELD_KEY.to_string(), first_monitor.clone());
+            }
+            if let Some(second_monitor) = monitors.get(1) {
+                item.dynamic_fields
+                    .insert(ASSET_NAME_2_FIELD_KEY.to_string(), second_monitor.clone());
+                item.dynamic_fields
+                    .insert("aset_name_2".to_string(), second_monitor.clone());
+            }
+        }
+
         let primary = item.computer_name.clone();
         let has_current_secondary_override =
             item.dynamic_fields.contains_key(COMPUTER_NAME_2_FIELD_KEY);
@@ -1309,6 +1366,12 @@ fn resolve_core_sort_expression(sort_key: &str) -> Option<&'static str> {
         }
         "assignedassets" | "assignedassetscount" | "assets" => {
             "COALESCE(al_counts.active_count, 0)"
+        }
+        "assetname" | "asset_name" => {
+            "COALESCE((SELECT COALESCE(NULLIF(TRIM(a.display_name), ''), a.asset_code) FROM asset_loans al INNER JOIN assets a ON a.id = al.asset_id LEFT JOIN asset_categories c ON c.id = a.category_id WHERE al.employee_id_fk = e.id AND al.returned_at IS NULL AND (c.category_code = 'monitor' COLLATE NOCASE OR c.category_name = 'Monitor' COLLATE NOCASE OR a.asset_type = 'Monitor' COLLATE NOCASE OR a.asset_code LIKE 'VNMON%') ORDER BY al.borrowed_at ASC, a.asset_code ASC, al.id ASC LIMIT 1), (SELECT v.value FROM employee_dynamic_values v WHERE v.employee_id = e.id AND v.field_key = 'asset_name'), '') COLLATE NOCASE"
+        }
+        "assetname2" | "asset_name_2" | "asetname2" | "aset_name_2" => {
+            "COALESCE((SELECT COALESCE(NULLIF(TRIM(a.display_name), ''), a.asset_code) FROM asset_loans al INNER JOIN assets a ON a.id = al.asset_id LEFT JOIN asset_categories c ON c.id = a.category_id WHERE al.employee_id_fk = e.id AND al.returned_at IS NULL AND (c.category_code = 'monitor' COLLATE NOCASE OR c.category_name = 'Monitor' COLLATE NOCASE OR a.asset_type = 'Monitor' COLLATE NOCASE OR a.asset_code LIKE 'VNMON%') ORDER BY al.borrowed_at ASC, a.asset_code ASC, al.id ASC LIMIT 1 OFFSET 1), (SELECT v.value FROM employee_dynamic_values v WHERE v.employee_id = e.id AND v.field_key IN ('asset_name_2', 'aset_name_2')), '') COLLATE NOCASE"
         }
         "notes" => "COALESCE(e.notes, '') COLLATE NOCASE",
         _ => return None,
@@ -1611,6 +1674,45 @@ mod tests {
             VALUES(?, ?, ?, datetime('now'))
             "#,
             params![asset_id, employee_row_id, borrow_request_id],
+        )
+        .expect("insert active asset loan");
+    }
+
+    fn seed_active_loan_with_borrowed_at(
+        conn: &Connection,
+        employee_row_id: i64,
+        asset_id: i64,
+        borrowed_at: &str,
+    ) {
+        conn.execute(
+            r#"
+            INSERT INTO borrow_requests(
+              request_key,
+              employee_id_fk,
+              submitted_employee_id,
+              submitted_full_name,
+              status,
+              request_type,
+              submitted_at
+            )
+            VALUES(?, ?, 'EE001', 'Nguyen Van A', 'approved', 'borrow', datetime('now'))
+            "#,
+            params![format!("TEST-BR-{asset_id}"), employee_row_id],
+        )
+        .expect("insert synthetic borrow request");
+        let borrow_request_id = conn.last_insert_rowid();
+
+        conn.execute(
+            r#"
+            INSERT INTO asset_loans(
+              asset_id,
+              employee_id_fk,
+              borrow_request_id,
+              borrowed_at
+            )
+            VALUES(?, ?, ?, ?)
+            "#,
+            params![asset_id, employee_row_id, borrow_request_id, borrowed_at],
         )
         .expect("insert active asset loan");
     }
@@ -2506,5 +2608,221 @@ mod tests {
         assert_eq!(location_count, 92);
         assert_eq!(distinct_legacy_employees, 92);
         assert_eq!(total_employees, 442);
+    }
+
+    #[test]
+    fn test_employee_monitor_display_alignment_zero_one_two_four_and_legacy_safety() {
+        let mut conn = open_test_connection();
+
+        // 1. Categories (already seeded by migrations)
+        let mon_cat_id: i64 = conn.query_row(
+            "SELECT id FROM asset_categories WHERE category_code = 'monitor'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        let lap_cat_id: i64 = conn.query_row(
+            "SELECT id FROM asset_categories WHERE category_code = 'laptop'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+
+        // 2. Employees
+        conn.execute(
+            "INSERT INTO employees(employee_id, full_name, staff_group, updated_at) VALUES('EE001', 'Nguyen Van A', 'employee_list', datetime('now'))",
+            [],
+        ).unwrap();
+        let emp1_id = conn.last_insert_rowid();
+
+        conn.execute(
+            "INSERT INTO employees(employee_id, full_name, staff_group, updated_at) VALUES('EE002', 'Tran Van B', 'employee_list', datetime('now'))",
+            [],
+        ).unwrap();
+        let emp2_id = conn.last_insert_rowid();
+
+        // 3. Dynamic field setup & Legacy value for EMP1
+        conn.execute(
+            "INSERT INTO employee_dynamic_fields(field_key, field_label, updated_at) VALUES('asset_name', 'Asset Name', datetime('now'))",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO employee_dynamic_values(employee_id, field_key, value, updated_at) VALUES(?, 'asset_name', 'MON_LEGACY', datetime('now'))",
+            params![emp1_id],
+        ).unwrap();
+
+        // 4. Test 0 monitors: EMP1 has legacy fallback in memory, EMP2 has None
+        let res0 = query_employees(&conn, EmployeeQuery {
+            query: None, team_name: None, staff_group: None, is_floating: None,
+            sort_key: None, sort_direction: None, start_date_from: None, start_date_to: None,
+            limit: Some(10), offset: Some(0),
+        }).unwrap();
+        let emp1_row0 = res0.items.iter().find(|e| e.id == emp1_id).unwrap();
+        let emp2_row0 = res0.items.iter().find(|e| e.id == emp2_id).unwrap();
+        assert_eq!(emp1_row0.dynamic_fields.get("asset_name"), Some(&"MON_LEGACY".to_string()));
+        assert_eq!(emp1_row0.dynamic_fields.get("asset_name_2"), None);
+        assert_eq!(emp1_row0.assigned_assets_count, 0);
+        assert_eq!(emp2_row0.dynamic_fields.get("asset_name"), None);
+
+        // 5. Add Laptop loan for EMP1 (PC-only invariant check)
+        conn.execute(
+            "INSERT INTO assets(asset_code, category_id, asset_type, display_name, status, updated_at) VALUES('VNLAP100', ?, 'Laptop', 'Dell Laptop', 'assigned', datetime('now'))",
+            params![lap_cat_id],
+        ).unwrap();
+        let lap_id = conn.last_insert_rowid();
+        seed_active_loan_with_borrowed_at(&conn, emp1_id, lap_id, "2026-01-01 08:00:00");
+
+        let res_lap = query_employees(&conn, EmployeeQuery {
+            query: None, team_name: None, staff_group: None, is_floating: None,
+            sort_key: None, sort_direction: None, start_date_from: None, start_date_to: None,
+            limit: Some(10), offset: Some(0),
+        }).unwrap();
+        let emp1_lap = res_lap.items.iter().find(|e| e.id == emp1_id).unwrap();
+        assert_eq!(emp1_lap.computer_name.as_deref(), Some("ASWVNLAP100"));
+        // Laptop did not affect asset_name fallback:
+        assert_eq!(emp1_lap.dynamic_fields.get("asset_name"), Some(&"MON_LEGACY".to_string()));
+
+        // 6. Add 1 Monitor loan for EMP1 ("MON614")
+        conn.execute(
+            "INSERT INTO assets(asset_code, category_id, asset_type, display_name, status, updated_at) VALUES('VNMON614', ?, 'Monitor', 'MON614', 'assigned', datetime('now'))",
+            params![mon_cat_id],
+        ).unwrap();
+        let mon1_id = conn.last_insert_rowid();
+        seed_active_loan_with_borrowed_at(&conn, emp1_id, mon1_id, "2026-01-01 09:00:00");
+
+        let res1 = query_employees(&conn, EmployeeQuery {
+            query: None, team_name: None, staff_group: None, is_floating: None,
+            sort_key: None, sort_direction: None, start_date_from: None, start_date_to: None,
+            limit: Some(10), offset: Some(0),
+        }).unwrap();
+        let emp1_row1 = res1.items.iter().find(|e| e.id == emp1_id).unwrap();
+        assert_eq!(emp1_row1.dynamic_fields.get("asset_name"), Some(&"MON614".to_string()));
+        assert_eq!(emp1_row1.dynamic_fields.get("asset_name_2"), None);
+        assert_eq!(emp1_row1.assigned_assets_count, 2); // 1 laptop + 1 monitor
+
+        // Legacy value in DB is still untouched:
+        let legacy_db_val: String = conn.query_row(
+            "SELECT value FROM employee_dynamic_values WHERE employee_id = ? AND field_key = 'asset_name'",
+            params![emp1_id],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(legacy_db_val, "MON_LEGACY");
+
+        // 7. Add 2nd Monitor loan ("MON615")
+        conn.execute(
+            "INSERT INTO assets(asset_code, category_id, asset_type, display_name, status, updated_at) VALUES('VNMON615', ?, 'Monitor', 'MON615', 'assigned', datetime('now'))",
+            params![mon_cat_id],
+        ).unwrap();
+        let mon2_id = conn.last_insert_rowid();
+        seed_active_loan_with_borrowed_at(&conn, emp1_id, mon2_id, "2026-01-02 09:00:00");
+
+        let res2 = query_employees(&conn, EmployeeQuery {
+            query: None, team_name: None, staff_group: None, is_floating: None,
+            sort_key: None, sort_direction: None, start_date_from: None, start_date_to: None,
+            limit: Some(10), offset: Some(0),
+        }).unwrap();
+        let emp1_row2 = res2.items.iter().find(|e| e.id == emp1_id).unwrap();
+        assert_eq!(emp1_row2.dynamic_fields.get("asset_name"), Some(&"MON614".to_string()));
+        assert_eq!(emp1_row2.dynamic_fields.get("asset_name_2"), Some(&"MON615".to_string()));
+        assert_eq!(emp1_row2.dynamic_fields.get("aset_name_2"), Some(&"MON615".to_string()));
+        assert_eq!(emp1_row2.assigned_assets_count, 3); // 1 laptop + 2 monitors
+
+        // 8. Add 3rd and 4th Monitor loans ("MON616", "MON617")
+        conn.execute(
+            "INSERT INTO assets(asset_code, category_id, asset_type, display_name, status, updated_at) VALUES('VNMON616', ?, 'Monitor', 'MON616', 'assigned', datetime('now'))",
+            params![mon_cat_id],
+        ).unwrap();
+        let mon3_id = conn.last_insert_rowid();
+        seed_active_loan_with_borrowed_at(&conn, emp1_id, mon3_id, "2026-01-03 09:00:00");
+
+        conn.execute(
+            "INSERT INTO assets(asset_code, category_id, asset_type, display_name, status, updated_at) VALUES('VNMON617', ?, 'Monitor', 'MON617', 'assigned', datetime('now'))",
+            params![mon_cat_id],
+        ).unwrap();
+        let mon4_id = conn.last_insert_rowid();
+        seed_active_loan_with_borrowed_at(&conn, emp1_id, mon4_id, "2026-01-04 09:00:00");
+
+        let res4 = query_employees(&conn, EmployeeQuery {
+            query: None, team_name: None, staff_group: None, is_floating: None,
+            sort_key: None, sort_direction: None, start_date_from: None, start_date_to: None,
+            limit: Some(10), offset: Some(0),
+        }).unwrap();
+        let emp1_row4 = res4.items.iter().find(|e| e.id == emp1_id).unwrap();
+        assert_eq!(emp1_row4.dynamic_fields.get("asset_name"), Some(&"MON614".to_string()));
+        assert_eq!(emp1_row4.dynamic_fields.get("asset_name_2"), Some(&"MON615".to_string()));
+        assert_eq!(emp1_row4.assigned_assets_count, 5); // 1 laptop + 4 monitors
+
+        // Assigned assets modal data returns all 5:
+        let all_emp1_assets = get_employee_assigned_assets_conn(&conn, emp1_id).unwrap();
+        assert_eq!(all_emp1_assets.len(), 5);
+        assert_eq!(all_emp1_assets[1].asset_name, "MON614");
+        assert_eq!(all_emp1_assets[2].asset_name, "MON615");
+        assert_eq!(all_emp1_assets[3].asset_name, "MON616");
+        assert_eq!(all_emp1_assets[4].asset_name, "MON617");
+
+        // 9. Return Monitor 1 ("MON614") -> slots dynamically roll to MON615 and MON616
+        conn.execute(
+            "UPDATE asset_loans SET returned_at = datetime('now') WHERE employee_id_fk = ? AND asset_id = ?",
+            params![emp1_id, mon1_id],
+        ).unwrap();
+
+        let res_ret = query_employees(&conn, EmployeeQuery {
+            query: None, team_name: None, staff_group: None, is_floating: None,
+            sort_key: None, sort_direction: None, start_date_from: None, start_date_to: None,
+            limit: Some(10), offset: Some(0),
+        }).unwrap();
+        let emp1_ret = res_ret.items.iter().find(|e| e.id == emp1_id).unwrap();
+        assert_eq!(emp1_ret.dynamic_fields.get("asset_name"), Some(&"MON615".to_string()));
+        assert_eq!(emp1_ret.dynamic_fields.get("asset_name_2"), Some(&"MON616".to_string()));
+        assert_eq!(emp1_ret.assigned_assets_count, 4);
+
+        // 10. Zero writes on employee save
+        let payload = EmployeePayload {
+            employee_id: "EE001".to_string(),
+            full_name: "Nguyen Van A (Updated)".to_string(),
+            nick_name: None, team_name: None, project: None, job_title: None,
+            email: None, cellphone: None, date_of_birth: None, gender: None,
+            asw_start_date: None, client_start_date: None, contract_end_date: None,
+            client_year_of_services: None, computer_name: None, notes: None,
+            is_floating: None, lifecycle_status: None,
+            staff_group: Some("employee_list".to_string()),
+            dynamic_fields: Some(HashMap::from([
+                ("asset_name".to_string(), "TRY_OVERWRITE".to_string()),
+                ("asset_name_2".to_string(), "TRY_OVERWRITE_2".to_string()),
+            ])),
+        };
+        let mut tx = conn.transaction().unwrap();
+        upsert_employee_from_payload(&mut tx, payload, "employee_list").unwrap();
+        tx.commit().unwrap();
+
+        let legacy_after_save: String = conn.query_row(
+            "SELECT value FROM employee_dynamic_values WHERE employee_id = ? AND field_key = 'asset_name'",
+            params![emp1_id],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(legacy_after_save, "MON_LEGACY", "Legacy DB value must be untouched");
+
+        let exists_asset_name_2: i64 = conn.query_row(
+            "SELECT count(*) FROM employee_dynamic_values WHERE employee_id = ? AND field_key = 'asset_name_2'",
+            params![emp1_id],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(exists_asset_name_2, 0, "asset_name_2 must never be written to employee_dynamic_values");
+
+        // 11. Search by monitor name
+        let search_res = query_employees(&conn, EmployeeQuery {
+            query: Some("MON615".to_string()),
+            team_name: None, staff_group: None, is_floating: None,
+            sort_key: None, sort_direction: None, start_date_from: None, start_date_to: None,
+            limit: Some(10), offset: Some(0),
+        }).unwrap();
+        assert_eq!(search_res.items.len(), 1);
+        assert_eq!(search_res.items[0].id, emp1_id);
+
+        // 12. Sorting by asset_name
+        let sort_res = query_employees(&conn, EmployeeQuery {
+            query: None, team_name: None, staff_group: None, is_floating: None,
+            sort_key: Some("asset_name".to_string()), sort_direction: Some("asc".to_string()),
+            start_date_from: None, start_date_to: None, limit: Some(10), offset: Some(0),
+        }).unwrap();
+        assert_eq!(sort_res.items.len(), 2);
     }
 }

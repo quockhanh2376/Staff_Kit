@@ -70,6 +70,7 @@ export function isEmployeeTableEditableColumn(
     if (key === "rowNumber") return false
     if (key === "employeeId") return false
     if (key === "assignedAssets") return false
+    if (key === "asset_name" || key === "asset_name_2" || key === "aset_name_2") return false
     if (key === "computerName") return canEditComputerName
     return true
 }
@@ -100,6 +101,9 @@ export function buildEmployeePayloadForSave(
     const dynamicDrafts: Record<string, string> = {}
     for (const [key, value] of Object.entries(drafts)) {
         if (key === "computerName") {
+            continue
+        }
+        if (key === "asset_name" || key === "asset_name_2" || key === "aset_name_2") {
             continue
         }
         if (!TOP_LEVEL_KEYS.has(key)) {

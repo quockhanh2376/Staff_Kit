@@ -60,6 +60,8 @@ pub(super) const DB_CUSTOM_PATH_KEY: &str = "custom_path";
 // ── Computer Name dynamic field ───────────────────────────────────────────────
 pub(crate) const COMPUTER_NAME_2_FIELD_KEY: &str = "computer_2";
 pub(crate) const COMPUTER_NAME_2_FIELD_LABEL: &str = "Computer (2)";
+pub(crate) const ASSET_NAME_FIELD_KEY: &str = "asset_name";
+pub(crate) const ASSET_NAME_2_FIELD_KEY: &str = "asset_name_2";
 pub(crate) const AZURE_AD_ACCOUNT_FIELD_KEY: &str = "azure_account";
 
 pub(crate) fn employee_column_data_type(key: &str) -> Option<&'static str> {
@@ -101,6 +103,8 @@ pub(crate) const CORE_COLUMN_DEFINITIONS: &[(&str, &str)] = &[
     ("computerName", "Computer Name"),
     ("computer_2", "Computer (2)"),
     ("assignedAssets", "Assigned Assets"),
+    ("asset_name", "Asset Name"),
+    ("asset_name_2", "Asset Name 2"),
     ("notes", "Notes"),
 ];
 
