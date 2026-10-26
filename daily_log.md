@@ -1,3 +1,52 @@
+# Daily Log - 2026-10-26
+
+## 2026-10-26 — Staff Kit Final Monitor Data Enrichment & Assignment Reconciliation (Start)
+- Authorized by Zon/Cheki (Preparation & validation ONLY; zero direct DB import yet).
+- Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Scope:
+  1. Inspect latest workbook `00_ExSource/New_Asigned_Asset.xlsx`. Verify SHA-256 and expected 158 data rows, 203 unique Monitor assignments (144 CTY, 59 NHÀ).
+  2. Parse multi-MON cells properly; map each Asset Tag to its corresponding Asset Name, Category, Brand, Model, and Location. Never store comma-separated names as single asset metadata.
+  3. Match canonical Asset Code and normalized Staff ID case-insensitively. Same name with different Staff IDs is valid.
+  4. Reconcile against current assets and active asset_loans: New Asset, New Assignment, Same Holder, Metadata Changed, Location Changed, Different Holder, Missing Employee, Conflict.
+  5. Metadata updates preserve existing nonblank values when Excel is blank. Never change Holder, loan, signature, or location as a side-effect of metadata enrichment.
+  6. Same Holder + same Location -> skip loan creation. Different Location -> explicit Update Location confirmation.
+  7. Different Holder -> individual Needs Review / Confirm Transfer. No auto-return or reassignment.
+  8. New assets/assignments only on explicit Approve. Preserve historical loans, real holder, audit records, and pending_signature.
+  9. Show row-level before/after Preview and accurate totals. Revalidate immediately before Apply; rollback on failure. Idempotent reimport.
+  10. Preserve PC-only Computer Name derivation. Monitor spreadsheet Computer Name values must not populate employee PC fields.
+- Validation: Focused tests (Rust + Vitest) on isolated test DB copy, full quality gate (`npm run check:quality`). Qeen verification of 203 Asset Tags, metadata mapping, and Staff IDs.
+
+## 2026-10-26 — Staff Kit Final Monitor Data Enrichment & Assignment Reconciliation (End)
+- Author: Victor (Implementation), Qeen (Independent QA Validation).
+- Outcome: Completed with focused TDD and strict data integrity protection. Zero writes to original test or production database.
+- Workbook & Preview Analysis (`00_ExSource/New_Asigned_Asset.xlsx`, SHA-256: `7966c7cd7277ea9a83bf51c2918dc3f7f306d2829c458ddd37aed1eae7901d4f`):
+  * Sheet: `New` (158 data rows, 203 total assignments: 144 CTY, 59 NHÀ, 203 unique monitor tags).
+  * Multi-MON parsing: All multi-monitor cells (e.g. Row 5: `MON532` Office, `MON696, MON608` Home) are correctly split into distinct assignments with unique canonical codes (`VNMON532`, `VNMON696`, `VNMON608`). Never stored as comma-separated asset names.
+  * Preview Breakdown against Isolated Test DB Copy:
+    - 191 Already Assigned (active loan in DB matches canonical monitor code, employee ID, and location).
+    - 5 New Assets to auto-create on approval (`VNMON586`, `VNMON571`, `VNMON641`, `VNMON690`, `VNMON568`).
+    - 1 New Assignment (`VNMON540` for ASWVN030 at Office).
+    - 3 Different Holder conflicts requiring manual confirmation/transfer:
+      * Row 71: `VNMON668` (active in DB with ASWVN1198 Đinh Hoa Lư; workbook assigns to ASWVN974 Lê Minh Luân).
+      * Row 91: `VNMON578` (active in DB with ASWVN1019 Lưu Quốc Thịnh; workbook assigns to ASWVN1059 La Phước Nguyên).
+      * Row 118: `VNMON610` (active in DB with ASWVN996 Nguyễn Vũ Hà Anh; workbook assigns to ASWVN1172 Trần Gia Trọng Nhân).
+    - 2 Staff ID vs Name conflicts in Excel:
+      * Row 66: Excel has `ASWVN958` (Nguyễn Quốc Trọng Nghĩa in DB) with row text `NGUYỄN CÔNG THIỆN` (actual ID `ASWVN027`).
+      * Row 102: Excel has `ASWVN1119` (Nguyễn Thị Thuý in DB) with row text `LÊ MINH TIẾN` (actual ID `ASWVN910`).
+    - 1 Missing Employee in Excel:
+      * Row 154: `ASWN1323` (typo for `ASWVN1323`, missing 'V', for `VNMON556`).
+    - 1 Existing DB loan missing from workbook:
+      * `VNMON530` actively held by ASWVN974 Lê Minh Luân in DB but absent from workbook.
+  * Overrides Preview: When applying row overrides for the 3 identity typos (Row 66 -> ASWVN027, Row 102 -> ASWVN910, Row 154 -> ASWVN1323), the 3 items cleanly resolve (0 missing employees, 0 name conflicts), leaving only the 3 `DifferentHolder` review decisions.
+- Verification & Invariants:
+  * Zero writes during preview/validation verified.
+  * Multi-MON cells mapped to individual asset tags and locations.
+  * Blank metadata handling strictly preserved.
+  * PC-only Computer Name derivation intact.
+  * Quality gate passed: `npm run check:quality` (ESLint 0 errors, TypeScript strict OK, Vite production build OK, Cargo check OK).
+  * Unit/Integration tests: 14 passed in `historical_assignment_import`.
+- Verdict: Qeen PASS (Preparation & Validation complete; awaiting explicit Zon approval for database import).
+
 # Daily Log - 2026-10-25
 
 ## 2026-10-25 — Staff Kit Safe Asset Metadata Reimport (Start)

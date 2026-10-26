@@ -2261,5 +2261,165 @@ mod tests {
         assert_eq!(row2_item.raw_staff_id, "ASWVN9999");
         assert_eq!(row2_item.status, HistoricalAssignmentRowStatus::MissingEmployee);
     }
+
+    #[test]
+    fn test_inspect_new_asigned_asset_workbook() {
+        let file_path = Path::new(r"D:\Staff_Kit\00_ExSource\New_Asigned_Asset.xlsx");
+        assert!(file_path.exists(), "New_Asigned_Asset.xlsx must exist");
+
+        let mut workbook = open_workbook_auto(file_path).expect("open workbook");
+        let sheet_names = workbook.sheet_names();
+        println!("SHEET_NAMES: {:?}", sheet_names);
+
+        for sheet in &sheet_names {
+            if let Ok(range) = workbook.worksheet_range(sheet) {
+                println!("--- SHEET: {} (rows={}, cols={}) ---", sheet, range.height(), range.width());
+                let mut total_cty = 0;
+                let mut total_nha = 0;
+                let mut all_tags = std::collections::HashSet::new();
+                let mut data_rows = 0;
+
+                for (_r_idx, row) in range.rows().enumerate().skip(1) {
+                    let staff_id = cell_to_string(&row[0]);
+                    let name = cell_to_string(&row[1]);
+                    let cty_str = cell_to_string(&row[2]);
+                    let nha_str = cell_to_string(&row[3]);
+                    let _asset_tag_str = if row.len() > 4 { cell_to_string(&row[4]) } else { String::new() };
+
+                    if staff_id.is_empty() && name.is_empty() && cty_str.is_empty() && nha_str.is_empty() {
+                        continue;
+                    }
+                    data_rows += 1;
+
+                    let cty_codes = split_monitor_codes(&cty_str);
+                    let nha_codes = split_monitor_codes(&nha_str);
+                    total_cty += cty_codes.len();
+                    total_nha += nha_codes.len();
+
+                    for c in &cty_codes {
+                        all_tags.insert(canonicalize_monitor_code(c));
+                    }
+                    for c in &nha_codes {
+                        all_tags.insert(canonicalize_monitor_code(c));
+                    }
+                }
+
+                println!("DATA_ROWS: {}", data_rows);
+                println!("TOTAL_CTY: {}", total_cty);
+                println!("TOTAL_NHA: {}", total_nha);
+                println!("TOTAL_ASSIGNMENTS: {}", total_cty + total_nha);
+                println!("UNIQUE_TAGS: {}", all_tags.len());
+            }
+        }
+
+        // Check AssetList.xlsx for the 5 new assets
+        let asset_list_path = Path::new(r"D:\Staff_Kit\00_ExSource\AssetList.xlsx");
+        if asset_list_path.exists() {
+            let mut alb = open_workbook_auto(asset_list_path).expect("open AssetList");
+            for s in alb.sheet_names() {
+                if let Ok(r) = alb.worksheet_range(&s) {
+                    println!("AssetList sheet {} rows: {}", s, r.height());
+                    for (i, row) in r.rows().enumerate() {
+                        let row_str = row.iter().map(cell_to_string).collect::<Vec<_>>().join(" | ");
+                        if i < 5 || row_str.contains("586") || row_str.contains("571") || row_str.contains("641") || row_str.contains("690") || row_str.contains("568") {
+                            println!("AssetList row {}: {}", i, row_str);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_preview_latest_new_asigned_asset_on_isolated_db() {
+        let original_db = Path::new(r"D:\Staff_Kit\data\test_db\staff_kit.sqlite3");
+        assert!(original_db.exists(), "original test db must exist");
+
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("timestamp")
+            .as_nanos();
+        let temp_db = std::env::temp_dir().join(format!("staffkit-reconcile-new-asigned-{timestamp}.sqlite3"));
+        std::fs::copy(original_db, &temp_db).expect("copy test db to temp");
+        let conn = crate::db::open_encrypted_connection(&temp_db).expect("open temp db");
+
+        let file_path = r"D:\Staff_Kit\00_ExSource\New_Asigned_Asset.xlsx";
+
+        // Check if the 5 new assets exist in original DB
+        for tag in ["VNMON586", "VNMON571", "VNMON641", "VNMON690", "VNMON568"] {
+            let found: Option<(i64, String, String)> = conn.query_row(
+                "SELECT id, asset_code, status FROM assets WHERE asset_code = ? COLLATE NOCASE",
+                params![tag],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            ).optional().unwrap();
+            println!("CHECK DB ASSET {}: {:?}", tag, found);
+        }
+        let payload = HistoricalAssignmentImportInput {
+            file_path: file_path.to_string(),
+            sheet_name: None,
+            row_overrides: None,
+            row_actions: None,
+        };
+
+        let preview = preview_historical_assignment_import_conn(&conn, &payload).expect("preview must succeed");
+        println!("PREVIEW SUMMARY: {:?}", preview.summary);
+
+        let mut status_counts = std::collections::HashMap::new();
+        for item in &preview.items {
+            *status_counts.entry(format!("{:?}", item.status)).or_insert(0) += 1;
+        }
+        println!("STATUS COUNTS: {:?}", status_counts);
+
+        // Print items that are not AlreadyAssigned
+        for item in &preview.items {
+            if item.status == HistoricalAssignmentRowStatus::NewAssignment {
+                println!(
+                    "NEW ASSIGNMENT: row={}, staff='{}' ({:?}), asset='{}' ({:?}), location={}",
+                    item.row_number, item.raw_staff_id, item.canonical_employee_name, item.raw_asset_code, item.canonical_asset_code, item.location
+                );
+            }
+            if item.status != HistoricalAssignmentRowStatus::AlreadyAssigned
+                && item.status != HistoricalAssignmentRowStatus::NewAssignment
+                && item.status != HistoricalAssignmentRowStatus::LocationChanged
+            {
+                println!(
+                    "ITEM EXCEPTION: row={}, staff='{}' ({:?}), asset='{}' ({:?}), status={:?}, reason={:?}",
+                    item.row_number, item.raw_staff_id, item.canonical_employee_name, item.raw_asset_code, item.canonical_asset_code, item.status, item.status_reason
+                );
+            }
+        }
+
+        // Test preview with row_overrides for the 3 identity corrections
+        let overrides_payload = HistoricalAssignmentImportInput {
+            file_path: file_path.to_string(),
+            sheet_name: None,
+            row_overrides: Some(vec![
+                HistoricalAssignmentRowOverride {
+                    row_number: 66,
+                    raw_asset_code: "MON667".to_string(),
+                    corrected_staff_id: Some("ASWVN027".to_string()),
+                    corrected_asset_code: None,
+                },
+                HistoricalAssignmentRowOverride {
+                    row_number: 102,
+                    raw_asset_code: "MON738".to_string(),
+                    corrected_staff_id: Some("ASWVN910".to_string()),
+                    corrected_asset_code: None,
+                },
+                HistoricalAssignmentRowOverride {
+                    row_number: 154,
+                    raw_asset_code: "MON556".to_string(),
+                    corrected_staff_id: Some("ASWVN1323".to_string()),
+                    corrected_asset_code: None,
+                },
+            ]),
+            row_actions: None,
+        };
+
+        let preview_corrected = preview_historical_assignment_import_conn(&conn, &overrides_payload).expect("preview with overrides");
+        println!("PREVIEW WITH OVERRIDES SUMMARY: {:?}", preview_corrected.summary);
+
+        let _ = std::fs::remove_file(&temp_db);
+    }
 }
 
