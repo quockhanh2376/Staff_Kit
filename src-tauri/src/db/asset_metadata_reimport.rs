@@ -650,6 +650,11 @@ mod tests {
 
         assert_eq!(preview.summary.total_rows, 219, "Total rows must be 219");
         assert_eq!(preview.summary.monitor_rows, 209, "Monitor rows must be 209");
+        let monitor_tags: std::collections::HashSet<_> = preview.rows.iter()
+            .filter(|r| r.status != AssetMetadataRowStatus::OutOfScope)
+            .map(|r| &r.raw_asset_tag)
+            .collect();
+        assert_eq!(monitor_tags.len(), 209, "All 209 Monitor rows must have unique Asset Tags");
         assert_eq!(preview.summary.out_of_scope, 10, "OutOfScope must be 10 (6 Laptop + 4 H Phone)");
         assert_eq!(preview.summary.invalid, 0, "Invalid rows must be 0");
 
