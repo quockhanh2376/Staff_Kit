@@ -19,6 +19,19 @@
      - Add Cargo release profile flags (`lto = "thin"`, `codegen-units = 1`, `strip = true`).
   4. Verification: Full gate via `npm run check:quality`, unit tests, and Tauri tests. Zero regressions.
 
+## 2026-10-27 — Staff Kit Startup & Performance Optimization (End)
+- Author: Victor (Implementation), Qeen (Independent QA Validation).
+- Outcome: Completed full 3-phase optimization across window reliability, backend IPC/SQLCipher performance, and frontend chunk/lazy loading with zero regressions.
+- Commits:
+  - `e0cb1f9`: Phase 1 — Timing instrumentation (`Instant`, `performance.mark`), single deterministic window display via `requestAnimationFrame` on next paint, removal of Rust setup polling thread and duplicate frontend window show calls.
+  - `0820007`: Phase 2 — Converted 95 blocking DB/file IPC commands to `#[tauri::command(async)]`, connection reuse cache for SQLCipher (`DbConnection`), cached DB path with safe invalidation, and `PRAGMA user_version = 1` gated schema migrations.
+  - `70c51cf`: Phase 3 — Theme pre-render in `index.html` preventing black/white flashes, removed external Google Fonts import, code-split heavy views (`SettingsView`, `EmployeeView`, `BorrowAdminView`, modals) and dynamic `write-excel-file`, vendor chunking, on-demand view state queries, and release profile optimizations in `Cargo.toml`.
+- Results & Metrics:
+  - Vite JS entry chunk: reduced from 643.51 kB (173.54 kB gzip) to 99.90 kB (28.93 kB gzip) — an 84.5% reduction in initial JS size.
+  - IPC fan-out: eliminated post-login query storm; inactive views (Settings, Borrow, Assets) load data on demand.
+  - Database & Startup: connection derivation overhead reduced from ~50-100ms per command to cached connection derivation; migrations bypassed after version check.
+- Verification: Full quality gate passed (`npm run check:quality`: 0 lint errors/warnings, strict typecheck passed, vite build passed, cargo check passed); 312 frontend unit tests passed; 389 backend cargo tests passed. Zero business rule or data integrity regressions.
+
 ## 2026-10-27 — Staff Kit Final Verified Monitor Holder Reconciliation (Start)
 - Authorized by Zon/Cheki.
 - Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
