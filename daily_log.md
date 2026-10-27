@@ -1,5 +1,24 @@
 # Daily Log - 2026-10-27
 
+## 2026-10-27 — Staff Kit Startup & Performance Optimization (Start)
+- Authorized by Zon/Cheki.
+- Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Goal: Reduce startup and login time, eliminate invisible/black windows and UI freezing, without altering business behavior or database encryption.
+- Scope:
+  1. Phase 1 — Baseline & Window Reliability:
+     - Timing instrumentation: Rust `Instant` for setup, ensure_database_ready, init_database; frontend `performance.mark` for first paint.
+     - Single deterministic `show_main_window` after first paint (`requestAnimationFrame`), remove immediate show & polling supervisor thread from Rust `setup`, remove duplicate shows from frontend.
+  2. Phase 2 — Rust IPC & SQLCipher:
+     - Offload synchronous blocking DB/file IPC commands with `#[tauri::command(async)]`.
+     - Connection reuse / small connection cache in State & cached DB path (safe invalidation on custom path/restore/reset).
+     - Gate migrations with `PRAGMA user_version`; rebuild FTS triggers only when missing/needed; use single connection for `init_database`.
+  3. Phase 3 — Frontend First Paint:
+     - Apply theme to `html` before React render; remove external Google Fonts `@import` in favor of system fonts.
+     - Code splitting: `React.lazy` + `Suspense` for heavy modals and views; dynamic import for `write-excel-file` and `qrcode.react`; vendor chunking.
+     - Reduce post-login IPC fan-out (load active view data on demand).
+     - Add Cargo release profile flags (`lto = "thin"`, `codegen-units = 1`, `strip = true`).
+  4. Verification: Full gate via `npm run check:quality`, unit tests, and Tauri tests. Zero regressions.
+
 ## 2026-10-27 — Staff Kit Final Verified Monitor Holder Reconciliation (Start)
 - Authorized by Zon/Cheki.
 - Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).

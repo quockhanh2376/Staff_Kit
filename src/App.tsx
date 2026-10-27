@@ -71,7 +71,6 @@ function App() {
   useEffect(() => {
     const saved = (localStorage.getItem("staffkit-theme") as Theme | null) ?? "dark"
     setTheme(saved)
-    void staffApi.showMainWindow().catch(() => {})
   }, [setTheme])
 
   // ── Auth ─────────────────────────────────────────────────────────────────────
@@ -241,7 +240,6 @@ function App() {
         if (!disposed) setGlobalError(getUserErrorMessage(error))
       } finally {
         if (!disposed) setBootstrapping(false)
-        void staffApi.showMainWindow().catch(() => {})
       }
     })()
 

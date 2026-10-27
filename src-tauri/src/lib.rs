@@ -1134,34 +1134,32 @@ pub fn run() {
         .setup({
             let lan_token_store = lan_token_store.clone();
             move |app| {
+                let setup_start = std::time::Instant::now();
                 let lan_server = std::sync::Arc::new(lan_server::LanServerManager::new(
                     app.handle().clone(),
                     lan_token_store.clone(),
                 ));
                 app.manage(lan_server.clone());
+
                 // LAN is intentionally manual-only. The QR card owns the
                 // serialized start/stop lifecycle after the app is ready.
+                //
+                // Main window visibility follows docs/superpowers/specs/2026-09-12-tauri-startup-webview-paint-design.md:
+                // Frontend signals readiness via `show_main_window` after first paint (requestAnimationFrame).
+                // Bounded fallback: if frontend crashes before signaling, show window after 7s to avoid orphan process.
                 let app_handle = app.handle().clone();
-                // 1. Immediate show attempt upon setup completion
-                if let Some(window) = app_handle.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.unminimize();
-                    let _ = window.set_focus();
-                }
-                // 2. Persistent visibility supervisor until visible
                 std::thread::spawn(move || {
-                    for _ in 0..120 {
-                        if let Some(window) = app_handle.get_webview_window("main") {
+                    std::thread::sleep(std::time::Duration::from_secs(7));
+                    if let Some(window) = app_handle.get_webview_window("main") {
+                        if !window.is_visible().unwrap_or(false) {
                             let _ = window.show();
-                            if window.is_visible().unwrap_or(false) {
-                                let _ = window.unminimize();
-                                let _ = window.set_focus();
-                                break;
-                            }
+                            let _ = window.unminimize();
+                            let _ = window.set_focus();
                         }
-                        std::thread::sleep(std::time::Duration::from_millis(250));
                     }
                 });
+
+                eprintln!("[Staff Kit Perf] tauri setup took {:?}", setup_start.elapsed());
                 Ok(())
             }
         })

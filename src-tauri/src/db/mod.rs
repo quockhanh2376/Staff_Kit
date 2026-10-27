@@ -61,11 +61,13 @@ static DB_READY: OnceLock<Result<(), String>> = OnceLock::new();
 // ── Public entry-point functions ──────────────────────────────────────────────
 
 pub fn init_database(app: &AppHandle) -> Result<DatabaseStatus, String> {
+    let start = std::time::Instant::now();
     ensure_database_ready(app)?;
     let db_path = resolve_database_path(app)?;
     let conn = open_encrypted_connection(&db_path)?;
 
     let version = sqlite_version(&conn)?;
+    eprintln!("[Staff Kit Perf] init_database took {:?}", start.elapsed());
 
     Ok(DatabaseStatus {
         initialized: true,
@@ -190,6 +192,7 @@ pub(crate) fn open_encrypted_read_only_connection(
 
 pub(crate) fn ensure_database_ready(app: &AppHandle) -> Result<(), String> {
     let result = DB_READY.get_or_init(|| {
+        let start = std::time::Instant::now();
         let db_path = resolve_database_path(app)?;
 
         // Migrate existing unencrypted DB to encrypted before first use
@@ -197,6 +200,7 @@ pub(crate) fn ensure_database_ready(app: &AppHandle) -> Result<(), String> {
 
         let conn = open_encrypted_connection(&db_path)?;
         apply_migrations(&conn)?;
+        eprintln!("[Staff Kit Perf] ensure_database_ready took {:?}", start.elapsed());
         Ok(())
     });
 
