@@ -2284,7 +2284,6 @@ mod tests {
                     let name = cell_to_string(&row[1]);
                     let cty_str = cell_to_string(&row[2]);
                     let nha_str = cell_to_string(&row[3]);
-                    let _asset_tag_str = if row.len() > 4 { cell_to_string(&row[4]) } else { String::new() };
 
                     if staff_id.is_empty() && name.is_empty() && cty_str.is_empty() && nha_str.is_empty() {
                         continue;
@@ -2309,23 +2308,6 @@ mod tests {
                 println!("TOTAL_NHA: {}", total_nha);
                 println!("TOTAL_ASSIGNMENTS: {}", total_cty + total_nha);
                 println!("UNIQUE_TAGS: {}", all_tags.len());
-            }
-        }
-
-        // Check AssetList.xlsx for the 5 new assets
-        let asset_list_path = Path::new(r"D:\Staff_Kit\00_ExSource\AssetList.xlsx");
-        if asset_list_path.exists() {
-            let mut alb = open_workbook_auto(asset_list_path).expect("open AssetList");
-            for s in alb.sheet_names() {
-                if let Ok(r) = alb.worksheet_range(&s) {
-                    println!("AssetList sheet {} rows: {}", s, r.height());
-                    for (i, row) in r.rows().enumerate() {
-                        let row_str = row.iter().map(cell_to_string).collect::<Vec<_>>().join(" | ");
-                        if i < 5 || row_str.contains("586") || row_str.contains("571") || row_str.contains("641") || row_str.contains("690") || row_str.contains("568") {
-                            println!("AssetList row {}: {}", i, row_str);
-                        }
-                    }
-                }
             }
         }
     }
@@ -2395,19 +2377,19 @@ mod tests {
             sheet_name: None,
             row_overrides: Some(vec![
                 HistoricalAssignmentRowOverride {
-                    row_number: 66,
+                    row_number: 65,
                     raw_asset_code: "MON667".to_string(),
                     corrected_staff_id: Some("ASWVN027".to_string()),
                     corrected_asset_code: None,
                 },
                 HistoricalAssignmentRowOverride {
-                    row_number: 102,
+                    row_number: 101,
                     raw_asset_code: "MON738".to_string(),
                     corrected_staff_id: Some("ASWVN910".to_string()),
                     corrected_asset_code: None,
                 },
                 HistoricalAssignmentRowOverride {
-                    row_number: 154,
+                    row_number: 153,
                     raw_asset_code: "MON556".to_string(),
                     corrected_staff_id: Some("ASWVN1323".to_string()),
                     corrected_asset_code: None,
