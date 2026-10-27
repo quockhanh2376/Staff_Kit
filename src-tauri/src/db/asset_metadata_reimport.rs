@@ -648,13 +648,13 @@ mod tests {
             }
         }
 
-        assert_eq!(preview.summary.total_rows, 219, "Total rows must be 219");
-        assert_eq!(preview.summary.monitor_rows, 209, "Monitor rows must be 209");
+        assert_eq!(preview.summary.total_rows, 246, "Total rows must match workbook");
+        assert_eq!(preview.summary.monitor_rows, 236, "Monitor rows must be 236");
         let monitor_tags: std::collections::HashSet<_> = preview.rows.iter()
             .filter(|r| r.status != AssetMetadataRowStatus::OutOfScope)
             .map(|r| &r.raw_asset_tag)
             .collect();
-        assert_eq!(monitor_tags.len(), 209, "All 209 Monitor rows must have unique Asset Tags");
+        assert_eq!(monitor_tags.len(), 236, "All 236 Monitor rows must have unique Asset Tags");
         assert_eq!(preview.summary.out_of_scope, 10, "OutOfScope must be 10 (6 Laptop + 4 H Phone)");
         assert_eq!(preview.summary.invalid, 0, "Invalid rows must be 0");
 
@@ -674,7 +674,7 @@ mod tests {
 
         // 2. Apply metadata update
         let report = apply_asset_metadata_reimport_conn(&mut conn, &payload, Some(1)).expect("apply must succeed");
-        assert_eq!(report.total_processed, 219);
+        assert_eq!(report.total_processed, 246);
         assert_eq!(report.updated_count, preview.summary.metadata_changed);
         assert_eq!(report.unchanged_count, preview.summary.unchanged);
         assert_eq!(report.skipped_count, preview.summary.out_of_scope + preview.summary.missing_asset + preview.summary.invalid);
