@@ -23,6 +23,7 @@ type UseSettingsStateOptions = {
     isAuthenticated: boolean
     isAdminAccount: boolean
     reloadToken: number
+    enabled?: boolean
     setGlobalError: (msg: string | null) => void
     triggerReload: () => void
     /**
@@ -42,6 +43,7 @@ export function useSettingsState({
     isAuthenticated,
     isAdminAccount,
     reloadToken,
+    enabled = true,
     setGlobalError,
     triggerReload,
     onLogout,
@@ -214,7 +216,7 @@ export function useSettingsState({
     // Load backup settings + current DB custom path (admin-only commands).
     // Standard users must never trigger these admin-guarded calls.
     useEffect(() => {
-        if (!dbReady || !isAuthenticated || !isAdminAccount) return
+        if (!enabled || !dbReady || !isAuthenticated || !isAdminAccount) return
 
         let disposed = false
 
@@ -261,11 +263,12 @@ export function useSettingsState({
         })()
 
         return () => { disposed = true }
-    }, [dbReady, detectBorrowLanHost, isAuthenticated, isAdminAccount, reloadToken, setGlobalError])
+    }, [dbReady, detectBorrowLanHost, enabled, isAuthenticated, isAdminAccount, reloadToken, setGlobalError])
 
     useEffect(() => {
+        if (!enabled) return
         void loadBorrowPolicy()
-    }, [loadBorrowPolicy, reloadToken])
+    }, [enabled, loadBorrowPolicy, reloadToken])
 
     // Load history snapshots (admin-only command)
     const loadSnapshots = useCallback(async () => {
@@ -279,12 +282,12 @@ export function useSettingsState({
         } finally {
             setLoadingSnapshots(false)
         }
-    }, [dbReady, setGlobalError])
+    }, [dbReady, isAdminAccount, setGlobalError])
 
     useEffect(() => {
-        if (!dbReady || !isAuthenticated || !isAdminAccount) return
+        if (!enabled || !dbReady || !isAuthenticated || !isAdminAccount) return
         void loadSnapshots()
-    }, [dbReady, isAuthenticated, isAdminAccount, reloadToken, loadSnapshots])
+    }, [enabled, dbReady, isAuthenticated, isAdminAccount, reloadToken, loadSnapshots])
 
     const handleSaveBackupSettings = async () => {
         const nextPath = backupDirectoryInput.trim()

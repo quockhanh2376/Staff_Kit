@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react"
 import { ClipboardList, LoaderCircle, LogOut, Moon, Settings, Sun, Users } from "lucide-react"
 import { staffApi } from "./services/staff-api"
 import { onUnauthorized } from "./services/session"
@@ -26,17 +26,19 @@ import { useAssetDirectImportState } from "./features/assets/useAssetDirectImpor
 import { useAssetDashboardState } from "./features/assets/useAssetDashboardState"
 import { useSettingsState } from "./features/settings/useSettingsState"
 
-// Feature views
-import { DataImportPanel } from './features/import/DataImportPanel'
+// Auth views (eager for instant first paint)
 import { ForcedPasswordReset } from "./features/auth/ForcedPasswordReset"
 import { LoginPage } from "./features/auth/LoginPage"
-import { EmployeeView } from "./features/employees/EmployeeView"
-import { ColumnsDrawer } from "./features/columns/ColumnsDrawer"
-import { ImportDrawer } from "./features/import/ImportDrawer"
-import { TeamView } from "./features/teams/TeamView"
-import { BorrowAdminView } from "./features/borrow/BorrowAdminView"
-import { AssetImportWizard } from "./features/assets/AssetImportWizard"
-import { SettingsView } from "./features/settings/SettingsView"
+
+// Post-login views and drawers (lazy code-split to reduce login bundle)
+const DataImportPanel = lazy(() => import('./features/import/DataImportPanel').then(m => ({ default: m.DataImportPanel })))
+const EmployeeView = lazy(() => import("./features/employees/EmployeeView").then(m => ({ default: m.EmployeeView })))
+const ColumnsDrawer = lazy(() => import("./features/columns/ColumnsDrawer").then(m => ({ default: m.ColumnsDrawer })))
+const ImportDrawer = lazy(() => import("./features/import/ImportDrawer").then(m => ({ default: m.ImportDrawer })))
+const TeamView = lazy(() => import("./features/teams/TeamView").then(m => ({ default: m.TeamView })))
+const BorrowAdminView = lazy(() => import("./features/borrow/BorrowAdminView").then(m => ({ default: m.BorrowAdminView })))
+const AssetImportWizard = lazy(() => import("./features/assets/AssetImportWizard").then(m => ({ default: m.AssetImportWizard })))
+const SettingsView = lazy(() => import("./features/settings/SettingsView").then(m => ({ default: m.SettingsView })))
 
 function App() {
   // ── App-level state ──────────────────────────────────────────────────────────
@@ -188,6 +190,7 @@ function App() {
     isAuthenticated,
     isAdminAccount: auth.isAdminAccount,
     reloadToken,
+    enabled: activeView === "settings" || activeView === "borrow",
     setGlobalError,
     triggerReload,
     onLogout: resetAppStateOnLogout,
@@ -198,6 +201,7 @@ function App() {
     isAuthenticated,
     isAdminAccount: auth.isAdminAccount,
     reloadToken,
+    enabled: activeView === "borrow",
     setGlobalError,
     triggerReload,
   })
@@ -214,6 +218,7 @@ function App() {
     dbReady,
     isAuthenticated,
     reloadToken,
+    enabled: activeView === "settings",
     setGlobalError,
   })
 
@@ -492,45 +497,54 @@ function App() {
             </div>
           )}
 
-          {activeView === "employees" && (
-            <EmployeeView
-              employeeState={emp}
-              tableEdit={edit}
-              columnState={col}
-              canEditEmployeeTable={auth.canEditEmployeeTable}
-              canEditEmployeeComputerName={auth.canEditEmployeeComputerName}
-              isAdminAccount={auth.isAdminAccount}
-              setGlobalError={setGlobalError}
-              selectedGroupLabel={selectedGroupLabel}
-              selectedGroupTotal={selectedGroupTotal}
-            />
-          )}
+          <Suspense
+            fallback={
+              <div className="mx-4 mt-8 flex items-center justify-center gap-2 text-sm text-[var(--text-secondary)] md:mx-8">
+                <LoaderCircle className="h-5 w-5 animate-spin text-emerald-500" />
+                Loading...
+              </div>
+            }
+          >
+            {activeView === "employees" && (
+              <EmployeeView
+                employeeState={emp}
+                tableEdit={edit}
+                columnState={col}
+                canEditEmployeeTable={auth.canEditEmployeeTable}
+                canEditEmployeeComputerName={auth.canEditEmployeeComputerName}
+                isAdminAccount={auth.isAdminAccount}
+                setGlobalError={setGlobalError}
+                selectedGroupLabel={selectedGroupLabel}
+                selectedGroupTotal={selectedGroupTotal}
+              />
+            )}
 
-          {activeView === "teams" && <TeamView teamState={teamState} />}
+            {activeView === "teams" && <TeamView teamState={teamState} />}
 
-          {activeView === "borrow" && (
-            <BorrowAdminView
-              auth={auth}
-              borrow={borrow}
-              settings={settings}
-            />
-          )}
+            {activeView === "borrow" && (
+              <BorrowAdminView
+                auth={auth}
+                borrow={borrow}
+                settings={settings}
+              />
+            )}
 
-          {activeView === "settings" && (
-            <SettingsView
-              auth={auth}
-              activeUserScope={activeUserScope}
-              settings={settings}
-              assetImport={assetImport}
-              assetDashboard={assetDashboard}
-              importState={imp}
-              dataImport={dataImport}
-              employeeGroupCounts={emp.employeeGroupCounts}
-              dbStatus={dbStatus}
-              setGlobalError={setGlobalError}
-              triggerReload={triggerReload}
-            />
-          )}
+            {activeView === "settings" && (
+              <SettingsView
+                auth={auth}
+                activeUserScope={activeUserScope}
+                settings={settings}
+                assetImport={assetImport}
+                assetDashboard={assetDashboard}
+                importState={imp}
+                dataImport={dataImport}
+                employeeGroupCounts={emp.employeeGroupCounts}
+                dbStatus={dbStatus}
+                setGlobalError={setGlobalError}
+                triggerReload={triggerReload}
+              />
+            )}
+          </Suspense>
         </main>
       </div>
 
@@ -574,17 +588,19 @@ function App() {
       </nav>
 
       {/* Drawers */}
-      <ColumnsDrawer
-        columnState={col}
-        activeAccountName={activeAccountName}
-        activeUserScope={activeUserScope}
-        activeTableLabel={selectedGroupLabel}
-        triggerReload={triggerReload}
-      />
+      <Suspense fallback={null}>
+        <ColumnsDrawer
+          columnState={col}
+          activeAccountName={activeAccountName}
+          activeUserScope={activeUserScope}
+          activeTableLabel={selectedGroupLabel}
+          triggerReload={triggerReload}
+        />
 
-      <ImportDrawer importState={imp} />
-      <AssetImportWizard assetImport={assetImport} />
-      <DataImportPanel canImportData={auth.canImportData} dataImport={dataImport} />
+        <ImportDrawer importState={imp} />
+        <AssetImportWizard assetImport={assetImport} />
+        <DataImportPanel canImportData={auth.canImportData} dataImport={dataImport} />
+      </Suspense>
     </div>
   )
 }

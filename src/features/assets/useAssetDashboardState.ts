@@ -14,6 +14,7 @@ type UseAssetDashboardStateOptions = {
   dbReady: boolean
   isAuthenticated: boolean
   reloadToken: number
+  enabled?: boolean
   setGlobalError: (msg: string | null) => void
 }
 
@@ -23,6 +24,7 @@ export function useAssetDashboardState({
   dbReady,
   isAuthenticated,
   reloadToken,
+  enabled = true,
   setGlobalError,
 }: UseAssetDashboardStateOptions) {
   const [summary, setSummary] = useState<AssetDashboardSummary | null>(null)
@@ -92,12 +94,16 @@ export function useAssetDashboardState({
   }, [dbReady, isAuthenticated, setGlobalError])
 
   useEffect(() => {
-    void loadDashboard()
-  }, [loadDashboard, reloadToken])
+    if (enabled) {
+      void loadDashboard()
+    }
+  }, [enabled, loadDashboard, reloadToken])
 
   useEffect(() => {
-    void loadCategoryDetails()
-  }, [loadCategoryDetails, reloadToken])
+    if (enabled) {
+      void loadCategoryDetails()
+    }
+  }, [enabled, loadCategoryDetails, reloadToken])
 
   const refreshDashboard = useCallback(async () => {
     await Promise.all([

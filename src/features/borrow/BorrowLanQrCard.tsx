@@ -1,6 +1,7 @@
 import { CheckCircle2, Crosshair, LoaderCircle, RefreshCw, Save, Sparkles, XCircle } from "lucide-react"
-import { useRef, useState } from "react"
 import { QRCodeSVG } from "qrcode.react"
+import { useRef, useState } from "react"
+
 import type { SettingsState } from "../settings/useSettingsState"
 import { BorrowPolicyCard } from "./BorrowPolicyCard"
 

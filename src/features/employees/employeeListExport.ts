@@ -1,4 +1,3 @@
-import writeExcelFile from "write-excel-file/universal"
 import type { EmployeeRecord } from "../../types/staff"
 import type { TableEditDrafts } from "../../types/app"
 import { formatDate } from "../../lib/utils"
@@ -68,5 +67,6 @@ export async function downloadXlsx(options: ExportEmployeeOptions, filename: str
 }
 
 export async function createXlsxBlob(options: ExportEmployeeOptions): Promise<Blob> {
+    const { default: writeExcelFile } = await import("write-excel-file/universal")
     return writeExcelFile(buildXlsxSheetData(options)).toBlob()
 }

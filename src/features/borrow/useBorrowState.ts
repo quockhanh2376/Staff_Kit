@@ -12,6 +12,7 @@ type UseBorrowStateOptions = {
   isAuthenticated: boolean
   isAdminAccount: boolean
   reloadToken: number
+  enabled?: boolean
   setGlobalError: (msg: string | null) => void
   triggerReload: () => void
 }
@@ -27,6 +28,7 @@ export function useBorrowState({
   isAuthenticated,
   isAdminAccount,
   reloadToken,
+  enabled = true,
   setGlobalError,
   triggerReload,
 }: UseBorrowStateOptions) {
@@ -149,7 +151,7 @@ export function useBorrowState({
   )
 
   useEffect(() => {
-    if (!dbReady || !isAuthenticated || !isAdminAccount) {
+    if (!enabled || !dbReady || !isAuthenticated || !isAdminAccount) {
       pendingRequestsRef.current = []
       setPendingRequests([])
       setSelectedRequestId(null)
@@ -158,7 +160,7 @@ export function useBorrowState({
     }
 
     void refreshQueue(selectedRequestIdRef.current)
-  }, [dbReady, isAuthenticated, isAdminAccount, reloadToken, refreshQueue])
+  }, [enabled, dbReady, isAuthenticated, isAdminAccount, reloadToken, refreshQueue])
 
   const handleSelectRequest = async (requestId: number) => {
     selectedRequestIdRef.current = requestId
