@@ -2421,5 +2421,274 @@ mod tests {
 
         let _ = std::fs::remove_file(&temp_db);
     }
+
+    #[test]
+    fn test_reconcile_9_zon_verified_monitors() {
+        let original_db = Path::new(r"D:\Staff_Kit\data\test_db\staff_kit.sqlite3");
+        assert!(original_db.exists(), "original test db must exist");
+
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("timestamp")
+            .as_nanos();
+        let temp_db = std::env::temp_dir().join(format!("staffkit-reconcile-9-monitors-{timestamp}.sqlite3"));
+        std::fs::copy(original_db, &temp_db).expect("copy test db to temp");
+        let conn = crate::db::open_encrypted_connection(&temp_db).expect("open temp db");
+
+        let target_pairs = [
+            ("ASWVN1019", "MON586"),
+            ("ASWVN1059", "MON578"),
+            ("ASWVN1179", "MON571"),
+            ("ASWVN1271", "MON568"),
+            ("ASWVN1172", "MON610"),
+            ("ASWVN1198", "MON641"),
+            ("ASWVN974", "MON668"),
+            ("ASWVN1233", "MON530"),
+            ("ASWVN1320", "MON596"),
+        ];
+
+        // Also inspect workbook mappings
+        let file_path = Path::new(r"D:\Staff_Kit\00_ExSource\New_Asigned_Asset.xlsx");
+        let mut workbook_rows = Vec::new();
+        if file_path.exists() {
+            let mut wb = open_workbook_auto(file_path).expect("open workbook");
+            if let Ok(range) = wb.worksheet_range("New") {
+                for (r_idx, row) in range.rows().enumerate().skip(1) {
+                    let s_id = cell_to_string(&row[0]);
+                    let name = cell_to_string(&row[1]);
+                    let cty = cell_to_string(&row[2]);
+                    let nha = cell_to_string(&row[3]);
+                    let cty_codes = split_monitor_codes(&cty);
+                    let nha_codes = split_monitor_codes(&nha);
+                    for c in cty_codes {
+                        workbook_rows.push((r_idx + 1, s_id.clone(), name.clone(), canonicalize_monitor_code(&c), "Tại công ty".to_string()));
+                    }
+                    for c in nha_codes {
+                        workbook_rows.push((r_idx + 1, s_id.clone(), name.clone(), canonicalize_monitor_code(&c), "Tại nhà".to_string()));
+                    }
+                }
+            }
+        }
+
+        println!("==================== 9-ROW VERIFIED RECONCILIATION ====================");
+        for (target_staff_id, target_mon) in &target_pairs {
+            let canon_asset = canonicalize_monitor_code(target_mon);
+
+            // 1. Employee info
+            let target_emp: Option<(i64, String, String)> = conn.query_row(
+                "SELECT id, employee_id, full_name FROM employees WHERE UPPER(TRIM(employee_id)) = UPPER(TRIM(?))",
+                params![target_staff_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            ).optional().unwrap();
+
+            // 2. Asset info
+            let asset_info: Option<(i64, String, String, Option<String>)> = conn.query_row(
+                "SELECT id, asset_code, status, usage_location FROM assets WHERE asset_code = ? COLLATE NOCASE",
+                params![canon_asset],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            ).optional().unwrap();
+
+            // 3. Active loan info
+            let active_loan: Option<(i64, String, String, String)> = if let Some((aid, _, _, _)) = &asset_info {
+                conn.query_row(
+                    r#"
+                    SELECT al.id, e.employee_id, e.full_name, al.borrowed_at
+                    FROM asset_loans al
+                    JOIN employees e ON e.id = al.employee_id_fk
+                    WHERE al.asset_id = ? AND al.returned_at IS NULL
+                    "#,
+                    params![aid],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                ).optional().unwrap()
+            } else {
+                None
+            };
+
+            // 4. Workbook info
+            let wb_matches: Vec<_> = workbook_rows.iter().filter(|(_, _, _, c, _)| c == &canon_asset).collect();
+
+            println!("--- Asset: {} ({}) ---", target_mon, canon_asset);
+            println!("  Zon Target: {} ({:?}) at Tại CTY", target_staff_id, target_emp.as_ref().map(|e| &e.2));
+            println!("  DB Asset Status: {:?}", asset_info);
+            println!("  DB Active Loan: {:?}", active_loan);
+            println!("  Workbook Entry: {:?}", wb_matches);
+
+            let (classification, proposed_action) = match (&asset_info, &active_loan) {
+                (None, _) => (
+                    "Missing Asset in DB",
+                    "Stage New Asset + Assignment (auto-create as Monitor, assign to Zon target, pending_signature)",
+                ),
+                (Some((_, _, _, db_loc)), Some((_, holder_id, _holder_name, _))) => {
+                    if holder_id.eq_ignore_ascii_case(target_staff_id) {
+                        let norm_db = normalize_location(db_loc.as_deref().unwrap_or(""));
+                        let norm_target = normalize_location("Tại CTY");
+                        if norm_db == norm_target {
+                            ("Same Holder, Same Location", "Skip (already correctly assigned in DB)")
+                        } else {
+                            ("Same Holder, Different Location", "Explicit Location Update to 'Tại công ty'")
+                        }
+                    } else {
+                        (
+                            "Different Holder",
+                            "Stage Confirm Transfer (close old loan, create new verified loan with pending_signature)",
+                        )
+                    }
+                }
+                (Some((_, _, _status, _)), None) => {
+                    ("Asset in DB, No Active Loan", "Stage New Assignment (create loan for Zon target, pending_signature)")
+                }
+            };
+            println!("  Classification: {}", classification);
+            println!("  Proposed Action: {}", proposed_action);
+        }
+        println!("========================================================================");
+
+        let _ = std::fs::remove_file(&temp_db);
+    }
+
+    #[test]
+    fn test_apply_9_zon_verified_monitors_on_isolated_db() {
+        let original_db = Path::new(r"D:\Staff_Kit\data\test_db\staff_kit.sqlite3");
+        assert!(original_db.exists(), "original test db must exist");
+
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("timestamp")
+            .as_nanos();
+        let temp_db = std::env::temp_dir().join(format!("staffkit-apply-9-monitors-{timestamp}.sqlite3"));
+        std::fs::copy(original_db, &temp_db).expect("copy test db to temp");
+        let mut conn = crate::db::open_encrypted_connection(&temp_db).expect("open temp db");
+
+        let target_pairs = [
+            ("ASWVN1019", "MON586"),
+            ("ASWVN1059", "MON578"),
+            ("ASWVN1179", "MON571"),
+            ("ASWVN1271", "MON568"),
+            ("ASWVN1172", "MON610"),
+            ("ASWVN1198", "MON641"),
+            ("ASWVN974", "MON668"),
+            ("ASWVN1233", "MON530"),
+            ("ASWVN1320", "MON596"),
+        ];
+
+        let cat_id = {
+            let tx = conn.transaction().expect("tx");
+            let cid = get_or_create_monitor_category(&tx).expect("cat id");
+            tx.commit().expect("commit");
+            cid
+        };
+
+        let tx = conn.transaction().expect("transaction");
+
+        for (target_staff_id, target_mon) in &target_pairs {
+            let canon_asset = canonicalize_monitor_code(target_mon);
+
+            let (emp_row_id, emp_staff_id, emp_full_name): (i64, String, String) = tx.query_row(
+                "SELECT id, employee_id, full_name FROM employees WHERE UPPER(TRIM(employee_id)) = UPPER(TRIM(?))",
+                params![target_staff_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            ).expect("find target employee");
+
+            let asset_opt: Option<i64> = tx.query_row(
+                "SELECT id FROM assets WHERE asset_code = ? COLLATE NOCASE",
+                params![canon_asset],
+                |r| r.get(0),
+            ).optional().expect("query asset");
+
+            let asset_id = if let Some(aid) = asset_opt {
+                // If exists and has active loan, close old loan (Transfer)
+                let active_loan_id: Option<i64> = tx.query_row(
+                    "SELECT id FROM asset_loans WHERE asset_id = ? AND returned_at IS NULL",
+                    params![aid],
+                    |r| r.get(0),
+                ).optional().expect("query active loan");
+
+                if let Some(old_loan_id) = active_loan_id {
+                    tx.execute(
+                        "UPDATE asset_loans SET returned_at = datetime('now') WHERE id = ?",
+                        params![old_loan_id],
+                    ).expect("close old loan");
+                }
+
+                tx.execute(
+                    "UPDATE assets SET status = 'assigned', usage_location = 'Tại công ty', updated_at = datetime('now') WHERE id = ?",
+                    params![aid],
+                ).expect("update asset location");
+
+                aid
+            } else {
+                // Auto-create new asset
+                tx.execute(
+                    r#"
+                    INSERT INTO assets(asset_code, category_id, asset_type, display_name, display_name_short, usage_location, status, created_at, updated_at)
+                    VALUES(?, ?, 'Monitor', ?, ?, 'Tại công ty', 'assigned', datetime('now'), datetime('now'))
+                    "#,
+                    params![canon_asset, cat_id, target_mon, target_mon],
+                ).expect("insert asset");
+                tx.last_insert_rowid()
+            };
+
+            // Apply assignment
+            apply_single_historical_assignment_tx(
+                &tx,
+                asset_id,
+                &canon_asset,
+                emp_row_id,
+                &emp_staff_id,
+                &emp_full_name,
+                "Tại công ty",
+                Some(1),
+            ).expect("apply single assignment");
+        }
+
+        tx.commit().expect("commit");
+
+        // Verification assertions on isolated DB
+        for (target_staff_id, target_mon) in &target_pairs {
+            let canon_asset = canonicalize_monitor_code(target_mon);
+
+            // Exactly 1 active loan per asset
+            let active_loans: Vec<(i64, String, String)> = conn.prepare(
+                r#"
+                SELECT al.id, e.employee_id, al.borrowed_at
+                FROM asset_loans al
+                JOIN employees e ON e.id = al.employee_id_fk
+                JOIN assets a ON a.id = al.asset_id
+                WHERE a.asset_code = ? COLLATE NOCASE AND al.returned_at IS NULL
+                "#
+            ).unwrap().query_map(params![canon_asset], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap().map(|r| r.unwrap()).collect();
+
+            assert_eq!(active_loans.len(), 1, "Must have exactly 1 active loan for {}", canon_asset);
+            assert!(active_loans[0].1.eq_ignore_ascii_case(target_staff_id), "Holder must be {}", target_staff_id);
+
+            // Asset status is assigned
+            let (status, loc): (String, String) = conn.query_row(
+                "SELECT status, usage_location FROM assets WHERE asset_code = ? COLLATE NOCASE",
+                params![canon_asset],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            ).unwrap();
+            assert_eq!(status, "assigned");
+            assert_eq!(loc, "Tại công ty");
+        }
+
+        // Integrity check: zero duplicate active loans across the entire DB
+        let duplicates: i64 = conn.query_row(
+            r#"
+            SELECT count(*) FROM (
+                SELECT asset_id, count(*) as c
+                FROM asset_loans
+                WHERE returned_at IS NULL
+                GROUP BY asset_id
+                HAVING count(*) > 1
+            )
+            "#,
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(duplicates, 0, "Zero assets may have multiple active loans");
+
+        let _ = std::fs::remove_file(&temp_db);
+    }
 }
 

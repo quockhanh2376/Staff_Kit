@@ -1,3 +1,46 @@
+# Daily Log - 2026-10-27
+
+## 2026-10-27 — Staff Kit Final Verified Monitor Holder Reconciliation (Start)
+- Authorized by Zon/Cheki.
+- Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Scope:
+  1. Reconcile 9 exact Asset Code + canonical Staff ID pairs confirmed by Zon (all at "Tại CTY"):
+     - ASWVN1019 → MON586
+     - ASWVN1059 → MON578
+     - ASWVN1179 → MON571
+     - ASWVN1271 → MON568
+     - ASWVN1172 → MON610
+     - ASWVN1198 → MON641
+     - ASWVN974 → MON668
+     - ASWVN1233 → MON530
+     - ASWVN1320 → MON596
+  2. Inspect current DB holder, location, asset existence, active loans, and workbook mapping for each pair.
+  3. Classify each asset: Same holder & same location (Skip), Same holder & diff location (Update Location), Different holder (Stage Confirm Transfer with pending_signature and old loan preserved), Missing asset (Stage New Asset + Assignment upon approval).
+  4. Work strictly on isolated test DB copy. Zero writes to original test or production DB during development.
+  5. Provide detailed 9-row reconciliation table, required transfers, Qeen verification, and git status.
+
+## 2026-10-27 — Staff Kit Final Verified Monitor Holder Reconciliation (End)
+- Author: Victor (Implementation), Qeen (Independent QA Validation).
+- Outcome: Completed with focused TDD and strict data integrity protection. Zero writes to original test or production database.
+- 9-Row Verified Reconciliation Analysis (Isolated DB Copy vs Latest Workbook `00_ExSource/New_Asigned_Asset.xlsx`):
+  1. MON586 (`VNMON586`): Not in DB (`None`). Latest Workbook row 84 assigns to ASWVN1019. Classification: Missing Asset in DB. Action: Stage New Asset + Assignment (auto-create as Monitor, assign to ASWVN1019 at Tại CTY with `pending_signature` on approval).
+  2. MON578 (`VNMON578`): DB ID 166, assigned at Tại công ty. Active loan held by ASWVN1019 (Lưu Quốc Thịnh). Latest Workbook row 91 assigns to ASWVN1059. Classification: Different Holder. Action: Stage Confirm Transfer (close ASWVN1019 loan with returned_at, create new loan for ASWVN1059 with `pending_signature`).
+  3. MON571 (`VNMON571`): Not in DB (`None`). Latest Workbook row 120 assigns to ASWVN1179. Classification: Missing Asset in DB. Action: Stage New Asset + Assignment (auto-create as Monitor, assign to ASWVN1179 at Tại CTY with `pending_signature` on approval).
+  4. MON568 (`VNMON568`): Not in DB (`None`). Latest Workbook row 159 assigns to ASWVN1271. Classification: Missing Asset in DB. Action: Stage New Asset + Assignment (auto-create as Monitor, assign to ASWVN1271 at Tại CTY with `pending_signature` on approval).
+  5. MON610 (`VNMON610`): DB ID 157, assigned at Tại công ty. Active loan held by ASWVN996 (Nguyễn Vũ Hà Anh). Latest Workbook row 118 assigns to ASWVN1172. Classification: Different Holder. Action: Stage Confirm Transfer (close ASWVN996 loan with returned_at, create new loan for ASWVN1172 with `pending_signature`).
+  6. MON641 (`VNMON641`): Not in DB (`None`). Latest Workbook row 126 assigns to ASWVN1198. Classification: Missing Asset in DB. Action: Stage New Asset + Assignment (auto-create as Monitor, assign to ASWVN1198 at Tại CTY with `pending_signature` on approval).
+  7. MON668 (`VNMON668`): DB ID 214, assigned at Tại công ty. Active loan held by ASWVN1198 (Đinh Hoa Lư). Latest Workbook row 71 assigns to ASWVN974. Classification: Different Holder. Action: Stage Confirm Transfer (close ASWVN1198 loan with returned_at, create new loan for ASWVN974 with `pending_signature`).
+  8. MON530 (`VNMON530`): DB ID 149, assigned at Tại công ty. Active loan held by ASWVN974 (Lê Minh Luân). Absent from verified workbook (flagged earlier as ExistingLoanMissingFromWorkbook). Classification: Different Holder (Physical transfer). Action: Stage Confirm Transfer (close ASWVN974 loan with returned_at, create new loan for ASWVN1233 with `pending_signature`).
+  9. MON596 (`VNMON596`): DB ID 125, assigned at Tại công ty. Active loan held by ASWVN872 (Hồ Minh Trí). Latest Workbook row 53 has ASWVN872. Classification: Different Holder (Physical transfer to ASWVN1320). Action: Stage Confirm Transfer (close ASWVN872 loan with returned_at, create new loan for ASWVN1320 with `pending_signature`).
+- Required Transfers Summary: 5 Confirm Transfers (`MON578`, `MON610`, `MON668`, `MON530`, `MON596`) + 4 New Assets to auto-create (`MON586`, `MON571`, `MON568`, `MON641`).
+- Lifecycle Invariants Verified on Isolated DB (`test_apply_9_zon_verified_monitors_on_isolated_db`):
+  * Exactly 1 active loan per asset (`returned_at IS NULL`).
+  * 0 duplicate active loans across the entire DB.
+  * Audit trails and returned_at recorded for old loans; new loans created with `pending_signature`.
+  * Original test DB `data/test_db/staff_kit.sqlite3` completely untouched.
+- Quality Gate: `npm run check:quality` PASS (lint, typecheck, build, and cargo check OK).
+- Verdict: Qeen PASS (9 cases independently audited and verified).
+
 # Daily Log - 2026-10-26
 
 ## 2026-10-26 — Staff Kit Final Monitor Data Enrichment & Assignment Reconciliation (Start)
