@@ -10,6 +10,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+#[cfg(test)]
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use tauri::async_runtime::JoinHandle;
@@ -21,7 +22,7 @@ use crate::{db, lan_assets, lan_auth};
 #[cfg(test)]
 use std::path::PathBuf;
 
-type DbFactory = Arc<dyn Fn() -> Result<Connection, String> + Send + Sync>;
+type DbFactory = Arc<dyn Fn() -> Result<db::DbConnection, String> + Send + Sync>;
 type SettingsFactory = Arc<dyn Fn() -> Result<db::BorrowLanSettings, String> + Send + Sync>;
 
 // ── Rate-limit constants ────────────────────────────────────────────────────
@@ -917,7 +918,7 @@ impl LanServerTestHarness {
             let conn = Connection::open(&db_path)
                 .map_err(|error| format!("failed to open test sqlite file: {error}"))?;
             db::configure_connection(&conn)?;
-            Ok(conn)
+            Ok(conn.into())
         })
     }
 }

@@ -55,18 +55,85 @@ pub use import::*;
 pub use import_detector::*;
 pub use team::*;
 
-// ── One-time init guard ───────────────────────────────────────────────────────
-static DB_READY: OnceLock<Result<(), String>> = OnceLock::new();
+// ── Connection Pool & Invalidation Infrastructure ───────────────────────────
+use std::ops::{Deref, DerefMut};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
+
+static POOL_GENERATION: AtomicU64 = AtomicU64::new(1);
+static IDLE_CONNECTIONS: Mutex<Vec<(u64, Connection)>> = Mutex::new(Vec::new());
+static CACHED_DB_PATH: Mutex<Option<(u64, PathBuf)>> = Mutex::new(None);
+static DB_READY: OnceLock<Result<(PathBuf, String), String>> = OnceLock::new();
+
+pub enum DbConnection {
+    Pooled {
+        conn: Option<Connection>,
+        generation: u64,
+    },
+    Owned(Connection),
+}
+
+impl Deref for DbConnection {
+    type Target = Connection;
+    fn deref(&self) -> &Self::Target {
+        match self {
+            DbConnection::Pooled { conn, .. } => {
+                conn.as_ref().expect("pooled connection must be active")
+            }
+            DbConnection::Owned(conn) => conn,
+        }
+    }
+}
+
+impl DerefMut for DbConnection {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            DbConnection::Pooled { conn, .. } => {
+                conn.as_mut().expect("pooled connection must be active")
+            }
+            DbConnection::Owned(conn) => conn,
+        }
+    }
+}
+
+impl Drop for DbConnection {
+    fn drop(&mut self) {
+        if let DbConnection::Pooled { conn, generation } = self {
+            if let Some(c) = conn.take() {
+                let current_gen = POOL_GENERATION.load(Ordering::Acquire);
+                if *generation == current_gen {
+                    if let Ok(mut pool) = IDLE_CONNECTIONS.lock() {
+                        if pool.len() < 4 {
+                            pool.push((*generation, c));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl From<Connection> for DbConnection {
+    fn from(conn: Connection) -> Self {
+        DbConnection::Owned(conn)
+    }
+}
+
+pub(crate) fn invalidate_db_cache() {
+    POOL_GENERATION.fetch_add(1, Ordering::SeqCst);
+    if let Ok(mut pool) = IDLE_CONNECTIONS.lock() {
+        pool.clear();
+    }
+    if let Ok(mut cache) = CACHED_DB_PATH.lock() {
+        *cache = None;
+    }
+}
 
 // ── Public entry-point functions ──────────────────────────────────────────────
 
 pub fn init_database(app: &AppHandle) -> Result<DatabaseStatus, String> {
     let start = std::time::Instant::now();
-    ensure_database_ready(app)?;
-    let db_path = resolve_database_path(app)?;
-    let conn = open_encrypted_connection(&db_path)?;
-
-    let version = sqlite_version(&conn)?;
+    let (db_path, version) = ensure_database_ready(app)?;
     eprintln!("[Staff Kit Perf] init_database took {:?}", start.elapsed());
 
     Ok(DatabaseStatus {
@@ -88,7 +155,7 @@ pub fn database_status(app: &AppHandle) -> Result<DatabaseStatus, String> {
         });
     }
 
-    let conn = open_encrypted_connection(&db_path)?;
+    let conn = open_runtime_connection(app)?;
     let version = sqlite_version(&conn)?;
 
     Ok(DatabaseStatus {
@@ -138,15 +205,33 @@ pub fn reset_all_data(app: &AppHandle) -> Result<bool, String> {
     tx.commit()
         .map_err(|err| format!("failed to commit reset transaction: {err}"))?;
 
+    invalidate_db_cache();
+
     Ok(true)
 }
 
 // ── Core connection infrastructure (pub(crate) for use by sub-modules) ────────
 
-pub(crate) fn open_runtime_connection(app: &AppHandle) -> Result<Connection, String> {
-    ensure_database_ready(app)?;
+pub(crate) fn open_runtime_connection(app: &AppHandle) -> Result<DbConnection, String> {
+    let _ = ensure_database_ready(app)?;
+    let current_gen = POOL_GENERATION.load(Ordering::Acquire);
+    if let Ok(mut pool) = IDLE_CONNECTIONS.lock() {
+        while let Some((gen, conn)) = pool.pop() {
+            if gen == current_gen {
+                return Ok(DbConnection::Pooled {
+                    conn: Some(conn),
+                    generation: current_gen,
+                });
+            }
+        }
+    }
+
     let db_path = resolve_database_path(app)?;
-    open_encrypted_connection(&db_path)
+    let conn = open_encrypted_connection(&db_path)?;
+    Ok(DbConnection::Pooled {
+        conn: Some(conn),
+        generation: current_gen,
+    })
 }
 
 pub(crate) fn resolve_database_path_read_only(app: &AppHandle) -> Result<PathBuf, String> {
@@ -190,7 +275,7 @@ pub(crate) fn open_encrypted_read_only_connection(
     Ok(conn)
 }
 
-pub(crate) fn ensure_database_ready(app: &AppHandle) -> Result<(), String> {
+pub(crate) fn ensure_database_ready(app: &AppHandle) -> Result<(PathBuf, String), String> {
     let result = DB_READY.get_or_init(|| {
         let start = std::time::Instant::now();
         let db_path = resolve_database_path(app)?;
@@ -200,26 +285,54 @@ pub(crate) fn ensure_database_ready(app: &AppHandle) -> Result<(), String> {
 
         let conn = open_encrypted_connection(&db_path)?;
         apply_migrations(&conn)?;
+        let version = sqlite_version(&conn)?;
+
+        // Seed the idle connection pool with this already-opened connection
+        let current_gen = POOL_GENERATION.load(Ordering::Acquire);
+        if let Ok(mut pool) = IDLE_CONNECTIONS.lock() {
+            pool.push((current_gen, conn));
+        }
+
         eprintln!("[Staff Kit Perf] ensure_database_ready took {:?}", start.elapsed());
-        Ok(())
+        Ok((db_path, version))
     });
 
     match result {
-        Ok(()) => Ok(()),
+        Ok((path, ver)) => Ok((path.clone(), ver.clone())),
         Err(err) => Err(err.clone()),
     }
 }
 
 pub(crate) fn resolve_database_path(app: &AppHandle) -> Result<PathBuf, String> {
-    // Check for custom path stored in db_settings.json (not the DB itself)
-    if let Ok(Some(custom_folder)) = backup::get_db_custom_path(app) {
-        let custom_dir = PathBuf::from(&custom_folder);
-        if custom_dir.exists() || fs::create_dir_all(&custom_dir).is_ok() {
-            return Ok(custom_dir.join(DB_FILE_NAME));
+    let current_gen = POOL_GENERATION.load(Ordering::Acquire);
+    if let Ok(cache) = CACHED_DB_PATH.lock() {
+        if let Some((gen, ref path)) = *cache {
+            if gen == current_gen {
+                return Ok(path.clone());
+            }
         }
     }
 
-    // Default: app local data dir
+    // Check for custom path stored in db_settings.json (not the DB itself)
+    let path = if let Ok(Some(custom_folder)) = backup::get_db_custom_path(app) {
+        let custom_dir = PathBuf::from(&custom_folder);
+        if custom_dir.exists() || fs::create_dir_all(&custom_dir).is_ok() {
+            custom_dir.join(DB_FILE_NAME)
+        } else {
+            resolve_default_database_path(app)?
+        }
+    } else {
+        resolve_default_database_path(app)?
+    };
+
+    if let Ok(mut cache) = CACHED_DB_PATH.lock() {
+        *cache = Some((current_gen, path.clone()));
+    }
+
+    Ok(path)
+}
+
+fn resolve_default_database_path(app: &AppHandle) -> Result<PathBuf, String> {
     let mut data_dir = app
         .path()
         .app_local_data_dir()
@@ -331,22 +444,36 @@ fn sqlite_version(conn: &Connection) -> Result<String, String> {
         .map_err(|err| format!("failed to query sqlite version: {err}"))
 }
 
-pub(crate) fn apply_migrations(conn: &Connection) -> Result<(), String> {
-    conn.execute_batch(BASE_SCHEMA_SQL)
-        .map_err(|err| format!("failed to initialize schema: {err}"))?;
+const SCHEMA_USER_VERSION: u32 = 1;
 
-    ensure_employee_columns(conn)?;
-    ensure_team_columns(conn)?;
-    ensure_local_account_columns(conn)?;
-    ensure_asset_model_tables(conn)?;
-    ensure_borrow_request_columns(conn)?;
-    ensure_phase_c_borrow_schema(conn)?;
-    ensure_handle_with_care_schema(conn)?;
-    auth::ensure_local_accounts_seed(conn)?;
-    normalize_staff_group_values(conn)?;
-    normalize_legacy_dynamic_field_aliases(conn)?;
-    normalize_eml_security_tool_values(conn)?;
-    ensure_search_index(conn)?;
+pub(crate) fn apply_migrations(conn: &Connection) -> Result<(), String> {
+    let current_version: u32 = conn
+        .query_row("PRAGMA user_version;", [], |r| r.get(0))
+        .unwrap_or(0);
+
+    if current_version < SCHEMA_USER_VERSION {
+        conn.execute_batch(BASE_SCHEMA_SQL)
+            .map_err(|err| format!("failed to initialize schema: {err}"))?;
+
+        ensure_employee_columns(conn)?;
+        ensure_team_columns(conn)?;
+        ensure_local_account_columns(conn)?;
+        ensure_asset_model_tables(conn)?;
+        ensure_borrow_request_columns(conn)?;
+        ensure_phase_c_borrow_schema(conn)?;
+        ensure_handle_with_care_schema(conn)?;
+        auth::ensure_local_accounts_seed(conn)?;
+        normalize_staff_group_values(conn)?;
+        normalize_legacy_dynamic_field_aliases(conn)?;
+        normalize_eml_security_tool_values(conn)?;
+        ensure_search_index(conn)?;
+
+        conn.execute_batch(&format!("PRAGMA user_version = {SCHEMA_USER_VERSION};"))
+            .map_err(|err| format!("failed to set PRAGMA user_version: {err}"))?;
+    } else {
+        // Fast path: schema already up to date, only ensure search index triggers exist
+        ensure_search_index(conn)?;
+    }
 
     Ok(())
 }
@@ -1394,58 +1521,68 @@ fn ensure_search_index(conn: &Connection) -> Result<(), String> {
         None => true,
     };
 
-    conn.execute_batch(
-        r#"
-        DROP TRIGGER IF EXISTS trg_employees_ai;
-        DROP TRIGGER IF EXISTS trg_employees_au;
-        DROP TRIGGER IF EXISTS trg_employees_ad;
-        DROP TRIGGER IF EXISTS trg_teams_au;
-        "#,
-    )
-    .map_err(|err| format!("failed to refresh FTS triggers: {err}"))?;
-
-    if needs_rebuild {
-        conn.execute_batch("DROP TABLE IF EXISTS employees_fts;")
-            .map_err(|err| format!("failed to drop outdated FTS table: {err}"))?;
-
-        conn.execute_batch(FTS_TABLE_SQL)
-            .map_err(|err| format!("failed to create FTS table: {err}"))?;
-
-        conn.execute(
-            r#"
-            INSERT INTO employees_fts(
-              rowid,
-              employee_id,
-              full_name,
-              nick_name,
-              email,
-              project,
-              job_title,
-              notes,
-              team_name,
-              computername
-            )
-            SELECT
-              e.id,
-              e.employee_id,
-              e.full_name,
-              COALESCE(e.nick_name, ''),
-              COALESCE(e.email, ''),
-              COALESCE(e.project, ''),
-              COALESCE(e.job_title, ''),
-              COALESCE(e.notes, ''),
-              COALESCE(t.name, ''),
-              COALESCE(e.computername, '')
-            FROM employees e
-            LEFT JOIN teams t ON t.id = e.team_id
-            "#,
+    let triggers_count: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_employees_ai', 'trg_employees_au', 'trg_employees_ad', 'trg_teams_au')",
             [],
+            |row| row.get(0),
         )
-        .map_err(|err| format!("failed to backfill FTS table: {err}"))?;
-    }
+        .unwrap_or(0);
 
-    conn.execute_batch(FTS_TRIGGERS_SQL)
-        .map_err(|err| format!("failed to create FTS triggers: {err}"))?;
+    if needs_rebuild || triggers_count < 4 {
+        conn.execute_batch(
+            r#"
+            DROP TRIGGER IF EXISTS trg_employees_ai;
+            DROP TRIGGER IF EXISTS trg_employees_au;
+            DROP TRIGGER IF EXISTS trg_employees_ad;
+            DROP TRIGGER IF EXISTS trg_teams_au;
+            "#,
+        )
+        .map_err(|err| format!("failed to refresh FTS triggers: {err}"))?;
+
+        if needs_rebuild {
+            conn.execute_batch("DROP TABLE IF EXISTS employees_fts;")
+                .map_err(|err| format!("failed to drop outdated FTS table: {err}"))?;
+
+            conn.execute_batch(FTS_TABLE_SQL)
+                .map_err(|err| format!("failed to create FTS table: {err}"))?;
+
+            conn.execute(
+                r#"
+                INSERT INTO employees_fts(
+                  rowid,
+                  employee_id,
+                  full_name,
+                  nick_name,
+                  email,
+                  project,
+                  job_title,
+                  notes,
+                  team_name,
+                  computername
+                )
+                SELECT
+                  e.id,
+                  e.employee_id,
+                  e.full_name,
+                  COALESCE(e.nick_name, ''),
+                  COALESCE(e.email, ''),
+                  COALESCE(e.project, ''),
+                  COALESCE(e.job_title, ''),
+                  COALESCE(e.notes, ''),
+                  COALESCE(t.name, ''),
+                  COALESCE(e.computername, '')
+                FROM employees e
+                LEFT JOIN teams t ON t.id = e.team_id
+                "#,
+                [],
+            )
+            .map_err(|err| format!("failed to backfill FTS table: {err}"))?;
+        }
+
+        conn.execute_batch(FTS_TRIGGERS_SQL)
+            .map_err(|err| format!("failed to create FTS triggers: {err}"))?;
+    }
 
     Ok(())
 }
@@ -2595,6 +2732,42 @@ mod tests {
 
         // Idempotent reapplication must also succeed
         apply_migrations(&conn).expect("reapply migrations idempotently");
+    }
+
+    #[test]
+    fn test_user_version_migration_lifecycle() {
+        let conn = Connection::open_in_memory().expect("open in-memory db");
+        let initial_version: u32 = conn
+            .query_row("PRAGMA user_version;", [], |r| r.get(0))
+            .expect("read initial user_version");
+        assert_eq!(initial_version, 0, "fresh database starts at user_version 0");
+
+        apply_migrations(&conn).expect("first migrations run");
+
+        let migrated_version: u32 = conn
+            .query_row("PRAGMA user_version;", [], |r| r.get(0))
+            .expect("read migrated user_version");
+        assert_eq!(migrated_version, SCHEMA_USER_VERSION);
+
+        // Fast path idempotency check
+        apply_migrations(&conn).expect("fast path migration run");
+        let post_version: u32 = conn
+            .query_row("PRAGMA user_version;", [], |r| r.get(0))
+            .expect("read post user_version");
+        assert_eq!(post_version, SCHEMA_USER_VERSION);
+    }
+
+    #[test]
+    fn test_cache_invalidation_increments_generation_and_clears() {
+        let initial_gen = POOL_GENERATION.load(Ordering::Acquire);
+        invalidate_db_cache();
+        let next_gen = POOL_GENERATION.load(Ordering::Acquire);
+        assert!(next_gen > initial_gen, "generation must increment");
+
+        let pool = IDLE_CONNECTIONS.lock().unwrap();
+        assert!(pool.is_empty(), "idle connections must be cleared on invalidate");
+        let path_cache = CACHED_DB_PATH.lock().unwrap();
+        assert!(path_cache.is_none(), "path cache must be None on invalidate");
     }
 }
 

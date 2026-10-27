@@ -115,7 +115,9 @@ pub fn get_db_custom_path(app: &AppHandle) -> Result<Option<String>, String> {
 pub fn set_db_custom_path(app: &AppHandle, new_path: Option<&str>) -> Result<(), String> {
     let mut settings = read_db_settings(app)?;
     settings.custom_path = new_path.map(|p| p.to_string());
-    write_db_settings(app, &settings)
+    let res = write_db_settings(app, &settings);
+    super::invalidate_db_cache();
+    res
 }
 
 /// Change DB to a new location, with two modes:
@@ -150,6 +152,7 @@ pub fn move_database_to(app: &AppHandle, target_folder: &str) -> Result<String, 
         })?;
 
         set_db_custom_path(app, Some(target_folder))?;
+        super::invalidate_db_cache();
 
         Ok(format!("LINKED:{}", target_path.to_string_lossy()))
     } else {
@@ -162,11 +165,13 @@ pub fn move_database_to(app: &AppHandle, target_folder: &str) -> Result<String, 
             conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
                 .map_err(|err| format!("failed to checkpoint WAL before move: {err}"))?;
         }
+        super::invalidate_db_cache();
 
         fs::copy(&current_path, &target_path)
             .map_err(|err| format!("failed to copy database to new location: {err}"))?;
 
         set_db_custom_path(app, Some(target_folder))?;
+        super::invalidate_db_cache();
 
         Ok(format!("COPIED:{}", target_path.to_string_lossy()))
     }
@@ -285,8 +290,11 @@ pub fn restore_history_snapshot(app: &AppHandle, filename: &str) -> Result<(), S
     conn.execute_batch("PRAGMA wal_checkpoint(FULL);")
         .map_err(|err| format!("failed to checkpoint WAL before restore: {err}"))?;
     drop(conn);
+    super::invalidate_db_cache();
 
-    replace_database_from_history_snapshot(&snapshot_path, &db_path)
+    let res = replace_database_from_history_snapshot(&snapshot_path, &db_path);
+    super::invalidate_db_cache();
+    res
 }
 
 /// Restores the database from any arbitrary backup file chosen by the user.
@@ -318,7 +326,10 @@ pub fn restore_database_from_file(app: &AppHandle, source_path: &str) -> Result<
 
     // Open the active DB and fully checkpoint WAL so all pages are in the main file
     let db_path = super::resolve_database_path(app)?;
-    restore_database_file(source, &db_path)
+    super::invalidate_db_cache();
+    let res = restore_database_file(source, &db_path);
+    super::invalidate_db_cache();
+    res
 }
 
 fn migrate_restored_database(path: &Path) -> Result<(), String> {

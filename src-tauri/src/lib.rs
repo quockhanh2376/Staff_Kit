@@ -22,7 +22,7 @@ fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn write_export_file(
     session_store: tauri::State<'_, auth_session::SessionStore>,
     session_token: String,
@@ -34,19 +34,19 @@ fn write_export_file(
         .map_err(|error| format!("failed to write export file '{}': {error}", path))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn init_database(app: tauri::AppHandle) -> Result<db::DatabaseStatus, String> {
     db::init_database(&app)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_database_status(app: tauri::AppHandle) -> Result<db::DatabaseStatus, String> {
     db::database_status(&app)
 }
 
 // ── Backup / settings / history (admin) ──────────────────────────────────────
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_backup_settings(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -56,7 +56,7 @@ fn get_backup_settings(
     db::get_backup_settings(&app)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn update_backup_settings(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -67,7 +67,7 @@ fn update_backup_settings(
     db::update_backup_settings(&app, payload)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn backup_database_now(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -79,7 +79,7 @@ fn backup_database_now(
 
 // ── Employee reads (authenticated) ───────────────────────────────────────────
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_employees(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -90,7 +90,7 @@ fn list_employees(
     db::list_employees(&app, filters)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn search_employees(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -101,7 +101,7 @@ fn search_employees(
     db::search_employees(&app, filters)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_employee_assigned_assets(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -114,7 +114,7 @@ fn get_employee_assigned_assets(
 
 // ── Employee asset seed (admin; actor from SessionContext) ───────────────────
 
-#[tauri::command]
+#[tauri::command(async)]
 fn preview_employee_asset_seed(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -125,7 +125,7 @@ fn preview_employee_asset_seed(
     db::preview_employee_asset_seed_with_actor(&app, ctx, payload)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn import_employee_asset_seed(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -136,7 +136,7 @@ fn import_employee_asset_seed(
     db::import_employee_asset_seed_with_actor(&app, ctx, payload)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_employee_group_counts(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -148,7 +148,7 @@ fn list_employee_group_counts(
 
 // ── Local accounts (super_admin CRUD; login/hints/logout public) ─────────────
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_local_accounts(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -158,7 +158,7 @@ fn list_local_accounts(
     db::list_local_accounts(&app)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn create_local_account(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -169,7 +169,7 @@ fn create_local_account(
     db::create_local_account(&app, payload)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn update_local_account(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -185,7 +185,7 @@ fn update_local_account(
     Ok(result)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn delete_local_account(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -202,7 +202,7 @@ fn delete_local_account(
 
 // ── Login / logout / hints (public) ──────────────────────────────────────────
 
-#[tauri::command]
+#[tauri::command(async)]
 fn login_local_account(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -211,7 +211,7 @@ fn login_local_account(
     db::login_local_account(&app, &session_store, payload)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn logout_local_account(
     session_store: tauri::State<'_, auth_session::SessionStore>,
     session_token: String,
@@ -220,12 +220,12 @@ fn logout_local_account(
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_login_account_hints(app: tauri::AppHandle) -> Result<Vec<db::LoginAccountHint>, String> {
     db::list_login_account_hints(&app)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn change_local_account_password(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -241,7 +241,7 @@ fn change_local_account_password(
     Ok(result)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn admin_reset_local_account_password(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -257,7 +257,7 @@ fn admin_reset_local_account_password(
     Ok(result)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn forgot_local_account_password(
     app: tauri::AppHandle,
     payload: db::LocalForgotPasswordInput,
@@ -267,7 +267,7 @@ fn forgot_local_account_password(
 
 // ── Employee columns (read authenticated, mutate admin) ──────────────────────
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_employee_columns(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -277,7 +277,7 @@ fn list_employee_columns(
     db::list_employee_columns(&app)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn upsert_employee_column(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -288,7 +288,7 @@ fn upsert_employee_column(
     db::upsert_employee_column(&app, payload)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn delete_employee_column(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -301,7 +301,7 @@ fn delete_employee_column(
 
 // ── Employee mutations (authenticated) ───────────────────────────────────────
 
-#[tauri::command]
+#[tauri::command(async)]
 fn create_employee(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -312,7 +312,7 @@ fn create_employee(
     db::create_employee(&app, payload)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn update_employee(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -324,7 +324,7 @@ fn update_employee(
     db::update_employee(&app, id, payload)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn move_employees_group(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -335,7 +335,7 @@ fn move_employees_group(
     db::move_employees_group(&app, payload)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn delete_employee(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -348,7 +348,7 @@ fn delete_employee(
 
 // ── Teams (authenticated) ────────────────────────────────────────────────────
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_teams(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -358,7 +358,7 @@ fn list_teams(
     db::list_teams(&app)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn upsert_team(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -369,7 +369,7 @@ fn upsert_team(
     db::upsert_team(&app, payload)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn delete_team(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -382,7 +382,7 @@ fn delete_team(
 
 // ── Data reset / restore / move DB (super_admin) ─────────────────────────────
 
-#[tauri::command]
+#[tauri::command(async)]
 fn reset_all_data(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -398,7 +398,7 @@ fn reset_all_data(
 
 // ── Excel import (admin) ─────────────────────────────────────────────────────
 
-#[tauri::command]
+#[tauri::command(async)]
 fn import_excel(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -411,7 +411,7 @@ fn import_excel(
     db::import_excel(&app, payload)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn preview_import_excel(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -424,7 +424,7 @@ fn preview_import_excel(
 
 // ── Remote EE Sync (admin) ────────────────────────────────────────────────────
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_remote_ee_sync_settings(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -434,7 +434,7 @@ fn get_remote_ee_sync_settings(
     db::mssql_import::get_remote_ee_sync_settings(&app)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn save_remote_ee_sync_settings(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -465,7 +465,7 @@ fn save_remote_ee_sync_settings(
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn change_remote_ee_sync_approved_account(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -482,7 +482,7 @@ fn change_remote_ee_sync_approved_account(
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn remove_remote_ee_sync_password(
     session_store: tauri::State<'_, auth_session::SessionStore>,
     session_token: String,
@@ -522,7 +522,7 @@ async fn apply_employee_list_mssql_sync(
     db::mssql_import::apply_employee_list_sync(&app, &preview_id).await
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn inspect_import_columns(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -533,7 +533,7 @@ fn inspect_import_columns(
     db::inspect_import_columns(&app, payload)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn detect_import_file(
     session_store: tauri::State<'_, auth_session::SessionStore>,
     session_token: String,
@@ -545,7 +545,7 @@ fn detect_import_file(
 
 // ── History snapshots (admin read, super_admin restore) ──────────────────────
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_history_snapshots(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -555,7 +555,7 @@ fn list_history_snapshots(
     db::list_history_snapshots(&app)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn create_history_snapshot_cmd(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -566,7 +566,7 @@ fn create_history_snapshot_cmd(
     db::create_history_snapshot(&app, &label)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn restore_history_snapshot(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -580,7 +580,7 @@ fn restore_history_snapshot(
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn move_database_to(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -594,7 +594,7 @@ fn move_database_to(
     Ok(result)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn restore_database_from_file(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -608,7 +608,7 @@ fn restore_database_from_file(
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_db_custom_path(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -620,7 +620,7 @@ fn get_db_custom_path(
 
 // ── Borrow LAN settings (admin) ──────────────────────────────────────────────
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_borrow_lan_settings(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -652,7 +652,7 @@ struct BorrowLanTokenStatus {
     ready: bool,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_borrow_lan_token_status(
     session_store: tauri::State<'_, auth_session::SessionStore>,
     lan_token_store: tauri::State<'_, std::sync::Arc<lan_auth::LanTokenStore>>,
@@ -666,7 +666,7 @@ fn get_borrow_lan_token_status(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn issue_borrow_lan_token(
     session_store: tauri::State<'_, auth_session::SessionStore>,
     lan_token_store: tauri::State<'_, std::sync::Arc<lan_auth::LanTokenStore>>,
@@ -678,7 +678,7 @@ fn issue_borrow_lan_token(
     Ok(lan_token_store.issue())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn revoke_borrow_lan_token(
     session_store: tauri::State<'_, auth_session::SessionStore>,
     lan_token_store: tauri::State<'_, std::sync::Arc<lan_auth::LanTokenStore>>,
@@ -711,7 +711,7 @@ async fn stop_borrow_lan_server(
     lan_server.status()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_borrow_lan_status(
     session_store: tauri::State<'_, auth_session::SessionStore>,
     lan_server: tauri::State<'_, std::sync::Arc<lan_server::LanServerManager>>,
@@ -721,7 +721,7 @@ fn get_borrow_lan_status(
     lan_server.status()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn detect_borrow_lan_host() -> Result<Option<String>, String> {
     db::detect_borrow_lan_host()
 }
@@ -741,7 +741,7 @@ async fn probe_lan_server(port: u16) -> bool {
 
 // ── Asset import (admin; row edits authenticated) ────────────────────────────
 
-#[tauri::command]
+#[tauri::command(async)]
 fn inspect_asset_import_file(
     session_store: tauri::State<'_, auth_session::SessionStore>,
     session_token: String,
@@ -751,7 +751,7 @@ fn inspect_asset_import_file(
     db::inspect_asset_import_file(payload)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn preview_asset_import_file(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -762,7 +762,7 @@ fn preview_asset_import_file(
     db::preview_asset_import_file(&app, payload)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn import_asset_import_file(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -773,7 +773,7 @@ fn import_asset_import_file(
     db::import_asset_import_file(&app, payload)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn preview_historical_assignment_import(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -784,7 +784,7 @@ fn preview_historical_assignment_import(
     db::preview_historical_assignment_import(&app, payload)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn apply_historical_assignment_import(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -795,7 +795,7 @@ fn apply_historical_assignment_import(
     db::apply_historical_assignment_import(&app, payload, Some(ctx.account_id))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn preview_asset_metadata_reimport(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -806,7 +806,7 @@ fn preview_asset_metadata_reimport(
     db::preview_asset_metadata_reimport(&app, payload)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn apply_asset_metadata_reimport(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -817,7 +817,7 @@ fn apply_asset_metadata_reimport(
     db::apply_asset_metadata_reimport(&app, payload, Some(ctx.account_id))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn sign_historical_borrow_request(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -828,7 +828,7 @@ fn sign_historical_borrow_request(
     db::sign_historical_borrow_request(&app, payload)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn create_asset_import_batch(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -839,7 +839,7 @@ fn create_asset_import_batch(
     db::create_asset_import_batch(&app, payload)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_asset_import_batches(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -849,7 +849,7 @@ fn list_asset_import_batches(
     db::list_asset_import_batches(&app)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_asset_import_batch_detail(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -860,7 +860,7 @@ fn get_asset_import_batch_detail(
     db::get_asset_import_batch_detail(&app, batch_id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn update_asset_import_row(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -871,7 +871,7 @@ fn update_asset_import_row(
     db::update_asset_import_row(&app, payload)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_asset_import_row_skipped(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -882,7 +882,7 @@ fn set_asset_import_row_skipped(
     db::set_asset_import_row_skipped(&app, payload)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn import_asset_import_batch_valid_rows(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -893,7 +893,7 @@ fn import_asset_import_batch_valid_rows(
     db::import_asset_import_batch_valid_rows(&app, batch_id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn delete_asset_import_batch(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -906,7 +906,7 @@ fn delete_asset_import_batch(
 
 // ── Asset CRUD (admin mutations) ─────────────────────────────────────────────
 
-#[tauri::command]
+#[tauri::command(async)]
 fn create_asset_manually(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -917,7 +917,7 @@ fn create_asset_manually(
     db::create_asset_manually(&app, payload)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn upsert_assets(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -930,7 +930,7 @@ fn upsert_assets(
 
 // ── Asset categories (read authenticated, mutate admin) ──────────────────────
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_asset_categories(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -940,7 +940,7 @@ fn list_asset_categories(
     db::list_asset_categories(&app)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_asset_category_details(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -950,7 +950,7 @@ fn list_asset_category_details(
     db::list_asset_category_details(&app)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn create_asset_category(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -961,7 +961,7 @@ fn create_asset_category(
     db::create_asset_category(&app, payload)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn update_asset_category(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -972,7 +972,7 @@ fn update_asset_category(
     db::update_asset_category(&app, payload)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn deactivate_asset_category(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -985,7 +985,7 @@ fn deactivate_asset_category(
 
 // ── Asset dashboard (read authenticated, stock mutate admin) ─────────────────
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_asset_dashboard_summary(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -995,7 +995,7 @@ fn get_asset_dashboard_summary(
     db::get_asset_dashboard_summary(&app)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_asset_dashboard_serialized(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -1005,7 +1005,7 @@ fn list_asset_dashboard_serialized(
     db::list_asset_dashboard_serialized(&app)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_asset_dashboard_quantity(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -1015,7 +1015,7 @@ fn list_asset_dashboard_quantity(
     db::list_asset_dashboard_quantity(&app)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn check_asset_integrity(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -1025,7 +1025,7 @@ fn check_asset_integrity(
     db::check_asset_integrity(&app)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn update_stock_item_quantity(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -1038,7 +1038,7 @@ fn update_stock_item_quantity(
 
 // ── Borrow review (admin; actor from SessionContext) ─────────────────────────
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_borrow_policy(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -1048,7 +1048,7 @@ fn get_borrow_policy(
     db::borrow::get_borrow_policy(&app)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn save_borrow_policy(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -1059,7 +1059,7 @@ fn save_borrow_policy(
     db::borrow::save_borrow_policy(&app, ctx.account_id, &payload.text_en, &payload.text_vi)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_borrow_request_evidence(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -1070,7 +1070,7 @@ fn get_borrow_request_evidence(
     db::borrow::get_borrow_request_evidence(&app, request_id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_pending_borrow_requests(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -1080,7 +1080,7 @@ fn list_pending_borrow_requests(
     db::list_pending_borrow_requests(&app)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_borrow_request_detail(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -1091,7 +1091,7 @@ fn get_borrow_request_detail(
     db::get_borrow_request_detail(&app, request_id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn approve_borrow_request(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -1102,7 +1102,7 @@ fn approve_borrow_request(
     db::approve_borrow_request_with_actor(&app, ctx, request_id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn reject_borrow_request(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -1113,7 +1113,7 @@ fn reject_borrow_request(
     db::reject_borrow_request_with_actor(&app, ctx, payload)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn cancel_borrow_request(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
