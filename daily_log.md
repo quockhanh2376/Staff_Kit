@@ -1,5 +1,26 @@
 # Daily Log - 2026-10-28
 
+## 2026-10-28 — Staff Kit Internal Pre-release v2.2.1-internal-rc1 (Start)
+- Authorized by Zon.
+- Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Goal: Package and publish the verified internal acceptance build as a GitHub Pre-release on quockhanh2376/Staff_Kit under tag `v2.2.1-internal-rc1` (commit d261d3b).
+- Scope:
+  1. Package `StaffKit-App.exe`, `Launch-Test-Environment.bat`, `Launch-Test-Environment.ps1`, `README.md`, `ACCEPTANCE_GUIDE.md` into `StaffKit-v2.2.1-internal-rc1-windows-x64.zip`.
+  2. Generate SHA-256 checksum file.
+  3. Ensure launcher operates independently upon extraction on any machine without touching production database.
+  4. Push tag `v2.2.1-internal-rc1` to `origin` and publish GitHub Pre-release (`prerelease=true`, `draft=false`).
+  5. Independent download and verification by Qeen.
+
+## 2026-10-28 — Staff Kit Internal Pre-release v2.2.1-internal-rc1 (End)
+- Author: Victor (Implementation), Qeen (Independent QA Validation).
+- Actions Completed:
+  1. Verified clean working tree on `main` at commit `d261d3b`.
+  2. Packaged self-contained archive `StaffKit-v2.2.1-internal-rc1-windows-x64.zip` (20,883,994 bytes, SHA-256 `ABF34AEF29A8ACF2CCC79AC68EFBF50B95FA8164F7F97E4182892667CB15490E`) containing `StaffKit-App.exe` (SHA-256 `7D6FEA0DA2FF6A87A6CA58D51C09626F41095271FA6E1633D3F1830590391105`) and test launcher.
+  3. Pushed tag `v2.2.1-internal-rc1` to `origin`.
+  4. Published GitHub Pre-release: `https://github.com/quockhanh2376/Staff_Kit/releases/tag/v2.2.1-internal-rc1` with explicit disclaimers: `INTERNAL TESTING ONLY — NOT STABLE — NOT PRODUCTION APPROVED`.
+  5. Qeen independently downloaded artifact via GitHub CLI, verified SHA-256 match, extracted into clean temp directory, launched executable, and verified zero production DB modification (`D:\AS White Global\IT Team - Staff Kit\staff_kit.sqlite3` completely untouched).
+- Verdict: PASS.
+
 ## 2026-10-28 — Staff Kit Login Password Reveal Polish (Start)
 - Authorized by Zon/Cheki.
 - Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
