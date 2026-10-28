@@ -1593,9 +1593,10 @@ pub(crate) fn get_setting_value(conn: &Connection, key: &str) -> Result<Option<S
     conn.query_row(
         "SELECT setting_value FROM app_settings WHERE setting_key = ?",
         params![key],
-        |row| row.get(0),
+        |row| row.get::<_, Option<String>>(0),
     )
     .optional()
+    .map(|opt| opt.flatten())
     .map_err(|err| format!("failed to read setting '{key}': {err}"))
 }
 

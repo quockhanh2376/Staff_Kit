@@ -34,6 +34,7 @@ pub(super) const DEFAULT_ADMIN_SEED_SETTING_KEY: &str = "default_admin_seed_v1";
 pub(super) const BACKUP_DIRECTORY_SETTING_KEY: &str = "backup_directory_path";
 pub(super) const AUTO_BACKUP_ENABLED_SETTING_KEY: &str = "backup_auto_enabled_v1";
 pub(super) const AUTO_BACKUP_LAST_DATE_SETTING_KEY: &str = "backup_auto_last_date_v1";
+pub(super) const AUTO_BACKUP_LAST_STATUS_SETTING_KEY: &str = "backup_auto_last_status_v1";
 #[allow(dead_code)]
 pub(super) const BORROW_LAN_ENABLED_SETTING_KEY: &str = "borrow_lan_enabled_v1";
 #[allow(dead_code)]
@@ -43,6 +44,7 @@ pub(super) const BORROW_LAN_PORT_SETTING_KEY: &str = "borrow_lan_port_v1";
 
 // ── Backup ────────────────────────────────────────────────────────────────────
 pub(super) const AUTO_BACKUP_RETENTION_FILES: usize = 7;
+pub(super) const AUTO_BACKUP_INTERVAL_HOURS: i64 = 6;
 pub(super) const AUTO_BACKUP_INTERVAL_DAYS: i64 = 7;
 pub(super) const AUTO_BACKUP_RETENTION_DAYS: i64 = 400;
 pub(super) const BACKUP_FILE_PREFIX: &str = "staff_kit_backup";

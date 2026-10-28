@@ -623,9 +623,19 @@ export function SettingsView({
                                             </span>
                                         </span>
                                         <span className="leading-snug transition-colors group-hover:text-[var(--text-primary)]">
-                                            7 versions and delete after 400 days
+                                            Auto-backup every 6 hours (retention 7 versions, cleanup after 400 days)
                                         </span>
                                     </label>
+                                    {settings.backupSettings?.lastAutoBackupDate && (
+                                        <div className="text-[11px] text-[var(--text-secondary)]">
+                                            Last auto-backup: <span className="font-mono">{new Date(settings.backupSettings.lastAutoBackupDate).toLocaleString()}</span>
+                                            {settings.backupSettings.lastAutoBackupStatus && (
+                                                <span className={`ml-1.5 font-medium ${settings.backupSettings.lastAutoBackupStatus.startsWith("ERROR") ? "text-rose-400" : "text-emerald-400"}`}>
+                                                    ({settings.backupSettings.lastAutoBackupStatus.startsWith("ERROR") ? "Failed" : "Success"})
+                                                </span>
+                                            )}
+                                        </div>
+                                    )}
                                     <button
                                         className={settingsSecondaryButtonClass}
                                         onClick={() => void settings.handleSaveBackupSettings()}
@@ -814,8 +824,18 @@ export function SettingsView({
                                     onChange={(e) => settings.setBackupAutoEnabled(e.target.checked)}
                                     disabled={settings.isSavingBackupSettings || settings.isBackingUpData}
                                 />
-                                7 versions and delete after 400 days
+                                Auto-backup every 6 hours (retention 7 versions, cleanup after 400 days)
                             </label>
+                            {settings.backupSettings?.lastAutoBackupDate && (
+                                <div className="text-[11px] text-[var(--text-secondary)]">
+                                    Last auto-backup: <span className="font-mono">{new Date(settings.backupSettings.lastAutoBackupDate).toLocaleString()}</span>
+                                    {settings.backupSettings.lastAutoBackupStatus && (
+                                        <span className={`ml-1.5 font-medium ${settings.backupSettings.lastAutoBackupStatus.startsWith("ERROR") ? "text-rose-400" : "text-emerald-400"}`}>
+                                            ({settings.backupSettings.lastAutoBackupStatus.startsWith("ERROR") ? "Failed" : "Success"})
+                                        </span>
+                                    )}
+                                </div>
+                            )}
                             <button
                                 className="rounded-[8px] border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)] disabled:opacity-50"
                                 onClick={() => void settings.handleSaveBackupSettings()}

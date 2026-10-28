@@ -1,5 +1,40 @@
 # Daily Log - 2026-10-28
 
+## 2026-10-28 — Staff Kit TotalSpec P1.1: Auto-backup Scheduler (Start)
+- Authorized by Zon.
+- Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Goal: Implement background auto-backup scheduler adhering to TotalSpec D1.1 (6-hour interval, catch-up overdue on start, concurrency lock, non-blocking background execution, failure visibility, zero production DB writes).
+- Scope:
+  1. Add `run_auto_backup_if_due` internal logic in `src-tauri/src/db/backup.rs` using existing SQLCipher WAL checkpoint and `VACUUM INTO`.
+  2. Implement concurrency lock (`BACKUP_IN_PROGRESS`) preventing duplicate/concurrent auto/manual backup jobs.
+  3. Support catch-up backup on startup if >6 hours have passed since the last successful auto-backup (recorded in `app_settings` under `backup_auto_last_date_v1`).
+  4. Ensure auto-backup filename includes timestamp granularity (`%Y-%m-%d_%H-%M-%S`) to avoid daily overwriting with 6-hour cycles.
+  5. Spawn internal background Tokio task in `setup` (`src-tauri/src/lib.rs`) running via `spawn_blocking` without blocking the main UI thread or LAN portal.
+  6. Surface last backup timestamp and status in `BackupSettings`.
+  7. Write unit tests with focused TDD covering due checks, catch-up logic, concurrency locks, and error tracking on disposable database copies.
+  8. Full quality gate verification (`npm run check:quality`).
+
+## 2026-10-28 — Staff Kit TotalSpec P1.1: Auto-backup Scheduler (End)
+- Author: Victor (Implementation), Qeen (Independent QA Validation).
+- Actions Completed:
+  1. Implemented `AUTO_BACKUP_INTERVAL_HOURS = 6;`, `AUTO_BACKUP_LAST_DATE_SETTING_KEY`, and `AUTO_BACKUP_LAST_STATUS_SETTING_KEY` in `src-tauri/src/db/schema.rs`.
+  2. Enhanced `get_setting_value` in `src-tauri/src/db/mod.rs` to handle nullable setting values safely without panic.
+  3. Implemented `try_acquire_backup_lock()` with RAII guard `BackupInProgressGuard` over `AtomicBool BACKUP_IN_PROGRESS` in `src-tauri/src/db/backup.rs` to prevent overlapping backups across auto and manual triggers.
+  4. Implemented `is_auto_backup_due` and `is_auto_backup_due_at` with instant catch-up logic when overdue (>6 hours) or never executed.
+  5. Updated auto-backup filename generator with second granularity (`%Y-%m-%d_%H-%M-%S`) preventing collisions.
+  6. Implemented `run_auto_backup_if_due` with failure/success status tracking in `app_settings` and detailed logging.
+  7. Spawned Tokio background task in `src-tauri/src/lib.rs` executing periodically every 15 minutes (with 5-second initial startup grace period) via `spawn_blocking`.
+  8. Exposed `lastAutoBackupDate` and `lastAutoBackupStatus` in frontend `BackupSettings` interface and rendered them in `SettingsView.tsx`.
+  9. Verified 5 new Rust unit tests covering due check, catch-up overdue, interval calculation, mutual exclusion lock, and valid SQLCipher encrypted backup generation with `PRAGMA integrity_check` pass.
+  10. Passed full quality gate: ESLint, TypeScript typecheck (`tsc -b`), Vite production build, Cargo check, 394 Rust tests, and 315 Vitest tests.
+- Evidence & Verification:
+  - `npm run check:quality`: PASS (ESLint clean, strict TSC clean, Vite 1878 modules bundled, Cargo check clean).
+  - `cargo test db::backup::tests`: 9/9 passed.
+  - `npm run test:tauri`: 394/394 passed (0 failed).
+  - `npx vitest run`: 315/315 passed across 43 test files.
+  - Zero modification to production database (`D:\AS White Global\IT Team - Staff Kit\staff_kit.sqlite3`).
+- Verdict: PASS.
+
 ## 2026-10-28 — Staff Kit Internal Pre-release v2.2.1-internal-rc1 (Start)
 - Authorized by Zon.
 - Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).

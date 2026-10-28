@@ -12,6 +12,8 @@ export type BackupSettings = {
   retentionFiles: number
   autoBackupIntervalDays: number
   autoBackupRetentionDays: number
+  lastAutoBackupDate?: string | null
+  lastAutoBackupStatus?: string | null
 }
 
 /** Information about a single database snapshot. */

@@ -1,16 +1,19 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
 
-use chrono::Local;
+use chrono::{DateTime, Local};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
 use super::schema::{
-    AUTO_BACKUP_ENABLED_SETTING_KEY, AUTO_BACKUP_INTERVAL_DAYS, AUTO_BACKUP_RETENTION_DAYS,
-    AUTO_BACKUP_RETENTION_FILES, BACKUP_DIRECTORY_SETTING_KEY, BACKUP_FILE_PREFIX, DB_FILE_NAME,
-    DB_SETTINGS_FILE_NAME, HISTORY_FILE_PREFIX, HISTORY_FOLDER_NAME, HISTORY_RETENTION_COUNT,
+    AUTO_BACKUP_ENABLED_SETTING_KEY, AUTO_BACKUP_INTERVAL_DAYS, AUTO_BACKUP_INTERVAL_HOURS,
+    AUTO_BACKUP_LAST_DATE_SETTING_KEY, AUTO_BACKUP_LAST_STATUS_SETTING_KEY,
+    AUTO_BACKUP_RETENTION_DAYS, AUTO_BACKUP_RETENTION_FILES, BACKUP_DIRECTORY_SETTING_KEY,
+    BACKUP_FILE_PREFIX, DB_FILE_NAME, DB_SETTINGS_FILE_NAME, HISTORY_FILE_PREFIX,
+    HISTORY_FOLDER_NAME, HISTORY_RETENTION_COUNT,
 };
 use super::{get_setting_value, open_runtime_connection, require_text, set_setting_value};
 
@@ -32,6 +35,8 @@ pub struct BackupSettings {
     pub retention_files: i64,
     pub auto_backup_interval_days: i64,
     pub auto_backup_retention_days: i64,
+    pub last_auto_backup_date: Option<String>,
+    pub last_auto_backup_status: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -100,6 +105,7 @@ pub fn update_backup_settings(
 }
 
 pub fn backup_database_now(app: &AppHandle) -> Result<BackupRunResult, String> {
+    let _guard = try_acquire_backup_lock()?;
     let conn = open_runtime_connection(app)?;
     let settings = read_backup_settings(&conn, app)?;
     run_backup(app, settings.backup_directory_path.as_str(), false)
@@ -397,12 +403,22 @@ pub(super) fn read_backup_settings(
         .map(|value| value.trim() == "1")
         .unwrap_or(false);
 
+    let last_auto_backup_date = get_setting_value(conn, AUTO_BACKUP_LAST_DATE_SETTING_KEY)?
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    let last_auto_backup_status = get_setting_value(conn, AUTO_BACKUP_LAST_STATUS_SETTING_KEY)?
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
     Ok(BackupSettings {
         backup_directory_path,
         auto_backup_enabled,
         retention_files: AUTO_BACKUP_RETENTION_FILES as i64,
         auto_backup_interval_days: AUTO_BACKUP_INTERVAL_DAYS,
         auto_backup_retention_days: AUTO_BACKUP_RETENTION_DAYS,
+        last_auto_backup_date,
+        last_auto_backup_status,
     })
 }
 
@@ -422,20 +438,140 @@ fn resolve_history_dir(db_path: &Path) -> Result<PathBuf, String> {
     Ok(db_dir.join(HISTORY_FOLDER_NAME))
 }
 
-fn run_backup(
-    app: &AppHandle,
-    backup_directory_path: &str,
+static BACKUP_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
+#[derive(Debug)]
+pub struct BackupInProgressGuard;
+
+impl Drop for BackupInProgressGuard {
+    fn drop(&mut self) {
+        BACKUP_IN_PROGRESS.store(false, Ordering::Release);
+    }
+}
+
+pub fn try_acquire_backup_lock() -> Result<BackupInProgressGuard, String> {
+    if BACKUP_IN_PROGRESS
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Err("another backup operation is currently in progress".to_string());
+    }
+    Ok(BackupInProgressGuard)
+}
+
+#[allow(dead_code)]
+pub fn is_backup_in_progress() -> bool {
+    BACKUP_IN_PROGRESS.load(Ordering::Acquire)
+}
+
+pub fn is_auto_backup_due(conn: &Connection) -> Result<bool, String> {
+    is_auto_backup_due_at(conn, Local::now())
+}
+
+pub fn is_auto_backup_due_at(
+    conn: &Connection,
+    current_time: DateTime<Local>,
+) -> Result<bool, String> {
+    let enabled = get_setting_value(conn, AUTO_BACKUP_ENABLED_SETTING_KEY)?
+        .map(|v| v.trim() == "1")
+        .unwrap_or(false);
+
+    if !enabled {
+        return Ok(false);
+    }
+
+    let last_date = get_setting_value(conn, AUTO_BACKUP_LAST_DATE_SETTING_KEY)?
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+
+    let Some(last_str) = last_date else {
+        // Never backed up yet -> due immediately (startup catch-up)
+        return Ok(true);
+    };
+
+    let Ok(last_dt) = DateTime::parse_from_rfc3339(&last_str) else {
+        // Corrupted or unrecognized timestamp -> due immediately
+        return Ok(true);
+    };
+
+    let elapsed = current_time.signed_duration_since(last_dt);
+    Ok(elapsed.num_hours() >= AUTO_BACKUP_INTERVAL_HOURS)
+}
+
+pub fn run_auto_backup_if_due(app: &AppHandle) -> Result<bool, String> {
+    {
+        let conn = open_runtime_connection(app)?;
+        if !is_auto_backup_due(&conn)? {
+            return Ok(false);
+        }
+    }
+
+    let _guard = match try_acquire_backup_lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            eprintln!("[Staff Kit Backup] Auto-backup skipped: another backup job is currently in progress");
+            return Ok(false);
+        }
+    };
+
+    let (backup_dir, enabled) = {
+        let conn = open_runtime_connection(app)?;
+        if !is_auto_backup_due(&conn)? {
+            return Ok(false);
+        }
+        let settings = read_backup_settings(&conn, app)?;
+        (settings.backup_directory_path, settings.auto_backup_enabled)
+    };
+
+    if !enabled {
+        return Ok(false);
+    }
+
+    let result = run_backup(app, &backup_dir, true);
+    match result {
+        Ok(res) => {
+            let now_str = Local::now().to_rfc3339();
+            if let Ok(conn) = open_runtime_connection(app) {
+                let _ = set_setting_value(&conn, AUTO_BACKUP_LAST_DATE_SETTING_KEY, Some(&now_str));
+                let _ = set_setting_value(
+                    &conn,
+                    AUTO_BACKUP_LAST_STATUS_SETTING_KEY,
+                    Some(&format!("SUCCESS: {}", res.backup_file_path)),
+                );
+            }
+            eprintln!(
+                "[Staff Kit Backup] Auto-backup completed successfully: {}",
+                res.backup_file_path
+            );
+            Ok(true)
+        }
+        Err(err) => {
+            if let Ok(conn) = open_runtime_connection(app) {
+                let _ = set_setting_value(
+                    &conn,
+                    AUTO_BACKUP_LAST_STATUS_SETTING_KEY,
+                    Some(&format!("ERROR: {err}")),
+                );
+            }
+            eprintln!("[Staff Kit Backup] Auto-backup failed: {err}");
+            Err(err)
+        }
+    }
+}
+
+pub(crate) fn run_backup_on_connection(
+    conn: &Connection,
+    backup_dir: &Path,
     automatic: bool,
 ) -> Result<BackupRunResult, String> {
-    let backup_dir = PathBuf::from(backup_directory_path);
-    fs::create_dir_all(&backup_dir)
+    fs::create_dir_all(backup_dir)
         .map_err(|err| format!("failed to create backup directory: {err}"))?;
 
     let now = Local::now();
     let file_name = if automatic {
         format!(
             "{BACKUP_FILE_PREFIX}_auto_{}.sqlite3",
-            now.format("%Y-%m-%d")
+            now.format("%Y-%m-%d_%H-%M-%S")
         )
     } else {
         format!(
@@ -450,7 +586,6 @@ fn run_backup(
             .map_err(|err| format!("failed to replace existing backup file: {err}"))?;
     }
 
-    let conn = open_runtime_connection(app)?;
     conn.execute_batch("PRAGMA wal_checkpoint(FULL);")
         .map_err(|err| format!("failed to checkpoint sqlite WAL before backup: {err}"))?;
 
@@ -458,16 +593,26 @@ fn run_backup(
     conn.execute_batch(&format!("VACUUM INTO '{escaped_path}';"))
         .map_err(|err| format!("failed to create backup file: {err}"))?;
 
-    let retained_files = prune_old_backups(&backup_dir, AUTO_BACKUP_RETENTION_FILES)?;
+    let retained_files = prune_old_backups(backup_dir, AUTO_BACKUP_RETENTION_FILES)?;
 
     // Clean up backups older than 400 days
-    let _ = prune_backups_by_age(&backup_dir, AUTO_BACKUP_RETENTION_DAYS);
+    let _ = prune_backups_by_age(backup_dir, AUTO_BACKUP_RETENTION_DAYS);
 
     Ok(BackupRunResult {
         backup_file_path: backup_file_path.to_string_lossy().to_string(),
         retained_files: retained_files as i64,
         performed: true,
     })
+}
+
+fn run_backup(
+    app: &AppHandle,
+    backup_directory_path: &str,
+    automatic: bool,
+) -> Result<BackupRunResult, String> {
+    let backup_dir = PathBuf::from(backup_directory_path);
+    let conn = open_runtime_connection(app)?;
+    run_backup_on_connection(&conn, &backup_dir, automatic)
 }
 
 fn prune_old_backups(backup_dir: &Path, retention: usize) -> Result<usize, String> {
@@ -602,9 +747,9 @@ mod tests {
 
     use crate::db::schema::BASE_SCHEMA_SQL;
     use crate::db::{apply_migrations, open_encrypted_connection};
-
     use super::{
         migrate_restored_database, replace_database_from_history_snapshot, restore_database_file,
+        AUTO_BACKUP_ENABLED_SETTING_KEY, AUTO_BACKUP_LAST_DATE_SETTING_KEY,
     };
 
     fn temp_path(label: &str) -> PathBuf {
@@ -844,5 +989,171 @@ mod tests {
 
         remove_database_files(&source);
         remove_database_files(&destination);
+    }
+
+    #[test]
+    fn test_is_auto_backup_due_when_disabled() {
+        let db_path = temp_path("test-auto-backup-disabled");
+        remove_database_files(&db_path);
+        {
+            let conn = open_encrypted_connection(&db_path).expect("open test db");
+            apply_migrations(&conn).expect("migrations");
+
+            crate::db::set_setting_value(&conn, AUTO_BACKUP_ENABLED_SETTING_KEY, Some("0")).unwrap();
+            assert_eq!(super::is_auto_backup_due(&conn).unwrap(), false);
+        }
+        remove_database_files(&db_path);
+    }
+
+    #[test]
+    fn test_is_auto_backup_due_catchup_when_never_run() {
+        let db_path = temp_path("test-auto-backup-catchup");
+        remove_database_files(&db_path);
+        {
+            let conn = open_encrypted_connection(&db_path).expect("open test db");
+            apply_migrations(&conn).expect("migrations");
+
+            crate::db::set_setting_value(&conn, AUTO_BACKUP_ENABLED_SETTING_KEY, Some("1")).unwrap();
+            crate::db::set_setting_value(&conn, AUTO_BACKUP_LAST_DATE_SETTING_KEY, None).unwrap();
+            // Should catch up immediately on startup
+            assert_eq!(super::is_auto_backup_due(&conn).unwrap(), true);
+        }
+        remove_database_files(&db_path);
+    }
+
+    #[test]
+    fn test_is_auto_backup_due_timing_intervals() {
+        let db_path = temp_path("test-auto-backup-intervals");
+        remove_database_files(&db_path);
+        {
+            let conn = open_encrypted_connection(&db_path).expect("open test db");
+            apply_migrations(&conn).expect("migrations");
+
+            crate::db::set_setting_value(&conn, AUTO_BACKUP_ENABLED_SETTING_KEY, Some("1")).unwrap();
+
+            let base_time = chrono::Local::now();
+
+            // Case A: Last backup 2 hours ago -> NOT due
+            let two_hours_ago = base_time - chrono::Duration::hours(2);
+            crate::db::set_setting_value(
+                &conn,
+                AUTO_BACKUP_LAST_DATE_SETTING_KEY,
+                Some(&two_hours_ago.to_rfc3339()),
+            )
+            .unwrap();
+            assert_eq!(
+                super::is_auto_backup_due_at(&conn, base_time).unwrap(),
+                false
+            );
+
+            // Case B: Last backup exactly 6 hours ago -> DUE
+            let six_hours_ago = base_time - chrono::Duration::hours(6);
+            crate::db::set_setting_value(
+                &conn,
+                AUTO_BACKUP_LAST_DATE_SETTING_KEY,
+                Some(&six_hours_ago.to_rfc3339()),
+            )
+            .unwrap();
+            assert_eq!(
+                super::is_auto_backup_due_at(&conn, base_time).unwrap(),
+                true
+            );
+
+            // Case C: Last backup 24 hours ago (overdue after app closed) -> DUE (catch-up)
+            let one_day_ago = base_time - chrono::Duration::hours(24);
+            crate::db::set_setting_value(
+                &conn,
+                AUTO_BACKUP_LAST_DATE_SETTING_KEY,
+                Some(&one_day_ago.to_rfc3339()),
+            )
+            .unwrap();
+            assert_eq!(
+                super::is_auto_backup_due_at(&conn, base_time).unwrap(),
+                true
+            );
+
+            // Case D: Corrupt / malformed timestamp -> DUE (failsafe catch-up)
+            crate::db::set_setting_value(
+                &conn,
+                AUTO_BACKUP_LAST_DATE_SETTING_KEY,
+                Some("not-a-valid-timestamp"),
+            )
+            .unwrap();
+            assert_eq!(
+                super::is_auto_backup_due_at(&conn, base_time).unwrap(),
+                true
+            );
+        }
+        remove_database_files(&db_path);
+    }
+
+    #[test]
+    fn test_concurrency_lock_prevents_duplicate_runs() {
+        assert_eq!(super::is_backup_in_progress(), false);
+
+        let guard1 = super::try_acquire_backup_lock().expect("acquire first lock");
+        assert_eq!(super::is_backup_in_progress(), true);
+
+        // Second acquire must fail
+        let guard2_err = super::try_acquire_backup_lock().expect_err("second acquire must fail");
+        assert!(guard2_err.contains("in progress"));
+
+        // Release first guard
+        drop(guard1);
+        assert_eq!(super::is_backup_in_progress(), false);
+
+        // Third acquire should succeed now
+        let guard3 = super::try_acquire_backup_lock().expect("acquire after release");
+        assert_eq!(super::is_backup_in_progress(), true);
+        drop(guard3);
+        assert_eq!(super::is_backup_in_progress(), false);
+    }
+
+    #[test]
+    fn test_run_backup_on_connection_creates_valid_encrypted_file_and_checks_integrity() {
+        let db_path = temp_path("test-backup-exec-source");
+        let backup_dir = temp_path("test-backup-exec-dir");
+        remove_database_files(&db_path);
+        let _ = std::fs::remove_dir_all(&backup_dir);
+
+        {
+            let conn = open_encrypted_connection(&db_path).expect("open source");
+            apply_migrations(&conn).expect("migrations");
+
+            // Insert distinct test record
+            conn.execute(
+                "INSERT INTO employees(employee_id, full_name) VALUES ('EE-AUTO-TEST', 'Auto Backup Tester');",
+                [],
+            )
+            .expect("insert test employee");
+
+            let result = super::run_backup_on_connection(&conn, &backup_dir, true)
+                .expect("run auto backup on connection");
+
+            assert!(result.performed);
+            assert!(result.backup_file_path.contains("staff_kit_backup_auto_"));
+            assert!(Path::new(&result.backup_file_path).exists());
+
+            // Open the generated backup file and verify encryption + integrity
+            let backup_conn = open_encrypted_connection(Path::new(&result.backup_file_path))
+                .expect("open backup with app encryption key");
+
+            let integrity: String = backup_conn
+                .query_row("PRAGMA integrity_check;", [], |r| r.get(0))
+                .expect("integrity check");
+            assert_eq!(integrity, "ok", "Backup file must pass SQLite integrity_check");
+
+            let count: i64 = backup_conn
+                .query_row(
+                    "SELECT COUNT(*) FROM employees WHERE employee_id = 'EE-AUTO-TEST';",
+                    [],
+                    |r| r.get(0),
+                )
+                .expect("query test record in backup");
+            assert_eq!(count, 1, "Backup must contain the employee record");
+        }
+
+        remove_database_files(&db_path);
+        let _ = std::fs::remove_dir_all(&backup_dir);
     }
 }

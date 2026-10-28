@@ -1159,6 +1159,23 @@ pub fn run() {
                     }
                 });
 
+                // Start background auto-backup scheduler (TotalSpec P1.1 / D1.1):
+                // Checks every 15 minutes, catches up overdue on start after 5s grace period.
+                // Runs completely in background via spawn_blocking without blocking UI or LAN portal.
+                let backup_app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(15 * 60));
+                    loop {
+                        interval.tick().await;
+                        let handle = backup_app_handle.clone();
+                        let _ = tauri::async_runtime::spawn_blocking(move || {
+                            let _ = db::run_auto_backup_if_due(&handle);
+                        })
+                        .await;
+                    }
+                });
+
                 eprintln!("[Staff Kit Perf] tauri setup took {:?}", setup_start.elapsed());
                 Ok(())
             }
