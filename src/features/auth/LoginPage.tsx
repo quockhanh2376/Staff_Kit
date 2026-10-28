@@ -57,8 +57,8 @@ export function LoginPage({
         ? "h-10 w-full rounded-md border border-slate-700 bg-[#0d1117] px-3 text-sm text-slate-200 outline-none transition-all placeholder:text-slate-500 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
         : "h-10 w-full rounded-md border border-slate-300 bg-slate-50 px-3 text-sm text-slate-900 outline-none transition-all placeholder:text-slate-400 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
     const passwordToggleClass = isDark
-        ? "absolute right-0 top-0 flex h-full items-center justify-center px-3 text-slate-500 transition-colors hover:text-slate-300"
-        : "absolute right-0 top-0 flex h-full items-center justify-center px-3 text-slate-400 transition-colors hover:text-slate-700"
+        ? "absolute left-0 top-0 z-10 flex h-full items-center justify-center px-3 text-slate-500 transition-colors hover:text-slate-300"
+        : "absolute left-0 top-0 z-10 flex h-full items-center justify-center px-3 text-slate-400 transition-colors hover:text-slate-700"
     const primaryButtonClass =
         "inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-emerald-600 text-sm font-medium text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
     const secondaryButtonClass = isDark
@@ -178,15 +178,6 @@ export function LoginPage({
                                     <div className="space-y-1.5">
                                         <label className={fieldLabelClass}>Password</label>
                                         <div className="relative">
-                                            <input
-                                                className={`${inputClass} pr-10`}
-                                                type={auth.showLoginPassword ? "text" : "password"}
-                                                value={auth.loginPassword}
-                                                onChange={(event) => auth.setLoginPassword(event.target.value)}
-                                                disabled={auth.isSigningIn}
-                                                autoComplete="current-password"
-                                                placeholder="••••••••"
-                                            />
                                             <button
                                                 className={passwordToggleClass}
                                                 type="button"
@@ -195,6 +186,15 @@ export function LoginPage({
                                             >
                                                 {auth.showLoginPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                                             </button>
+                                            <input
+                                                className={`${inputClass} pl-10 pr-3 [&::-ms-reveal]:hidden [&::-ms-clear]:hidden`}
+                                                type={auth.showLoginPassword ? "text" : "password"}
+                                                value={auth.loginPassword}
+                                                onChange={(event) => auth.setLoginPassword(event.target.value)}
+                                                disabled={auth.isSigningIn}
+                                                autoComplete="current-password"
+                                                placeholder="••••••••"
+                                            />
                                         </div>
                                     </div>
 
@@ -250,14 +250,6 @@ export function LoginPage({
                                     <div className="space-y-1.5">
                                         <label className={fieldLabelClass}>New Password</label>
                                         <div className="relative">
-                                            <input
-                                                className={`${inputClass} pr-10`}
-                                                type={auth.showForgotNewPassword ? "text" : "password"}
-                                                value={auth.forgotNewPassword}
-                                                onChange={(event) => auth.setForgotNewPassword(event.target.value)}
-                                                disabled={auth.isSubmittingForgotPassword}
-                                                placeholder="••••••••"
-                                            />
                                             <button
                                                 className={passwordToggleClass}
                                                 type="button"
@@ -266,6 +258,14 @@ export function LoginPage({
                                             >
                                                 {auth.showForgotNewPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                                             </button>
+                                            <input
+                                                className={`${inputClass} pl-10 pr-3 [&::-ms-reveal]:hidden [&::-ms-clear]:hidden`}
+                                                type={auth.showForgotNewPassword ? "text" : "password"}
+                                                value={auth.forgotNewPassword}
+                                                onChange={(event) => auth.setForgotNewPassword(event.target.value)}
+                                                disabled={auth.isSubmittingForgotPassword}
+                                                placeholder="••••••••"
+                                            />
                                         </div>
                                     </div>
                                     <div className="space-y-3 pt-2">

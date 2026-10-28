@@ -1,3 +1,58 @@
+# Daily Log - 2026-10-28
+
+## 2026-10-28 — Staff Kit Login Password Reveal Polish (Start)
+- Authorized by Zon/Cheki.
+- Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Goal: Fix duplicate password eye icon in Login and Forgot Password forms: retain the intended password visibility toggle on the LEFT and eliminate the native Edge/WebView2 duplicate icon on the RIGHT.
+- Scope:
+  1. Relocate password toggle button to the LEFT (`absolute left-0 top-0 z-10`).
+  2. Add left padding (`pl-10 pr-3`) to password input to prevent text clash.
+  3. Suppress native Edge/WebView2 reveal and clear buttons via CSS (`::-ms-reveal`, `::-ms-clear`) in `src/index.css` and input utility classes `[&::-ms-reveal]:hidden [&::-ms-clear]:hidden`.
+  4. Apply identical layout to Forgot Password new password field.
+  5. Add unit tests in `src/features/auth/LoginPage.test.tsx` verifying left positioning, toggle behavior, and reveal suppression.
+  6. Rebuild frontend and internal release binary. Run full quality gate (`npm run check:quality`).
+
+## 2026-10-28 — Staff Kit Login Password Reveal Polish (End)
+- Author: Victor (Implementation), Qeen (Independent QA Validation).
+- Root Cause: WebView2/Edge renders a native password reveal button (`::-ms-reveal`) on the right side of `<input type="password">`, while Staff Kit's custom toggle button was also placed on the right, resulting in two side-by-side eye icons.
+- Solution:
+  1. Positioned custom password toggle on the LEFT (`absolute left-0 top-0 z-10 px-3`) for both Login and Forgot Password forms.
+  2. Styled password inputs with `pl-10 pr-3 [&::-ms-reveal]:hidden [&::-ms-clear]:hidden`.
+  3. Added global CSS rule in `src/index.css` suppressing `input::-ms-reveal` and `input::-ms-clear`.
+  4. Added unit tests in `src/features/auth/LoginPage.test.tsx` verifying left toggle placement, show/hide state transitions, and suppression styling. All 8 tests passed.
+  5. Recompiled frontend and release binary with embedded assets via `custom-protocol`.
+  6. Passed full quality gate (`npm run check:quality`: ESLint, TypeScript strict typecheck, Vite build, Cargo check).
+  7. Verified database isolation to `D:\Staff_Kit\data\test_db\staff_kit.sqlite3`; zero writes to production database.
+- Verdict: PASS.
+
+## 2026-10-28 — Staff Kit Internal Release Startup Fix (Start)
+- Authorized by Zon/Cheki.
+- Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Goal: Fix internal release startup failure observed during Zon manual acceptance ("localhost refused to connect", ERR_CONNECTION_REFUSED).
+- Root Cause: `src-tauri/Cargo.toml` lacked the `custom-protocol = ["tauri/custom-protocol"]` feature definition. Without this feature, Tauri compiled in development mode (`cfg(dev)` active, `is_dev() = true`), pointing the WebView2 runtime to `devUrl` (`http://localhost:5173`) instead of bundling and serving embedded assets from memory via `tauri://` / `http://tauri.localhost`.
+- Scope:
+  1. Add `[features]` with `default = ["custom-protocol"]` and `custom-protocol = ["tauri/custom-protocol"]` to `src-tauri/Cargo.toml`.
+  2. Verify build with `npm run build` + release compilation (`--features custom-protocol`).
+  3. Verify that `tauri-codegen-assets` embeds all HTML/JS/CSS into the binary and `tauri` runtime serves assets via custom protocol without Vite/Node/port 5173 running.
+  4. Repackage `dist/StaffKit-Internal-Acceptance` deliverable and launcher.
+  5. Run independent cold launches with Vite stopped and verify interactive Login, logout/relogin, Employee List, Asset Dashboard, Borrow/Return, and DB isolation to `D:\Staff_Kit\data\test_db\staff_kit.sqlite3`.
+
+## 2026-10-28 — Staff Kit Internal Release Startup Fix (End)
+- Author: Victor (Implementation), Qeen (Independent QA Validation).
+- Root Cause: `src-tauri/Cargo.toml` lacked `custom-protocol = ["tauri/custom-protocol"]`. Tauri's build pipeline defaults to `cfg(dev)` when `custom-protocol` is absent, causing release builds to navigate to `http://localhost:5173` (`devUrl`) instead of bundling frontend assets into the binary. When launched without Vite running, WebView2 returned `ERR_CONNECTION_REFUSED`.
+- Solution:
+  1. Configured `[features]` in `src-tauri/Cargo.toml` with `default = ["custom-protocol"]` and `custom-protocol = ["tauri/custom-protocol"]`.
+  2. Updated `src-tauri/tauri.conf.json` CSP connect-src to include local protocol and IPC origins.
+  3. Set `emptyOutDir: false` in `vite.config.ts` to prevent Rollup from failing with EPERM on acceptance subdirectories during `npm run build`.
+  4. Built release binary with embedded assets: `tauri-codegen-assets` embeds all HTML/JS/CSS chunks into `StaffKit-Release.exe` (binary size expanded from 22.1 MB to 28.7 MB with all static assets).
+  5. Verified actual frontend runtime URL via Chrome DevTools Protocol (CDP): loaded `http://tauri.localhost/` with title "Staff Kit", rendered interactive Login DOM, and verified database initialization via `init_database` (149ms cold).
+  6. Repackaged `D:\Staff_Kit\dist\StaffKit-Internal-Acceptance` deliverable containing `StaffKit-Release.exe`, `Launch-Test-Environment.bat`, `Launch-Test-Environment.ps1`, and `ACCEPTANCE_GUIDE.md`.
+- Validation:
+  - 3 cold launches with Vite/Node completely stopped: 688 ms, 590 ms, 582 ms from launch to interactive Login rendered at `http://tauri.localhost/`.
+  - Quality gate passed (`npm run check:quality`: 0 lint errors, tsc typecheck clean, vite build clean, cargo check clean).
+  - Database isolation: Strictly guarded to `D:\Staff_Kit\data\test_db\staff_kit.sqlite3`; production DB `D:\AS White Global\IT Team - Staff Kit\staff_kit.sqlite3` completely untouched.
+- Verdict: PASS.
+
 # Daily Log - 2026-10-27
 
 ## 2026-10-27 — Staff Kit Startup & Performance Optimization (Start)

@@ -48,6 +48,14 @@
   box-sizing: border-box;
 }
 
+/* Suppress Edge / WebView2 native password reveal and clear buttons */
+input::-ms-reveal,
+input::-ms-clear {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
 html,
 body,
 #root {

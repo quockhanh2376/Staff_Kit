@@ -139,3 +139,92 @@ describe("LoginPage account discovery (Phase B regression)", () => {
         expect(screen.getByText(/No local account found/i)).toBeInTheDocument()
     })
 })
+
+describe("LoginPage password toggle and reveal suppression", () => {
+    const singleAccount = [
+        {
+            id: 1,
+            accountKey: "adman",
+            displayName: "Admin",
+            username: "adman",
+            role: "super_admin" as const,
+            isSuperAdmin: true,
+            isActive: true,
+            forcePasswordReset: false,
+            createdAt: "",
+            updatedAt: "",
+        },
+    ]
+
+    it("positions password toggle on the LEFT and styles input with left padding and reveal suppression", () => {
+        renderLogin({
+            accounts: singleAccount,
+            showLoginPassword: false,
+        })
+
+        const toggleButton = screen.getByRole("button", { name: /show password/i })
+        expect(toggleButton).toBeInTheDocument()
+        expect(toggleButton.className).toContain("left-0")
+        expect(toggleButton.className).not.toContain("right-0")
+
+        const passwordInput = screen.getByPlaceholderText("••••••••")
+        expect(passwordInput).toHaveAttribute("type", "password")
+        expect(passwordInput.className).toContain("pl-10")
+        expect(passwordInput.className).toContain("[&::-ms-reveal]:hidden")
+    })
+
+    it("toggles password visibility callback when clicked and reflects text type", () => {
+        const setShowLoginPassword = vi.fn()
+        const { rerender } = renderLogin({
+            accounts: singleAccount,
+            showLoginPassword: false,
+            setShowLoginPassword,
+        })
+
+        const toggleButton = screen.getByRole("button", { name: /show password/i })
+        toggleButton.click()
+        expect(setShowLoginPassword).toHaveBeenCalledTimes(1)
+
+        // Rerender with showLoginPassword = true
+        rerender(
+            <LoginPage
+                theme="dark"
+                setTheme={noopSetTheme}
+                auth={{
+                    ...baseAuth,
+                    accounts: singleAccount,
+                    showLoginPassword: true,
+                    setShowLoginPassword,
+                }}
+                isBootstrapping={false}
+                globalError={null}
+                setGlobalError={setGlobalError}
+            />,
+        )
+
+        const hideButton = screen.getByRole("button", { name: /hide password/i })
+        expect(hideButton).toBeInTheDocument()
+        expect(hideButton.className).toContain("left-0")
+
+        const textInput = screen.getByPlaceholderText("••••••••")
+        expect(textInput).toHaveAttribute("type", "text")
+    })
+
+    it("positions forgot password toggle on the LEFT as well", () => {
+        renderLogin({
+            accounts: singleAccount,
+            isForgotPasswordMode: true,
+            showForgotNewPassword: false,
+        })
+
+        const toggleButton = screen.getByRole("button", { name: /show password/i })
+        expect(toggleButton).toBeInTheDocument()
+        expect(toggleButton.className).toContain("left-0")
+        expect(toggleButton.className).not.toContain("right-0")
+
+        const newPasswordInput = screen.getByPlaceholderText("••••••••")
+        expect(newPasswordInput).toHaveAttribute("type", "password")
+        expect(newPasswordInput.className).toContain("pl-10")
+        expect(newPasswordInput.className).toContain("[&::-ms-reveal]:hidden")
+    })
+})
