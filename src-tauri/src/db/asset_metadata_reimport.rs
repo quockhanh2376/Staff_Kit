@@ -100,6 +100,7 @@ pub fn apply_asset_metadata_reimport(
     payload: AssetMetadataImportInput,
     reviewer_account_id: Option<i64>,
 ) -> Result<AssetMetadataImportReport, String> {
+    super::backup::create_mandatory_safety_snapshot(app, "before_asset_metadata_apply")?;
     let mut conn = open_runtime_connection(app)?;
     apply_asset_metadata_reimport_conn(&mut conn, &payload, reviewer_account_id)
 }

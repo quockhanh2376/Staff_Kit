@@ -185,31 +185,111 @@ pub fn move_database_to(app: &AppHandle, target_folder: &str) -> Result<String, 
 
 // ── History snapshots ─────────────────────────────────────────────────────────
 
-/// Create a snapshot of the current DB. `label` is a short descriptor like
-/// "before_import" or "app_close". Keeps at most HISTORY_RETENTION_COUNT files.
-pub fn create_history_snapshot(app: &AppHandle, label: &str) -> Result<SnapshotInfo, String> {
-    let db_path = super::resolve_database_path(app)?;
-    let history_dir = resolve_history_dir(&db_path)?;
+#[cfg(test)]
+pub static SIMULATE_SNAPSHOT_FAILURE: AtomicBool = AtomicBool::new(false);
+#[cfg(test)]
+pub static SIMULATE_SNAPSHOT_VERIFICATION_FAILURE: AtomicBool = AtomicBool::new(false);
 
+#[cfg(test)]
+pub fn set_simulate_snapshot_failure(fail: bool) {
+    SIMULATE_SNAPSHOT_FAILURE.store(fail, Ordering::Release);
+}
+
+#[cfg(test)]
+pub fn set_simulate_snapshot_verification_failure(fail: bool) {
+    SIMULATE_SNAPSHOT_VERIFICATION_FAILURE.store(fail, Ordering::Release);
+}
+
+/// Verifies that a created snapshot file is a valid, readable, and structurally sound
+/// SQLCipher encrypted database by opening it with the application key and running PRAGMA integrity_check.
+/// If verification fails, the corrupted/unreadable snapshot file is removed and Err is returned.
+pub fn verify_snapshot_integrity(snapshot_path: &Path) -> Result<(), String> {
+    #[cfg(test)]
+    if SIMULATE_SNAPSHOT_VERIFICATION_FAILURE.load(Ordering::Acquire) {
+        let _ = fs::remove_file(snapshot_path);
+        return Err("simulated snapshot verification failure: integrity verification failed".to_string());
+    }
+
+    if !snapshot_path.exists() {
+        return Err(format!(
+            "snapshot verification failed: file does not exist ({})",
+            snapshot_path.display()
+        ));
+    }
+
+    let metadata = fs::metadata(snapshot_path)
+        .map_err(|err| format!("snapshot verification failed: cannot read file metadata: {err}"))?;
+    if metadata.len() == 0 {
+        let _ = fs::remove_file(snapshot_path);
+        return Err("snapshot verification failed: created file is empty (0 bytes)".to_string());
+    }
+
+    let conn = match super::open_encrypted_connection(snapshot_path) {
+        Ok(c) => c,
+        Err(err) => {
+            let _ = fs::remove_file(snapshot_path);
+            return Err(format!(
+                "snapshot verification failed: unable to decrypt snapshot with application key: {err}"
+            ));
+        }
+    };
+
+    let integrity: String = match conn.query_row("PRAGMA integrity_check;", [], |r| r.get(0)) {
+        Ok(val) => val,
+        Err(err) => {
+            let _ = fs::remove_file(snapshot_path);
+            return Err(format!(
+                "snapshot verification failed: PRAGMA integrity_check query failed: {err}"
+            ));
+        }
+    };
+
+    if !integrity.eq_ignore_ascii_case("ok") {
+        let _ = fs::remove_file(snapshot_path);
+        return Err(format!(
+            "snapshot verification failed: database integrity check returned '{integrity}'"
+        ));
+    }
+
+    Ok(())
+}
+
+/// Creates and strictly verifies a mandatory safety snapshot for a given database path.
+/// Fails closed if snapshot creation or integrity verification fails.
+pub fn create_mandatory_safety_snapshot_for_db(
+    db_path: &Path,
+    label: &str,
+) -> Result<SnapshotInfo, String> {
+    #[cfg(test)]
+    if SIMULATE_SNAPSHOT_FAILURE.load(Ordering::Acquire) {
+        return Err("simulated snapshot creation failure: operation blocked by safety guard".to_string());
+    }
+
+    let history_dir = resolve_history_dir(db_path)?;
     fs::create_dir_all(&history_dir)
-        .map_err(|err| format!("failed to create history directory: {err}"))?;
+        .map_err(|err| format!("failed to create history directory for safety snapshot: {err}"))?;
 
     let now = Local::now();
     let timestamp_str = now.format("%Y%m%d_%H%M%S").to_string();
-    let filename = format!("{HISTORY_FILE_PREFIX}_{timestamp_str}_{label}.sqlite3");
+    let safe_label = label.replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
+    let filename = format!("{HISTORY_FILE_PREFIX}_{timestamp_str}_{safe_label}.sqlite3");
     let snapshot_path = history_dir.join(&filename);
 
-    // Checkpoint WAL so snapshot is complete
+    // 1. Checkpoint WAL and perform VACUUM INTO
     {
-        let conn = open_runtime_connection(app)?;
+        let conn = super::open_encrypted_connection(db_path)?;
         conn.execute_batch("PRAGMA wal_checkpoint(FULL);")
-            .map_err(|err| format!("failed to checkpoint WAL before snapshot: {err}"))?;
+            .map_err(|err| format!("failed to checkpoint WAL before safety snapshot: {err}"))?;
         let escaped = snapshot_path.to_string_lossy().replace('\'', "''");
         conn.execute_batch(&format!("VACUUM INTO '{escaped}';"))
-            .map_err(|err| format!("failed to create snapshot: {err}"))?;
+            .map_err(|err| format!("failed to create safety snapshot: {err}"))?;
     }
 
-    prune_history_snapshots(&history_dir)?;
+    // 2. Strict Verification: Open snapshot with encryption key and run PRAGMA integrity_check
+    verify_snapshot_integrity(&snapshot_path)?;
+
+    // 3. Prune old history snapshots
+    let _ = prune_history_snapshots(&history_dir);
 
     let size_mb = fs::metadata(&snapshot_path)
         .map(|m| m.len() as f64 / 1_048_576.0)
@@ -217,11 +297,27 @@ pub fn create_history_snapshot(app: &AppHandle, label: &str) -> Result<SnapshotI
 
     Ok(SnapshotInfo {
         filename,
-        label: label.to_string(),
+        label: safe_label,
         timestamp: now.format("%Y-%m-%d %H:%M").to_string(),
         size_mb: (size_mb * 100.0).round() / 100.0,
         full_path: snapshot_path.to_string_lossy().to_string(),
     })
+}
+
+/// Creates and strictly verifies a mandatory safety snapshot before destructive or bulk operations.
+/// If creation or integrity verification fails, the operation fails closed and returns Err.
+pub fn create_mandatory_safety_snapshot(
+    app: &AppHandle,
+    label: &str,
+) -> Result<SnapshotInfo, String> {
+    let db_path = super::resolve_database_path(app)?;
+    create_mandatory_safety_snapshot_for_db(&db_path, label)
+}
+
+/// Create a snapshot of the current DB. `label` is a short descriptor like
+/// "before_import" or "app_close". Keeps at most HISTORY_RETENTION_COUNT files.
+pub fn create_history_snapshot(app: &AppHandle, label: &str) -> Result<SnapshotInfo, String> {
+    create_mandatory_safety_snapshot(app, label)
 }
 
 pub fn list_history_snapshots(app: &AppHandle) -> Result<Vec<SnapshotInfo>, String> {
@@ -288,8 +384,8 @@ pub fn restore_history_snapshot(app: &AppHandle, filename: &str) -> Result<(), S
         return Err(format!("snapshot file not found: {filename}"));
     }
 
-    // Save current state before restore
-    let _ = create_history_snapshot(app, "before_restore");
+    // Save current state before restore - must succeed or abort
+    create_mandatory_safety_snapshot(app, "before_restore")?;
 
     // Close connections by checkpointing WAL before replacing the main file.
     let conn = open_runtime_connection(app)?;
@@ -327,8 +423,8 @@ pub fn restore_database_from_file(app: &AppHandle, source_path: &str) -> Result<
         "the selected database file could not be opened. Make sure it is a valid Staff Kit database.".to_string()
     })?;
 
-    // Save a snapshot of the current state before restore
-    let _ = create_history_snapshot(app, "before_restore");
+    // Save a snapshot of the current state before restore - must succeed or abort
+    create_mandatory_safety_snapshot(app, "before_restore")?;
 
     // Open the active DB and fully checkpoint WAL so all pages are in the main file
     let db_path = super::resolve_database_path(app)?;
@@ -1155,5 +1251,126 @@ mod tests {
 
         remove_database_files(&db_path);
         let _ = std::fs::remove_dir_all(&backup_dir);
+    }
+
+    #[test]
+    fn test_create_mandatory_safety_snapshot_creates_and_verifies_valid_encrypted_db() {
+        let db_path = temp_path("test-safety-snapshot-source");
+        remove_database_files(&db_path);
+
+        {
+            let conn = open_encrypted_connection(&db_path).expect("open source");
+            apply_migrations(&conn).expect("migrations");
+
+            conn.execute(
+                "INSERT INTO employees(employee_id, full_name) VALUES ('EE-SNAP-01', 'Snapshot Tester');",
+                [],
+            )
+            .expect("insert employee");
+
+            let snapshot_info = super::create_mandatory_safety_snapshot_for_db(
+                &db_path,
+                "before_destructive_apply",
+            )
+            .expect("mandatory safety snapshot must succeed");
+
+            assert!(snapshot_info.filename.contains("before_destructive_apply"));
+            assert!(Path::new(&snapshot_info.full_path).exists());
+
+            // Verify the snapshot file independently
+            super::verify_snapshot_integrity(Path::new(&snapshot_info.full_path))
+                .expect("snapshot verification must pass");
+
+            // Open snapshot with app key and verify data
+            let snap_conn = open_encrypted_connection(Path::new(&snapshot_info.full_path))
+                .expect("open snapshot database");
+            let count: i64 = snap_conn
+                .query_row(
+                    "SELECT COUNT(*) FROM employees WHERE employee_id = 'EE-SNAP-01';",
+                    [],
+                    |r| r.get(0),
+                )
+                .expect("query employee in snapshot");
+            assert_eq!(count, 1);
+        }
+
+        remove_database_files(&db_path);
+    }
+
+    #[test]
+    fn test_verify_snapshot_integrity_detects_empty_corrupted_or_unencrypted_files() {
+        let test_dir = temp_path("test-snapshot-verify-dir");
+        let _ = std::fs::create_dir_all(&test_dir);
+
+        // 1. Non-existent file
+        let non_existent = test_dir.join("non_existent.sqlite3");
+        let err = super::verify_snapshot_integrity(&non_existent).expect_err("non-existent file");
+        assert!(err.contains("does not exist"));
+
+        // 2. Empty file (0 bytes) -> must fail and remove bad file
+        let empty_file = test_dir.join("empty.sqlite3");
+        std::fs::write(&empty_file, b"").expect("write empty file");
+        assert!(empty_file.exists());
+        let err = super::verify_snapshot_integrity(&empty_file).expect_err("empty file");
+        assert!(err.contains("0 bytes"));
+        assert!(!empty_file.exists(), "empty corrupt file must be removed");
+
+        // 3. Corrupt / unencrypted garbage bytes -> must fail and remove bad file
+        let garbage_file = test_dir.join("garbage.sqlite3");
+        std::fs::write(&garbage_file, b"THIS IS NOT A VALID SQLCIPHER DATABASE").expect("write garbage");
+        assert!(garbage_file.exists());
+        let err = super::verify_snapshot_integrity(&garbage_file).expect_err("garbage file");
+        assert!(err.contains("verification failed") || err.contains("unable to decrypt"));
+        assert!(!garbage_file.exists(), "corrupt file must be removed");
+
+        let _ = std::fs::remove_dir_all(&test_dir);
+    }
+
+    #[test]
+    fn test_mandatory_safety_snapshot_fail_closed_on_creation_failure() {
+        let db_path = temp_path("test-fail-closed-creation");
+        remove_database_files(&db_path);
+
+        {
+            let conn = open_encrypted_connection(&db_path).expect("open source");
+            apply_migrations(&conn).expect("migrations");
+
+            super::set_simulate_snapshot_failure(true);
+            let result = super::create_mandatory_safety_snapshot_for_db(
+                &db_path,
+                "simulate_failure_label",
+            );
+            super::set_simulate_snapshot_failure(false);
+
+            assert!(result.is_err(), "Must fail closed when snapshot creation fails");
+            let err_msg = result.unwrap_err();
+            assert!(err_msg.contains("blocked by safety guard"));
+        }
+
+        remove_database_files(&db_path);
+    }
+
+    #[test]
+    fn test_mandatory_safety_snapshot_fail_closed_on_verification_failure() {
+        let db_path = temp_path("test-fail-closed-verification");
+        remove_database_files(&db_path);
+
+        {
+            let conn = open_encrypted_connection(&db_path).expect("open source");
+            apply_migrations(&conn).expect("migrations");
+
+            super::set_simulate_snapshot_verification_failure(true);
+            let result = super::create_mandatory_safety_snapshot_for_db(
+                &db_path,
+                "simulate_verify_fail",
+            );
+            super::set_simulate_snapshot_verification_failure(false);
+
+            assert!(result.is_err(), "Must fail closed when verification fails");
+            let err_msg = result.unwrap_err();
+            assert!(err_msg.contains("verification failure"));
+        }
+
+        remove_database_files(&db_path);
     }
 }

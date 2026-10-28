@@ -1875,6 +1875,7 @@ pub async fn apply_employee_list_sync(
                 .to_string(),
         );
     }
+    super::backup::create_mandatory_safety_snapshot(app, "before_mssql_sync_apply")?;
     let db_path = super::resolve_database_path_read_only(app)?;
     let mut conn = super::open_encrypted_connection(&db_path)?;
     let tx = conn

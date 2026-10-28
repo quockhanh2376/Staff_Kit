@@ -166,6 +166,7 @@ pub fn database_status(app: &AppHandle) -> Result<DatabaseStatus, String> {
 }
 
 pub fn reset_all_data(app: &AppHandle) -> Result<bool, String> {
+    backup::create_mandatory_safety_snapshot(app, "before_reset")?;
     let mut conn = open_runtime_connection(app)?;
     let tx = conn
         .transaction()
@@ -284,6 +285,34 @@ pub(crate) fn ensure_database_ready(app: &AppHandle) -> Result<(PathBuf, String)
         migrate_to_encrypted(&db_path)?;
 
         let conn = open_encrypted_connection(&db_path)?;
+        let current_version: u32 = conn
+            .query_row("PRAGMA user_version;", [], |r| r.get(0))
+            .unwrap_or(0);
+
+        if current_version < SCHEMA_USER_VERSION {
+            let has_tables: bool = conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%');",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap_or(false);
+
+            if has_tables {
+                drop(conn);
+                backup::create_mandatory_safety_snapshot_for_db(&db_path, "before_schema_migration")?;
+                let conn = open_encrypted_connection(&db_path)?;
+                apply_migrations(&conn)?;
+                let version = sqlite_version(&conn)?;
+                let current_gen = POOL_GENERATION.load(Ordering::Acquire);
+                if let Ok(mut pool) = IDLE_CONNECTIONS.lock() {
+                    pool.push((current_gen, conn));
+                }
+                eprintln!("[Staff Kit Perf] ensure_database_ready took {:?}", start.elapsed());
+                return Ok((db_path, version));
+            }
+        }
+
         apply_migrations(&conn)?;
         let version = sqlite_version(&conn)?;
 

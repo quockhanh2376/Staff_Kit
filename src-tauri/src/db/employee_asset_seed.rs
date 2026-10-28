@@ -182,6 +182,7 @@ pub fn import_employee_asset_seed_with_actor(
     _ctx: crate::auth_session::SessionContext,
     payload: EmployeeAssetSeedInput,
 ) -> Result<EmployeeAssetSeedReport, String> {
+    super::backup::create_mandatory_safety_snapshot(app, "before_employee_asset_seed_import")?;
     let mut conn = open_runtime_connection(app)?;
     import_employee_asset_seed_conn(&mut conn, &payload)
 }

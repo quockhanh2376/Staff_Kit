@@ -238,6 +238,7 @@ pub fn inspect_import_columns(
 
 pub fn import_excel(app: &AppHandle, payload: ImportExcelInput) -> Result<ImportReport, String> {
     ensure_database_ready(app)?;
+    super::backup::create_mandatory_safety_snapshot(app, "before_excel_import")?;
     let ImportExcelInput {
         file_path,
         file_paths,

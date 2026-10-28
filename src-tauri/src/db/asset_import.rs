@@ -536,6 +536,7 @@ pub fn import_asset_import_file(
     app: &AppHandle,
     payload: AssetDirectImportInput,
 ) -> Result<AssetDirectImportReport, String> {
+    super::backup::create_mandatory_safety_snapshot(app, "before_asset_direct_import")?;
     let file_path = resolve_import_file_path(payload.file_path)?;
     let parsed = parse_asset_import_source(
         file_path.as_path(),
@@ -584,6 +585,7 @@ pub fn import_asset_import_batch_valid_rows(
     app: &AppHandle,
     batch_id: i64,
 ) -> Result<AssetImportCommitResult, String> {
+    super::backup::create_mandatory_safety_snapshot(app, "before_asset_batch_import")?;
     let mut conn = open_runtime_connection(app)?;
     import_asset_import_batch_valid_rows_conn(&mut conn, batch_id)
 }

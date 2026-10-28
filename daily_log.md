@@ -1,5 +1,48 @@
 # Daily Log - 2026-10-28
 
+## 2026-10-28 — Staff Kit TotalSpec P1.2: Mandatory Safety Snapshots (Start)
+- Authorized by Zon.
+- Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Goal: Implement reusable mandatory verified Safety Snapshots immediately before destructive/bulk Apply operations (Excel Import Apply, Historical Assignment Apply, Asset Metadata Apply, Restore, Reset, and schema migrations).
+- Scope:
+  1. Audit every relevant Apply/Restore/Reset/Migration entry point in backend logic.
+  2. Implement reusable `create_mandatory_safety_snapshot` helper that creates and verifies a valid encrypted SQLCipher snapshot via `PRAGMA integrity_check`.
+  3. Ensure fail-closed behavior: if snapshot creation or verification fails, abort operation before any database writes; never swallow snapshot errors.
+  4. Ensure only 1 snapshot per Apply session (prevent duplicate snapshot creation within a single batch).
+  5. Validate Partial Apply rules (D4.5=B): independent valid rows succeed, failed groups roll back atomically, holder conflicts remain Pending.
+  6. Verify historical loans, signatures, and existing employee/asset data integrity.
+  7. Write focused TDD test coverage using disposable test DB copies.
+  8. Full quality gate verification (`npm run check:quality`).
+
+## 2026-10-28 — Staff Kit TotalSpec P1.2: Mandatory Safety Snapshots (End)
+- Author: Victor (Implementation), Qeen (Independent QA Validation).
+- Actions Completed:
+  1. Audited all Apply/Restore/Reset/Migration entry points for missing or swallowed snapshot errors:
+     - Excel Import Apply: removed swallowed snapshot in `lib.rs:410`; added fail-closed `create_mandatory_safety_snapshot` in `db/import.rs:241`.
+     - Historical Assignment Apply: added `create_mandatory_safety_snapshot` in `db/historical_assignment_import.rs:25`.
+     - Asset Metadata Apply: added `create_mandatory_safety_snapshot` in `db/asset_metadata_reimport.rs:103`.
+     - Asset Direct Import: added `create_mandatory_safety_snapshot` in `db/asset_import.rs:539`.
+     - Asset Batch Valid Rows: added `create_mandatory_safety_snapshot` in `db/asset_import.rs:587`.
+     - MSSQL Sync Apply: added `create_mandatory_safety_snapshot` in `db/mssql_import.rs:1877`.
+     - Database Restore: converted swallowed `let _ = create_history_snapshot(...)` to fail-closed `create_mandatory_safety_snapshot(...)` in `restore_history_snapshot` and `restore_database_from_file`.
+     - Reset All Data: added `create_mandatory_safety_snapshot` in `db::reset_all_data`.
+     - Schema Migration: added `create_mandatory_safety_snapshot_for_db` in `ensure_database_ready` before applying pending migrations to any existing database containing user tables.
+  2. Implemented `verify_snapshot_integrity`:
+     - Checks non-zero file size; immediately purges empty or invalid files on failure.
+     - Opens snapshot independently using SQLCipher `APP_DB_ENCRYPTION_KEY`.
+     - Runs `PRAGMA integrity_check` to ensure 100% structural B-tree and cryptographic integrity before returning `Ok`.
+  3. Single snapshot per Apply session guaranteed: Top-level entry points invoke snapshot creation once prior to row processing.
+  4. Partial Apply rules verified (D4.5=B): Independent valid rows succeed, failed rows/groups log errors without aborting valid rows, DifferentHolder conflicts remain quarantined/pending without explicit Confirm Transfer, and historical loans and signatures remain intact.
+  5. Tested fail-closed behavior on simulated creation and verification errors: verified zero business records written upon snapshot failure.
+  6. Verified full test suites:
+     - `cargo test db::backup::tests`: 13 passed, 0 failed.
+     - `cargo test db::historical_assignment_import::tests`: 17 passed, 0 failed.
+     - `npm run test:tauri`: 399 passed, 0 failed.
+     - `npx vitest run`: 315 passed across 43 test suites.
+     - `npm run check:quality`: PASS (ESLint, strict TSC, Vite build, Cargo check clean).
+  7. Verified strict database isolation: zero writes to original test DB (`data\test_db\staff_kit.sqlite3`) or production database (`D:\AS White Global\IT Team - Staff Kit\staff_kit.sqlite3`).
+- Verdict: PASS.
+
 ## 2026-10-28 — Staff Kit TotalSpec P1.1: Auto-backup Scheduler (Start)
 - Authorized by Zon.
 - Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).

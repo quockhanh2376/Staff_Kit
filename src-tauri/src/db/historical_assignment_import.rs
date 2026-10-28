@@ -22,6 +22,7 @@ pub fn apply_historical_assignment_import(
     payload: HistoricalAssignmentImportInput,
     reviewer_account_id: Option<i64>,
 ) -> Result<HistoricalAssignmentImportReport, String> {
+    super::backup::create_mandatory_safety_snapshot(app, "before_historical_assignment_apply")?;
     let mut conn = open_runtime_connection(app)?;
     apply_historical_assignment_import_conn(&mut conn, &payload, reviewer_account_id)
 }
@@ -2671,6 +2672,75 @@ mod tests {
         assert_eq!(duplicates, 0, "Zero assets may have multiple active loans");
 
         let _ = std::fs::remove_file(&temp_db);
+    }
+
+    #[test]
+    fn test_partial_apply_and_conflict_handling_preserves_audit_and_history() {
+        let mut conn = open_test_conn();
+
+        // Seed employees
+        conn.execute(
+            "INSERT INTO employees (id, employee_id, full_name) VALUES (1, 'ASWVN001', 'Alice Nguyen'), (2, 'ASWVN002', 'Bob Tran')",
+            [],
+        )
+        .expect("insert employees");
+
+        // Seed an existing assigned asset to Bob Tran (id=2)
+        let cat_id = {
+            let tx = conn.transaction().expect("tx");
+            let cid = get_or_create_monitor_category(&tx).expect("cat id");
+            tx.commit().expect("commit");
+            cid
+        };
+
+        conn.execute(
+            "INSERT INTO assets (id, asset_code, category_id, asset_type, display_name, usage_location, status) VALUES (10, 'VNMON999', ?, 'Monitor', 'Test Mon 999', 'Tại công ty', 'assigned')",
+            params![cat_id],
+        )
+        .expect("insert existing asset");
+
+        // Seed existing loan using apply_single_historical_assignment_tx
+        {
+            let tx = conn.transaction().expect("tx");
+            apply_single_historical_assignment_tx(
+                &tx,
+                10,
+                "VNMON999",
+                2,
+                "ASWVN002",
+                "Bob Tran",
+                "Tại công ty",
+                Some(1),
+            )
+            .expect("seed initial loan");
+            tx.commit().expect("commit");
+        }
+
+        // Verify Bob Tran is the active holder before apply
+        let active_holder: i64 = conn
+            .query_row(
+                "SELECT employee_id_fk FROM asset_loans WHERE asset_id = 10 AND returned_at IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .expect("active holder before");
+        assert_eq!(active_holder, 2, "Bob Tran is active holder before");
+
+        // Verify loan count before
+        let loan_count_before: i64 = conn
+            .query_row("SELECT COUNT(*) FROM asset_loans", [], |r| r.get(0))
+            .expect("count loans");
+        assert_eq!(loan_count_before, 1);
+
+        // Verify borrow request signature status is pending_signature
+        let sig_status: String = conn
+            .query_row(
+                "SELECT signature_status FROM borrow_requests WHERE id = (SELECT borrow_request_id FROM asset_loans WHERE asset_id = 10)",
+                [],
+                |r| r.get(0),
+            )
+            .expect("signature status");
+        assert_eq!(sig_status, SIGNATURE_STATUS_PENDING);
     }
 }
 

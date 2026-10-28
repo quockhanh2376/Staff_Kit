@@ -406,8 +406,6 @@ fn import_excel(
     payload: db::ImportExcelInput,
 ) -> Result<db::ImportReport, String> {
     let _ctx = auth_session::require_admin(&session_store, &session_token)?;
-    // Snapshot before import so user can rollback if needed
-    let _ = db::create_history_snapshot(&app, "before_import");
     db::import_excel(&app, payload)
 }
 
