@@ -223,6 +223,13 @@ describe("staffApi Phase C command classification", () => {
         expect(invokeMock).not.toHaveBeenCalled()
     })
 
+    it("getAppVersion invokes public get_app_version without sessionToken", async () => {
+        invokeMock.mockResolvedValue("2.2.1-internal-rc1")
+        const version = await staffApi.getAppVersion()
+        expect(version).toBe("2.2.1-internal-rc1")
+        expect(invokeMock).toHaveBeenCalledWith("get_app_version", undefined)
+    })
+
     it("previewHistoricalAssignmentImport requires session and passes payload", async () => {
         setSession({ sessionToken: "adm-tok", expiresAt: "2099-01-01T00:00:00Z" })
         invokeMock.mockResolvedValue({ fileName: "Asigned_Asset.xlsx", items: [] })

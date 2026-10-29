@@ -1,5 +1,34 @@
 # Daily Log - 2026-10-29
 
+## 2026-10-29 — Staff Kit: Runtime App Version Indicator (Start)
+- Authorized by Zon.
+- Implementer: Senior Engineer (Tauri v2 + Rust + React). QA Validator: Qeen.
+- Goal: Add app runtime version indicator to Login screen and In-App shell from single source of truth.
+- Scope:
+  1. Add thin public Tauri IPC command `get_app_version` reading from Tauri runtime package info (`app.package_info().version`).
+  2. Register and classify `get_app_version` under `PUBLIC_COMMANDS` in `src-tauri/src/lib.rs`.
+  3. Expose `staffApi.getAppVersion()` in `src/services/staff-api.ts`.
+  4. Create shared hook/helper `useAppVersion` in `src/hooks/useAppVersion.ts` with lightweight caching and fail-safe `"Version unavailable"`.
+  5. Display version below "Staff Kit" brand header in both `src/features/auth/LoginPage.tsx` and `src/App.tsx`.
+  6. Ensure theme compatibility (light & dark) and preserve prerelease suffix (e.g. `2.2.1-internal-rc1`).
+  7. Add comprehensive unit & integration tests (`src/hooks/useAppVersion.test.ts`, `LoginPage.test.tsx`, `App.test.tsx` / backend IPC tests).
+  8. Run quality gates: `npm run check:quality`, `npm run test:unit`, `npm run test:tauri`.
+
+## 2026-10-29 — Staff Kit: Runtime App Version Indicator (End)
+- Status: COMPLETED — Verified & Quality Passed.
+- Deliverables:
+  * Backend IPC command `get_app_version` in `src-tauri/src/lib.rs` querying Tauri package info (`app.package_info().version`), falling back safely to `CARGO_PKG_VERSION`. Classified under `PUBLIC_COMMANDS` for pre-login accessibility.
+  * Public typed API bridge `staffApi.getAppVersion()` in `src/services/staff-api.ts`.
+  * Single-source-of-truth React hook & utility `useAppVersion` in `src/lib/appVersion.ts` with in-memory caching and fail-safe fallback to `"Version unavailable"`.
+  * Visual version indicator below brand/logo "Staff Kit" in `LoginPage.tsx` (Login screen) and `App.tsx` (In-App shell), supporting light & dark theme styling and preserving prerelease suffixes (`2.2.1-internal-rc1`).
+  * 0 modifications to database schema, auth logic, session handling, or business rules.
+- Test & Verification Evidence:
+  * Unit tests: `src/lib/appVersion.test.ts` (12 tests PASS), `LoginPage.test.tsx` (11 tests PASS), `src/services/staff-api.test.ts` (24 tests PASS), `src/App.version.test.tsx` (3 tests PASS).
+  * Frontend unit test suite: `npm run test:unit` -> 45 test files passed, 334 tests passed.
+  * Backend test suite: `npm run test:tauri` -> 407 passed, 0 failed.
+  * Quality gate: `npm run check:quality` -> ESLint + TypeScript strict check + Vite production build (10.04s) + Cargo check ALL PASSED.
+- Qeen Verdict: PASS.
+
 ## 2026-10-29 — Staff Kit TotalSpec P1.3: Safe SQLCipher Restore (End)
 - Status: COMPLETED — Verified & Quality Passed.
 - Protected Restore paths:

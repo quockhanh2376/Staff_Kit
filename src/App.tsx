@@ -12,6 +12,7 @@ import {
   STAFF_GROUP_BUTTONS,
   DEFAULT_ACCOUNT_NAME,
 } from "./lib/constants"
+import { useAppVersion } from "./lib/appVersion"
 
 // Feature hooks
 import { useDataImportState } from './features/import/useDataImportState'
@@ -41,6 +42,7 @@ const AssetImportWizard = lazy(() => import("./features/assets/AssetImportWizard
 const SettingsView = lazy(() => import("./features/settings/SettingsView").then(m => ({ default: m.SettingsView })))
 
 function App() {
+  const { displayVersion } = useAppVersion()
   // ── App-level state ──────────────────────────────────────────────────────────
   const [theme, setThemeState] = useState<Theme>("dark")
   const [activeView, setActiveView] = useState<AppView>("employees")
@@ -316,7 +318,15 @@ function App() {
             <div className="flex h-9 w-9 items-center justify-center rounded-[8px] bg-[var(--primary)]/15 text-[var(--primary)]">
               <Users size={18} />
             </div>
-            <span className="text-[30px] font-bold leading-none">Staff Kit</span>
+            <div className="flex flex-col justify-center">
+              <span className="text-[22px] font-bold leading-tight sm:text-[24px]">Staff Kit</span>
+              <span
+                data-testid="app-version"
+                className="text-[11px] font-medium leading-tight text-[var(--text-secondary)]"
+              >
+                {displayVersion}
+              </span>
+            </div>
           </div>
 
           <div className="hidden flex-1 lg:block" />

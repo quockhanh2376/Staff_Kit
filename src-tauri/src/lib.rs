@@ -7,6 +7,20 @@ use tauri::Manager;
 
 // ── Public commands (no session required: bootstrap/login/diagnostics) ───────
 
+pub(crate) fn resolve_app_version(package_version: &str) -> String {
+    let trimmed = package_version.trim();
+    if !trimmed.is_empty() && trimmed != "0.0.0" {
+        trimmed.to_string()
+    } else {
+        env!("CARGO_PKG_VERSION").to_string()
+    }
+}
+
+#[tauri::command]
+fn get_app_version(app: tauri::AppHandle) -> String {
+    resolve_app_version(&app.package_info().version.to_string())
+}
+
 #[tauri::command]
 fn ping() -> &'static str {
     "pong"
@@ -1181,6 +1195,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // ── Public (bootstrap/login/diagnostics) ───────────────────────────
             ping,
+            get_app_version,
             show_main_window,
             init_database,
             get_database_status,
@@ -1316,6 +1331,7 @@ mod tests {
 
     const PUBLIC_COMMANDS: &[&str] = &[
         "ping",
+        "get_app_version",
         "show_main_window",
         "init_database",
         "get_database_status",
@@ -1434,6 +1450,17 @@ mod tests {
         all.extend_from_slice(ADMIN_COMMANDS);
         all.extend_from_slice(AUTHENTICATED_COMMANDS);
         all
+    }
+
+    #[test]
+    fn resolve_app_version_handles_standard_and_prerelease_and_fallback() {
+        assert_eq!(resolve_app_version("2.2.1"), "2.2.1");
+        assert_eq!(resolve_app_version("2.2.1-internal-rc1"), "2.2.1-internal-rc1");
+        assert_eq!(resolve_app_version("2.3.0-beta.2"), "2.3.0-beta.2");
+        assert_eq!(resolve_app_version("0.0.0"), env!("CARGO_PKG_VERSION"));
+        assert_eq!(resolve_app_version(""), env!("CARGO_PKG_VERSION"));
+        assert_eq!(resolve_app_version("   "), env!("CARGO_PKG_VERSION"));
+        assert!(PUBLIC_COMMANDS.contains(&"get_app_version"));
     }
 
     #[test]

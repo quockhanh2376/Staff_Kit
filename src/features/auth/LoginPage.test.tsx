@@ -1,11 +1,18 @@
-import { describe, expect, it, vi } from "vitest"
+import { describe, expect, it, vi, beforeEach } from "vitest"
 import { render, screen } from "@testing-library/react"
 import "@testing-library/jest-dom/vitest"
 import type { AuthState } from "./useAuthState"
 import { LoginPage } from "./LoginPage"
+import { staffApi } from "../../services/staff-api"
+import { __resetAppVersionCacheForTesting } from "../../lib/appVersion"
 
 vi.mock("../../services/staff-api", () => ({
-    staffApi: { ping: vi.fn(), initDatabase: vi.fn(), getDatabaseStatus: vi.fn() },
+    staffApi: {
+        ping: vi.fn(),
+        initDatabase: vi.fn(),
+        getDatabaseStatus: vi.fn(),
+        getAppVersion: vi.fn().mockResolvedValue("2.2.1"),
+    },
 }))
 
 // Minimal AuthState stub — only the fields LoginPage reads.
@@ -226,5 +233,39 @@ describe("LoginPage password toggle and reveal suppression", () => {
         expect(newPasswordInput).toHaveAttribute("type", "password")
         expect(newPasswordInput.className).toContain("pl-10")
         expect(newPasswordInput.className).toContain("[&::-ms-reveal]:hidden")
+    })
+})
+
+describe("LoginPage app version indicator", () => {
+    beforeEach(() => {
+        __resetAppVersionCacheForTesting()
+        vi.clearAllMocks()
+    })
+
+    it("renders app version near brand logo on login screen", async () => {
+        vi.mocked(staffApi.getAppVersion).mockResolvedValueOnce("2.2.1")
+        renderLogin()
+
+        const versionEl = await screen.findByTestId("app-version")
+        expect(versionEl).toBeInTheDocument()
+        expect(versionEl).toHaveTextContent("Version 2.2.1")
+    })
+
+    it("renders prerelease version suffix on login screen", async () => {
+        vi.mocked(staffApi.getAppVersion).mockResolvedValueOnce("2.2.1-internal-rc1")
+        renderLogin()
+
+        const versionEl = await screen.findByTestId("app-version")
+        expect(versionEl).toBeInTheDocument()
+        expect(versionEl).toHaveTextContent("Version 2.2.1-internal-rc1")
+    })
+
+    it("renders fallback 'Version unavailable' when version reading fails", async () => {
+        vi.mocked(staffApi.getAppVersion).mockRejectedValueOnce(new Error("IPC failure"))
+        renderLogin()
+
+        const versionEl = await screen.findByTestId("app-version")
+        expect(versionEl).toBeInTheDocument()
+        expect(versionEl).toHaveTextContent("Version unavailable")
     })
 })

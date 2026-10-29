@@ -10,6 +10,7 @@ import {
 } from "lucide-react"
 import type { Theme } from "../../types/app"
 import type { AuthState } from "./useAuthState"
+import { useAppVersion } from "../../lib/appVersion"
 
 type LoginPageProps = {
     theme: Theme
@@ -28,7 +29,9 @@ export function LoginPage({
     globalError,
     setGlobalError,
 }: LoginPageProps) {
+    const { displayVersion } = useAppVersion()
     const isDark = theme === "dark"
+    const versionTextClass = isDark ? "text-slate-400" : "text-slate-500"
     const pageClass = isDark ? "bg-[#0d1117] text-slate-100" : "bg-[#edf2ee] text-slate-900"
     const headerClass = isDark
         ? "border-slate-900 bg-[#0d1117]/95"
@@ -76,7 +79,15 @@ export function LoginPage({
                         <div className={`flex h-9 w-9 items-center justify-center rounded-[8px] ${headerBrandClass}`}>
                             <Users size={18} />
                         </div>
-                        <span className="text-[30px] font-bold leading-none">Staff Kit</span>
+                        <div className="flex flex-col justify-center">
+                            <span className="text-[22px] font-bold leading-tight sm:text-[24px]">Staff Kit</span>
+                            <span
+                                data-testid="app-version"
+                                className={`text-[11px] font-medium leading-tight ${versionTextClass}`}
+                            >
+                                {displayVersion}
+                            </span>
+                        </div>
                     </div>
 
                     <div className="ml-auto flex items-center gap-4">
