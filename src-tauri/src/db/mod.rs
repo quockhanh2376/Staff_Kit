@@ -214,6 +214,9 @@ pub fn reset_all_data(app: &AppHandle) -> Result<bool, String> {
 // ── Core connection infrastructure (pub(crate) for use by sub-modules) ────────
 
 pub(crate) fn open_runtime_connection(app: &AppHandle) -> Result<DbConnection, String> {
+    if backup::is_restore_in_progress() {
+        return Err("database is undergoing maintenance/restore; operations temporarily blocked".to_string());
+    }
     let _ = ensure_database_ready(app)?;
     let current_gen = POOL_GENERATION.load(Ordering::Acquire);
     if let Ok(mut pool) = IDLE_CONNECTIONS.lock() {
@@ -473,7 +476,7 @@ fn sqlite_version(conn: &Connection) -> Result<String, String> {
         .map_err(|err| format!("failed to query sqlite version: {err}"))
 }
 
-const SCHEMA_USER_VERSION: u32 = 1;
+pub(crate) const SCHEMA_USER_VERSION: u32 = 1;
 
 pub(crate) fn apply_migrations(conn: &Connection) -> Result<(), String> {
     let current_version: u32 = conn

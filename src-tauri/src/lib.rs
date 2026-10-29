@@ -571,8 +571,8 @@ fn restore_history_snapshot(
     session_token: String,
     filename: String,
 ) -> Result<(), String> {
-    let _ctx = auth_session::require_super_admin(&session_store, &session_token)?;
-    db::restore_history_snapshot(&app, &filename)?;
+    let ctx = auth_session::require_super_admin(&session_store, &session_token)?;
+    db::restore_history_snapshot(&app, &filename, Some(ctx.account_id))?;
     // The DB was replaced — all sessions are stale. Invalidate everything.
     session_store.invalidate_all();
     Ok(())
@@ -599,8 +599,8 @@ fn restore_database_from_file(
     session_token: String,
     source_path: String,
 ) -> Result<(), String> {
-    let _ctx = auth_session::require_super_admin(&session_store, &session_token)?;
-    db::restore_database_from_file(&app, &source_path)?;
+    let ctx = auth_session::require_super_admin(&session_store, &session_token)?;
+    db::restore_database_from_file(&app, &source_path, Some(ctx.account_id))?;
     // The entire DB was replaced — invalidate all sessions.
     session_store.invalidate_all();
     Ok(())

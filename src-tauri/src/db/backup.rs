@@ -6,8 +6,10 @@ use std::time::SystemTime;
 use chrono::{DateTime, Local};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tauri::{AppHandle, Manager};
 
+use super::audit;
 use super::schema::{
     AUTO_BACKUP_ENABLED_SETTING_KEY, AUTO_BACKUP_INTERVAL_DAYS, AUTO_BACKUP_INTERVAL_HOURS,
     AUTO_BACKUP_LAST_DATE_SETTING_KEY, AUTO_BACKUP_LAST_STATUS_SETTING_KEY,
@@ -361,8 +363,288 @@ pub fn list_history_snapshots(app: &AppHandle) -> Result<Vec<SnapshotInfo>, Stri
     Ok(snapshots)
 }
 
-/// Restores a snapshot: saves current state as "before_restore", then replaces active DB.
-pub fn restore_history_snapshot(app: &AppHandle, filename: &str) -> Result<(), String> {
+#[cfg(test)]
+pub static SIMULATE_RESTORE_POST_VERIFY_FAILURE: AtomicBool = AtomicBool::new(false);
+
+#[cfg(test)]
+pub fn set_simulate_restore_post_verify_failure(fail: bool) {
+    SIMULATE_RESTORE_POST_VERIFY_FAILURE.store(fail, Ordering::Release);
+}
+
+/// Validates that a source backup file is a valid, uncorrupted, and schema-compatible
+/// Staff Kit SQLCipher database before performing any restore actions.
+pub fn validate_source_backup(source_path: &Path) -> Result<(), String> {
+    if !source_path.exists() {
+        return Err(format!("source backup file not found: {}", source_path.display()));
+    }
+    if !source_path.is_file() {
+        return Err("selected source backup path is not a file".to_string());
+    }
+    let metadata = fs::metadata(source_path)
+        .map_err(|err| format!("cannot read source backup metadata: {err}"))?;
+    if metadata.len() == 0 {
+        return Err("source backup file is empty (0 bytes)".to_string());
+    }
+
+    // 1. Key validation: must decrypt with application key
+    let conn = super::open_encrypted_connection(source_path).map_err(|err| {
+        format!("source backup decryption failed: unable to open with encryption key: {err}")
+    })?;
+
+    // 2. Integrity validation: PRAGMA integrity_check
+    let integrity: String = conn
+        .query_row("PRAGMA integrity_check;", [], |r| r.get(0))
+        .map_err(|err| format!("source backup integrity check failed: {err}"))?;
+    if !integrity.eq_ignore_ascii_case("ok") {
+        return Err(format!("source backup is corrupt: integrity check returned '{integrity}'"));
+    }
+
+    // 3. Schema compatibility validation: must contain core tables
+    let has_employees: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='employees');",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(false);
+    if !has_employees {
+        return Err("source backup is incompatible: missing 'employees' table".to_string());
+    }
+
+    let source_version: u32 = conn
+        .query_row("PRAGMA user_version;", [], |r| r.get(0))
+        .unwrap_or(0);
+    if source_version > super::SCHEMA_USER_VERSION {
+        return Err(format!(
+            "source backup schema version ({source_version}) is newer than application schema version ({})",
+            super::SCHEMA_USER_VERSION
+        ));
+    }
+
+    Ok(())
+}
+
+/// Executes an atomic, staged replacement of destination_path with source_path.
+/// If any step or verification fails, the original database is recovered intact.
+fn execute_staged_replacement_with_rollback(
+    destination_path: &Path,
+    source_path: &Path,
+    actor_account_id: Option<i64>,
+    snapshot_filename: Option<&str>,
+) -> Result<(), String> {
+    let parent = destination_path
+        .parent()
+        .ok_or_else(|| "destination database path has no parent directory".to_string())?;
+
+    let file_stem = destination_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(DB_FILE_NAME);
+
+    let staged_path = parent.join(format!("{file_stem}.restoring"));
+    if staged_path.exists() {
+        let _ = fs::remove_file(&staged_path);
+    }
+
+    // ── STAGE: Stream backup from source into staged_path using Online Backup API ──
+    {
+        let src_conn = super::open_encrypted_connection(source_path)
+            .map_err(|err| format!("failed to open source database: {err}"))?;
+        let mut staged_conn = super::open_encrypted_connection(&staged_path)
+            .map_err(|err| format!("failed to open staging database: {err}"))?;
+
+        let backup = rusqlite::backup::Backup::new(&src_conn, &mut staged_conn)
+            .map_err(|err| format!("failed to initialize staged restore: {err}"))?;
+        backup
+            .run_to_completion(5, std::time::Duration::from_millis(0), None)
+            .map_err(|err| {
+                let _ = fs::remove_file(&staged_path);
+                format!("failed to stream backup into staging: {err}")
+            })?;
+        drop(backup);
+
+        staged_conn
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+            .map_err(|err| {
+                let _ = fs::remove_file(&staged_path);
+                format!("failed to checkpoint staged database: {err}")
+            })?;
+
+        super::apply_migrations(&staged_conn).map_err(|err| {
+            let _ = fs::remove_file(&staged_path);
+            format!("failed to migrate staged database: {err}")
+        })?;
+
+        let integrity: String = staged_conn
+            .query_row("PRAGMA integrity_check;", [], |r| r.get(0))
+            .map_err(|err| {
+                let _ = fs::remove_file(&staged_path);
+                format!("staged integrity check failed: {err}")
+            })?;
+        if !integrity.eq_ignore_ascii_case("ok") {
+            let _ = fs::remove_file(&staged_path);
+            return Err(format!("staged database integrity check failed: '{integrity}'"));
+        }
+        drop(staged_conn);
+        drop(src_conn);
+    }
+
+    // ── DRAIN ACTIVE CONNECTIONS & WAL FLUSH ──
+    if destination_path.exists() {
+        if let Ok(conn) = super::open_encrypted_connection(destination_path) {
+            let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+        }
+    }
+    super::invalidate_db_cache();
+
+    // ── PREPARE ROLLBACK BACKUP OF ACTIVE DB ──
+    let orig_bak = parent.join(format!("{file_stem}.orig_bak"));
+    let wal_path = parent.join(format!("{file_stem}-wal"));
+    let shm_path = parent.join(format!("{file_stem}-shm"));
+    let wal_bak = parent.join(format!("{file_stem}-wal.bak"));
+    let shm_bak = parent.join(format!("{file_stem}-shm.bak"));
+
+    if orig_bak.exists() {
+        let _ = fs::remove_file(&orig_bak);
+    }
+    if wal_bak.exists() {
+        let _ = fs::remove_file(&wal_bak);
+    }
+    if shm_bak.exists() {
+        let _ = fs::remove_file(&shm_bak);
+    }
+
+    let original_existed = destination_path.exists();
+    if original_existed {
+        fs::rename(destination_path, &orig_bak)
+            .map_err(|err| format!("failed to preserve original database for rollback: {err}"))?;
+        if wal_path.exists() {
+            let _ = fs::rename(&wal_path, &wal_bak);
+        }
+        if shm_path.exists() {
+            let _ = fs::rename(&shm_path, &shm_bak);
+        }
+    }
+
+    // ── SWAP STAGED FILE INTO PLACE ──
+    if let Err(swap_err) = fs::rename(&staged_path, destination_path) {
+        // Rollback immediately
+        if original_existed && orig_bak.exists() {
+            let _ = fs::rename(&orig_bak, destination_path);
+            if wal_bak.exists() {
+                let _ = fs::rename(&wal_bak, &wal_path);
+            }
+            if shm_bak.exists() {
+                let _ = fs::rename(&shm_bak, &shm_path);
+            }
+        }
+        let _ = fs::remove_file(&staged_path);
+        super::invalidate_db_cache();
+        return Err(format!(
+            "failed to swap staged database into place; original database recovered intact: {swap_err}"
+        ));
+    }
+
+    // ── VERIFY RESTORED DATABASE ──
+    let verify_result = (|| -> Result<(), String> {
+        #[cfg(test)]
+        if SIMULATE_RESTORE_POST_VERIFY_FAILURE.load(Ordering::Acquire) {
+            return Err("simulated post-restore verification failure for rollback testing".to_string());
+        }
+
+        let conn = super::open_encrypted_connection(destination_path)
+            .map_err(|e| format!("cannot open restored database: {e}"))?;
+        let integrity: String = conn
+            .query_row("PRAGMA integrity_check;", [], |r| r.get(0))
+            .map_err(|e| format!("integrity check query failed on restored db: {e}"))?;
+        if !integrity.eq_ignore_ascii_case("ok") {
+            return Err(format!("restored database integrity check failed: '{integrity}'"));
+        }
+
+        // Record SUCCESS in restored DB audit logs
+        let audit_payload = json!({
+            "action": "database.restore",
+            "source": source_path.to_string_lossy(),
+            "status": "SUCCESS",
+            "safetySnapshot": snapshot_filename,
+        })
+        .to_string();
+
+        let _ = audit::insert_audit_log_conn(
+            &conn,
+            "database.restore",
+            "account",
+            actor_account_id.map(|id| id.to_string()).as_deref(),
+            "database",
+            "main",
+            Some(&audit_payload),
+        );
+
+        Ok(())
+    })();
+
+    if let Err(verify_err) = verify_result {
+        // ROLLBACK TO ORIGINAL DATABASE
+        let _ = fs::remove_file(destination_path);
+        if original_existed && orig_bak.exists() {
+            let _ = fs::rename(&orig_bak, destination_path);
+            if wal_bak.exists() {
+                let _ = fs::rename(&wal_bak, &wal_path);
+            }
+            if shm_bak.exists() {
+                let _ = fs::rename(&shm_bak, &shm_path);
+            }
+        }
+        super::invalidate_db_cache();
+
+        // Record FAILURE in recovered original DB audit logs
+        if let Ok(orig_conn) = super::open_encrypted_connection(destination_path) {
+            let audit_payload = json!({
+                "action": "database.restore",
+                "source": source_path.to_string_lossy(),
+                "status": "FAILED",
+                "error": verify_err,
+                "safetySnapshot": snapshot_filename,
+            })
+            .to_string();
+
+            let _ = audit::insert_audit_log_conn(
+                &orig_conn,
+                "database.restore",
+                "account",
+                actor_account_id.map(|id| id.to_string()).as_deref(),
+                "database",
+                "main",
+                Some(&audit_payload),
+            );
+        }
+
+        return Err(format!(
+            "restored database verification failed; original database has been recovered intact: {verify_err}"
+        ));
+    }
+
+    // Success! Clean up temporary rollback files
+    if orig_bak.exists() {
+        let _ = fs::remove_file(&orig_bak);
+    }
+    if wal_bak.exists() {
+        let _ = fs::remove_file(&wal_bak);
+    }
+    if shm_bak.exists() {
+        let _ = fs::remove_file(&shm_bak);
+    }
+
+    super::invalidate_db_cache();
+    Ok(())
+}
+
+/// Restores a snapshot safely with validation, safety snapshot, maintenance lock, and rollback.
+pub fn restore_history_snapshot(
+    app: &AppHandle,
+    filename: &str,
+    actor_account_id: Option<i64>,
+) -> Result<(), String> {
     // Security: reject filenames containing path separators or traversal sequences
     if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
         return Err("invalid snapshot filename: path traversal not allowed".to_string());
@@ -384,24 +666,24 @@ pub fn restore_history_snapshot(app: &AppHandle, filename: &str) -> Result<(), S
         return Err(format!("snapshot file not found: {filename}"));
     }
 
-    // Save current state before restore - must succeed or abort
-    create_mandatory_safety_snapshot(app, "before_restore")?;
+    let _restore_guard = try_acquire_restore_lock()?;
+    validate_source_backup(&snapshot_path)?;
+    let safety_snapshot = create_mandatory_safety_snapshot(app, "before_restore")?;
 
-    // Close connections by checkpointing WAL before replacing the main file.
-    let conn = open_runtime_connection(app)?;
-    conn.execute_batch("PRAGMA wal_checkpoint(FULL);")
-        .map_err(|err| format!("failed to checkpoint WAL before restore: {err}"))?;
-    drop(conn);
-    super::invalidate_db_cache();
-
-    let res = replace_database_from_history_snapshot(&snapshot_path, &db_path);
-    super::invalidate_db_cache();
-    res
+    execute_staged_replacement_with_rollback(
+        &db_path,
+        &snapshot_path,
+        actor_account_id,
+        Some(&safety_snapshot.filename),
+    )
 }
 
-/// Restores the database from any arbitrary backup file chosen by the user.
-/// Uses SQLite's Online Backup API to safely copy data while connections may be live.
-pub fn restore_database_from_file(app: &AppHandle, source_path: &str) -> Result<(), String> {
+/// Restores the database from an external file safely with validation, safety snapshot, maintenance lock, and rollback.
+pub fn restore_database_from_file(
+    app: &AppHandle,
+    source_path: &str,
+    actor_account_id: Option<i64>,
+) -> Result<(), String> {
     let source = Path::new(source_path);
 
     // Basic validation
@@ -418,64 +700,52 @@ pub fn restore_database_from_file(app: &AppHandle, source_path: &str) -> Result<
         );
     }
 
-    // Open and validate the source backup (confirm it is a valid Staff Kit DB)
-    super::open_encrypted_connection(source).map_err(|_| {
-        "the selected database file could not be opened. Make sure it is a valid Staff Kit database.".to_string()
-    })?;
+    let _restore_guard = try_acquire_restore_lock()?;
+    validate_source_backup(source)?;
+    let safety_snapshot = create_mandatory_safety_snapshot(app, "before_restore")?;
 
-    // Save a snapshot of the current state before restore - must succeed or abort
-    create_mandatory_safety_snapshot(app, "before_restore")?;
-
-    // Open the active DB and fully checkpoint WAL so all pages are in the main file
     let db_path = super::resolve_database_path(app)?;
-    super::invalidate_db_cache();
-    let res = restore_database_file(source, &db_path);
-    super::invalidate_db_cache();
-    res
+    execute_staged_replacement_with_rollback(
+        &db_path,
+        source,
+        actor_account_id,
+        Some(&safety_snapshot.filename),
+    )
 }
 
-fn migrate_restored_database(path: &Path) -> Result<(), String> {
+pub(crate) fn migrate_restored_database(path: &Path) -> Result<(), String> {
     let conn = super::open_encrypted_connection(path)
         .map_err(|err| format!("restored database could not be reopened: {err}"))?;
     super::apply_migrations(&conn)
         .map_err(|err| format!("restored database migration failed: {err}"))
 }
 
-fn replace_database_from_history_snapshot(
+pub(crate) fn replace_database_from_history_snapshot(
     snapshot_path: &Path,
     database_path: &Path,
 ) -> Result<(), String> {
-    fs::copy(snapshot_path, database_path)
-        .map_err(|err| format!("failed to restore snapshot: {err}"))?;
-    migrate_restored_database(database_path)
+    restore_database_file(snapshot_path, database_path)
 }
 
-fn restore_database_file(source_path: &Path, destination_path: &Path) -> Result<(), String> {
-    use rusqlite::backup::Backup;
-    use std::time::Duration;
+pub(crate) fn restore_database_file(
+    source_path: &Path,
+    destination_path: &Path,
+) -> Result<(), String> {
+    let _restore_guard = try_acquire_restore_lock()?;
+    validate_source_backup(source_path)?;
 
-    let src_conn = super::open_encrypted_connection(source_path)
-        .map_err(|err| format!("failed to open restore source: {err}"))?;
-    let mut dst_conn = super::open_encrypted_connection(destination_path)
-        .map_err(|err| format!("failed to open restore destination: {err}"))?;
-    dst_conn
-        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
-        .map_err(|err| format!("failed to checkpoint active database: {err}"))?;
+    let snapshot_info = if destination_path.exists() {
+        create_mandatory_safety_snapshot_for_db(destination_path, "before_restore").ok()
+    } else {
+        None
+    };
 
-    // SQLite Online Backup API: stream every page from src → dst.
-    // This safely handles Windows file locking (os error 32) that fs::copy cannot.
-    let backup = Backup::new(&src_conn, &mut dst_conn)
-        .map_err(|err| format!("failed to initialize database restore: {err}"))?;
-    backup
-        .run_to_completion(5, Duration::from_millis(0), None)
-        .map_err(|err| format!("failed to restore database from file: {err}"))?;
-    drop(backup);
-    drop(dst_conn);
-    drop(src_conn);
-
-    // The source may predate Borrow/Return. Migrate before restore success is
-    // reported or the caller invalidates the current session.
-    migrate_restored_database(destination_path)
+    execute_staged_replacement_with_rollback(
+        destination_path,
+        source_path,
+        None,
+        snapshot_info.as_ref().map(|s| s.filename.as_str()),
+    )
 }
 
 // ── Private helpers ───────────────────────────────────────────────────────────
@@ -535,6 +805,7 @@ fn resolve_history_dir(db_path: &Path) -> Result<PathBuf, String> {
 }
 
 static BACKUP_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+pub static RESTORE_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug)]
 pub struct BackupInProgressGuard;
@@ -542,6 +813,17 @@ pub struct BackupInProgressGuard;
 impl Drop for BackupInProgressGuard {
     fn drop(&mut self) {
         BACKUP_IN_PROGRESS.store(false, Ordering::Release);
+    }
+}
+
+#[derive(Debug)]
+pub struct RestoreInProgressGuard {
+    _backup_guard: BackupInProgressGuard,
+}
+
+impl Drop for RestoreInProgressGuard {
+    fn drop(&mut self) {
+        RESTORE_IN_PROGRESS.store(false, Ordering::Release);
     }
 }
 
@@ -553,6 +835,23 @@ pub fn try_acquire_backup_lock() -> Result<BackupInProgressGuard, String> {
         return Err("another backup operation is currently in progress".to_string());
     }
     Ok(BackupInProgressGuard)
+}
+
+pub fn try_acquire_restore_lock() -> Result<RestoreInProgressGuard, String> {
+    let backup_guard = try_acquire_backup_lock()?;
+    if RESTORE_IN_PROGRESS
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Err("another restore operation is currently in progress".to_string());
+    }
+    Ok(RestoreInProgressGuard {
+        _backup_guard: backup_guard,
+    })
+}
+
+pub fn is_restore_in_progress() -> bool {
+    RESTORE_IN_PROGRESS.load(Ordering::Acquire)
 }
 
 #[allow(dead_code)]
@@ -848,6 +1147,8 @@ mod tests {
         AUTO_BACKUP_ENABLED_SETTING_KEY, AUTO_BACKUP_LAST_DATE_SETTING_KEY,
     };
 
+    static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     fn temp_path(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
             "staff-kit-restore-{label}-{}-{}.sqlite3",
@@ -924,6 +1225,7 @@ mod tests {
 
     #[test]
     fn restore_database_file_migrates_legacy_schema_before_returning() {
+        let _test_lock = TEST_MUTEX.lock().unwrap();
         let source = temp_path("legacy-source");
         let destination = temp_path("legacy-destination");
         create_legacy_database(&source);
@@ -972,6 +1274,7 @@ mod tests {
 
     #[test]
     fn history_snapshot_restore_migrates_legacy_schema_before_returning() {
+        let _test_lock = TEST_MUTEX.lock().unwrap();
         let snapshot = temp_path("history-source");
         let destination = temp_path("history-destination");
         create_legacy_database(&snapshot);
@@ -1016,6 +1319,7 @@ mod tests {
 
     #[test]
     fn restore_current_database_preserves_borrow_evidence_and_is_idempotent() {
+        let _test_lock = TEST_MUTEX.lock().unwrap();
         let source = temp_path("current-source");
         let destination = temp_path("current-destination");
         remove_database_files(&source);
@@ -1185,6 +1489,7 @@ mod tests {
 
     #[test]
     fn test_concurrency_lock_prevents_duplicate_runs() {
+        let _test_lock = TEST_MUTEX.lock().unwrap();
         assert_eq!(super::is_backup_in_progress(), false);
 
         let guard1 = super::try_acquire_backup_lock().expect("acquire first lock");
@@ -1328,6 +1633,7 @@ mod tests {
 
     #[test]
     fn test_mandatory_safety_snapshot_fail_closed_on_creation_failure() {
+        let _test_lock = TEST_MUTEX.lock().unwrap();
         let db_path = temp_path("test-fail-closed-creation");
         remove_database_files(&db_path);
 
@@ -1352,6 +1658,7 @@ mod tests {
 
     #[test]
     fn test_mandatory_safety_snapshot_fail_closed_on_verification_failure() {
+        let _test_lock = TEST_MUTEX.lock().unwrap();
         let db_path = temp_path("test-fail-closed-verification");
         remove_database_files(&db_path);
 
@@ -1372,5 +1679,261 @@ mod tests {
         }
 
         remove_database_files(&db_path);
+    }
+
+    #[test]
+    fn test_restore_rejects_invalid_key_or_unencrypted_source() {
+        let _test_lock = TEST_MUTEX.lock().unwrap();
+        let destination = temp_path("restore-invalid-key-dst");
+        let invalid_source = temp_path("restore-invalid-key-src");
+        remove_database_files(&destination);
+        remove_database_files(&invalid_source);
+
+        // Destination with valid schema and employee
+        {
+            let conn = open_encrypted_connection(&destination).expect("open destination");
+            apply_migrations(&conn).expect("migrations");
+            conn.execute("INSERT INTO employees(employee_id, full_name) VALUES('EE-INTACT', 'Intact Employee')", []).unwrap();
+        }
+
+        // Source file with plain/garbage bytes
+        std::fs::write(&invalid_source, b"THIS_IS_PLAIN_OR_WRONGLY_ENCRYPTED_DATA").unwrap();
+
+        let val_err = super::validate_source_backup(&invalid_source).expect_err("must reject invalid key/garbage");
+        assert!(val_err.contains("decryption failed") || val_err.contains("unable to open"));
+
+        let res = super::restore_database_file(&invalid_source, &destination);
+        assert!(res.is_err(), "restore must fail closed");
+
+        // Verify destination was NOT modified
+        let check_conn = open_encrypted_connection(&destination).expect("open destination after failed restore");
+        let count: i64 = check_conn.query_row("SELECT count(*) FROM employees WHERE employee_id = 'EE-INTACT'", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 1, "Original database must remain 100% intact");
+
+        remove_database_files(&destination);
+        remove_database_files(&invalid_source);
+    }
+
+    #[test]
+    fn test_restore_rejects_corrupted_backup() {
+        let _test_lock = TEST_MUTEX.lock().unwrap();
+        let destination = temp_path("restore-corrupt-dst");
+        let corrupt_source = temp_path("restore-corrupt-src");
+        remove_database_files(&destination);
+        remove_database_files(&corrupt_source);
+
+        {
+            let conn = open_encrypted_connection(&destination).expect("open destination");
+            apply_migrations(&conn).expect("migrations");
+            conn.execute("INSERT INTO employees(employee_id, full_name) VALUES('EE-INTACT-2', 'Intact Employee 2')", []).unwrap();
+        }
+
+        // Create valid DB first, then corrupt it
+        {
+            let conn = open_encrypted_connection(&corrupt_source).expect("open source");
+            apply_migrations(&conn).expect("migrations");
+        }
+        // Append or corrupt bytes in the file
+        let mut bytes = std::fs::read(&corrupt_source).unwrap();
+        if bytes.len() > 100 {
+            for b in bytes[40..80].iter_mut() {
+                *b ^= 0xFF;
+            }
+            std::fs::write(&corrupt_source, &bytes).unwrap();
+        }
+
+        let val_err = super::validate_source_backup(&corrupt_source).expect_err("must reject corrupted file");
+        assert!(val_err.contains("decryption failed") || val_err.contains("corrupt"));
+
+        let res = super::restore_database_file(&corrupt_source, &destination);
+        assert!(res.is_err(), "restore must fail closed");
+
+        remove_database_files(&destination);
+        remove_database_files(&corrupt_source);
+    }
+
+    #[test]
+    fn test_restore_rejects_incompatible_schema() {
+        let _test_lock = TEST_MUTEX.lock().unwrap();
+        let destination = temp_path("restore-incompat-dst");
+        let incompat_source = temp_path("restore-incompat-src");
+        remove_database_files(&destination);
+        remove_database_files(&incompat_source);
+
+        {
+            let conn = open_encrypted_connection(&destination).expect("open destination");
+            apply_migrations(&conn).expect("migrations");
+        }
+
+        // 1. Source missing employees table
+        {
+            let conn = open_encrypted_connection(&incompat_source).expect("open source");
+            conn.execute("CREATE TABLE other_table (id INTEGER PRIMARY KEY);", []).unwrap();
+        }
+        let val_err = super::validate_source_backup(&incompat_source).expect_err("missing employees table");
+        assert!(val_err.contains("missing 'employees' table"));
+
+        // 2. Source with future user_version
+        {
+            let conn = open_encrypted_connection(&incompat_source).expect("open source");
+            conn.execute("CREATE TABLE employees (id INTEGER PRIMARY KEY);", []).unwrap();
+            conn.execute("PRAGMA user_version = 9999;", []).unwrap();
+        }
+        let val_err2 = super::validate_source_backup(&incompat_source).expect_err("future schema version");
+        assert!(val_err2.contains("newer than application schema version"));
+
+        remove_database_files(&destination);
+        remove_database_files(&incompat_source);
+    }
+
+    #[test]
+    fn test_restore_maintenance_mode_and_concurrency_lock() {
+        let _test_lock = TEST_MUTEX.lock().unwrap();
+        assert_eq!(super::is_restore_in_progress(), false);
+        assert_eq!(super::is_backup_in_progress(), false);
+
+        let restore_guard = super::try_acquire_restore_lock().expect("acquire restore lock");
+        assert_eq!(super::is_restore_in_progress(), true);
+        assert_eq!(super::is_backup_in_progress(), true);
+
+        // Attempting to acquire second restore lock must fail
+        let second_restore = super::try_acquire_restore_lock().expect_err("concurrent restore must fail");
+        assert!(second_restore.contains("in progress"));
+
+        // Attempting to acquire backup lock during restore must fail
+        let backup_err = super::try_acquire_backup_lock().expect_err("backup during restore must fail");
+        assert!(backup_err.contains("in progress"));
+
+        // Drop guard -> both locks released
+        drop(restore_guard);
+        assert_eq!(super::is_restore_in_progress(), false);
+        assert_eq!(super::is_backup_in_progress(), false);
+    }
+
+    #[test]
+    fn test_restore_active_wal_resolves_and_restores_cleanly() {
+        let _test_lock = TEST_MUTEX.lock().unwrap();
+        let destination = temp_path("restore-wal-dst");
+        let wal_source = temp_path("restore-wal-src");
+        remove_database_files(&destination);
+        remove_database_files(&wal_source);
+
+        {
+            let conn = open_encrypted_connection(&destination).expect("open destination");
+            apply_migrations(&conn).expect("migrations");
+        }
+
+        // Source writes in WAL mode
+        {
+            let conn = open_encrypted_connection(&wal_source).expect("open source");
+            apply_migrations(&conn).expect("migrations");
+            let _: String = conn.query_row("PRAGMA journal_mode = WAL;", [], |r| r.get(0)).unwrap();
+            conn.execute("INSERT INTO employees(employee_id, full_name) VALUES('EE-WAL-TEST', 'WAL Employee')", []).unwrap();
+            // Don't checkpoint, leave active WAL
+        }
+
+        super::restore_database_file(&wal_source, &destination).expect("restore from active WAL source");
+
+        let dest_conn = open_encrypted_connection(&destination).expect("open restored dest");
+        let count: i64 = dest_conn.query_row("SELECT count(*) FROM employees WHERE employee_id = 'EE-WAL-TEST'", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 1, "WAL-committed rows must be present in restored database");
+
+        remove_database_files(&destination);
+        remove_database_files(&wal_source);
+    }
+
+    #[test]
+    fn test_restore_failure_rolls_back_original_db_and_records_audit() {
+        let _test_lock = TEST_MUTEX.lock().unwrap();
+        let destination = temp_path("restore-rollback-dst");
+        let source = temp_path("restore-rollback-src");
+        remove_database_files(&destination);
+        remove_database_files(&source);
+
+        {
+            let conn = open_encrypted_connection(&destination).expect("open destination");
+            apply_migrations(&conn).expect("migrations");
+            conn.execute("INSERT INTO employees(employee_id, full_name) VALUES('EE-ORIG-PRESERVED', 'Original Employee')", []).unwrap();
+        }
+
+        {
+            let conn = open_encrypted_connection(&source).expect("open source");
+            apply_migrations(&conn).expect("migrations");
+            conn.execute("INSERT INTO employees(employee_id, full_name) VALUES('EE-NEW-REJECTED', 'New Employee')", []).unwrap();
+        }
+
+        // Simulate post-verify failure
+        super::set_simulate_restore_post_verify_failure(true);
+        let res = super::restore_database_file(&source, &destination);
+        super::set_simulate_restore_post_verify_failure(false);
+
+        assert!(res.is_err(), "Restore must fail when verification fails");
+        let err_msg = res.unwrap_err();
+        assert!(err_msg.contains("recovered intact"));
+
+        // Destination must still have EE-ORIG-PRESERVED and NOT EE-NEW-REJECTED
+        let check_conn = open_encrypted_connection(&destination).expect("open destination after rollback");
+        let orig_count: i64 = check_conn.query_row("SELECT count(*) FROM employees WHERE employee_id = 'EE-ORIG-PRESERVED'", [], |r| r.get(0)).unwrap();
+        assert_eq!(orig_count, 1, "Original data must be recovered intact");
+
+        let new_count: i64 = check_conn.query_row("SELECT count(*) FROM employees WHERE employee_id = 'EE-NEW-REJECTED'", [], |r| r.get(0)).unwrap();
+        assert_eq!(new_count, 0, "Rejected data must not remain in destination");
+
+        // Verify audit log for failure was inserted into recovered original DB
+        let audit_count: i64 = check_conn.query_row(
+            "SELECT count(*) FROM audit_logs WHERE event_type = 'database.restore' AND payload_json LIKE '%FAILED%'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert!(audit_count >= 1, "Failed restore must be audited");
+
+        remove_database_files(&destination);
+        remove_database_files(&source);
+    }
+
+    #[test]
+    fn test_successful_restore_records_audit_and_preserves_integrity() {
+        let _test_lock = TEST_MUTEX.lock().unwrap();
+        let destination = temp_path("restore-audit-dst");
+        let source = temp_path("restore-audit-src");
+        remove_database_files(&destination);
+        remove_database_files(&source);
+
+        {
+            let conn = open_encrypted_connection(&destination).expect("open destination");
+            apply_migrations(&conn).expect("migrations");
+        }
+
+        {
+            let conn = open_encrypted_connection(&source).expect("open source");
+            apply_migrations(&conn).expect("migrations");
+            conn.execute("INSERT INTO employees(employee_id, full_name) VALUES('EE-AUDIT-RESTORE', 'Audit Employee')", []).unwrap();
+        }
+
+        let _guard = super::try_acquire_restore_lock().unwrap();
+        super::execute_staged_replacement_with_rollback(
+            &destination,
+            &source,
+            Some(99),
+            Some("safety_snap_test.sqlite3"),
+        ).expect("restore must succeed");
+        drop(_guard);
+
+        let dest_conn = open_encrypted_connection(&destination).expect("open restored dest");
+        let count: i64 = dest_conn.query_row("SELECT count(*) FROM employees WHERE employee_id = 'EE-AUDIT-RESTORE'", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 1);
+
+        let (event_type, actor_ref, payload): (String, Option<String>, Option<String>) = dest_conn.query_row(
+            "SELECT event_type, actor_ref, payload_json FROM audit_logs WHERE event_type = 'database.restore'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).expect("query restore audit record");
+
+        assert_eq!(event_type, "database.restore");
+        assert_eq!(actor_ref.as_deref(), Some("99"));
+        assert!(payload.as_deref().unwrap().contains("SUCCESS"));
+
+        remove_database_files(&destination);
+        remove_database_files(&source);
     }
 }

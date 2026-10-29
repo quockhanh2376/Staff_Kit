@@ -1,3 +1,45 @@
+# Daily Log - 2026-10-29
+
+## 2026-10-29 — Staff Kit TotalSpec P1.3: Safe SQLCipher Restore (End)
+- Status: COMPLETED — Verified & Quality Passed.
+- Protected Restore paths:
+  * `restore_history_snapshot`: Super Admin IPC command with active session verification; acquires `RESTORE_IN_PROGRESS` maintenance lock (and nested `BACKUP_IN_PROGRESS` lock); validates snapshot key, SQLite integrity, and schema compatibility; creates verified mandatory safety snapshot `before_restore`; stages backup via SQLite Online Backup API into `<stem>.restoring`; runs migrations and verifies staging integrity; checkpoints active WAL and safely backs up original DB to `<stem>.orig_bak`; atomically swaps files; invalidates connection cache and sessions; logs durable Security Audit record.
+  * `restore_database_from_file`: Super Admin external file restore with identical safety, maintenance mode, validation, staged replacement, rollback, and audit logging guards.
+  * `open_runtime_connection`: Fail-closed check rejecting all operations with maintenance mode error during restore, blocking concurrent LAN borrow/return requests, employee updates, auto-backup, and imports.
+- Failure tests (7 added, all 20 backup tests PASS):
+  * `test_restore_rejects_invalid_key_or_unencrypted_source`: Rejects invalid key/corrupted source bytes; destination remains 100% intact.
+  * `test_restore_rejects_corrupted_backup`: Rejects damaged SQLite database before touching active DB.
+  * `test_restore_rejects_incompatible_schema`: Rejects backup missing core tables (`employees`) or bearing unsupported future schema user version.
+  * `test_restore_maintenance_mode_and_concurrency_lock`: Proves concurrent restores and concurrent backups are blocked; runtime queries fail with maintenance error.
+  * `test_restore_active_wal_resolves_and_restores_cleanly`: Proves active WAL on source is safely transferred and committed in destination.
+  * `test_restore_failure_rolls_back_original_db_and_records_audit`: Verifies post-verification failure triggers automatic rollback recovering original DB intact with 0 data loss.
+  * `test_successful_restore_records_audit_and_preserves_integrity`: Verifies successful restore preserves B-tree integrity and writes event `database.restore` to audit log.
+- Verification Evidence:
+  * Unit tests: All 20 backup tests pass.
+  * Backend tests: `npm run test:tauri` -> 406 passed, 0 failed.
+  * Frontend tests: `npx vitest run` -> 43 test files passed, 315 tests passed.
+  * Quality gate: `npm run check:quality` -> ESLint + TypeScript strict check + Vite production build + Cargo check ALL PASSED.
+  * DB Isolation: Verified 0 writes to production DB (`D:\AS White Global\IT Team - Staff Kit\staff_kit.sqlite3`) and original test DB (`data\test_db\staff_kit.sqlite3`).
+- Qeen Verdict: PASS.
+
+## 2026-10-29 — Staff Kit TotalSpec P1.3: Safe SQLCipher Restore (Start)
+- Authorized by Zon.
+- Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Goal: Implement safe, verified, atomic SQLCipher database restore adhering to TotalSpec D1.6, D5.1, D5.3, REL-001, and SEC-006.
+- Scope:
+  1. Audit all restore entry points: `restore_history_snapshot` and `restore_database_from_file`.
+  2. Require Super Admin authorization and explicit confirmation.
+  3. Validate source backup: SQLCipher encryption key, B-tree integrity (`PRAGMA integrity_check`), and schema compatibility.
+  4. Ensure verified mandatory Safety Snapshot (`before_restore`) before any live DB replacement (reusing P1.2 guards).
+  5. Put system into Maintenance Mode during restore: block writes, reject concurrent LAN Borrow/Return submissions, prevent auto-backup and imports.
+  6. Safely manage SQLite WAL/SHM files and invalidate/drain connection pool and cache before replacing active database.
+  7. Stage and verify replacement atomically; never `fs::copy` directly over a live, active database.
+  8. If restore fails at any stage, roll back to original active DB intact.
+  9. Record durable Security Audit logs for both successful and failed restore attempts.
+  10. Preserve employee/asset/loan history and signatures with zero invented timestamps.
+  11. Write comprehensive unit tests on disposable test DB copies without modifying production or primary test DB.
+  12. Pass full quality gate (`npm run check:quality`).
+
 # Daily Log - 2026-10-28
 
 ## 2026-10-28 — Staff Kit TotalSpec P1.2: Mandatory Safety Snapshots (Start)
