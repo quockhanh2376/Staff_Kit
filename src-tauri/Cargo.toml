@@ -41,7 +41,11 @@ futures = "0.3"
 
 [target.'cfg(windows)'.dependencies]
 ipconfig = { version = "0.3.4", default-features = false }
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security_Credentials"] }
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Security_Credentials",
+    "Win32_Storage_FileSystem",
+] }
 
 [profile.release]
 lto = "thin"

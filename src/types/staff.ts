@@ -14,6 +14,13 @@ export type BackupSettings = {
   autoBackupRetentionDays: number
   lastAutoBackupDate?: string | null
   lastAutoBackupStatus?: string | null
+  usbBackupEnabled?: boolean
+  usbBackupDirectoryPath?: string | null
+  usbDeviceId?: string | null
+  usbDeviceName?: string | null
+  lastUsbBackupDate?: string | null
+  lastUsbBackupStatus?: string | null
+  protectionStatus?: string | null
 }
 
 /** Information about a single database snapshot. */
@@ -35,6 +42,11 @@ export type BackupRunResult = {
 export type BackupSettingsUpdateInput = {
   backupDirectoryPath: string
   autoBackupEnabled: boolean
+}
+
+export type ConfigureUsbBackupInput = {
+  usbDirectoryPath: string
+  enabled: boolean
 }
 
 /** LAN server configuration for the Borrow/Return QR flow. */

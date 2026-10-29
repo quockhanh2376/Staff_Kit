@@ -265,4 +265,25 @@ describe("staffApi Phase C command classification", () => {
         expect(cmd).toBe("apply_asset_metadata_reimport")
         expect((args as Record<string, unknown>).sessionToken).toBe("adm-tok")
     })
+
+    it("configureUsbBackupDestination requires session and passes payload", async () => {
+        setSession({ sessionToken: "adm-tok", expiresAt: "2099-01-01T00:00:00Z" })
+        invokeMock.mockResolvedValue({
+            backupDirectoryPath: "C:/backups",
+            autoBackupEnabled: true,
+            usbBackupEnabled: true,
+            usbBackupDirectoryPath: "E:/usb_backups",
+            usbDeviceId: "VOL_1234",
+            usbDeviceName: "MyUSB",
+            protectionStatus: "Protected",
+        })
+        await staffApi.configureUsbBackupDestination({ usbDirectoryPath: "E:/usb_backups", enabled: true })
+        const [cmd, args] = invokeMock.mock.calls[0]
+        expect(cmd).toBe("configure_usb_backup_destination")
+        expect((args as Record<string, unknown>).sessionToken).toBe("adm-tok")
+        expect((args as Record<string, unknown>).payload).toEqual({
+            usbDirectoryPath: "E:/usb_backups",
+            enabled: true,
+        })
+    })
 })

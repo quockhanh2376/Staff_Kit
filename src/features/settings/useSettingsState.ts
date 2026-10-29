@@ -56,6 +56,12 @@ export function useSettingsState({
     const [backupStatusMessage, setBackupStatusMessage] = useState("")
     const [isResettingData, setResettingData] = useState(false)
 
+    // USB Independent Copy (P1.4)
+    const [usbBackupDirectoryInput, setUsbBackupDirectoryInput] = useState("")
+    const [usbBackupEnabled, setUsbBackupEnabled] = useState(false)
+    const [isSavingUsbBackupSettings, setSavingUsbBackupSettings] = useState(false)
+    const [usbBackupStatusMessage, setUsbBackupStatusMessage] = useState("")
+
     // History snapshots
     const [snapshots, setSnapshots] = useState<SnapshotInfo[]>([])
     const [isLoadingSnapshots, setLoadingSnapshots] = useState(false)
@@ -233,6 +239,8 @@ export function useSettingsState({
                     setBackupSettings(backupSettings)
                     setBackupDirectoryInput(backupSettings?.backupDirectoryPath ?? "")
                     setBackupAutoEnabled(backupSettings?.autoBackupEnabled ?? false)
+                    setUsbBackupDirectoryInput(backupSettings?.usbBackupDirectoryPath ?? "")
+                    setUsbBackupEnabled(backupSettings?.usbBackupEnabled ?? false)
                     setBorrowLanSettings(lanSettings)
                     setBorrowLanHostInput(lanSettings.host)
                     setBorrowLanPortInput(String(lanSettings.port))
@@ -309,6 +317,45 @@ export function useSettingsState({
             setGlobalError(getUserErrorMessage(error))
         } finally {
             setSavingBackupSettings(false)
+        }
+    }
+
+    const handleBrowseUsbDirectory = async () => {
+        try {
+            const selected = await openFileDialog({
+                title: "Select Registered External USB / Backup Drive",
+                directory: true,
+                multiple: false,
+            })
+            if (!selected) return
+            const dirPath = typeof selected === "string" ? selected : (selected as { path: string }).path
+            setUsbBackupDirectoryInput(dirPath)
+        } catch (error) {
+            setGlobalError(getUserErrorMessage(error))
+        }
+    }
+
+    const handleSaveUsbBackupSettings = async () => {
+        const nextPath = usbBackupDirectoryInput.trim()
+        if (usbBackupEnabled && !nextPath) {
+            setGlobalError("USB backup directory path is required when USB backup is enabled.")
+            return
+        }
+        try {
+            setSavingUsbBackupSettings(true)
+            setUsbBackupStatusMessage("")
+            const updated = await staffApi.configureUsbBackupDestination({
+                usbDirectoryPath: nextPath,
+                enabled: usbBackupEnabled,
+            })
+            setBackupSettings(updated)
+            setUsbBackupDirectoryInput(updated.usbBackupDirectoryPath ?? "")
+            setUsbBackupEnabled(updated.usbBackupEnabled ?? false)
+            setUsbBackupStatusMessage("USB backup settings saved successfully.")
+        } catch (error) {
+            setGlobalError(getUserErrorMessage(error))
+        } finally {
+            setSavingUsbBackupSettings(false)
         }
     }
 
@@ -768,6 +815,15 @@ export function useSettingsState({
         handleSaveBackupSettings,
         handleBackupNow,
         handleResetAllData,
+        // USB Backup (P1.4)
+        usbBackupDirectoryInput,
+        setUsbBackupDirectoryInput,
+        usbBackupEnabled,
+        setUsbBackupEnabled,
+        isSavingUsbBackupSettings,
+        usbBackupStatusMessage,
+        handleBrowseUsbDirectory,
+        handleSaveUsbBackupSettings,
         // History
         snapshots,
         isLoadingSnapshots,

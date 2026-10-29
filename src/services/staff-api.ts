@@ -15,6 +15,7 @@ import type {
   BackupRunResult,
   BackupSettings,
   BackupSettingsUpdateInput,
+  ConfigureUsbBackupInput,
   BorrowLanSettings,
   BorrowLanSettingsUpdateInput,
   BorrowLanTokenStatus,
@@ -183,6 +184,14 @@ export const staffApi = {
       payload: {
         backupDirectoryPath: payload.backupDirectoryPath,
         autoBackupEnabled: payload.autoBackupEnabled,
+      },
+    }),
+
+  configureUsbBackupDestination: (payload: ConfigureUsbBackupInput) =>
+    call<BackupSettings>("configure_usb_backup_destination", {
+      payload: {
+        usbDirectoryPath: payload.usbDirectoryPath,
+        enabled: payload.enabled,
       },
     }),
 

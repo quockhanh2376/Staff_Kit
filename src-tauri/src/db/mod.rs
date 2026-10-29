@@ -39,6 +39,7 @@ mod schema;
 pub mod team;
 pub mod historical_assignment_import;
 pub mod asset_metadata_reimport;
+pub mod storage_safety;
 
 // ── Re-exports (all public types bubble up to `db::`) ─────────────────────────
 pub use asset::*;
@@ -48,6 +49,8 @@ pub use asset_metadata_reimport::*;
 pub use auth::*;
 pub use backup::*;
 pub use borrow::*;
+#[allow(unused_imports)]
+pub use storage_safety::*;
 pub use column::*;
 pub use employee::*;
 pub use employee_asset_seed::*;

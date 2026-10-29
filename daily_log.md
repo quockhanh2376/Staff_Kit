@@ -1,5 +1,50 @@
 # Daily Log - 2026-10-29
 
+## 2026-10-29 — Staff Kit TotalSpec P1.4: Backup Retention, USB Independent Copy, Storage Safety (Start)
+- Authorized by Zon.
+- Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Goal: Implement comprehensive P1.4 backup retention, USB independent copy, and storage safety safeguards adhering to D1.2, D1.4, D1.7, D1.8, D1.9, D5.2, S6, and REL-004.
+- Scope & Requirements:
+  1. Super Admin configurable registered external USB/HDD destination with device identification (volume serial number/identity check), rejecting same physical disk/DB directory/network DB paths.
+  2. Local backup disk-space preflight before VACUUM INTO, staging to temp file, strict SQLCipher key + integrity verification, atomic finalize.
+  3. USB independent copy staged to temporary file (`.sync_tmp`), verifying checksum + SQLCipher integrity before final rename; handling unplug, disk full, interruption; catch-up sync for missing eligible backups.
+  4. Retention: 30-day age-based retention for auto-backups (`staff_kit_backup_auto_*.sqlite3`); manual backups NEVER auto-pruned; Safety Snapshots categorized quotas (`app_close`: 5, `import`: 10, `restore`: 10, `critical_ops`: 10, `manual`: never pruned).
+  5. Sync + verify BEFORE pruning; NEVER delete existing backup solely because verification fails; NEVER delete last valid recoverable backup.
+  6. Protection status engine: Protected (verified fresh local + USB), Degraded (local valid, USB missing/stale/unsynced), At Risk (no valid local / critical failure).
+  7. Retry backoff for independent copy (15 min, 1 hour, 3 hours); single-flight backup lock; async execution off UI thread.
+  8. Focused TDD on disposable DB copies/dirs with simulation of wrong USB, unplug mid-copy, disk full, corrupted existing backup, retention boundaries, concurrent scheduler triggers.
+
+## 2026-10-29 — Staff Kit TotalSpec P1.4: Backup Retention, USB Independent Copy, Storage Safety (End)
+- Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Implementation completed:
+  1. `src-tauri/src/db/storage_safety.rs`:
+     - Windows volume identification via `GetVolumeInformationW` and `GetDriveTypeW`, querying volume serial number, volume name, file system, drive type.
+     - Available disk space queries via `GetDiskFreeSpaceExW`.
+     - Strict UNC network path detection (`is_network_unc_path`).
+     - Validation logic `validate_usb_destination`: Rejects DB directory and parent, rejects local backup directory, rejects same volume serial number as primary local DB, verifies filesystem writability via probe file.
+     - Mock test helpers with path prefix normalization (`strip_verbatim_prefix`).
+  2. `src-tauri/src/db/backup.rs` & `src-tauri/src/db/schema.rs`:
+     - Updated `AUTO_BACKUP_RETENTION_DAYS = 30`.
+     - Categorized snapshot quotas: `app_close` (5), `import` (10), `restore` (10), `critical_ops` (10), manual backups never auto-pruned.
+     - Preflight disk space verification before VACUUM INTO and USB copy.
+     - Staged local backup into `_auto_<ts>.tmp`, strict SQLCipher decryption and B-tree integrity check via `validate_source_backup(&temp_path)`, atomic finalize with `fs::rename`.
+     - Staged USB copy into `.sync_tmp`, size and SQLCipher integrity validation, atomic finalize.
+     - Independent copy retry backoff (15 min, 1 hour, 3 hours).
+     - Catch-up sync of missing eligible local auto-backups from last 30 days upon registered USB reconnect.
+     - Pruning engine: Sync + verify precedes prune; preserves last valid recoverable backup even if older than 30 days; never auto-deletes corrupted existing backups (Rule A); never auto-deletes manual backups.
+     - Protection status calculation: `Protected` (fresh local + USB <= 7h), `Degraded` (local fresh, USB missing/offline/stale), `At Risk` (local failed/overdue > 7h).
+     - Guarded Super Admin command `configure_usb_backup_destination` registered in Tauri invoke handler and classified in `SUPER_ADMIN_COMMANDS`.
+  3. Frontend Integration:
+     - `src/types/staff.ts`: Updated `BackupSettings` with USB fields and `protectionStatus`. Added `ConfigureUsbBackupInput`.
+     - `src/services/staff-api.ts`: Added `configureUsbBackupDestination` with session token injection.
+     - `src/features/settings/useSettingsState.ts`: Added USB backup state (`usbBackupDirectoryInput`, `usbBackupEnabled`, `isSavingUsbBackupSettings`, `usbBackupStatusMessage`), Browse folder dialog, and Save handler.
+     - `src/features/settings/SettingsView.tsx`: Added Protection Status badge (`Protected`, `Degraded`, `At Risk`), separate timestamps for local and USB backups, and USB destination configuration panel for Super Admin.
+- Test Coverage & Quality Gates:
+  - `npm run check:quality`: PASSED (eslint clean, tsc -b strict clean, vite build clean, cargo check clean).
+  - `npm run test:unit`: PASSED (45 test files, 338/338 tests passed, including `useSettingsState.test.tsx` 28/28 and `staff-api.test.ts` 25/25).
+  - `npm run test:tauri`: PASSED (417/417 tests passed, including 30 backup tests covering disk space preflight, USB volume mismatch, unplug simulation, corruption simulation, retry backoff schedule, catch-up sync, 30-day retention, categorized snapshot quotas, protection status evaluation, preserving corrupted existing backups, and preserving the last valid backup).
+- Invariants strictly preserved: No schema migrations, no rekeying, no production DB touches, test isolation verified.
+
 ## 2026-10-29 — Staff Kit: Runtime App Version Indicator (Start)
 - Authorized by Zon.
 - Implementer: Senior Engineer (Tauri v2 + Rust + React). QA Validator: Qeen.

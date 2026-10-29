@@ -410,6 +410,17 @@ fn reset_all_data(
     Ok(result)
 }
 
+#[tauri::command(async)]
+fn configure_usb_backup_destination(
+    app: tauri::AppHandle,
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    session_token: String,
+    payload: db::ConfigureUsbBackupInput,
+) -> Result<db::BackupSettings, String> {
+    let _ctx = auth_session::require_super_admin(&session_store, &session_token)?;
+    db::configure_usb_backup_destination(&app, payload)
+}
+
 // ── Excel import (admin) ─────────────────────────────────────────────────────
 
 #[tauri::command(async)]
@@ -1282,6 +1293,7 @@ pub fn run() {
             upsert_team,
             delete_team,
             reset_all_data,
+            configure_usb_backup_destination,
             inspect_import_columns,
             detect_import_file,
             import_excel,
@@ -1345,6 +1357,7 @@ mod tests {
 
     const SUPER_ADMIN_COMMANDS: &[&str] = &[
         "reset_all_data",
+        "configure_usb_backup_destination",
         "restore_history_snapshot",
         "move_database_to",
         "restore_database_from_file",

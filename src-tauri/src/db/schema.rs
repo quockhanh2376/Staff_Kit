@@ -35,6 +35,14 @@ pub(super) const BACKUP_DIRECTORY_SETTING_KEY: &str = "backup_directory_path";
 pub(super) const AUTO_BACKUP_ENABLED_SETTING_KEY: &str = "backup_auto_enabled_v1";
 pub(super) const AUTO_BACKUP_LAST_DATE_SETTING_KEY: &str = "backup_auto_last_date_v1";
 pub(super) const AUTO_BACKUP_LAST_STATUS_SETTING_KEY: &str = "backup_auto_last_status_v1";
+pub(super) const USB_BACKUP_ENABLED_SETTING_KEY: &str = "backup_usb_enabled_v1";
+pub(super) const USB_BACKUP_PATH_SETTING_KEY: &str = "backup_usb_path_v1";
+pub(super) const USB_BACKUP_DEVICE_ID_SETTING_KEY: &str = "backup_usb_device_id_v1";
+pub(super) const USB_BACKUP_DEVICE_NAME_SETTING_KEY: &str = "backup_usb_device_name_v1";
+pub(super) const USB_BACKUP_LAST_DATE_SETTING_KEY: &str = "backup_usb_last_date_v1";
+pub(super) const USB_BACKUP_LAST_STATUS_SETTING_KEY: &str = "backup_usb_last_status_v1";
+pub(super) const USB_BACKUP_RETRY_STAGE_SETTING_KEY: &str = "backup_usb_retry_stage_v1";
+pub(super) const USB_BACKUP_NEXT_RETRY_DATE_SETTING_KEY: &str = "backup_usb_next_retry_date_v1";
 #[allow(dead_code)]
 pub(super) const BORROW_LAN_ENABLED_SETTING_KEY: &str = "borrow_lan_enabled_v1";
 #[allow(dead_code)]
@@ -46,12 +54,17 @@ pub(super) const BORROW_LAN_PORT_SETTING_KEY: &str = "borrow_lan_port_v1";
 pub(super) const AUTO_BACKUP_RETENTION_FILES: usize = 7;
 pub(super) const AUTO_BACKUP_INTERVAL_HOURS: i64 = 6;
 pub(super) const AUTO_BACKUP_INTERVAL_DAYS: i64 = 7;
-pub(super) const AUTO_BACKUP_RETENTION_DAYS: i64 = 400;
+pub(super) const AUTO_BACKUP_RETENTION_DAYS: i64 = 30;
 pub(super) const BACKUP_FILE_PREFIX: &str = "staff_kit_backup";
 
 // ── History snapshots ─────────────────────────────────────────────────────────
 pub(super) const HISTORY_FOLDER_NAME: &str = "staff_kit_history";
+#[allow(dead_code)]
 pub(super) const HISTORY_RETENTION_COUNT: usize = 7;
+pub(super) const HISTORY_RETENTION_APP_CLOSE: usize = 5;
+pub(super) const HISTORY_RETENTION_IMPORT: usize = 10;
+pub(super) const HISTORY_RETENTION_RESTORE: usize = 10;
+pub(super) const HISTORY_RETENTION_CRITICAL_OPS: usize = 10;
 pub(super) const HISTORY_FILE_PREFIX: &str = "snap";
 
 // ── Configurable DB path ──────────────────────────────────────────────────────

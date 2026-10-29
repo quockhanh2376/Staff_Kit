@@ -8,7 +8,7 @@
  * discover the dead session. Failures must preserve the session.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { act, renderHook } from "@testing-library/react"
+import { act, renderHook, waitFor } from "@testing-library/react"
 
 // Mock the Tauri invoke surface BEFORE importing the hook/staffApi.
 const invokeMock = vi.fn()
@@ -818,5 +818,98 @@ describe("Borrow / Return saved Handle with Care policy", () => {
         expect(result.current.borrowPolicy).toEqual(savedPolicy)
         expect(result.current.borrowPolicyEnglishInput).toBe(savedPolicy.textEn)
         expect(result.current.borrowPolicyVietnameseInput).toBe(savedPolicy.textVi)
+    })
+
+    describe("USB Independent Copy Settings (P1.4)", () => {
+        it("initializes USB backup inputs from getBackupSettings", async () => {
+            setSession({ sessionToken: "test-token", expiresAt: "2099-01-01T00:00:00Z" })
+            invokeMock.mockImplementation(async (command: string) => {
+                if (command === "get_backup_settings") {
+                    return {
+                        backupDirectoryPath: "C:/backups",
+                        autoBackupEnabled: true,
+                        retentionFiles: 7,
+                        autoBackupIntervalDays: 7,
+                        autoBackupRetentionDays: 30,
+                        usbBackupEnabled: true,
+                        usbBackupDirectoryPath: "E:/usb_backups",
+                        usbDeviceId: "VOL_USB_42",
+                        usbDeviceName: "Transcend USB",
+                        protectionStatus: "Protected",
+                    }
+                }
+                if (command === "get_db_custom_path") return ""
+                if (command === "get_borrow_lan_settings") return { enabled: false, host: "127.0.0.1", port: 8787, borrowUrl: "" }
+                if (command === "get_borrow_lan_token_status") return { ready: false }
+                if (command === "get_borrow_lan_status") return { running: false }
+                if (command === "list_history_snapshots") return []
+                return undefined
+            })
+
+            const { result } = renderHook(() => useSettingsState(baseOptions))
+            await waitFor(() => {
+                expect(result.current.backupSettings?.protectionStatus).toBe("Protected")
+            })
+
+            expect(result.current.usbBackupDirectoryInput).toBe("E:/usb_backups")
+            expect(result.current.usbBackupEnabled).toBe(true)
+            expect(result.current.backupSettings?.usbDeviceId).toBe("VOL_USB_42")
+        })
+
+        it("validates that USB directory path is required when USB backup is enabled", async () => {
+            const setGlobalError = vi.fn()
+            const { result } = renderHook(() => useSettingsState({ ...baseOptions, setGlobalError }))
+
+            await act(async () => {
+                result.current.setUsbBackupEnabled(true)
+                result.current.setUsbBackupDirectoryInput("")
+            })
+
+            await act(async () => {
+                await result.current.handleSaveUsbBackupSettings()
+            })
+
+            expect(setGlobalError).toHaveBeenCalledWith(
+                "USB backup directory path is required when USB backup is enabled."
+            )
+            expect(invokeMock.mock.calls.some(([cmd]) => cmd === "configure_usb_backup_destination")).toBe(false)
+        })
+
+        it("saves USB backup settings via staffApi.configureUsbBackupDestination", async () => {
+            setSession({ sessionToken: "test-token", expiresAt: "2099-01-01T00:00:00Z" })
+            invokeMock.mockImplementation(async (command: string, args: unknown) => {
+                if (command === "configure_usb_backup_destination") {
+                    const payload = (args as { payload: { enabled: boolean; usbDirectoryPath: string } }).payload
+                    return {
+                        backupDirectoryPath: "C:/backups",
+                        autoBackupEnabled: true,
+                        retentionFiles: 7,
+                        autoBackupIntervalDays: 7,
+                        autoBackupRetentionDays: 30,
+                        usbBackupEnabled: payload.enabled,
+                        usbBackupDirectoryPath: payload.usbDirectoryPath,
+                        usbDeviceId: "VOL_EXT_NEW",
+                        usbDeviceName: "SanDisk Extreme",
+                        protectionStatus: "Protected",
+                    }
+                }
+                return undefined
+            })
+
+            const { result } = renderHook(() => useSettingsState(baseOptions))
+
+            await act(async () => {
+                result.current.setUsbBackupEnabled(true)
+                result.current.setUsbBackupDirectoryInput("F:/SafeBackups")
+            })
+
+            await act(async () => {
+                await result.current.handleSaveUsbBackupSettings()
+            })
+
+            expect(result.current.usbBackupStatusMessage).toBe("USB backup settings saved successfully.")
+            expect(result.current.backupSettings?.usbDeviceId).toBe("VOL_EXT_NEW")
+            expect(result.current.backupSettings?.protectionStatus).toBe("Protected")
+        })
     })
 })

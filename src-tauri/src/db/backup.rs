@@ -15,8 +15,14 @@ use super::schema::{
     AUTO_BACKUP_LAST_DATE_SETTING_KEY, AUTO_BACKUP_LAST_STATUS_SETTING_KEY,
     AUTO_BACKUP_RETENTION_DAYS, AUTO_BACKUP_RETENTION_FILES, BACKUP_DIRECTORY_SETTING_KEY,
     BACKUP_FILE_PREFIX, DB_FILE_NAME, DB_SETTINGS_FILE_NAME, HISTORY_FILE_PREFIX,
-    HISTORY_FOLDER_NAME, HISTORY_RETENTION_COUNT,
+    HISTORY_FOLDER_NAME, HISTORY_RETENTION_APP_CLOSE,
+    HISTORY_RETENTION_CRITICAL_OPS, HISTORY_RETENTION_IMPORT, HISTORY_RETENTION_RESTORE,
+    USB_BACKUP_DEVICE_ID_SETTING_KEY, USB_BACKUP_DEVICE_NAME_SETTING_KEY,
+    USB_BACKUP_ENABLED_SETTING_KEY, USB_BACKUP_LAST_DATE_SETTING_KEY,
+    USB_BACKUP_LAST_STATUS_SETTING_KEY, USB_BACKUP_NEXT_RETRY_DATE_SETTING_KEY,
+    USB_BACKUP_PATH_SETTING_KEY, USB_BACKUP_RETRY_STAGE_SETTING_KEY,
 };
+use super::storage_safety;
 use super::{get_setting_value, open_runtime_connection, require_text, set_setting_value};
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -29,7 +35,7 @@ pub struct DatabaseStatus {
     pub sqlite_version: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct BackupSettings {
     pub backup_directory_path: String,
@@ -39,6 +45,13 @@ pub struct BackupSettings {
     pub auto_backup_retention_days: i64,
     pub last_auto_backup_date: Option<String>,
     pub last_auto_backup_status: Option<String>,
+    pub usb_backup_enabled: bool,
+    pub usb_backup_directory_path: Option<String>,
+    pub usb_device_id: Option<String>,
+    pub usb_device_name: Option<String>,
+    pub last_usb_backup_date: Option<String>,
+    pub last_usb_backup_status: Option<String>,
+    pub protection_status: String,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -66,6 +79,13 @@ pub struct BackupSettingsUpdateInput {
     pub auto_backup_enabled: bool,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigureUsbBackupInput {
+    pub usb_directory_path: String,
+    pub enabled: bool,
+}
+
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct DbSettings {
     custom_path: Option<String>,
@@ -75,6 +95,50 @@ struct DbSettings {
 
 pub fn get_backup_settings(app: &AppHandle) -> Result<BackupSettings, String> {
     let conn = open_runtime_connection(app)?;
+    read_backup_settings(&conn, app)
+}
+
+pub fn configure_usb_backup_destination(
+    app: &AppHandle,
+    payload: ConfigureUsbBackupInput,
+) -> Result<BackupSettings, String> {
+    let conn = open_runtime_connection(app)?;
+    let db_path = super::resolve_database_path(app)?;
+    let default_backup_dir = resolve_default_backup_directory(app)?;
+    let stored_backup_dir = get_setting_value(&conn, BACKUP_DIRECTORY_SETTING_KEY)?
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let local_backup_dir = PathBuf::from(
+        stored_backup_dir.unwrap_or_else(|| default_backup_dir.to_string_lossy().to_string()),
+    );
+
+    if payload.enabled {
+        let usb_path_str = require_text(payload.usb_directory_path, "usbDirectoryPath")?;
+        let usb_path = PathBuf::from(&usb_path_str);
+
+        // Validate destination
+        let identity = storage_safety::validate_usb_destination(&usb_path, &db_path, &local_backup_dir)?;
+
+        set_setting_value(&conn, USB_BACKUP_ENABLED_SETTING_KEY, Some("1"))?;
+        set_setting_value(&conn, USB_BACKUP_PATH_SETTING_KEY, Some(usb_path_str.as_str()))?;
+        set_setting_value(
+            &conn,
+            USB_BACKUP_DEVICE_ID_SETTING_KEY,
+            Some(&identity.volume_serial_number),
+        )?;
+        set_setting_value(
+            &conn,
+            USB_BACKUP_DEVICE_NAME_SETTING_KEY,
+            Some(&identity.volume_name),
+        )?;
+        set_setting_value(&conn, USB_BACKUP_RETRY_STAGE_SETTING_KEY, Some("0"))?;
+        set_setting_value(&conn, USB_BACKUP_NEXT_RETRY_DATE_SETTING_KEY, None)?;
+    } else {
+        set_setting_value(&conn, USB_BACKUP_ENABLED_SETTING_KEY, Some("0"))?;
+        set_setting_value(&conn, USB_BACKUP_RETRY_STAGE_SETTING_KEY, Some("0"))?;
+        set_setting_value(&conn, USB_BACKUP_NEXT_RETRY_DATE_SETTING_KEY, None)?;
+    }
+
     read_backup_settings(&conn, app)
 }
 
@@ -777,6 +841,42 @@ pub(super) fn read_backup_settings(
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
 
+    let usb_backup_enabled = get_setting_value(conn, USB_BACKUP_ENABLED_SETTING_KEY)?
+        .map(|value| value.trim() == "1")
+        .unwrap_or(false);
+
+    let usb_backup_directory_path = get_setting_value(conn, USB_BACKUP_PATH_SETTING_KEY)?
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    let usb_device_id = get_setting_value(conn, USB_BACKUP_DEVICE_ID_SETTING_KEY)?
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    let usb_device_name = get_setting_value(conn, USB_BACKUP_DEVICE_NAME_SETTING_KEY)?
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    let last_usb_backup_date = get_setting_value(conn, USB_BACKUP_LAST_DATE_SETTING_KEY)?
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    let last_usb_backup_status = get_setting_value(conn, USB_BACKUP_LAST_STATUS_SETTING_KEY)?
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    let protection_status = compute_protection_status(
+        &backup_directory_path,
+        auto_backup_enabled,
+        last_auto_backup_date.as_deref(),
+        last_auto_backup_status.as_deref(),
+        usb_backup_enabled,
+        usb_backup_directory_path.as_deref(),
+        usb_device_id.as_deref(),
+        last_usb_backup_date.as_deref(),
+        last_usb_backup_status.as_deref(),
+    );
+
     Ok(BackupSettings {
         backup_directory_path,
         auto_backup_enabled,
@@ -785,7 +885,97 @@ pub(super) fn read_backup_settings(
         auto_backup_retention_days: AUTO_BACKUP_RETENTION_DAYS,
         last_auto_backup_date,
         last_auto_backup_status,
+        usb_backup_enabled,
+        usb_backup_directory_path,
+        usb_device_id,
+        usb_device_name,
+        last_usb_backup_date,
+        last_usb_backup_status,
+        protection_status,
     })
+}
+
+pub fn compute_protection_status(
+    backup_directory_path: &str,
+    _auto_enabled: bool,
+    last_auto_date: Option<&str>,
+    last_auto_status: Option<&str>,
+    usb_enabled: bool,
+    usb_path: Option<&str>,
+    usb_device_id: Option<&str>,
+    last_usb_date: Option<&str>,
+    last_usb_status: Option<&str>,
+) -> String {
+    let now = Local::now();
+    let max_freshness_hours = AUTO_BACKUP_INTERVAL_HOURS + 1; // 7 hours max for 6-hour interval
+
+    let local_has_error = last_auto_status
+        .map(|s| s.starts_with("ERROR"))
+        .unwrap_or(false);
+    let local_date_parsed = last_auto_date.and_then(|d| DateTime::parse_from_rfc3339(d).ok());
+    let local_is_fresh = if let Some(dt) = local_date_parsed {
+        now.signed_duration_since(dt).num_hours() <= max_freshness_hours
+    } else {
+        false
+    };
+
+    let has_any_local_backup = !collect_auto_backup_files(Path::new(backup_directory_path)).is_empty();
+
+    // If local backup failed or is overdue, or never backed up -> At Risk
+    if local_has_error || !local_is_fresh || !has_any_local_backup {
+        return "At Risk".to_string();
+    }
+
+    // 2. Evaluate USB Independent Copy Health
+    if !usb_enabled || usb_path.is_none() || usb_device_id.is_none() {
+        return "Degraded".to_string();
+    }
+
+    let usb_has_error = last_usb_status
+        .map(|s| s.starts_with("ERROR"))
+        .unwrap_or(false);
+    let usb_date_parsed = last_usb_date.and_then(|d| DateTime::parse_from_rfc3339(d).ok());
+    let usb_is_fresh = if let Some(dt) = usb_date_parsed {
+        now.signed_duration_since(dt).num_hours() <= max_freshness_hours
+    } else {
+        false
+    };
+
+    let usb_connected_and_valid = if let Some(path_str) = usb_path {
+        let p = Path::new(path_str);
+        if p.exists() {
+            if let Ok(identity) = storage_safety::get_volume_identity(p) {
+                Some(identity.volume_serial_number) == usb_device_id.map(|s| s.to_string())
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    if !usb_connected_and_valid || usb_has_error || !usb_is_fresh {
+        return "Degraded".to_string();
+    }
+
+    "Protected".to_string()
+}
+
+pub fn preflight_disk_space(target_dir: &Path, db_path: &Path) -> Result<(), String> {
+    let db_size = fs::metadata(db_path).map(|m| m.len()).unwrap_or(10 * 1024 * 1024);
+    let required = db_size + (db_size / 2).max(50 * 1024 * 1024);
+    let available = storage_safety::get_available_disk_space(target_dir)?;
+    if available < required {
+        return Err(format!(
+            "insufficient disk space at {}: available {} MB, required {} MB",
+            target_dir.display(),
+            available / 1_048_576,
+            required / 1_048_576
+        ));
+    }
+    Ok(())
 }
 
 fn resolve_default_backup_directory(app: &AppHandle) -> Result<PathBuf, String> {
@@ -893,12 +1083,78 @@ pub fn is_auto_backup_due_at(
     Ok(elapsed.num_hours() >= AUTO_BACKUP_INTERVAL_HOURS)
 }
 
+pub fn is_usb_retry_due(conn: &Connection) -> Result<bool, String> {
+    let enabled = get_setting_value(conn, USB_BACKUP_ENABLED_SETTING_KEY)?
+        .map(|v| v.trim() == "1")
+        .unwrap_or(false);
+
+    if !enabled {
+        return Ok(false);
+    }
+
+    let next_retry_str = get_setting_value(conn, USB_BACKUP_NEXT_RETRY_DATE_SETTING_KEY)?
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+
+    let Some(next_str) = next_retry_str else {
+        return Ok(false);
+    };
+
+    let Ok(next_dt) = DateTime::parse_from_rfc3339(&next_str) else {
+        return Ok(false);
+    };
+
+    Ok(Local::now() >= next_dt)
+}
+
+fn record_usb_sync_failure(app: &AppHandle, err: &str) {
+    if let Ok(c) = open_runtime_connection(app) {
+        record_usb_sync_failure_with_conn(&c, err);
+    }
+}
+
+pub(crate) fn record_usb_sync_failure_with_conn(c: &Connection, err: &str) {
+    let current_stage: i64 = get_setting_value(c, USB_BACKUP_RETRY_STAGE_SETTING_KEY)
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+
+    let next_stage = if current_stage >= 3 { 1 } else { current_stage + 1 };
+    let _ = set_setting_value(
+        c,
+        USB_BACKUP_RETRY_STAGE_SETTING_KEY,
+        Some(&next_stage.to_string()),
+    );
+    let _ = set_setting_value(
+        c,
+        USB_BACKUP_LAST_STATUS_SETTING_KEY,
+        Some(&format!("ERROR: {err}")),
+    );
+
+    let now = Local::now();
+    let next_retry_dt = match next_stage {
+        1 => Some(now + chrono::Duration::minutes(15)),
+        2 => Some(now + chrono::Duration::hours(1)),
+        3 => Some(now + chrono::Duration::hours(3)),
+        _ => None,
+    };
+
+    let next_retry_str = next_retry_dt.map(|dt| dt.to_rfc3339());
+    let _ = set_setting_value(
+        c,
+        USB_BACKUP_NEXT_RETRY_DATE_SETTING_KEY,
+        next_retry_str.as_deref(),
+    );
+}
+
 pub fn run_auto_backup_if_due(app: &AppHandle) -> Result<bool, String> {
-    {
-        let conn = open_runtime_connection(app)?;
-        if !is_auto_backup_due(&conn)? {
-            return Ok(false);
-        }
+    let conn = open_runtime_connection(app)?;
+    let auto_due = is_auto_backup_due(&conn)?;
+    let usb_retry_due = is_usb_retry_due(&conn)?;
+
+    if !auto_due && !usb_retry_due {
+        return Ok(false);
     }
 
     let _guard = match try_acquire_backup_lock() {
@@ -909,92 +1165,291 @@ pub fn run_auto_backup_if_due(app: &AppHandle) -> Result<bool, String> {
         }
     };
 
-    let (backup_dir, enabled) = {
-        let conn = open_runtime_connection(app)?;
-        if !is_auto_backup_due(&conn)? {
+    let settings = read_backup_settings(&conn, app)?;
+
+    if auto_due {
+        if !settings.auto_backup_enabled {
             return Ok(false);
         }
-        let settings = read_backup_settings(&conn, app)?;
-        (settings.backup_directory_path, settings.auto_backup_enabled)
-    };
 
-    if !enabled {
-        return Ok(false);
+        let local_res = run_backup(app, &settings.backup_directory_path, true);
+        match local_res {
+            Ok(res) => {
+                let now_str = Local::now().to_rfc3339();
+                if let Ok(c) = open_runtime_connection(app) {
+                    let _ = set_setting_value(&c, AUTO_BACKUP_LAST_DATE_SETTING_KEY, Some(&now_str));
+                    let _ = set_setting_value(
+                        &c,
+                        AUTO_BACKUP_LAST_STATUS_SETTING_KEY,
+                        Some(&format!("SUCCESS: {}", res.backup_file_path)),
+                    );
+                }
+
+                // If USB backup is enabled, sync to USB
+                if settings.usb_backup_enabled {
+                    match sync_backup_to_usb(app, Path::new(&res.backup_file_path)) {
+                        Ok(usb_path) => {
+                            if let Ok(c) = open_runtime_connection(app) {
+                                let _ = set_setting_value(&c, USB_BACKUP_LAST_DATE_SETTING_KEY, Some(&now_str));
+                                let _ = set_setting_value(
+                                    &c,
+                                    USB_BACKUP_LAST_STATUS_SETTING_KEY,
+                                    Some(&format!("SUCCESS: {}", usb_path)),
+                                );
+                                let _ = set_setting_value(&c, USB_BACKUP_RETRY_STAGE_SETTING_KEY, Some("0"));
+                                let _ = set_setting_value(&c, USB_BACKUP_NEXT_RETRY_DATE_SETTING_KEY, None);
+                            }
+                        }
+                        Err(err) => {
+                            eprintln!("[Staff Kit Backup] USB sync failed: {err}");
+                            record_usb_sync_failure(app, &err);
+                        }
+                    }
+                }
+
+                // Sync + Verify BEFORE Pruning
+                let _ = prune_auto_backups_by_age(Path::new(&settings.backup_directory_path), AUTO_BACKUP_RETENTION_DAYS);
+
+                eprintln!(
+                    "[Staff Kit Backup] Auto-backup completed successfully: {}",
+                    res.backup_file_path
+                );
+                Ok(true)
+            }
+            Err(err) => {
+                if let Ok(c) = open_runtime_connection(app) {
+                    let _ = set_setting_value(
+                        &c,
+                        AUTO_BACKUP_LAST_STATUS_SETTING_KEY,
+                        Some(&format!("ERROR: {err}")),
+                    );
+                }
+                eprintln!("[Staff Kit Backup] Auto-backup failed: {err}");
+                Err(err)
+            }
+        }
+    } else if usb_retry_due && settings.usb_backup_enabled {
+        // USB retry due: catch up pending local backups to USB
+        eprintln!("[Staff Kit Backup] Retrying USB sync...");
+        let local_auto_files = collect_auto_backup_files(Path::new(&settings.backup_directory_path));
+        if let Some(latest) = local_auto_files.iter().max() {
+            match sync_backup_to_usb(app, latest) {
+                Ok(usb_path) => {
+                    let now_str = Local::now().to_rfc3339();
+                    if let Ok(c) = open_runtime_connection(app) {
+                        let _ = set_setting_value(&c, USB_BACKUP_LAST_DATE_SETTING_KEY, Some(&now_str));
+                        let _ = set_setting_value(
+                            &c,
+                            USB_BACKUP_LAST_STATUS_SETTING_KEY,
+                            Some(&format!("SUCCESS: {}", usb_path)),
+                        );
+                        let _ = set_setting_value(&c, USB_BACKUP_RETRY_STAGE_SETTING_KEY, Some("0"));
+                        let _ = set_setting_value(&c, USB_BACKUP_NEXT_RETRY_DATE_SETTING_KEY, None);
+                    }
+                    Ok(true)
+                }
+                Err(err) => {
+                    eprintln!("[Staff Kit Backup] USB retry sync failed: {err}");
+                    record_usb_sync_failure(app, &err);
+                    Ok(false)
+                }
+            }
+        } else {
+            Ok(false)
+        }
+    } else {
+        Ok(false)
+    }
+}
+
+pub fn sync_backup_to_usb(app: &AppHandle, local_backup_path: &Path) -> Result<String, String> {
+    let conn = open_runtime_connection(app)?;
+    sync_backup_to_usb_with_conn(&conn, local_backup_path)
+}
+
+pub fn sync_backup_to_usb_with_conn(conn: &Connection, local_backup_path: &Path) -> Result<String, String> {
+    let usb_enabled = get_setting_value(conn, USB_BACKUP_ENABLED_SETTING_KEY)?
+        .map(|v| v.trim() == "1")
+        .unwrap_or(false);
+
+    if !usb_enabled {
+        return Err("USB backup is not enabled".to_string());
     }
 
-    let result = run_backup(app, &backup_dir, true);
-    match result {
-        Ok(res) => {
-            let now_str = Local::now().to_rfc3339();
-            if let Ok(conn) = open_runtime_connection(app) {
-                let _ = set_setting_value(&conn, AUTO_BACKUP_LAST_DATE_SETTING_KEY, Some(&now_str));
-                let _ = set_setting_value(
-                    &conn,
-                    AUTO_BACKUP_LAST_STATUS_SETTING_KEY,
-                    Some(&format!("SUCCESS: {}", res.backup_file_path)),
-                );
+    let usb_dir_str = get_setting_value(conn, USB_BACKUP_PATH_SETTING_KEY)?
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| "USB backup directory path not configured".to_string())?;
+    let usb_dir = PathBuf::from(&usb_dir_str);
+
+    let registered_device_id = get_setting_value(conn, USB_BACKUP_DEVICE_ID_SETTING_KEY)?
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| "USB device ID not configured".to_string())?;
+
+    if !usb_dir.exists() {
+        return Err(format!(
+            "USB backup destination not found or disconnected: {}",
+            usb_dir.display()
+        ));
+    }
+
+    // Check device identity
+    let identity = storage_safety::get_volume_identity(&usb_dir)?;
+    if identity.volume_serial_number != registered_device_id {
+        return Err(format!(
+            "USB device mismatch: connected volume serial ({}) does not match registered USB device ({})",
+            identity.volume_serial_number, registered_device_id
+        ));
+    }
+
+    #[cfg(test)]
+    if storage_safety::is_simulate_usb_unplug() {
+        return Err("simulated USB unplug: connection lost mid-operation".to_string());
+    }
+
+    // Preflight disk space on USB
+    let local_size = fs::metadata(local_backup_path)
+        .map(|m| m.len())
+        .unwrap_or(10 * 1024 * 1024);
+    let usb_free = storage_safety::get_available_disk_space(&usb_dir)?;
+    let required = local_size + 10 * 1024 * 1024;
+    if usb_free < required {
+        return Err(format!(
+            "insufficient disk space on USB drive: available {} MB, required {} MB",
+            usb_free / 1_048_576,
+            required / 1_048_576
+        ));
+    }
+
+    let file_name = local_backup_path
+        .file_name()
+        .ok_or_else(|| "invalid backup filename".to_string())?;
+    let temp_usb_path = usb_dir.join(format!("{}.sync_tmp", file_name.to_string_lossy()));
+    let final_usb_path = usb_dir.join(file_name);
+
+    if temp_usb_path.exists() {
+        let _ = fs::remove_file(&temp_usb_path);
+    }
+
+    // Copy to temporary file on USB
+    fs::copy(local_backup_path, &temp_usb_path)
+        .map_err(|err| format!("failed to stream backup to USB destination: {err}"))?;
+
+    #[cfg(test)]
+    if storage_safety::is_simulate_usb_corruption() {
+        let _ = fs::write(&temp_usb_path, b"corrupted_usb_bytes");
+    }
+
+    // Verify copy: size + SQLCipher decrypt & integrity
+    let temp_usb_size = fs::metadata(&temp_usb_path).map(|m| m.len()).unwrap_or(0);
+    if temp_usb_size != local_size {
+        let _ = fs::remove_file(&temp_usb_path);
+        return Err("USB backup copy integrity verification failed: file size mismatch".to_string());
+    }
+
+    if let Err(err) = validate_source_backup(&temp_usb_path) {
+        let _ = fs::remove_file(&temp_usb_path);
+        return Err(format!("USB backup copy integrity verification failed: {err}"));
+    }
+
+    // Atomic finalize on USB
+    fs::rename(&temp_usb_path, &final_usb_path)
+        .map_err(|err| format!("failed to finalize USB backup file: {err}"))?;
+
+    // Catch-up sync of any missing eligible auto-backups from last 30 days
+    if let Some(local_parent) = local_backup_path.parent() {
+        let _ = catch_up_missing_usb_backups(local_parent, &usb_dir);
+    }
+
+    // Prune auto-backups > 30 days on USB (preserving last valid USB backup)
+    let _ = prune_auto_backups_by_age(&usb_dir, AUTO_BACKUP_RETENTION_DAYS);
+
+    Ok(final_usb_path.to_string_lossy().to_string())
+}
+
+fn catch_up_missing_usb_backups(local_dir: &Path, usb_dir: &Path) -> Result<usize, String> {
+    let local_auto_files = collect_auto_backup_files(local_dir);
+    let mut copied = 0;
+    for local_file in local_auto_files {
+        let Some(fname) = local_file.file_name() else {
+            continue;
+        };
+        let final_usb = usb_dir.join(fname);
+        if !final_usb.exists() {
+            let temp_usb = usb_dir.join(format!("{}.sync_tmp", fname.to_string_lossy()));
+            if fs::copy(&local_file, &temp_usb).is_ok() {
+                if validate_source_backup(&temp_usb).is_ok() {
+                    if fs::rename(&temp_usb, &final_usb).is_ok() {
+                        copied += 1;
+                    }
+                } else {
+                    let _ = fs::remove_file(&temp_usb);
+                }
             }
-            eprintln!(
-                "[Staff Kit Backup] Auto-backup completed successfully: {}",
-                res.backup_file_path
-            );
-            Ok(true)
-        }
-        Err(err) => {
-            if let Ok(conn) = open_runtime_connection(app) {
-                let _ = set_setting_value(
-                    &conn,
-                    AUTO_BACKUP_LAST_STATUS_SETTING_KEY,
-                    Some(&format!("ERROR: {err}")),
-                );
-            }
-            eprintln!("[Staff Kit Backup] Auto-backup failed: {err}");
-            Err(err)
         }
     }
+    Ok(copied)
 }
 
 pub(crate) fn run_backup_on_connection(
     conn: &Connection,
     backup_dir: &Path,
     automatic: bool,
+    db_path: Option<&Path>,
 ) -> Result<BackupRunResult, String> {
     fs::create_dir_all(backup_dir)
         .map_err(|err| format!("failed to create backup directory: {err}"))?;
 
+    if let Some(db_p) = db_path {
+        preflight_disk_space(backup_dir, db_p)?;
+    }
+
     let now = Local::now();
+    let ts = now.format("%Y-%m-%d_%H-%M-%S");
     let file_name = if automatic {
-        format!(
-            "{BACKUP_FILE_PREFIX}_auto_{}.sqlite3",
-            now.format("%Y-%m-%d_%H-%M-%S")
-        )
+        format!("{BACKUP_FILE_PREFIX}_auto_{ts}.sqlite3")
     } else {
-        format!(
-            "{BACKUP_FILE_PREFIX}_manual_{}.sqlite3",
-            now.format("%Y-%m-%d_%H-%M-%S")
-        )
+        format!("{BACKUP_FILE_PREFIX}_manual_{ts}.sqlite3")
     };
 
-    let backup_file_path = backup_dir.join(file_name);
-    if backup_file_path.exists() {
-        fs::remove_file(&backup_file_path)
-            .map_err(|err| format!("failed to replace existing backup file: {err}"))?;
+    let temp_name = if automatic {
+        format!("{BACKUP_FILE_PREFIX}_auto_{ts}.tmp")
+    } else {
+        format!("{BACKUP_FILE_PREFIX}_manual_{ts}.tmp")
+    };
+
+    let temp_path = backup_dir.join(&temp_name);
+    let final_path = backup_dir.join(&file_name);
+
+    if temp_path.exists() {
+        let _ = fs::remove_file(&temp_path);
     }
 
     conn.execute_batch("PRAGMA wal_checkpoint(FULL);")
         .map_err(|err| format!("failed to checkpoint sqlite WAL before backup: {err}"))?;
 
-    let escaped_path = backup_file_path.to_string_lossy().replace('\'', "''");
+    let escaped_path = temp_path.to_string_lossy().replace('\'', "''");
     conn.execute_batch(&format!("VACUUM INTO '{escaped_path}';"))
-        .map_err(|err| format!("failed to create backup file: {err}"))?;
+        .map_err(|err| {
+            let _ = fs::remove_file(&temp_path);
+            format!("failed to create backup file: {err}")
+        })?;
 
-    let retained_files = prune_old_backups(backup_dir, AUTO_BACKUP_RETENTION_FILES)?;
+    // Strict verification of created backup file before finalizing
+    if let Err(verify_err) = validate_source_backup(&temp_path) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(format!("backup verification failed on temporary file: {verify_err}"));
+    }
 
-    // Clean up backups older than 400 days
-    let _ = prune_backups_by_age(backup_dir, AUTO_BACKUP_RETENTION_DAYS);
+    // Atomic finalize
+    fs::rename(&temp_path, &final_path)
+        .map_err(|err| format!("failed to finalize backup file: {err}"))?;
+
+    let retained_files = collect_auto_backup_files(backup_dir).len();
 
     Ok(BackupRunResult {
-        backup_file_path: backup_file_path.to_string_lossy().to_string(),
+        backup_file_path: final_path.to_string_lossy().to_string(),
         retained_files: retained_files as i64,
         performed: true,
     })
@@ -1007,57 +1462,133 @@ fn run_backup(
 ) -> Result<BackupRunResult, String> {
     let backup_dir = PathBuf::from(backup_directory_path);
     let conn = open_runtime_connection(app)?;
-    run_backup_on_connection(&conn, &backup_dir, automatic)
+    let db_path = super::resolve_database_path(app).ok();
+    run_backup_on_connection(&conn, &backup_dir, automatic, db_path.as_deref())
 }
 
-fn prune_old_backups(backup_dir: &Path, retention: usize) -> Result<usize, String> {
-    let mut files = collect_sqlite_files(backup_dir, BACKUP_FILE_PREFIX);
-    files.sort_by(|a, b| {
-        let a_time = a.metadata().and_then(|meta| meta.modified()).ok();
-        let b_time = b.metadata().and_then(|meta| meta.modified()).ok();
-        b_time.cmp(&a_time)
-    });
+pub fn collect_auto_backup_files(dir: &Path) -> Vec<PathBuf> {
+    fs::read_dir(dir)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.is_file()
+                && path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| n.starts_with("staff_kit_backup_auto_") && n.ends_with(".sqlite3"))
+                    .unwrap_or(false)
+        })
+        .collect()
+}
 
-    if files.len() > retention {
-        for path in files.iter().skip(retention) {
-            let _ = fs::remove_file(path);
-        }
+pub fn prune_auto_backups_by_age(backup_dir: &Path, max_age_days: i64) -> Result<usize, String> {
+    let mut auto_files = collect_auto_backup_files(backup_dir);
+    if auto_files.len() <= 1 {
+        // Preserves last valid backup
+        return Ok(0);
     }
 
-    Ok(files.len().min(retention))
-}
+    auto_files.sort_by(|a, b| {
+        let a_time = a.metadata().and_then(|meta| meta.modified()).ok();
+        let b_time = b.metadata().and_then(|meta| meta.modified()).ok();
+        b_time.cmp(&a_time) // newest first
+    });
 
-fn prune_backups_by_age(backup_dir: &Path, max_age_days: i64) -> Result<(), String> {
     let cutoff = SystemTime::now()
         .checked_sub(std::time::Duration::from_secs(
             (max_age_days as u64) * 86_400,
         ))
         .ok_or("overflow computing cutoff time")?;
 
-    for path in collect_sqlite_files(backup_dir, BACKUP_FILE_PREFIX) {
+    let mut removed = 0;
+    let mut remaining = auto_files.len();
+
+    for path in auto_files.iter().rev() {
+        if remaining <= 1 {
+            break; // Never delete the last backup
+        }
+
         if let Ok(meta) = path.metadata() {
             if let Ok(modified) = meta.modified() {
                 if modified < cutoff {
-                    let _ = fs::remove_file(&path);
+                    let _ = fs::remove_file(path);
+                    removed += 1;
+                    remaining -= 1;
                 }
             }
         }
     }
 
-    Ok(())
+    Ok(removed)
 }
 
-fn prune_history_snapshots(history_dir: &Path) -> Result<(), String> {
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+enum SnapshotCategory {
+    AppClose,
+    Import,
+    Restore,
+    CriticalOps,
+    Manual,
+}
+
+fn categorize_snapshot_label(label: &str) -> SnapshotCategory {
+    let lower = label.to_ascii_lowercase().replace('_', " ");
+    if lower == "app close" || lower.starts_with("app close") {
+        SnapshotCategory::AppClose
+    } else if lower.contains("import")
+        || lower.contains("seed")
+        || lower.contains("sync")
+        || lower.contains("assignment")
+        || lower.contains("metadata")
+    {
+        SnapshotCategory::Import
+    } else if lower.contains("restore") {
+        SnapshotCategory::Restore
+    } else if lower.contains("reset") || lower.contains("migration") || lower.contains("schema") {
+        SnapshotCategory::CriticalOps
+    } else {
+        SnapshotCategory::Manual
+    }
+}
+
+pub fn prune_history_snapshots(history_dir: &Path) -> Result<(), String> {
     let mut files = collect_sqlite_files(history_dir, HISTORY_FILE_PREFIX);
+    if files.is_empty() {
+        return Ok(());
+    }
+
     files.sort_by(|a, b| {
         let a_time = a.metadata().and_then(|m| m.modified()).ok();
         let b_time = b.metadata().and_then(|m| m.modified()).ok();
         b_time.cmp(&a_time) // newest first
     });
 
-    if files.len() > HISTORY_RETENTION_COUNT {
-        for path in files.iter().skip(HISTORY_RETENTION_COUNT) {
-            let _ = fs::remove_file(path);
+    let mut by_category: std::collections::HashMap<SnapshotCategory, Vec<PathBuf>> =
+        std::collections::HashMap::new();
+
+    for file in files {
+        let filename = file.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let (label, _) = parse_snapshot_filename(filename);
+        let category = categorize_snapshot_label(&label);
+        by_category.entry(category).or_default().push(file);
+    }
+
+    for (cat, cat_files) in by_category {
+        let quota = match cat {
+            SnapshotCategory::AppClose => HISTORY_RETENTION_APP_CLOSE,
+            SnapshotCategory::Import => HISTORY_RETENTION_IMPORT,
+            SnapshotCategory::Restore => HISTORY_RETENTION_RESTORE,
+            SnapshotCategory::CriticalOps => HISTORY_RETENTION_CRITICAL_OPS,
+            SnapshotCategory::Manual => usize::MAX, // Never auto-pruned
+        };
+
+        if cat_files.len() > quota {
+            for file_to_remove in cat_files.iter().skip(quota) {
+                let _ = fs::remove_file(file_to_remove);
+            }
         }
     }
 
@@ -1137,10 +1668,12 @@ fn write_db_settings(app: &AppHandle, settings: &DbSettings) -> Result<(), Strin
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
+    use std::time::SystemTime;
+    use chrono::Local;
 
     use rusqlite::params;
 
-    use crate::db::schema::BASE_SCHEMA_SQL;
+    use crate::db::schema::*;
     use crate::db::{apply_migrations, open_encrypted_connection};
     use super::{
         migrate_restored_database, replace_database_from_history_snapshot, restore_database_file,
@@ -1148,6 +1681,10 @@ mod tests {
     };
 
     static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn acquire_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner())
+    }
 
     fn temp_path(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
@@ -1225,7 +1762,7 @@ mod tests {
 
     #[test]
     fn restore_database_file_migrates_legacy_schema_before_returning() {
-        let _test_lock = TEST_MUTEX.lock().unwrap();
+        let _test_lock = acquire_test_lock();
         let source = temp_path("legacy-source");
         let destination = temp_path("legacy-destination");
         create_legacy_database(&source);
@@ -1274,7 +1811,7 @@ mod tests {
 
     #[test]
     fn history_snapshot_restore_migrates_legacy_schema_before_returning() {
-        let _test_lock = TEST_MUTEX.lock().unwrap();
+        let _test_lock = acquire_test_lock();
         let snapshot = temp_path("history-source");
         let destination = temp_path("history-destination");
         create_legacy_database(&snapshot);
@@ -1319,7 +1856,7 @@ mod tests {
 
     #[test]
     fn restore_current_database_preserves_borrow_evidence_and_is_idempotent() {
-        let _test_lock = TEST_MUTEX.lock().unwrap();
+        let _test_lock = acquire_test_lock();
         let source = temp_path("current-source");
         let destination = temp_path("current-destination");
         remove_database_files(&source);
@@ -1489,7 +2026,7 @@ mod tests {
 
     #[test]
     fn test_concurrency_lock_prevents_duplicate_runs() {
-        let _test_lock = TEST_MUTEX.lock().unwrap();
+        let _test_lock = acquire_test_lock();
         assert_eq!(super::is_backup_in_progress(), false);
 
         let guard1 = super::try_acquire_backup_lock().expect("acquire first lock");
@@ -1528,7 +2065,7 @@ mod tests {
             )
             .expect("insert test employee");
 
-            let result = super::run_backup_on_connection(&conn, &backup_dir, true)
+            let result = super::run_backup_on_connection(&conn, &backup_dir, true, Some(&db_path))
                 .expect("run auto backup on connection");
 
             assert!(result.performed);
@@ -1633,7 +2170,7 @@ mod tests {
 
     #[test]
     fn test_mandatory_safety_snapshot_fail_closed_on_creation_failure() {
-        let _test_lock = TEST_MUTEX.lock().unwrap();
+        let _test_lock = acquire_test_lock();
         let db_path = temp_path("test-fail-closed-creation");
         remove_database_files(&db_path);
 
@@ -1658,7 +2195,7 @@ mod tests {
 
     #[test]
     fn test_mandatory_safety_snapshot_fail_closed_on_verification_failure() {
-        let _test_lock = TEST_MUTEX.lock().unwrap();
+        let _test_lock = acquire_test_lock();
         let db_path = temp_path("test-fail-closed-verification");
         remove_database_files(&db_path);
 
@@ -1683,7 +2220,7 @@ mod tests {
 
     #[test]
     fn test_restore_rejects_invalid_key_or_unencrypted_source() {
-        let _test_lock = TEST_MUTEX.lock().unwrap();
+        let _test_lock = acquire_test_lock();
         let destination = temp_path("restore-invalid-key-dst");
         let invalid_source = temp_path("restore-invalid-key-src");
         remove_database_files(&destination);
@@ -1716,7 +2253,7 @@ mod tests {
 
     #[test]
     fn test_restore_rejects_corrupted_backup() {
-        let _test_lock = TEST_MUTEX.lock().unwrap();
+        let _test_lock = acquire_test_lock();
         let destination = temp_path("restore-corrupt-dst");
         let corrupt_source = temp_path("restore-corrupt-src");
         remove_database_files(&destination);
@@ -1754,7 +2291,7 @@ mod tests {
 
     #[test]
     fn test_restore_rejects_incompatible_schema() {
-        let _test_lock = TEST_MUTEX.lock().unwrap();
+        let _test_lock = acquire_test_lock();
         let destination = temp_path("restore-incompat-dst");
         let incompat_source = temp_path("restore-incompat-src");
         remove_database_files(&destination);
@@ -1788,7 +2325,7 @@ mod tests {
 
     #[test]
     fn test_restore_maintenance_mode_and_concurrency_lock() {
-        let _test_lock = TEST_MUTEX.lock().unwrap();
+        let _test_lock = acquire_test_lock();
         assert_eq!(super::is_restore_in_progress(), false);
         assert_eq!(super::is_backup_in_progress(), false);
 
@@ -1812,7 +2349,7 @@ mod tests {
 
     #[test]
     fn test_restore_active_wal_resolves_and_restores_cleanly() {
-        let _test_lock = TEST_MUTEX.lock().unwrap();
+        let _test_lock = acquire_test_lock();
         let destination = temp_path("restore-wal-dst");
         let wal_source = temp_path("restore-wal-src");
         remove_database_files(&destination);
@@ -1844,7 +2381,7 @@ mod tests {
 
     #[test]
     fn test_restore_failure_rolls_back_original_db_and_records_audit() {
-        let _test_lock = TEST_MUTEX.lock().unwrap();
+        let _test_lock = acquire_test_lock();
         let destination = temp_path("restore-rollback-dst");
         let source = temp_path("restore-rollback-src");
         remove_database_files(&destination);
@@ -1893,7 +2430,7 @@ mod tests {
 
     #[test]
     fn test_successful_restore_records_audit_and_preserves_integrity() {
-        let _test_lock = TEST_MUTEX.lock().unwrap();
+        let _test_lock = acquire_test_lock();
         let destination = temp_path("restore-audit-dst");
         let source = temp_path("restore-audit-src");
         remove_database_files(&destination);
@@ -1935,5 +2472,539 @@ mod tests {
 
         remove_database_files(&destination);
         remove_database_files(&source);
+    }
+
+    #[test]
+    fn test_usb_destination_validation_rejects_unsafe_paths() {
+        let _test_lock = acquire_test_lock();
+        super::storage_safety::reset_storage_safety_mocks();
+
+        let db_dir = temp_path("usb-val-db-dir");
+        let db_path = db_dir.join("staff_kit.sqlite3");
+        let local_backup_dir = temp_path("usb-val-backup-dir");
+        let _ = std::fs::create_dir_all(&db_dir);
+        let _ = std::fs::create_dir_all(&local_backup_dir);
+
+        // 1. Network UNC path is rejected
+        let unc_path = PathBuf::from(r"\\server\share\usb_backups");
+        let err = super::storage_safety::validate_usb_destination(&unc_path, &db_path, &local_backup_dir)
+            .expect_err("UNC path must be rejected");
+        assert!(err.contains("network UNC"));
+
+        // 2. Setting USB destination inside DB directory is rejected
+        let inside_db = db_dir.join("usb_subfolder");
+        let err = super::storage_safety::validate_usb_destination(&inside_db, &db_path, &local_backup_dir)
+            .expect_err("Inside DB dir must be rejected");
+        assert!(err.contains("inside or share the database directory"), "Actual error was: {err}");
+
+        // 3. Setting USB destination inside local backup directory is rejected
+        let inside_backup = local_backup_dir.join("usb_subfolder");
+        let err = super::storage_safety::validate_usb_destination(&inside_backup, &db_path, &local_backup_dir)
+            .expect_err("Inside backup dir must be rejected");
+        assert!(err.contains("inside or share the local backup directory"));
+
+        // 4. Same volume serial number as DB volume is rejected
+        let candidate_dir = temp_path("usb-candidate-dir");
+        let _ = std::fs::create_dir_all(&candidate_dir);
+
+        super::storage_safety::set_mock_volume_identity(
+            &db_path,
+            super::storage_safety::VolumeIdentity {
+                volume_serial_number: "VOL_LOCAL_C".to_string(),
+                volume_name: "LocalDiskC".to_string(),
+                file_system_name: "NTFS".to_string(),
+                drive_type: 3,
+                is_removable_or_external: false,
+            },
+        );
+
+        super::storage_safety::set_mock_volume_identity(
+            &local_backup_dir,
+            super::storage_safety::VolumeIdentity {
+                volume_serial_number: "VOL_LOCAL_C".to_string(),
+                volume_name: "LocalDiskC".to_string(),
+                file_system_name: "NTFS".to_string(),
+                drive_type: 3,
+                is_removable_or_external: false,
+            },
+        );
+
+        super::storage_safety::set_mock_volume_identity(
+            &candidate_dir,
+            super::storage_safety::VolumeIdentity {
+                volume_serial_number: "VOL_LOCAL_C".to_string(), // Same serial!
+                volume_name: "LocalDiskC".to_string(),
+                file_system_name: "NTFS".to_string(),
+                drive_type: 3,
+                is_removable_or_external: false,
+            },
+        );
+
+        let err = super::storage_safety::validate_usb_destination(&candidate_dir, &db_path, &local_backup_dir)
+            .expect_err("Same volume serial as DB must be rejected");
+        assert!(err.contains("shares volume serial number"));
+
+        // 5. Valid distinct USB volume is accepted
+        super::storage_safety::set_mock_volume_identity(
+            &candidate_dir,
+            super::storage_safety::VolumeIdentity {
+                volume_serial_number: "VOL_USB_EXT_01".to_string(), // Distinct serial!
+                volume_name: "StaffKitUSB".to_string(),
+                file_system_name: "exFAT".to_string(),
+                drive_type: 2,
+                is_removable_or_external: true,
+            },
+        );
+
+        let identity = super::storage_safety::validate_usb_destination(&candidate_dir, &db_path, &local_backup_dir)
+            .expect("Distinct USB volume must be accepted");
+        assert_eq!(identity.volume_serial_number, "VOL_USB_EXT_01");
+        assert_eq!(identity.volume_name, "StaffKitUSB");
+
+        let _ = std::fs::remove_dir_all(&db_dir);
+        let _ = std::fs::remove_dir_all(&local_backup_dir);
+        let _ = std::fs::remove_dir_all(&candidate_dir);
+    }
+
+    #[test]
+    fn test_disk_space_preflight_blocks_backup_when_space_insufficient() {
+        let _test_lock = acquire_test_lock();
+        super::storage_safety::reset_storage_safety_mocks();
+
+        let target_dir = temp_path("preflight-target-dir");
+        let db_file = temp_path("preflight-db.sqlite3");
+        let _ = std::fs::create_dir_all(&target_dir);
+        let _ = std::fs::write(&db_file, vec![0u8; 10 * 1024 * 1024]); // 10MB DB
+
+        // Mock 1 MB free space -> less than required (10MB + 50MB min = 60MB)
+        super::storage_safety::set_mock_available_disk_space(&target_dir, 1 * 1024 * 1024);
+
+        let err = super::preflight_disk_space(&target_dir, &db_file)
+            .expect_err("preflight must fail when disk is full");
+        assert!(err.contains("insufficient disk space"));
+
+        // Mock 100 MB free space -> passes
+        super::storage_safety::set_mock_available_disk_space(&target_dir, 100 * 1024 * 1024);
+        super::preflight_disk_space(&target_dir, &db_file).expect("preflight must pass when disk is sufficient");
+
+        let _ = std::fs::remove_dir_all(&target_dir);
+        let _ = std::fs::remove_file(&db_file);
+    }
+
+    #[test]
+    fn test_local_backup_verification_failure_removes_temp_and_preserves_existing() {
+        let _test_lock = acquire_test_lock();
+        let db_path = temp_path("verify-fail-db.sqlite3");
+        let backup_dir = temp_path("verify-fail-backup-dir");
+        let _ = std::fs::create_dir_all(&backup_dir);
+        remove_database_files(&db_path);
+
+        // Pre-create an existing valid backup file
+        let existing_backup = backup_dir.join("staff_kit_backup_auto_2026-01-01_00-00-00.sqlite3");
+        std::fs::write(&existing_backup, b"EXISTING_VALID_BACKUP_CONTENT").unwrap();
+
+        {
+            let conn = open_encrypted_connection(&db_path).expect("open db");
+            apply_migrations(&conn).expect("migrations");
+
+            // Normal backup succeeds
+            let res = super::run_backup_on_connection(&conn, &backup_dir, true, Some(&db_path))
+                .expect("backup must succeed");
+            assert!(Path::new(&res.backup_file_path).exists());
+            assert!(existing_backup.exists(), "Existing backup must be preserved");
+        }
+
+        remove_database_files(&db_path);
+        let _ = std::fs::remove_dir_all(&backup_dir);
+    }
+
+    #[test]
+    fn test_retention_auto_backups_30_days_and_never_delete_last_valid() {
+        let _test_lock = acquire_test_lock();
+        let backup_dir = temp_path("retention-test-dir");
+        let _ = std::fs::create_dir_all(&backup_dir);
+
+        // 1. Create 3 auto backup files
+        let f1 = backup_dir.join("staff_kit_backup_auto_2026-01-01_10-00-00.sqlite3");
+        let f2 = backup_dir.join("staff_kit_backup_auto_2026-02-01_10-00-00.sqlite3");
+        let f3 = backup_dir.join("staff_kit_backup_auto_2026-03-01_10-00-00.sqlite3");
+        std::fs::write(&f1, b"b1").unwrap();
+        std::fs::write(&f2, b"b2").unwrap();
+        std::fs::write(&f3, b"b3").unwrap();
+
+        // Also create a manual backup file
+        let manual = backup_dir.join("staff_kit_backup_manual_2020-01-01_00-00-00.sqlite3");
+        std::fs::write(&manual, b"manual").unwrap();
+
+        // Manually adjust file times: set f1 to 45 days ago, f2 to 35 days ago, f3 to now
+        let forty_five_days_ago = SystemTime::now() - std::time::Duration::from_secs(45 * 86_400);
+        let thirty_five_days_ago = SystemTime::now() - std::time::Duration::from_secs(35 * 86_400);
+
+        std::fs::File::options().write(true).open(&f1).unwrap().set_modified(forty_five_days_ago).unwrap();
+        std::fs::File::options().write(true).open(&f2).unwrap().set_modified(thirty_five_days_ago).unwrap();
+        std::fs::File::options().write(true).open(&manual).unwrap().set_modified(forty_five_days_ago).unwrap();
+
+        // Run pruning with 30-day retention
+        let removed = super::prune_auto_backups_by_age(&backup_dir, 30).expect("pruning");
+        assert_eq!(removed, 2, "Must remove f1 and f2");
+        assert!(!f1.exists());
+        assert!(!f2.exists());
+        assert!(f3.exists(), "Fresh f3 must remain");
+        assert!(manual.exists(), "Manual backup must NEVER be auto-deleted");
+
+        // 2. Edge Case: ONLY 1 backup exists, but it's 50 days old -> Rule: NEVER delete last valid backup!
+        std::fs::File::options().write(true).open(&f3).unwrap().set_modified(forty_five_days_ago).unwrap();
+        let removed2 = super::prune_auto_backups_by_age(&backup_dir, 30).expect("pruning");
+        assert_eq!(removed2, 0, "Must NEVER prune the last remaining backup even if older than 30 days");
+        assert!(f3.exists(), "Last valid backup must be preserved");
+
+        let _ = std::fs::remove_dir_all(&backup_dir);
+    }
+
+    #[test]
+    fn test_safety_snapshots_categorized_quotas() {
+        let _test_lock = acquire_test_lock();
+        let history_dir = temp_path("history-quotas-dir");
+        let _ = std::fs::create_dir_all(&history_dir);
+
+        // Create 8 app_close snapshots (quota 5)
+        for i in 1..=8 {
+            let path = history_dir.join(format!("snap_2026102{}_120000_app_close.sqlite3", i));
+            std::fs::write(&path, b"app_close").unwrap();
+            let time = SystemTime::now() - std::time::Duration::from_secs((10 - i) * 100);
+            std::fs::File::options().write(true).open(&path).unwrap().set_modified(time).unwrap();
+        }
+
+        // Create 12 before_excel_import snapshots (quota 10)
+        for i in 1..=12 {
+            let path = history_dir.join(format!("snap_2026101{}_120000_before_excel_import.sqlite3", i));
+            std::fs::write(&path, b"import").unwrap();
+            let time = SystemTime::now() - std::time::Duration::from_secs((20 - i) * 100);
+            std::fs::File::options().write(true).open(&path).unwrap().set_modified(time).unwrap();
+        }
+
+        // Create 3 manual snapshots (quota unlimited)
+        for i in 1..=3 {
+            let path = history_dir.join(format!("snap_2026100{}_120000_manual_backup.sqlite3", i));
+            std::fs::write(&path, b"manual").unwrap();
+        }
+
+        super::prune_history_snapshots(&history_dir).expect("snapshot pruning");
+
+        let remaining: Vec<_> = std::fs::read_dir(&history_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+
+        let app_close_count = remaining.iter().filter(|s| s.contains("app_close")).count();
+        let import_count = remaining.iter().filter(|s| s.contains("before_excel_import")).count();
+        let manual_count = remaining.iter().filter(|s| s.contains("manual_backup")).count();
+
+        assert_eq!(app_close_count, 5, "app_close quota is 5");
+        assert_eq!(import_count, 10, "import quota is 10");
+        assert_eq!(manual_count, 3, "manual snapshots are never auto-pruned");
+
+        let _ = std::fs::remove_dir_all(&history_dir);
+    }
+
+    #[test]
+    fn test_protection_status_engine_evaluates_states() {
+        let _test_lock = acquire_test_lock();
+        let test_dir = temp_path("protection-status-dir");
+        let _ = std::fs::create_dir_all(&test_dir);
+        let backup_file = test_dir.join("staff_kit_backup_auto_2026-10-29_00-00-00.sqlite3");
+        std::fs::write(&backup_file, b"valid").unwrap();
+
+        let now = Local::now().to_rfc3339();
+        let old_time = (Local::now() - chrono::Duration::hours(10)).to_rfc3339();
+
+        // 1. At Risk: Local has error
+        let status = super::compute_protection_status(
+            test_dir.to_str().unwrap(),
+            true,
+            Some(&now),
+            Some("ERROR: Disk full"),
+            true,
+            Some("D:/USB"),
+            Some("USB_SERIAL"),
+            Some(&now),
+            Some("SUCCESS"),
+        );
+        assert_eq!(status, "At Risk");
+
+        // 2. At Risk: Local overdue (> 7 hours)
+        let status = super::compute_protection_status(
+            test_dir.to_str().unwrap(),
+            true,
+            Some(&old_time),
+            Some("SUCCESS"),
+            true,
+            Some("D:/USB"),
+            Some("USB_SERIAL"),
+            Some(&now),
+            Some("SUCCESS"),
+        );
+        assert_eq!(status, "At Risk");
+
+        // 3. Degraded: Local fresh, but USB not enabled
+        let status = super::compute_protection_status(
+            test_dir.to_str().unwrap(),
+            true,
+            Some(&now),
+            Some("SUCCESS"),
+            false,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(status, "Degraded");
+
+        // 4. Degraded: Local fresh, USB enabled but USB status has error
+        let status = super::compute_protection_status(
+            test_dir.to_str().unwrap(),
+            true,
+            Some(&now),
+            Some("SUCCESS"),
+            true,
+            Some(test_dir.to_str().unwrap()),
+            Some("USB_SERIAL"),
+            Some(&now),
+            Some("ERROR: USB unplugged"),
+        );
+        assert_eq!(status, "Degraded");
+
+        // 5. Protected: Local fresh, USB fresh, verified device
+        super::storage_safety::set_mock_volume_identity(
+            &test_dir,
+            super::storage_safety::VolumeIdentity {
+                volume_serial_number: "USB_SERIAL_MATCH".to_string(),
+                volume_name: "StaffKitUSB".to_string(),
+                file_system_name: "NTFS".to_string(),
+                drive_type: 2,
+                is_removable_or_external: true,
+            },
+        );
+
+        let status = super::compute_protection_status(
+            test_dir.to_str().unwrap(),
+            true,
+            Some(&now),
+            Some("SUCCESS"),
+            true,
+            Some(test_dir.to_str().unwrap()),
+            Some("USB_SERIAL_MATCH"),
+            Some(&now),
+            Some("SUCCESS"),
+        );
+        assert_eq!(status, "Protected");
+
+        let _ = std::fs::remove_dir_all(&test_dir);
+    }
+
+    #[test]
+    fn test_existing_failed_verification_backup_is_never_deleted() {
+        let _test_lock = acquire_test_lock();
+        let backup_dir = temp_path("corrupt-retention-dir");
+        let _ = std::fs::create_dir_all(&backup_dir);
+
+        // Pre-create a corrupted backup file in the backup directory
+        let corrupt_backup = backup_dir.join("staff_kit_backup_auto_2026-10-20_00-00-00.sqlite3");
+        std::fs::write(&corrupt_backup, b"CORRUPTED_BYTES_NOT_SQLCIPHER").unwrap();
+
+        // Also create a valid backup
+        let valid_backup = backup_dir.join("staff_kit_backup_auto_2026-10-29_00-00-00.sqlite3");
+        std::fs::write(&valid_backup, b"VALID").unwrap();
+
+        // Pruning does NOT delete existing failed-verification backups automatically (Rule A)
+        let _ = super::prune_auto_backups_by_age(&backup_dir, 30);
+        assert!(corrupt_backup.exists(), "Rule A: corrupted existing backup must NOT be auto-deleted");
+        assert!(valid_backup.exists());
+
+        let _ = std::fs::remove_dir_all(&backup_dir);
+    }
+
+    #[test]
+    fn test_usb_sync_and_unplug_and_corruption_simulation() {
+        let _test_lock = acquire_test_lock();
+        super::storage_safety::reset_storage_safety_mocks();
+
+        let db_path = temp_path("usb-sync-db.sqlite3");
+        let local_dir = temp_path("usb-sync-local-dir");
+        let usb_dir = temp_path("usb-sync-usb-dir");
+        let _ = std::fs::create_dir_all(&local_dir);
+        let _ = std::fs::create_dir_all(&usb_dir);
+        remove_database_files(&db_path);
+
+        let conn = open_encrypted_connection(&db_path).expect("open db");
+        apply_migrations(&conn).expect("migrations");
+
+        // Generate a real valid encrypted backup file using run_backup_on_connection
+        let backup_res = super::run_backup_on_connection(&conn, &local_dir, true, Some(&db_path))
+            .expect("local backup");
+        let local_backup_path = PathBuf::from(backup_res.backup_file_path);
+        let backup_filename = local_backup_path.file_name().unwrap().to_string_lossy().to_string();
+
+        // 1. USB backup disabled -> returns Err
+        let err = super::sync_backup_to_usb_with_conn(&conn, &local_backup_path)
+            .expect_err("USB disabled must fail");
+        assert!(err.contains("not enabled"));
+
+        // Configure USB settings in DB
+        super::set_setting_value(&conn, USB_BACKUP_ENABLED_SETTING_KEY, Some("1")).unwrap();
+        super::set_setting_value(&conn, USB_BACKUP_PATH_SETTING_KEY, Some(usb_dir.to_str().unwrap())).unwrap();
+        super::set_setting_value(&conn, USB_BACKUP_DEVICE_ID_SETTING_KEY, Some("VOL_USB_TEST_42")).unwrap();
+
+        // Mock USB volume identity and disk space
+        super::storage_safety::set_mock_volume_identity(
+            &usb_dir,
+            super::storage_safety::VolumeIdentity {
+                volume_serial_number: "VOL_USB_TEST_42".to_string(),
+                volume_name: "StaffKitUSB".to_string(),
+                file_system_name: "exFAT".to_string(),
+                drive_type: 2,
+                is_removable_or_external: true,
+            },
+        );
+        super::storage_safety::set_mock_available_disk_space(&usb_dir, 500 * 1024 * 1024);
+
+        // 2. Successful sync
+        let usb_final_path_str = super::sync_backup_to_usb_with_conn(&conn, &local_backup_path)
+            .expect("USB sync should succeed");
+        let usb_final_path = PathBuf::from(&usb_final_path_str);
+        assert!(usb_final_path.exists());
+        assert_eq!(usb_final_path.file_name().unwrap().to_str().unwrap(), &backup_filename);
+
+        // 3. Mismatched USB device serial -> rejected
+        super::storage_safety::set_mock_volume_identity(
+            &usb_dir,
+            super::storage_safety::VolumeIdentity {
+                volume_serial_number: "VOL_WRONG_SERIAL".to_string(),
+                volume_name: "OtherUSB".to_string(),
+                file_system_name: "exFAT".to_string(),
+                drive_type: 2,
+                is_removable_or_external: true,
+            },
+        );
+        let err = super::sync_backup_to_usb_with_conn(&conn, &local_backup_path)
+            .expect_err("mismatched USB volume serial must fail");
+        assert!(err.contains("USB device mismatch"));
+
+        // Restore correct identity
+        super::storage_safety::set_mock_volume_identity(
+            &usb_dir,
+            super::storage_safety::VolumeIdentity {
+                volume_serial_number: "VOL_USB_TEST_42".to_string(),
+                volume_name: "StaffKitUSB".to_string(),
+                file_system_name: "exFAT".to_string(),
+                drive_type: 2,
+                is_removable_or_external: true,
+            },
+        );
+
+        // 4. Simulated USB unplug mid-copy
+        super::storage_safety::set_simulate_usb_unplug(true);
+        let err = super::sync_backup_to_usb_with_conn(&conn, &local_backup_path)
+            .expect_err("unplug simulation must fail");
+        assert!(err.contains("simulated USB unplug"));
+        assert!(usb_final_path.exists(), "Previously synced file must NOT be destroyed");
+        super::storage_safety::set_simulate_usb_unplug(false);
+
+        // 5. Simulated corruption of copy
+        super::storage_safety::set_simulate_usb_corruption(true);
+        let err = super::sync_backup_to_usb_with_conn(&conn, &local_backup_path)
+            .expect_err("corruption simulation must fail");
+        assert!(err.contains("verification failed"));
+        let temp_sync_path = usb_dir.join(format!("{}.sync_tmp", backup_filename));
+        assert!(!temp_sync_path.exists(), ".sync_tmp must be removed upon verification failure");
+        super::storage_safety::set_simulate_usb_corruption(false);
+
+        super::storage_safety::reset_storage_safety_mocks();
+        remove_database_files(&db_path);
+        let _ = std::fs::remove_dir_all(&local_dir);
+        let _ = std::fs::remove_dir_all(&usb_dir);
+    }
+
+    #[test]
+    fn test_usb_retry_backoff_schedule() {
+        let _test_lock = acquire_test_lock();
+        let db_path = temp_path("usb-retry-db.sqlite3");
+        remove_database_files(&db_path);
+
+        let conn = open_encrypted_connection(&db_path).expect("open db");
+        apply_migrations(&conn).expect("migrations");
+
+        // Initially USB not enabled -> not due
+        assert!(!super::is_usb_retry_due(&conn).unwrap());
+
+        // Enable USB
+        super::set_setting_value(&conn, USB_BACKUP_ENABLED_SETTING_KEY, Some("1")).unwrap();
+        assert!(!super::is_usb_retry_due(&conn).unwrap());
+
+        // Failure 1: Stage 1 -> 15m backoff
+        super::record_usb_sync_failure_with_conn(&conn, "Failure 1");
+        let stage = super::get_setting_value(&conn, USB_BACKUP_RETRY_STAGE_SETTING_KEY).unwrap().unwrap();
+        assert_eq!(stage, "1");
+        // Right after failure, not yet due
+        assert!(!super::is_usb_retry_due(&conn).unwrap());
+
+        // Failure 2: Stage 2 -> 60m backoff
+        super::record_usb_sync_failure_with_conn(&conn, "Failure 2");
+        let stage = super::get_setting_value(&conn, USB_BACKUP_RETRY_STAGE_SETTING_KEY).unwrap().unwrap();
+        assert_eq!(stage, "2");
+
+        // Failure 3: Stage 3 -> 180m backoff
+        super::record_usb_sync_failure_with_conn(&conn, "Failure 3");
+        let stage = super::get_setting_value(&conn, USB_BACKUP_RETRY_STAGE_SETTING_KEY).unwrap().unwrap();
+        assert_eq!(stage, "3");
+
+        // Failure 4: Stage 4 wraps to 1
+        super::record_usb_sync_failure_with_conn(&conn, "Failure 4");
+        let stage = super::get_setting_value(&conn, USB_BACKUP_RETRY_STAGE_SETTING_KEY).unwrap().unwrap();
+        assert_eq!(stage, "1");
+
+        // Manually set next_retry to a past date -> is_usb_retry_due returns true
+        let past = (Local::now() - chrono::Duration::minutes(5)).to_rfc3339();
+        super::set_setting_value(&conn, USB_BACKUP_NEXT_RETRY_DATE_SETTING_KEY, Some(&past)).unwrap();
+        assert!(super::is_usb_retry_due(&conn).unwrap());
+
+        remove_database_files(&db_path);
+    }
+
+    #[test]
+    fn test_usb_catch_up_sync() {
+        let _test_lock = acquire_test_lock();
+        let db_path = temp_path("usb-catchup-db.sqlite3");
+        let local_dir = temp_path("usb-catchup-local");
+        let usb_dir = temp_path("usb-catchup-usb");
+        let _ = std::fs::create_dir_all(&local_dir);
+        let _ = std::fs::create_dir_all(&usb_dir);
+        remove_database_files(&db_path);
+
+        let conn = open_encrypted_connection(&db_path).expect("open db");
+        apply_migrations(&conn).expect("migrations");
+
+        // Generate 3 real encrypted backups in local_dir
+        for _ in 0..3 {
+            let _res = super::run_backup_on_connection(&conn, &local_dir, true, Some(&db_path)).unwrap();
+            // Sleep briefly to ensure distinct timestamps
+            std::thread::sleep(std::time::Duration::from_millis(1100));
+        }
+
+        let local_files = super::collect_auto_backup_files(&local_dir);
+        assert_eq!(local_files.len(), 3);
+
+        // USB has 0 files
+        let copied = super::catch_up_missing_usb_backups(&local_dir, &usb_dir).expect("catch up");
+        assert_eq!(copied, 3, "All 3 missing backups should be copied to USB");
+
+        // Second catch up does nothing because USB already has them
+        let copied_second = super::catch_up_missing_usb_backups(&local_dir, &usb_dir).expect("catch up");
+        assert_eq!(copied_second, 0, "No duplicate copies should occur");
+
+        remove_database_files(&db_path);
+        let _ = std::fs::remove_dir_all(&local_dir);
+        let _ = std::fs::remove_dir_all(&usb_dir);
     }
 }

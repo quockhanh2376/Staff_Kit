@@ -11,7 +11,11 @@ import {
     MoveRight,
     PencilLine,
     RotateCcw,
+    FolderOpen,
+    HardDrive,
     Save,
+    ShieldAlert,
+    ShieldCheck,
     Trash2,
     Upload,
     Users,
@@ -492,6 +496,27 @@ export function SettingsView({
                             <div className={settingsCardHeaderTitleClass}>
                                 <Database size={20} className="shrink-0 text-emerald-400" />
                                 <div>Data-Backup</div>
+                                {settings.backupSettings?.protectionStatus && (
+                                    <span
+                                        data-testid="protection-status-badge"
+                                        className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                                            settings.backupSettings.protectionStatus === "Protected"
+                                                ? "border border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
+                                                : settings.backupSettings.protectionStatus === "Degraded"
+                                                ? "border border-amber-500/40 bg-amber-500/15 text-amber-300"
+                                                : "border border-rose-500/40 bg-rose-500/15 text-rose-300"
+                                        }`}
+                                    >
+                                        {settings.backupSettings.protectionStatus === "Protected" ? (
+                                            <ShieldCheck size={13} />
+                                        ) : settings.backupSettings.protectionStatus === "Degraded" ? (
+                                            <AlertTriangle size={13} />
+                                        ) : (
+                                            <ShieldAlert size={13} />
+                                        )}
+                                        {settings.backupSettings.protectionStatus}
+                                    </span>
+                                )}
                                 <span className="ml-1 inline-flex items-center justify-center rounded-[8px] border border-[var(--border)] bg-[var(--surface-hover)] p-1 text-[var(--text-secondary)]">
                                     {databaseBackupCard.isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                                 </span>
@@ -623,12 +648,12 @@ export function SettingsView({
                                             </span>
                                         </span>
                                         <span className="leading-snug transition-colors group-hover:text-[var(--text-primary)]">
-                                            Auto-backup every 6 hours (retention 7 versions, cleanup after 400 days)
+                                            Auto-backup every 6 hours (retention 30 days, manual backups never deleted)
                                         </span>
                                     </label>
                                     {settings.backupSettings?.lastAutoBackupDate && (
                                         <div className="text-[11px] text-[var(--text-secondary)]">
-                                            Last auto-backup: <span className="font-mono">{new Date(settings.backupSettings.lastAutoBackupDate).toLocaleString()}</span>
+                                            Last local backup: <span className="font-mono">{new Date(settings.backupSettings.lastAutoBackupDate).toLocaleString()}</span>
                                             {settings.backupSettings.lastAutoBackupStatus && (
                                                 <span className={`ml-1.5 font-medium ${settings.backupSettings.lastAutoBackupStatus.startsWith("ERROR") ? "text-rose-400" : "text-emerald-400"}`}>
                                                     ({settings.backupSettings.lastAutoBackupStatus.startsWith("ERROR") ? "Failed" : "Success"})
@@ -651,6 +676,88 @@ export function SettingsView({
                                         </div>
                                     )}
                                 </div>
+
+                                {auth.isSuperAdminAccount && (
+                                    <div className="space-y-3 rounded-[12px] border border-[var(--border)] bg-[var(--surface-hover)] p-3">
+                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                            <div className="flex items-center gap-2">
+                                                <HardDrive size={15} className="text-emerald-400" />
+                                                <div className={settingsLabelClass}>
+                                                    Registered USB Destination (Super Admin)
+                                                </div>
+                                            </div>
+                                            {settings.backupSettings?.usbDeviceId && (
+                                                <span className="text-[11px] font-mono text-[var(--text-secondary)]">
+                                                    Device: {settings.backupSettings.usbDeviceName || "External"} ({settings.backupSettings.usbDeviceId})
+                                                </span>
+                                            )}
+                                        </div>
+
+                                        <div className="flex gap-2">
+                                            <input
+                                                className={`${settingsInputClass} min-w-0 flex-1 font-mono text-sm`}
+                                                value={settings.usbBackupDirectoryInput}
+                                                onChange={(event) => settings.setUsbBackupDirectoryInput(event.target.value)}
+                                                placeholder="E:\\StaffKit_USB_Backups"
+                                                disabled={settings.isSavingUsbBackupSettings}
+                                            />
+                                            <button
+                                                className={settingsSecondaryButtonClass}
+                                                onClick={() => void settings.handleBrowseUsbDirectory()}
+                                                type="button"
+                                                disabled={settings.isSavingUsbBackupSettings}
+                                            >
+                                                <FolderOpen size={15} />
+                                                Browse...
+                                            </button>
+                                        </div>
+
+                                        <label className="group flex items-start gap-2 text-sm text-[var(--text-secondary)]">
+                                            <span className="relative mt-0.5 flex shrink-0 items-center justify-center">
+                                                <input
+                                                    type="checkbox"
+                                                    className="peer sr-only"
+                                                    checked={settings.usbBackupEnabled}
+                                                    onChange={(event) => settings.setUsbBackupEnabled(event.target.checked)}
+                                                    disabled={settings.isSavingUsbBackupSettings}
+                                                />
+                                                <span className="flex h-4 w-4 items-center justify-center rounded-[5px] border border-[var(--border)] bg-[var(--bg)] text-transparent transition peer-checked:border-emerald-500 peer-checked:bg-emerald-500 peer-checked:text-[#03130d]">
+                                                    <CheckCircle2 size={12} />
+                                                </span>
+                                            </span>
+                                            <span className="leading-snug transition-colors group-hover:text-[var(--text-primary)]">
+                                                Enable independent copy to registered external USB/HDD (catch-up on reconnect)
+                                            </span>
+                                        </label>
+
+                                        {settings.backupSettings?.lastUsbBackupDate && (
+                                            <div className="text-[11px] text-[var(--text-secondary)]">
+                                                Last USB copy: <span className="font-mono">{new Date(settings.backupSettings.lastUsbBackupDate).toLocaleString()}</span>
+                                                {settings.backupSettings.lastUsbBackupStatus && (
+                                                    <span className={`ml-1.5 font-medium ${settings.backupSettings.lastUsbBackupStatus.startsWith("ERROR") ? "text-rose-400" : "text-emerald-400"}`}>
+                                                        ({settings.backupSettings.lastUsbBackupStatus.startsWith("ERROR") ? settings.backupSettings.lastUsbBackupStatus : "Success"})
+                                                    </span>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        <button
+                                            className={settingsSecondaryButtonClass}
+                                            onClick={() => void settings.handleSaveUsbBackupSettings()}
+                                            type="button"
+                                            disabled={settings.isSavingUsbBackupSettings}
+                                        >
+                                            <Save size={15} />
+                                            {settings.isSavingUsbBackupSettings ? "Saving USB Settings..." : "Save USB Settings"}
+                                        </button>
+
+                                        {settings.usbBackupStatusMessage && (
+                                            <div className="rounded-[10px] border border-emerald-500/28 bg-emerald-500/8 px-3 py-2 text-xs text-emerald-100">
+                                                {settings.usbBackupStatusMessage}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                             </div>
 
                             <div className="overflow-hidden rounded-[12px] border border-[var(--border)] bg-[var(--surface-hover)]">
