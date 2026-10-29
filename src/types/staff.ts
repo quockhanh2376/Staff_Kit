@@ -49,6 +49,20 @@ export type ConfigureUsbBackupInput = {
   enabled: boolean
 }
 
+export type SecurityPolicyMode = "standard" | "strict"
+
+export interface SecurityPolicyRecord {
+  mode: SecurityPolicyMode
+  minPasswordLength: number
+  maxFailedLoginAttempts: number
+  lockoutDurationMinutes: number
+}
+
+export interface UpdateSecurityPolicyInput {
+  currentPassword: string
+  newMode: SecurityPolicyMode
+}
+
 /** LAN server configuration for the Borrow/Return QR flow. */
 export type BorrowLanSettings = {
   enabled: boolean

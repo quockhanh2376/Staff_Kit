@@ -1,5 +1,52 @@
 # Daily Log - 2026-10-29
 
+## 2026-10-29 — Staff Kit Security Policy: Standard / Strict Policy (Start)
+- Authorized by Zon.
+- Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Scope: Configurable Standard vs Strict security policy (D3.12–D3.19, AC-01–AC-06). Recovery Codes and Emergency Recovery are strictly out of scope.
+- Key Specifications & Safeguards:
+  1. Standard Mode (default): 8-char minimum password, 10 failed login attempts -> 5-minute lockout.
+  2. Strict Mode: 12-char minimum password, 5 failed login attempts -> 15-minute lockout.
+  3. Sole usable Super Admin exemption: detected via actual login eligibility (role='super_admin', non-empty username, valid parsed Argon2id password hash format). Exempt from timed lockout only; bounded progressive throttling (max 2.0s), in-flight attempt serialization, and mandatory password verification remain intact.
+  4. 2+ usable Super Admins: normal lockout applies to all accounts.
+  5. Policy switching: Super Admin only, requires current-password reauthentication, audits success/failure in `audit_logs`. Unlocked failure counters reset on switch; active lockouts preserve expiry. Active sessions stay valid.
+  6. Persistence & Fail-safe: Persisted in `app_settings` (`security_policy_mode_v1`); read error safely defaults to Strict mode.
+  7. Test isolation: Disposable in-memory or isolated test DB copies only. 0 production DB writes.
+
+## 2026-10-29 — Staff Kit Security Policy: Standard / Strict Policy (End)
+- Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Implementation completed:
+  1. `src-tauri/src/auth_session.rs`:
+     - Added `SecurityPolicyMode` enum (`Standard`, `Strict`) with methods for `min_password_length()`, `max_failed_login_attempts()`, `lockout_duration()`, `as_str()`, and `from_str()`.
+     - In-flight login serialization via `InFlightLoginGuard` (`HashSet<String>`) per username without blocking global mutex.
+     - Bounded progressive throttling for exempt Super Admin (attempts 1–4: 0ms, 5–9: 1000ms, 10+: 2000ms cap).
+     - Policy switching mechanism: `current_policy()` and `switch_policy()` (clears unlocked counters, preserves active lockout deadlines).
+     - Lockout checking and failed attempt recording with sole usable Super Admin exemption.
+  2. `src-tauri/src/db/schema.rs`:
+     - Added `SECURITY_POLICY_SETTING_KEY = "security_policy_mode_v1"`.
+  3. `src-tauri/src/db/auth.rs`:
+     - Added `SecurityPolicyRecord` and `UpdateSecurityPolicyInput` DTOs.
+     - `is_valid_password_hash_format`: verifies Argon2 format via `PasswordHash::new`.
+     - `is_sole_active_super_admin`: counts eligible Super Admins with role='super_admin', non-empty username, and valid Argon2 hash format.
+     - `get_security_policy_mode` & `resolve_security_policy_fail_safe`: fail-safe fallback to Strict if read fails.
+     - `get_security_policy` and `update_security_policy`: Super Admin authorization, current-password reauthentication, progressive delay on actor, security audit logging (`security_policy.updated`, `security_policy.change_failed`), setting persistence, and store synchronization.
+     - Dynamic password length validation and failed attempt handling across all auth commands (`login`, `change_password`, `admin_reset`, `forgot_password`).
+  4. `src-tauri/src/lib.rs`:
+     - Exposed `get_security_policy` and `update_security_policy` IPC commands.
+     - Classified `update_security_policy` in `SUPER_ADMIN_COMMANDS` and `get_security_policy` in `AUTHENTICATED_COMMANDS`.
+     - App startup synchronization of security policy into `SessionStore`.
+  5. Frontend:
+     - `src/types/staff.ts`: Types `SecurityPolicyMode`, `SecurityPolicyRecord`, and `UpdateSecurityPolicyInput`.
+     - `src/services/staff-api.ts`: API wrappers `getSecurityPolicy` and `updateSecurityPolicy`.
+     - `src/features/settings/useSettingsState.ts`: State management and `handleSaveSecurityPolicy`.
+     - `src/features/settings/SettingsView.tsx`: Security Policy management card with Standard/Strict switcher, current active badge, rule breakdown, and Super Admin guard (`auth.isSuperAdminAccount`).
+     - `src/features/settings/useSettingsState.test.tsx`: 3 unit tests verifying policy load, password prompt & update, and prompt cancel.
+- Verification & Test Coverage:
+  - `npm run check:quality`: PASSED (eslint clean, tsc -b strict clean, vite build clean, cargo check clean).
+  - `npm run test:unit`: PASSED (45 test files, 346/346 passed).
+  - `npm run test:tauri`: PASSED (440/440 passed).
+- Invariants strictly preserved: No schema migrations, no DB rekeying, 0 production DB touches, test DB isolation maintained.
+
 ## 2026-10-29 — Staff Kit TotalSpec Security: SEC-010 (Login Rate Limiting & Account Lockout) + SEC-011 (Password Policy) (Start)
 - Authorized by Zon.
 - Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).

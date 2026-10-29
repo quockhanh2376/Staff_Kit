@@ -16,12 +16,13 @@
 //! - No `unsafe` code. Poisoned mutexes are recovered rather than panicking.
 //! - No database schema change.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use rand::rngs::OsRng;
 use rand::RngCore;
+use serde::{Deserialize, Serialize};
 
 // ── Expiry configuration ─────────────────────────────────────────────────────
 
@@ -32,15 +33,60 @@ pub const SESSION_IDLE_TIMEOUT: Duration = Duration::from_secs(8 * 60 * 60); // 
 /// never extends this cap.
 pub const SESSION_ABSOLUTE_LIFETIME: Duration = Duration::from_secs(12 * 60 * 60); // 12 hours
 
-// ── SEC-010 & SEC-011 configuration ──────────────────────────────────────────
+// ── Security Policy configuration ────────────────────────────────────────────
 
-/// Maximum consecutive failed login attempts before temporary lockout.
+/// Configurable security policy mode for local accounts (D3.12–D3.19).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SecurityPolicyMode {
+    Standard,
+    Strict,
+}
+
+impl SecurityPolicyMode {
+    pub fn min_password_length(self) -> usize {
+        match self {
+            Self::Standard => 8,
+            Self::Strict => 12,
+        }
+    }
+
+    pub fn max_failed_login_attempts(self) -> u32 {
+        match self {
+            Self::Standard => 10,
+            Self::Strict => 5,
+        }
+    }
+
+    pub fn lockout_duration(self) -> Duration {
+        match self {
+            Self::Standard => Duration::from_secs(5 * 60),
+            Self::Strict => Duration::from_secs(15 * 60),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::Strict => "strict",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.trim().to_lowercase().as_str() {
+            "standard" => Some(Self::Standard),
+            "strict" => Some(Self::Strict),
+            _ => None,
+        }
+    }
+}
+
+/// Fallback constants for Strict mode compatibility.
+#[allow(dead_code)]
 pub const MAX_FAILED_LOGIN_ATTEMPTS: u32 = 5;
-
-/// Duration of temporary authentication lockout after exceeding failed attempts.
-pub const LOGIN_LOCKOUT_DURATION: Duration = Duration::from_secs(15 * 60); // 15 minutes
-
-/// Minimum password length for newly created or changed passwords.
+#[allow(dead_code)]
+pub const LOGIN_LOCKOUT_DURATION: Duration = Duration::from_secs(15 * 60);
+#[allow(dead_code)]
 pub const MIN_PASSWORD_LENGTH: usize = 12;
 
 // ── Stable, machine-readable auth error codes ────────────────────────────────
@@ -263,12 +309,36 @@ pub struct LockoutEntry {
     pub locked_until: Option<Instant>,
 }
 
+// ── In-Flight Login Guard ────────────────────────────────────────────────────
+
+/// RAII guard releasing an in-flight login lock on drop.
+pub struct InFlightLoginGuard<'a> {
+    store: &'a SessionStore,
+    key: String,
+}
+
+impl<'a> std::fmt::Debug for InFlightLoginGuard<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InFlightLoginGuard")
+            .field("key", &self.key)
+            .finish()
+    }
+}
+
+impl<'a> Drop for InFlightLoginGuard<'a> {
+    fn drop(&mut self) {
+        self.store.release_in_flight_login(&self.key);
+    }
+}
+
 // ── SessionStore ─────────────────────────────────────────────────────────────
 
 /// In-memory session store. Held in `tauri::State` and never persisted.
 pub struct SessionStore {
     entries: Mutex<HashMap<OpaqueToken, SessionEntry>>,
     lockouts: Mutex<HashMap<String, LockoutEntry>>,
+    in_flight_logins: Mutex<HashSet<String>>,
+    policy: Mutex<SecurityPolicyMode>,
     clock: Box<dyn Clock>,
 }
 
@@ -277,6 +347,8 @@ impl Default for SessionStore {
         Self {
             entries: Mutex::new(HashMap::new()),
             lockouts: Mutex::new(HashMap::new()),
+            in_flight_logins: Mutex::new(HashSet::new()),
+            policy: Mutex::new(SecurityPolicyMode::Standard),
             clock: Box::new(SystemClock),
         }
     }
@@ -294,6 +366,8 @@ impl SessionStore {
         Self {
             entries: Mutex::new(HashMap::new()),
             lockouts: Mutex::new(HashMap::new()),
+            in_flight_logins: Mutex::new(HashSet::new()),
+            policy: Mutex::new(SecurityPolicyMode::Standard),
             clock: Box::new(clock),
         }
     }
@@ -411,10 +485,79 @@ impl SessionStore {
         username.trim().to_lowercase()
     }
 
+    /// Acquire an in-flight login lock for `username`.
+    /// Rejects concurrent authentication attempts for the same account.
+    pub fn acquire_in_flight_login<'a>(&'a self, username: &str) -> Result<InFlightLoginGuard<'a>, String> {
+        let key = Self::normalize_lockout_key(username);
+        if key.is_empty() {
+            return Ok(InFlightLoginGuard { store: self, key });
+        }
+        let mut in_flight = self.in_flight_logins.lock().unwrap_or_else(|p| p.into_inner());
+        if in_flight.contains(&key) {
+            return Err("Authentication request already in progress for this account. Please wait.".to_string());
+        }
+        in_flight.insert(key.clone());
+        Ok(InFlightLoginGuard { store: self, key })
+    }
+
+    /// Internal release of in-flight login lock called by `InFlightLoginGuard`.
+    pub(crate) fn release_in_flight_login(&self, key: &str) {
+        if !key.is_empty() {
+            let mut in_flight = self.in_flight_logins.lock().unwrap_or_else(|p| p.into_inner());
+            in_flight.remove(key);
+        }
+    }
+
+    /// Progressive throttling delay for the sole Super Admin:
+    /// Attempts 1-4: 0ms. Attempts 5-9: 1000ms. Attempts 10+: 2000ms maximum.
+    pub fn calculate_progressive_delay(&self, username: &str) -> Duration {
+        let key = Self::normalize_lockout_key(username);
+        let lockouts = self.lockouts.lock().unwrap_or_else(|p| p.into_inner());
+        let attempts = lockouts.get(&key).map(|e| e.failed_attempts).unwrap_or(0);
+        drop(lockouts);
+
+        if attempts < 5 {
+            Duration::from_millis(0)
+        } else if attempts < 10 {
+            Duration::from_millis(1000)
+        } else {
+            Duration::from_millis(2000)
+        }
+    }
+
+    /// Read active security policy mode.
+    pub fn current_policy(&self) -> SecurityPolicyMode {
+        let guard = self.policy.lock().unwrap_or_else(|p| p.into_inner());
+        *guard
+    }
+
+    /// Switch active security policy mode (D3.13).
+    /// Clears non-locked failure counters; preserves already-active lock expiry.
+    pub fn switch_policy(&self, new_mode: SecurityPolicyMode) {
+        let mut policy_guard = self.policy.lock().unwrap_or_else(|p| p.into_inner());
+        *policy_guard = new_mode;
+
+        let mut lockouts = self.lockouts.lock().unwrap_or_else(|p| p.into_inner());
+        let now = self.clock.now();
+        lockouts.retain(|_, entry| {
+            if let Some(deadline) = entry.locked_until {
+                now < deadline
+            } else {
+                false
+            }
+        });
+    }
+
     /// Check if authentication is temporarily locked out for `username`.
     /// Returns `Err(message)` if locked.
     /// If an existing lockout has expired, it resets the failed attempt count.
+    #[allow(dead_code)]
     pub fn check_lockout(&self, username: &str) -> Result<(), String> {
+        self.check_lockout_with_exemption(username, false)
+    }
+
+    /// Check lockout with sole super admin exemption.
+    pub fn check_lockout_with_exemption(&self, username: &str, is_exempt: bool) -> Result<(), String> {
         let key = Self::normalize_lockout_key(username);
         if key.is_empty() {
             return Ok(());
@@ -424,13 +567,17 @@ impl SessionStore {
         if let Some(entry) = lockouts.get_mut(&key) {
             if let Some(deadline) = entry.locked_until {
                 if now < deadline {
-                    let remaining_secs = deadline.duration_since(now).as_secs();
-                    let remaining_mins = remaining_secs.div_ceil(60).max(1);
-                    return Err(format!(
-                        "Account is temporarily locked due to too many failed attempts. Please try again in {} minute{}.",
-                        remaining_mins,
-                        if remaining_mins == 1 { "" } else { "s" }
-                    ));
+                    if is_exempt {
+                        entry.locked_until = None;
+                    } else {
+                        let remaining_secs = deadline.duration_since(now).as_secs();
+                        let remaining_mins = remaining_secs.div_ceil(60).max(1);
+                        return Err(format!(
+                            "Account is temporarily locked due to too many failed attempts. Please try again in {} minute{}.",
+                            remaining_mins,
+                            if remaining_mins == 1 { "" } else { "s" }
+                        ));
+                    }
                 } else {
                     // Lockout period has elapsed: clear the lock and reset failed attempts
                     entry.failed_attempts = 0;
@@ -442,15 +589,22 @@ impl SessionStore {
     }
 
     /// Record a failed login or authentication attempt for `username`.
-    /// Increments the failure counter. When `MAX_FAILED_LOGIN_ATTEMPTS` (5) is reached,
-    /// sets `locked_until` to `now + LOGIN_LOCKOUT_DURATION` (15 minutes) and returns
-    /// `Err` with the lockout message.
+    #[allow(dead_code)]
     pub fn record_failed_attempt(&self, username: &str) -> Result<(), String> {
+        self.record_failed_attempt_with_exemption(username, false)
+    }
+
+    /// Record a failed login or authentication attempt with sole super admin exemption.
+    pub fn record_failed_attempt_with_exemption(&self, username: &str, is_exempt: bool) -> Result<(), String> {
         let key = Self::normalize_lockout_key(username);
         if key.is_empty() {
             return Ok(());
         }
         let now = self.clock.now();
+        let current_policy = self.current_policy();
+        let max_failed = current_policy.max_failed_login_attempts();
+        let lockout_dur = current_policy.lockout_duration();
+
         let mut lockouts = self.lockouts.lock().unwrap_or_else(|p| p.into_inner());
 
         // Bounded capacity: prune if map exceeds threshold to prevent memory exhaustion
@@ -475,10 +629,15 @@ impl SessionStore {
         }
 
         entry.failed_attempts = entry.failed_attempts.saturating_add(1);
-        if entry.failed_attempts >= MAX_FAILED_LOGIN_ATTEMPTS {
-            let deadline = now + LOGIN_LOCKOUT_DURATION;
+        if !is_exempt && entry.failed_attempts >= max_failed {
+            let deadline = now + lockout_dur;
             entry.locked_until = Some(deadline);
-            return Err("Account is temporarily locked due to too many failed attempts. Please try again in 15 minutes.".to_string());
+            let mins = lockout_dur.as_secs() / 60;
+            return Err(format!(
+                "Account is temporarily locked due to too many failed attempts. Please try again in {} minute{}.",
+                mins,
+                if mins == 1 { "" } else { "s" }
+            ));
         }
 
         Ok(())
@@ -1112,9 +1271,10 @@ mod tests {
     // ── SEC-010 Lockout Tests ──────────────────────────────────────────────────
 
     #[test]
-    fn lockout_triggers_after_5_failed_attempts() {
+    fn lockout_triggers_after_5_failed_attempts_in_strict_mode() {
         let clock = TestClock::new();
         let store = SessionStore::with_clock(clock.handle());
+        store.switch_policy(SecurityPolicyMode::Strict);
 
         // First 4 failed attempts do not lock
         for i in 1..=4 {
@@ -1138,9 +1298,10 @@ mod tests {
     }
 
     #[test]
-    fn lockout_expires_after_15_minutes_and_resets() {
+    fn lockout_expires_after_15_minutes_and_resets_in_strict_mode() {
         let clock = TestClock::new();
         let store = SessionStore::with_clock(clock.handle());
+        store.switch_policy(SecurityPolicyMode::Strict);
 
         for _ in 0..5 {
             let _ = store.record_failed_attempt("bob");
@@ -1160,6 +1321,131 @@ mod tests {
     }
 
     #[test]
+    fn standard_mode_locks_after_10_attempts_for_5_minutes() {
+        let clock = TestClock::new();
+        let store = SessionStore::with_clock(clock.handle());
+        // Standard mode is default
+
+        for i in 1..=9 {
+            assert!(store.record_failed_attempt("stan").is_ok(), "attempt {i} should not lock in standard mode");
+            assert!(!store.is_account_locked("stan"));
+        }
+        // 10th attempt triggers lockout
+        let res = store.record_failed_attempt("stan");
+        assert!(res.is_err());
+        assert!(res.unwrap_err().contains("5 minutes"));
+        assert!(store.is_account_locked("stan"));
+
+        // Advances 4 minutes -> still locked
+        clock.advance(Duration::from_secs(4 * 60));
+        assert!(store.is_account_locked("stan"));
+
+        // Advances 1 more minute (total 5 mins) -> unlocked
+        clock.advance(Duration::from_secs(60));
+        assert!(!store.is_account_locked("stan"));
+        assert!(store.check_lockout("stan").is_ok());
+    }
+
+    #[test]
+    fn sole_super_admin_is_exempt_from_timed_lockout_but_tracks_failures() {
+        let store = SessionStore::new();
+        store.switch_policy(SecurityPolicyMode::Strict);
+
+        // Fail 12 times with is_exempt = true
+        for _ in 0..12 {
+            let res = store.record_failed_attempt_with_exemption("root_admin", true);
+            assert!(res.is_ok(), "exempt sole super admin must never be locked out");
+        }
+
+        assert_eq!(store.get_failed_attempts("root_admin"), 12);
+        assert!(!store.is_account_locked("root_admin"));
+        assert!(store.check_lockout_with_exemption("root_admin", true).is_ok());
+    }
+
+    #[test]
+    fn bounded_progressive_delay_schedule() {
+        let store = SessionStore::new();
+
+        // 0-4 attempts: 0ms
+        assert_eq!(store.calculate_progressive_delay("admin"), Duration::from_millis(0));
+        for _ in 0..4 {
+            let _ = store.record_failed_attempt_with_exemption("admin", true);
+        }
+        assert_eq!(store.calculate_progressive_delay("admin"), Duration::from_millis(0));
+
+        // 5th attempt: 1000ms
+        let _ = store.record_failed_attempt_with_exemption("admin", true);
+        assert_eq!(store.calculate_progressive_delay("admin"), Duration::from_millis(1000));
+
+        // 9th attempt: 1000ms
+        for _ in 0..4 {
+            let _ = store.record_failed_attempt_with_exemption("admin", true);
+        }
+        assert_eq!(store.calculate_progressive_delay("admin"), Duration::from_millis(1000));
+
+        // 10th attempt and beyond: capped at 2000ms
+        let _ = store.record_failed_attempt_with_exemption("admin", true);
+        assert_eq!(store.calculate_progressive_delay("admin"), Duration::from_millis(2000));
+
+        for _ in 0..10 {
+            let _ = store.record_failed_attempt_with_exemption("admin", true);
+        }
+        assert_eq!(store.calculate_progressive_delay("admin"), Duration::from_millis(2000));
+    }
+
+    #[test]
+    fn in_flight_login_concurrency_protection() {
+        let store = SessionStore::new();
+
+        let guard1 = store.acquire_in_flight_login("alice").expect("first acquisition succeeds");
+        let attempt2 = store.acquire_in_flight_login("alice");
+        assert!(attempt2.is_err(), "concurrent login for same username must be rejected");
+        assert!(attempt2.unwrap_err().contains("already in progress"));
+
+        // Different user can acquire simultaneously
+        let guard_bob = store.acquire_in_flight_login("bob");
+        assert!(guard_bob.is_ok(), "different user acquisition must succeed");
+
+        drop(guard1);
+        let attempt3 = store.acquire_in_flight_login("alice");
+        assert!(attempt3.is_ok(), "after drop, acquisition succeeds");
+    }
+
+    #[test]
+    fn policy_switch_clears_unlocked_counters_and_preserves_active_expiry() {
+        let clock = TestClock::new();
+        let store = SessionStore::with_clock(clock.handle());
+
+        // Alice is unlocked with 3 failed attempts
+        for _ in 0..3 {
+            let _ = store.record_failed_attempt("alice");
+        }
+        assert_eq!(store.get_failed_attempts("alice"), 3);
+
+        // Bob is locked in Standard mode (10 failed attempts)
+        for _ in 0..10 {
+            let _ = store.record_failed_attempt("bob");
+        }
+        assert!(store.is_account_locked("bob"));
+
+        // Switch policy to Strict mode (D3.13)
+        store.switch_policy(SecurityPolicyMode::Strict);
+        assert_eq!(store.current_policy(), SecurityPolicyMode::Strict);
+
+        // Alice's unlocked counter is cleared!
+        assert_eq!(store.get_failed_attempts("alice"), 0);
+
+        // Bob's active lockout deadline is preserved!
+        assert!(store.is_account_locked("bob"));
+        assert!(store.check_lockout("bob").is_err());
+
+        // Advancing clock past Bob's 5-minute original expiry unlocks Bob
+        clock.advance(Duration::from_secs(5 * 60));
+        assert!(!store.is_account_locked("bob"));
+        assert!(store.check_lockout("bob").is_ok());
+    }
+
+    #[test]
     fn successful_login_clears_failed_attempts() {
         let store = SessionStore::new();
 
@@ -1176,6 +1462,7 @@ mod tests {
     #[test]
     fn admin_unlock_clears_lockout_immediately() {
         let store = SessionStore::new();
+        store.switch_policy(SecurityPolicyMode::Strict);
 
         for _ in 0..5 {
             let _ = store.record_failed_attempt("david");
@@ -1191,13 +1478,14 @@ mod tests {
     #[test]
     fn case_insensitivity_and_whitespace_trimmed_in_lockout() {
         let store = SessionStore::new();
+        store.switch_policy(SecurityPolicyMode::Strict);
 
         store.record_failed_attempt("  Eve  ").expect("attempt 1");
         store.record_failed_attempt("EVE").expect("attempt 2");
         store.record_failed_attempt("eve").expect("attempt 3");
         store.record_failed_attempt(" EvE ").expect("attempt 4");
         let res = store.record_failed_attempt("eve");
-        assert!(res.is_err(), "attempt 5 under any case variant must lock");
+        assert!(res.is_err(), "attempt 5 under any case variant must lock in strict mode");
 
         assert!(store.is_account_locked("EVE"));
         assert!(store.is_account_locked("eve"));
@@ -1207,6 +1495,7 @@ mod tests {
     #[test]
     fn unknown_username_locks_identically() {
         let store = SessionStore::new();
+        store.switch_policy(SecurityPolicyMode::Strict);
 
         for _ in 0..4 {
             assert!(store.record_failed_attempt("ghost_user").is_ok());
@@ -1220,6 +1509,7 @@ mod tests {
     #[test]
     fn concurrent_failed_attempts_are_thread_safe() {
         let store = Arc::new(SessionStore::new());
+        store.switch_policy(SecurityPolicyMode::Strict);
         let mut handles = Vec::new();
 
         for _ in 0..10 {

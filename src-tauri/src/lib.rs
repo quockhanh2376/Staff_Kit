@@ -280,6 +280,27 @@ fn forgot_local_account_password(
     db::forgot_local_account_password(&app, &session_store, payload)
 }
 
+#[tauri::command(async)]
+fn get_security_policy(
+    app: tauri::AppHandle,
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    session_token: String,
+) -> Result<db::SecurityPolicyRecord, String> {
+    let _ctx = auth_session::require_authenticated(&session_store, &session_token)?;
+    db::get_security_policy(&app)
+}
+
+#[tauri::command(async)]
+fn update_security_policy(
+    app: tauri::AppHandle,
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    session_token: String,
+    payload: db::UpdateSecurityPolicyInput,
+) -> Result<db::SecurityPolicyRecord, String> {
+    let ctx = auth_session::require_super_admin(&session_store, &session_token)?;
+    db::update_security_policy(&app, &session_store, ctx.account_id, payload)
+}
+
 // ── Employee columns (read authenticated, mutate admin) ──────────────────────
 
 #[tauri::command(async)]
@@ -1200,6 +1221,13 @@ pub fn run() {
                     }
                 });
 
+                if let Ok(conn) = db::open_runtime_connection(app.handle()) {
+                    let mode = db::resolve_security_policy_fail_safe(&conn);
+                    if let Some(store) = app.try_state::<auth_session::SessionStore>() {
+                        store.switch_policy(mode);
+                    }
+                }
+
                 eprintln!("[Staff Kit Perf] tauri setup took {:?}", setup_start.elapsed());
                 Ok(())
             }
@@ -1305,7 +1333,9 @@ pub fn run() {
             remove_remote_ee_sync_password,
             test_remote_ee_sync_connection,
             preview_employee_list_mssql_sync,
-            apply_employee_list_mssql_sync
+            apply_employee_list_mssql_sync,
+            get_security_policy,
+            update_security_policy
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
@@ -1367,6 +1397,7 @@ mod tests {
         "delete_local_account",
         "list_local_accounts",
         "change_remote_ee_sync_approved_account",
+        "update_security_policy",
     ];
 
     const ADMIN_COMMANDS: &[&str] = &[
@@ -1451,6 +1482,7 @@ mod tests {
         "list_asset_dashboard_quantity",
         "check_asset_integrity",
         "sign_historical_borrow_request",
+        "get_security_policy",
     ];
 
     /// Commands that must NOT be registered for IPC (internal-only or removed).

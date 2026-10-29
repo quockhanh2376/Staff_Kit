@@ -11,14 +11,31 @@ use super::schema::{
     DEFAULT_LOCAL_ACCOUNT_NAME, DEFAULT_LOCAL_ACCOUNT_PASSWORD,
     DEFAULT_LOCAL_ACCOUNT_RECOVERY_CODE, DEFAULT_LOCAL_ACCOUNT_USERNAME,
     DEFAULT_NEW_LOCAL_ACCOUNT_PASSWORD, LOCAL_ACCOUNT_ROLE_ADMIN, LOCAL_ACCOUNT_ROLE_SUPER_ADMIN,
-    LOCAL_ACCOUNT_ROLE_USER,
+    LOCAL_ACCOUNT_ROLE_USER, SECURITY_POLICY_SETTING_KEY,
 };
 use super::{
     humanize_sqlite_error, normalize_dynamic_key, normalize_optional_text, open_runtime_connection,
     require_text,
 };
+use crate::auth_session::SecurityPolicyMode;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SecurityPolicyRecord {
+    pub mode: SecurityPolicyMode,
+    pub min_password_length: usize,
+    pub max_failed_login_attempts: u32,
+    pub lockout_duration_minutes: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateSecurityPolicyInput {
+    pub current_password: String,
+    pub new_mode: SecurityPolicyMode,
+}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -298,8 +315,23 @@ pub(crate) fn login_local_account_conn(
         return Err("incorrect username or password".to_string());
     }
 
-    // SEC-010: Check temporary lockout status before checking credentials
-    session_store.check_lockout(&username_raw)?;
+    // Per-account in-flight serialization: reject concurrent attempts for same username
+    let _in_flight_guard = session_store.acquire_in_flight_login(&username_raw)?;
+
+    // Check if this username is the sole usable Super Admin (D3.14)
+    let is_sole = is_sole_active_super_admin(conn, &username_raw).unwrap_or(false);
+
+    // SEC-010 / D3.14: Check lockout status before verifying credentials.
+    // Sole usable Super Admin is exempt from timed lockout.
+    session_store.check_lockout_with_exemption(&username_raw, is_sole)?;
+
+    // D3.15: Progressive throttling for sole Super Admin, bounded and outside global locks
+    if is_sole {
+        let throttle_delay = session_store.calculate_progressive_delay(&username_raw);
+        if throttle_delay > std::time::Duration::ZERO {
+            std::thread::sleep(throttle_delay);
+        }
+    }
 
     let username_normalized = normalize_local_account_username(payload.username);
 
@@ -332,7 +364,7 @@ pub(crate) fn login_local_account_conn(
     };
 
     if !credentials_valid {
-        session_store.record_failed_attempt(&username_raw)?;
+        session_store.record_failed_attempt_with_exemption(&username_raw, is_sole)?;
         return Err("incorrect username or password".to_string());
     }
 
@@ -416,7 +448,8 @@ pub(crate) fn change_local_account_password_conn(
     session_store: &crate::auth_session::SessionStore,
     payload: LocalPasswordChangeInput,
 ) -> Result<bool, String> {
-    let new_password = require_local_account_password(payload.new_password)?;
+    let policy = resolve_security_policy_fail_safe(conn);
+    let new_password = require_local_account_password(payload.new_password, policy.min_password_length())?;
 
     let maybe = conn
         .query_row(
@@ -465,7 +498,8 @@ pub(crate) fn admin_reset_local_account_password_conn(
     session_store: &crate::auth_session::SessionStore,
     payload: LocalPasswordResetInput,
 ) -> Result<bool, String> {
-    let new_password = require_local_account_password(payload.new_password)?;
+    let policy = resolve_security_policy_fail_safe(conn);
+    let new_password = require_local_account_password(payload.new_password, policy.min_password_length())?;
     let new_hash = hash_password(new_password.as_str())?;
 
     let username: Option<String> = conn
@@ -523,11 +557,13 @@ pub(crate) fn forgot_local_account_password_conn(
         return Err("incorrect username or recovery code".to_string());
     }
 
-    // SEC-010: Check lockout first to prevent brute-forcing via recovery flow
-    session_store.check_lockout(&username_raw)?;
+    // SEC-010: Check lockout first to prevent brute-forcing via recovery flow.
+    // Check if this username is the sole usable Super Admin (exempt from lockout).
+    let is_sole = is_sole_active_super_admin(conn, &username_raw).unwrap_or(false);
+    session_store.check_lockout_with_exemption(&username_raw, is_sole)?;
 
-    // SEC-011: Require minimum 12 characters for new password
-    let new_password = require_local_account_password(payload.new_password)?;
+    let policy = resolve_security_policy_fail_safe(conn);
+    let new_password = require_local_account_password(payload.new_password, policy.min_password_length())?;
 
     let recovery_code = normalize_recovery_code_input(Some(payload.recovery_code))
         .ok_or_else(|| "recovery code is required".to_string())?;
@@ -571,7 +607,7 @@ pub(crate) fn forgot_local_account_password_conn(
     };
 
     if !recovery_valid {
-        session_store.record_failed_attempt(&username_raw)?;
+        session_store.record_failed_attempt_with_exemption(&username_raw, is_sole)?;
         return Err("incorrect username or recovery code".to_string());
     }
 
@@ -851,12 +887,165 @@ fn require_local_account_username(value: String) -> Result<String, String> {
     })
 }
 
-fn require_local_account_password(value: String) -> Result<String, String> {
+fn require_local_account_password(value: String, min_length: usize) -> Result<String, String> {
     let password = value.trim().to_string();
-    if password.chars().count() < crate::auth_session::MIN_PASSWORD_LENGTH {
-        return Err("password must be at least 12 characters".to_string());
+    if password.chars().count() < min_length {
+        return Err(format!("password must be at least {} characters", min_length));
     }
     Ok(password)
+}
+
+/// Validate if `password_hash` has a valid, parseable Argon2id format.
+pub(crate) fn is_valid_password_hash_format(password_hash: &str) -> bool {
+    PasswordHash::new(password_hash).is_ok()
+}
+
+/// Determine whether `target_username` is the sole genuinely active/usable Super Admin (D3.14).
+///
+/// An account is considered an active/usable Super Admin only if:
+/// 1. Its role is `super_admin` (case-insensitive)
+/// 2. Username is non-empty
+/// 3. Its password hash has a valid, parseable format (meaning the account is actually login-eligible)
+///
+/// If exactly 1 such account exists and matches `target_username`, returns `true`.
+pub(crate) fn is_sole_active_super_admin(
+    conn: &Connection,
+    target_username: &str,
+) -> Result<bool, String> {
+    let normalized_target = target_username.trim().to_lowercase();
+    if normalized_target.is_empty() {
+        return Ok(false);
+    }
+
+    let mut stmt = conn
+        .prepare("SELECT username, password_hash FROM app_local_accounts WHERE role = ? COLLATE NOCASE")
+        .map_err(|err| format!("failed to prepare super admin query: {err}"))?;
+
+    let rows = stmt
+        .query_map(params![LOCAL_ACCOUNT_ROLE_SUPER_ADMIN], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|err| format!("failed to query super admins: {err}"))?;
+
+    let mut eligible_admins = Vec::new();
+    for row in rows {
+        let (username, password_hash) =
+            row.map_err(|err| format!("failed to read super admin row: {err}"))?;
+        let u_trim = username.trim();
+        let p_trim = password_hash.trim();
+        if !u_trim.is_empty() && is_valid_password_hash_format(p_trim) {
+            eligible_admins.push(u_trim.to_lowercase());
+        }
+    }
+
+    Ok(eligible_admins.len() == 1 && eligible_admins[0] == normalized_target)
+}
+
+/// Read persisted security policy from `app_settings` (D3.19).
+pub(crate) fn get_security_policy_mode(conn: &Connection) -> Result<SecurityPolicyMode, String> {
+    let val = super::get_setting_value(conn, SECURITY_POLICY_SETTING_KEY)?;
+    match val.as_deref() {
+        Some(s) => SecurityPolicyMode::from_str(s)
+            .ok_or_else(|| format!("unknown security policy mode '{s}'")),
+        None => Ok(SecurityPolicyMode::Standard), // default for new/unconfigured installations
+    }
+}
+
+/// Read security policy with fail-safe fallback to Strict mode if reading fails (D3.19 Rule 10).
+pub(crate) fn resolve_security_policy_fail_safe(conn: &Connection) -> SecurityPolicyMode {
+    match get_security_policy_mode(conn) {
+        Ok(mode) => mode,
+        Err(err) => {
+            eprintln!(
+                "[SECURITY] Failed to read security policy from database: {err}. Safely falling back to Strict mode."
+            );
+            SecurityPolicyMode::Strict
+        }
+    }
+}
+
+pub fn get_security_policy(app: &AppHandle) -> Result<SecurityPolicyRecord, String> {
+    let conn = open_runtime_connection(app)?;
+    get_security_policy_conn(&conn)
+}
+
+pub(crate) fn get_security_policy_conn(conn: &Connection) -> Result<SecurityPolicyRecord, String> {
+    let mode = resolve_security_policy_fail_safe(conn);
+    Ok(SecurityPolicyRecord {
+        mode,
+        min_password_length: mode.min_password_length(),
+        max_failed_login_attempts: mode.max_failed_login_attempts(),
+        lockout_duration_minutes: mode.lockout_duration().as_secs() / 60,
+    })
+}
+
+pub fn update_security_policy(
+    app: &AppHandle,
+    session_store: &crate::auth_session::SessionStore,
+    actor_account_id: i64,
+    payload: UpdateSecurityPolicyInput,
+) -> Result<SecurityPolicyRecord, String> {
+    let conn = open_runtime_connection(app)?;
+    update_security_policy_conn(&conn, session_store, actor_account_id, payload)
+}
+
+pub(crate) fn update_security_policy_conn(
+    conn: &Connection,
+    session_store: &crate::auth_session::SessionStore,
+    actor_account_id: i64,
+    payload: UpdateSecurityPolicyInput,
+) -> Result<SecurityPolicyRecord, String> {
+    let actor = load_local_account_by_id(conn, actor_account_id)?;
+    if actor.role != LOCAL_ACCOUNT_ROLE_SUPER_ADMIN {
+        return Err("only super admin accounts may modify security policy".to_string());
+    }
+
+    let password_hash: String = conn
+        .query_row(
+            "SELECT password_hash FROM app_local_accounts WHERE id = ?",
+            params![actor_account_id],
+            |row| row.get(0),
+        )
+        .map_err(|err| format!("failed to load super admin credentials: {err}"))?;
+
+    let is_valid = verify_password(&payload.current_password, &password_hash)?;
+    if !is_valid {
+        let _ = super::audit::insert_audit_log_conn(
+            conn,
+            "security_policy.change_failed",
+            "account",
+            Some(&actor.username),
+            "security_policy",
+            "global",
+            Some(r#"{"reason":"incorrect_password"}"#),
+        );
+        let is_sole = is_sole_active_super_admin(conn, &actor.username).unwrap_or(false);
+        let _ = session_store.record_failed_attempt_with_exemption(&actor.username, is_sole);
+        return Err("incorrect password for security policy confirmation".to_string());
+    }
+
+    let old_mode = get_security_policy_mode(conn).unwrap_or(SecurityPolicyMode::Standard);
+    super::set_setting_value(conn, SECURITY_POLICY_SETTING_KEY, Some(payload.new_mode.as_str()))?;
+
+    // Switch policy in SessionStore: clears non-locked failure counts, preserves active lockouts
+    session_store.switch_policy(payload.new_mode);
+
+    let payload_json = format!(
+        r#"{{"from":"{}","to":"{}"}}"#,
+        old_mode.as_str(),
+        payload.new_mode.as_str()
+    );
+    let _ = super::audit::insert_audit_log_conn(
+        conn,
+        "security_policy.updated",
+        "account",
+        Some(&actor.username),
+        "security_policy",
+        "global",
+        Some(&payload_json),
+    );
+
+    get_security_policy_conn(conn)
 }
 
 fn normalize_recovery_code_input(value: Option<String>) -> Option<String> {
@@ -1577,6 +1766,7 @@ mod tests {
     fn wrong_password_increments_failures_and_locks_at_5() {
         let conn = seeded_connection();
         let store = SessionStore::new();
+        store.switch_policy(SecurityPolicyMode::Strict);
 
         // 4 failed attempts with wrong password
         for _ in 0..4 {
@@ -1626,6 +1816,7 @@ mod tests {
         let conn = seeded_connection();
         let clock = crate::auth_session::TestClock::new();
         let store = SessionStore::with_clock(clock.handle());
+        store.switch_policy(SecurityPolicyMode::Strict);
 
         // Lock alice out with 5 failed attempts
         for _ in 0..5 {
@@ -1671,6 +1862,7 @@ mod tests {
     fn unknown_username_timing_and_lockout() {
         let conn = seeded_connection();
         let store = SessionStore::new();
+        store.switch_policy(SecurityPolicyMode::Strict);
 
         // 4 failed attempts on nonexistent user
         for _ in 0..4 {
@@ -1703,6 +1895,7 @@ mod tests {
     fn forgot_password_rate_limiting_and_safe_unlock() {
         let conn = seeded_connection();
         let store = SessionStore::new();
+        store.switch_policy(SecurityPolicyMode::Strict);
 
         // Add recovery code for alice
         let recovery_hash = hash_password("ALICE-REC-1234").expect("hash recovery");
@@ -1778,7 +1971,9 @@ mod tests {
     #[test]
     fn password_length_policy_minimum_12_chars_and_passphrases() {
         let conn = seeded_connection();
+        super::super::set_setting_value(&conn, SECURITY_POLICY_SETTING_KEY, Some("strict")).unwrap();
         let store = SessionStore::new();
+        store.switch_policy(SecurityPolicyMode::Strict);
 
         // 1. Rejects passwords shorter than 12 characters
         let short_res = change_local_account_password_conn(
@@ -1856,7 +2051,51 @@ mod tests {
         let clock = crate::auth_session::TestClock::new();
         let store = SessionStore::with_clock(clock.handle());
 
-        // 1. Lockout on adman is temporary (15 minutes), never permanent
+        // 1. Sole super_admin is exempt from timed lockout (D3.14)
+        for _ in 0..12 {
+            let res = login_local_account_conn(
+                &conn,
+                &store,
+                LocalAccountLoginInput {
+                    username: "adman".to_string(),
+                    password: "wrong".to_string(),
+                },
+            );
+            assert!(res.is_err());
+        }
+        assert!(!store.is_account_locked("adman"), "sole super admin must never be locked out");
+        assert_eq!(store.get_failed_attempts("adman"), 12);
+
+        // Correct password succeeds and clears failed attempts
+        let ok_res = login_local_account_conn(
+            &conn,
+            &store,
+            LocalAccountLoginInput {
+                username: "adman".to_string(),
+                password: "Aswhite2026".to_string(),
+            },
+        );
+        assert!(ok_res.is_ok());
+        assert_eq!(store.get_failed_attempts("adman"), 0);
+
+        // 2. When a 2nd active super_admin is added, normal lockout applies to both (D3.16)
+        store.switch_policy(SecurityPolicyMode::Strict);
+        let super2_hash = hash_password("ValidSuperAdminPass123!").expect("hash super2");
+        conn.execute(
+            r#"
+            INSERT INTO app_local_accounts(
+              account_key, display_name, username, password_hash,
+              recovery_code_hash, force_password_reset, role, created_at, updated_at
+            )
+            VALUES ('super2', 'Super2', 'super2', ?, NULL, 0, 'super_admin', datetime('now'), datetime('now'))
+            "#,
+            params![super2_hash],
+        )
+        .expect("seed super2 account");
+
+        assert!(!is_sole_active_super_admin(&conn, "adman").expect("check sole"));
+        assert!(!is_sole_active_super_admin(&conn, "super2").expect("check sole"));
+
         for _ in 0..5 {
             let _ = login_local_account_conn(
                 &conn,
@@ -1867,7 +2106,7 @@ mod tests {
                 },
             );
         }
-        assert!(store.is_account_locked("adman"));
+        assert!(store.is_account_locked("adman"), "with 2+ super admins, normal lockout applies");
 
         // Advance 15 minutes -> adman can log in again
         clock.advance(std::time::Duration::from_secs(15 * 60));
@@ -1881,9 +2120,232 @@ mod tests {
         )
         .is_ok());
 
-        // 2. Last super_admin cannot be deleted
+        // 3. Last super_admin cannot be deleted
+        let super2_id: i64 = conn
+            .query_row("SELECT id FROM app_local_accounts WHERE username = 'super2'", [], |r| r.get(0))
+            .expect("get super2 id");
+        let del_super2 = delete_local_account_conn(&conn, 1, super2_id);
+        assert!(del_super2.is_ok(), "can delete super2 when adman remains");
+
         let del_res = delete_local_account_conn(&conn, 2, 1);
-        assert!(del_res.is_err());
+        assert!(del_res.is_err(), "cannot delete the last remaining super admin");
         assert_eq!(del_res.unwrap_err(), "cannot delete the last remaining super admin");
+    }
+
+    // ── Security Policy Tests (Standard / Strict) ──────────────────────────────
+
+    #[test]
+    fn test_is_sole_active_super_admin_logic() {
+        let conn = seeded_connection();
+
+        // Initially: only 'adman' is super_admin with a valid hash
+        assert!(is_sole_active_super_admin(&conn, "adman").unwrap());
+        assert!(!is_sole_active_super_admin(&conn, "alice").unwrap());
+        assert!(!is_sole_active_super_admin(&conn, "nonexistent").unwrap());
+
+        // Add second super_admin with valid hash -> neither is sole
+        let valid_hash = hash_password("ValidHash123456").unwrap();
+        conn.execute(
+            r#"
+            INSERT INTO app_local_accounts(
+              account_key, display_name, username, password_hash,
+              recovery_code_hash, force_password_reset, role, created_at, updated_at
+            )
+            VALUES ('admin2', 'Admin 2', 'admin2', ?, NULL, 0, 'super_admin', datetime('now'), datetime('now'))
+            "#,
+            params![valid_hash],
+        )
+        .unwrap();
+
+        assert!(!is_sole_active_super_admin(&conn, "adman").unwrap());
+        assert!(!is_sole_active_super_admin(&conn, "admin2").unwrap());
+
+        // Corrupt admin2's password hash to invalid format -> admin2 is not login-eligible
+        conn.execute(
+            "UPDATE app_local_accounts SET password_hash = 'corrupt-not-argon-hash' WHERE username = 'admin2'",
+            [],
+        )
+        .unwrap();
+
+        // Now adman is the sole USABLE/eligible super admin again!
+        assert!(is_sole_active_super_admin(&conn, "adman").unwrap());
+        assert!(!is_sole_active_super_admin(&conn, "admin2").unwrap());
+
+        // Demote admin2 to user -> adman remains sole super admin
+        conn.execute(
+            "UPDATE app_local_accounts SET role = 'user' WHERE username = 'admin2'",
+            [],
+        )
+        .unwrap();
+        assert!(is_sole_active_super_admin(&conn, "adman").unwrap());
+    }
+
+    #[test]
+    fn test_security_policy_persistence_and_fail_safe() {
+        let conn = seeded_connection();
+
+        // Unconfigured default is Standard (D3.19)
+        let mode = get_security_policy_mode(&conn).unwrap();
+        assert_eq!(mode, SecurityPolicyMode::Standard);
+        assert_eq!(resolve_security_policy_fail_safe(&conn), SecurityPolicyMode::Standard);
+
+        // Update setting to strict
+        super::super::set_setting_value(&conn, SECURITY_POLICY_SETTING_KEY, Some("strict")).unwrap();
+        assert_eq!(get_security_policy_mode(&conn).unwrap(), SecurityPolicyMode::Strict);
+        assert_eq!(resolve_security_policy_fail_safe(&conn), SecurityPolicyMode::Strict);
+
+        // Corrupt setting value -> fail-safe fallback to Strict (D3.19 Rule 10)
+        super::super::set_setting_value(&conn, SECURITY_POLICY_SETTING_KEY, Some("corrupted_val")).unwrap();
+        assert!(get_security_policy_mode(&conn).is_err());
+        assert_eq!(resolve_security_policy_fail_safe(&conn), SecurityPolicyMode::Strict);
+    }
+
+    #[test]
+    fn test_update_security_policy_reauth_and_audit() {
+        let conn = seeded_connection();
+        let store = SessionStore::new();
+
+        // 1. Non-super_admin (alice, id=2) cannot change policy (D3.17)
+        let err_role = update_security_policy_conn(
+            &conn,
+            &store,
+            2,
+            UpdateSecurityPolicyInput {
+                current_password: "alicepw".to_string(),
+                new_mode: SecurityPolicyMode::Strict,
+            },
+        );
+        assert!(err_role.is_err());
+        assert_eq!(err_role.unwrap_err(), "only super admin accounts may modify security policy");
+
+        // 2. Wrong current password for super admin (adman, id=1) fails atomically and audits (D3.20)
+        let err_pw = update_security_policy_conn(
+            &conn,
+            &store,
+            1,
+            UpdateSecurityPolicyInput {
+                current_password: "wrong_adman_pw".to_string(),
+                new_mode: SecurityPolicyMode::Strict,
+            },
+        );
+        assert!(err_pw.is_err());
+        assert_eq!(err_pw.unwrap_err(), "incorrect password for security policy confirmation");
+
+        // Check failure audit log
+        let count_fail: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM audit_logs WHERE event_type = 'security_policy.change_failed'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count_fail, 1);
+
+        // Policy is unchanged
+        assert_eq!(get_security_policy_mode(&conn).unwrap(), SecurityPolicyMode::Standard);
+        assert_eq!(store.current_policy(), SecurityPolicyMode::Standard);
+
+        // 3. Correct password succeeds, persists, updates in-memory store, and audits (D3.17)
+        let res_ok = update_security_policy_conn(
+            &conn,
+            &store,
+            1,
+            UpdateSecurityPolicyInput {
+                current_password: "Aswhite2026".to_string(),
+                new_mode: SecurityPolicyMode::Strict,
+            },
+        );
+        assert!(res_ok.is_ok());
+        let rec = res_ok.unwrap();
+        assert_eq!(rec.mode, SecurityPolicyMode::Strict);
+        assert_eq!(rec.min_password_length, 12);
+        assert_eq!(rec.max_failed_login_attempts, 5);
+        assert_eq!(rec.lockout_duration_minutes, 15);
+
+        // Check success audit log
+        let count_success: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM audit_logs WHERE event_type = 'security_policy.updated'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count_success, 1);
+
+        // DB setting and store are both Strict
+        assert_eq!(get_security_policy_mode(&conn).unwrap(), SecurityPolicyMode::Strict);
+        assert_eq!(store.current_policy(), SecurityPolicyMode::Strict);
+    }
+
+    #[test]
+    fn test_password_length_enforcement_by_policy() {
+        let conn = seeded_connection();
+        let store = SessionStore::new();
+
+        // In Standard mode (default): min 8 characters
+        assert_eq!(store.current_policy(), SecurityPolicyMode::Standard);
+        let res_short_std = change_local_account_password_conn(
+            &conn,
+            &store,
+            LocalPasswordChangeInput {
+                id: 2,
+                current_password: "alicepw".to_string(),
+                new_password: "short7c".to_string(),
+            },
+        );
+        assert!(res_short_std.is_err());
+        assert_eq!(res_short_std.unwrap_err(), "password must be at least 8 characters");
+
+        // 8 chars in Standard succeeds
+        let res_8 = change_local_account_password_conn(
+            &conn,
+            &store,
+            LocalPasswordChangeInput {
+                id: 2,
+                current_password: "alicepw".to_string(),
+                new_password: "exact8ch".to_string(),
+            },
+        );
+        assert!(res_8.is_ok());
+
+        // Switch to Strict mode: min 12 characters
+        super::super::set_setting_value(&conn, SECURITY_POLICY_SETTING_KEY, Some("strict")).unwrap();
+        store.switch_policy(SecurityPolicyMode::Strict);
+
+        // 11 chars in Strict fails
+        let res_11 = change_local_account_password_conn(
+            &conn,
+            &store,
+            LocalPasswordChangeInput {
+                id: 2,
+                current_password: "exact8ch".to_string(),
+                new_password: "elevenchars".to_string(),
+            },
+        );
+        assert!(res_11.is_err());
+        assert_eq!(res_11.unwrap_err(), "password must be at least 12 characters");
+
+        // Passphrase with spaces and Vietnamese Unicode (16 characters) succeeds in Strict
+        let res_passphrase = change_local_account_password_conn(
+            &conn,
+            &store,
+            LocalPasswordChangeInput {
+                id: 2,
+                current_password: "exact8ch".to_string(),
+                new_password: "mật khẩu an toàn".to_string(),
+            },
+        );
+        assert!(res_passphrase.is_ok());
+
+        // Legacy accounts with short passwords (e.g. adman's Aswhite2026 = 11 chars) still log in!
+        let login_legacy = login_local_account_conn(
+            &conn,
+            &store,
+            LocalAccountLoginInput {
+                username: "adman".to_string(),
+                password: "Aswhite2026".to_string(),
+            },
+        );
+        assert!(login_legacy.is_ok());
     }
 }

@@ -372,7 +372,8 @@ describe("Borrow / Return LAN automatic lifecycle", () => {
                                     ? "session-token"
                                     : undefined,
         )
-        const { result } = renderHook(() => useSettingsState(baseOptions))
+        const setGlobalError = vi.fn();
+            const { result } = renderHook(() => useSettingsState({ ...baseOptions, setGlobalError }))
         await act(async () => {
             await Promise.resolve()
             await Promise.resolve()
@@ -911,5 +912,107 @@ describe("Borrow / Return saved Handle with Care policy", () => {
             expect(result.current.backupSettings?.usbDeviceId).toBe("VOL_EXT_NEW")
             expect(result.current.backupSettings?.protectionStatus).toBe("Protected")
         })
+
+    describe("Security Policy (D3.12–D3.19)", () => {
+        it("loads security policy on mount", async () => {
+            setSession({ sessionToken: "test-token", expiresAt: "2099-01-01T00:00:00Z" })
+            invokeMock.mockImplementation(async (command: string) => {
+                if (command === "get_security_policy") {
+                    return {
+                        mode: "standard",
+                        minPasswordLength: 8,
+                        maxFailedLoginAttempts: 10,
+                        lockoutDurationMinutes: 5,
+                    }
+                }
+                return undefined
+            })
+
+            const { result } = renderHook(() => useSettingsState(baseOptions))
+
+            await waitFor(() => {
+                expect(result.current.securityPolicy?.mode).toBe("standard")
+            })
+
+            expect(result.current.securityPolicy?.minPasswordLength).toBe(8)
+            expect(result.current.securityPolicy?.maxFailedLoginAttempts).toBe(10)
+            expect(result.current.securityPolicy?.lockoutDurationMinutes).toBe(5)
+        })
+
+        it("prompts for password and updates security policy when confirmed", async () => {
+            setSession({ sessionToken: "test-token", expiresAt: "2099-01-01T00:00:00Z" })
+            const promptSpy = vi.spyOn(window, "prompt").mockReturnValue("SuperAdminPass123!")
+
+            invokeMock.mockImplementation(async (command: string, args: unknown) => {
+                if (command === "update_security_policy") {
+                    const payload = (args as { payload: { currentPassword: string; newMode: string } }).payload
+                    expect(payload.currentPassword).toBe("SuperAdminPass123!")
+                    expect(payload.newMode).toBe("strict")
+                    return {
+                        mode: "strict",
+                        minPasswordLength: 12,
+                        maxFailedLoginAttempts: 5,
+                        lockoutDurationMinutes: 15,
+                    }
+                }
+                if (command === "get_security_policy") {
+                    return {
+                        mode: "standard",
+                        minPasswordLength: 8,
+                        maxFailedLoginAttempts: 10,
+                        lockoutDurationMinutes: 5,
+                    }
+                }
+                if (command === "get_borrow_lan_settings") {
+                    return { host: "127.0.0.1", port: 8787 }
+                }
+                if (command === "get_backup_settings") {
+                    return { backupDirectoryPath: "C:/backups", autoBackupEnabled: false }
+                }
+                return undefined
+            })
+
+            const { result } = renderHook(() => useSettingsState(baseOptions))
+
+            // Wait for initial bootstrap to settle
+            await waitFor(() => {
+                expect(result.current.securityPolicy?.mode).toBe("standard")
+            })
+
+            await act(async () => {
+                await result.current.handleSaveSecurityPolicy("strict")
+            })
+
+            expect(promptSpy).toHaveBeenCalled()
+            expect(result.current.securityPolicy?.mode).toBe("strict")
+            expect(result.current.securityPolicy?.minPasswordLength).toBe(12)
+            expect(result.current.securityPolicy?.maxFailedLoginAttempts).toBe(5)
+            expect(result.current.securityPolicy?.lockoutDurationMinutes).toBe(15)
+            expect(result.current.securityPolicyStatusMessage).toBe(
+                "Security policy successfully updated to Strict.",
+            )
+
+            promptSpy.mockRestore()
+        })
+
+        it("does not update security policy if password prompt is cancelled", async () => {
+            setSession({ sessionToken: "test-token", expiresAt: "2099-01-01T00:00:00Z" })
+            const promptSpy = vi.spyOn(window, "prompt").mockReturnValue(null)
+
+            const { result } = renderHook(() => useSettingsState(baseOptions))
+
+            await act(async () => {
+                await result.current.handleSaveSecurityPolicy("strict")
+            })
+
+            expect(promptSpy).toHaveBeenCalled()
+            expect(invokeMock.mock.calls.some(([cmd]) => cmd === "update_security_policy")).toBe(false)
+            expect(result.current.securityPolicyStatusMessage).toBe("")
+
+            promptSpy.mockRestore()
+        })
+    })
+
+
     })
 })

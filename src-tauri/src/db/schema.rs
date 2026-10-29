@@ -31,6 +31,7 @@ pub(super) const DB_ENCRYPTION_MIGRATION_SETTING_KEY: &str = "db_encrypted_v1";
 // ── Settings keys ─────────────────────────────────────────────────────────────
 pub(super) const ACTIVE_LOCAL_ACCOUNT_SETTING_KEY: &str = "active_local_account_id";
 pub(super) const DEFAULT_ADMIN_SEED_SETTING_KEY: &str = "default_admin_seed_v1";
+pub(super) const SECURITY_POLICY_SETTING_KEY: &str = "security_policy_mode_v1";
 pub(super) const BACKUP_DIRECTORY_SETTING_KEY: &str = "backup_directory_path";
 pub(super) const AUTO_BACKUP_ENABLED_SETTING_KEY: &str = "backup_auto_enabled_v1";
 pub(super) const AUTO_BACKUP_LAST_DATE_SETTING_KEY: &str = "backup_auto_last_date_v1";

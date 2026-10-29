@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog"
 import { staffApi } from "../../services/staff-api"
 import { clearSession } from "../../services/session"
-import type { AssetRecord, AssetSeedItemInput, BackupSettings, BorrowLanServerStatus, BorrowLanSettings, BorrowPolicyRecord, SnapshotInfo } from "../../types/staff"
+import type { AssetRecord, AssetSeedItemInput, BackupSettings, BorrowLanServerStatus, BorrowLanSettings, BorrowPolicyRecord, SecurityPolicyMode, SecurityPolicyRecord, SnapshotInfo } from "../../types/staff"
 import { getUserErrorMessage } from "../../lib/errorHandling"
 import { buildBorrowLanUrlPreview } from "./borrowLanAutoFill"
 
@@ -61,6 +61,11 @@ export function useSettingsState({
     const [usbBackupEnabled, setUsbBackupEnabled] = useState(false)
     const [isSavingUsbBackupSettings, setSavingUsbBackupSettings] = useState(false)
     const [usbBackupStatusMessage, setUsbBackupStatusMessage] = useState("")
+
+    // Security Policy (D3.12–D3.19)
+    const [securityPolicy, setSecurityPolicy] = useState<SecurityPolicyRecord | null>(null)
+    const [isSavingSecurityPolicy, setIsSavingSecurityPolicy] = useState(false)
+    const [securityPolicyStatusMessage, setSecurityPolicyStatusMessage] = useState("")
 
     // History snapshots
     const [snapshots, setSnapshots] = useState<SnapshotInfo[]>([])
@@ -228,15 +233,17 @@ export function useSettingsState({
 
         void (async () => {
             try {
-                const [backupSettings, customPathValue, lanSettings, tokenStatus, serverStatus] = await Promise.all([
+                const [backupSettings, customPathValue, lanSettings, tokenStatus, serverStatus, secPolicy] = await Promise.all([
                     staffApi.getBackupSettings(),
                     staffApi.getDbCustomPath(),
                     staffApi.getBorrowLanSettings(),
                     staffApi.getBorrowLanTokenStatus(),
                     staffApi.getBorrowLanStatus(),
+                    staffApi.getSecurityPolicy().catch(() => null),
                 ])
                 if (!disposed) {
                     setBackupSettings(backupSettings)
+                    setSecurityPolicy(secPolicy)
                     setBackupDirectoryInput(backupSettings?.backupDirectoryPath ?? "")
                     setBackupAutoEnabled(backupSettings?.autoBackupEnabled ?? false)
                     setUsbBackupDirectoryInput(backupSettings?.usbBackupDirectoryPath ?? "")
@@ -802,6 +809,26 @@ export function useSettingsState({
         }
     }
 
+    const handleSaveSecurityPolicy = useCallback(async (newMode: SecurityPolicyMode) => {
+        const password = window.prompt("Enter your current Super Admin password to confirm security policy change:")
+        if (!password) return
+
+        setIsSavingSecurityPolicy(true)
+        setSecurityPolicyStatusMessage("")
+        try {
+            const updated = await staffApi.updateSecurityPolicy({
+                currentPassword: password,
+                newMode,
+            })
+            setSecurityPolicy(updated)
+            setSecurityPolicyStatusMessage(`Security policy successfully updated to ${newMode === "strict" ? "Strict" : "Standard"}.`)
+        } catch (error) {
+            setGlobalError(getUserErrorMessage(error))
+        } finally {
+            setIsSavingSecurityPolicy(false)
+        }
+    }, [setGlobalError])
+
     return {
         backupSettings,
         backupDirectoryInput,
@@ -824,6 +851,11 @@ export function useSettingsState({
         usbBackupStatusMessage,
         handleBrowseUsbDirectory,
         handleSaveUsbBackupSettings,
+        // Security Policy (D3.12–D3.19)
+        securityPolicy,
+        isSavingSecurityPolicy,
+        securityPolicyStatusMessage,
+        handleSaveSecurityPolicy,
         // History
         snapshots,
         isLoadingSnapshots,

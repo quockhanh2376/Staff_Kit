@@ -286,4 +286,41 @@ describe("staffApi Phase C command classification", () => {
             enabled: true,
         })
     })
+
+    it("getSecurityPolicy injects session token", async () => {
+        setSession({ sessionToken: "user-tok", expiresAt: "2099-01-01T00:00:00Z" })
+        invokeMock.mockResolvedValue({
+            mode: "standard",
+            minPasswordLength: 8,
+            maxFailedLoginAttempts: 10,
+            lockoutDurationMinutes: 5,
+        })
+        const res = await staffApi.getSecurityPolicy()
+        expect(res.mode).toBe("standard")
+        const [cmd, args] = invokeMock.mock.calls[0]
+        expect(cmd).toBe("get_security_policy")
+        expect((args as Record<string, unknown>).sessionToken).toBe("user-tok")
+    })
+
+    it("updateSecurityPolicy injects session token and passes payload", async () => {
+        setSession({ sessionToken: "super-tok", expiresAt: "2099-01-01T00:00:00Z" })
+        invokeMock.mockResolvedValue({
+            mode: "strict",
+            minPasswordLength: 12,
+            maxFailedLoginAttempts: 5,
+            lockoutDurationMinutes: 15,
+        })
+        const res = await staffApi.updateSecurityPolicy({
+            currentPassword: "my_password",
+            newMode: "strict",
+        })
+        expect(res.mode).toBe("strict")
+        const [cmd, args] = invokeMock.mock.calls[0]
+        expect(cmd).toBe("update_security_policy")
+        expect((args as Record<string, unknown>).sessionToken).toBe("super-tok")
+        expect((args as Record<string, unknown>).payload).toEqual({
+            currentPassword: "my_password",
+            newMode: "strict",
+        })
+    })
 })

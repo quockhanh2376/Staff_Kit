@@ -16,6 +16,8 @@ import type {
   BackupSettings,
   BackupSettingsUpdateInput,
   ConfigureUsbBackupInput,
+  SecurityPolicyRecord,
+  UpdateSecurityPolicyInput,
   BorrowLanSettings,
   BorrowLanSettingsUpdateInput,
   BorrowLanTokenStatus,
@@ -194,6 +196,11 @@ export const staffApi = {
         enabled: payload.enabled,
       },
     }),
+
+  getSecurityPolicy: () => call<SecurityPolicyRecord>("get_security_policy"),
+
+  updateSecurityPolicy: (payload: UpdateSecurityPolicyInput) =>
+    call<SecurityPolicyRecord>("update_security_policy", { payload }),
 
   backupDatabaseNow: () => call<BackupRunResult>("backup_database_now"),
 
