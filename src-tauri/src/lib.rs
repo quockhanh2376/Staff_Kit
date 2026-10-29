@@ -248,7 +248,7 @@ fn change_local_account_password(
 ) -> Result<bool, String> {
     let _ctx = auth_session::require_authenticated(&session_store, &session_token)?;
     let target_id = payload.id;
-    let result = db::change_local_account_password(&app, payload)?;
+    let result = db::change_local_account_password(&app, &session_store, payload)?;
     // Invalidate ALL sessions for this account (including the current token) so
     // the user must re-login with the new password.
     session_store.invalidate_account(target_id);
@@ -264,7 +264,7 @@ fn admin_reset_local_account_password(
 ) -> Result<bool, String> {
     let _ctx = auth_session::require_admin(&session_store, &session_token)?;
     let target_id = payload.id;
-    let result = db::admin_reset_local_account_password(&app, payload)?;
+    let result = db::admin_reset_local_account_password(&app, &session_store, payload)?;
     // Invalidate the TARGET account's sessions (not the actor's). The target
     // must re-login with the new password; the admin stays logged in.
     session_store.invalidate_account(target_id);
@@ -274,9 +274,10 @@ fn admin_reset_local_account_password(
 #[tauri::command(async)]
 fn forgot_local_account_password(
     app: tauri::AppHandle,
+    session_store: tauri::State<'_, auth_session::SessionStore>,
     payload: db::LocalForgotPasswordInput,
 ) -> Result<bool, String> {
-    db::forgot_local_account_password(&app, payload)
+    db::forgot_local_account_password(&app, &session_store, payload)
 }
 
 // ── Employee columns (read authenticated, mutate admin) ──────────────────────

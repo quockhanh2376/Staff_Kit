@@ -32,6 +32,17 @@ pub const SESSION_IDLE_TIMEOUT: Duration = Duration::from_secs(8 * 60 * 60); // 
 /// never extends this cap.
 pub const SESSION_ABSOLUTE_LIFETIME: Duration = Duration::from_secs(12 * 60 * 60); // 12 hours
 
+// ── SEC-010 & SEC-011 configuration ──────────────────────────────────────────
+
+/// Maximum consecutive failed login attempts before temporary lockout.
+pub const MAX_FAILED_LOGIN_ATTEMPTS: u32 = 5;
+
+/// Duration of temporary authentication lockout after exceeding failed attempts.
+pub const LOGIN_LOCKOUT_DURATION: Duration = Duration::from_secs(15 * 60); // 15 minutes
+
+/// Minimum password length for newly created or changed passwords.
+pub const MIN_PASSWORD_LENGTH: usize = 12;
+
 // ── Stable, machine-readable auth error codes ────────────────────────────────
 
 /// No session token was supplied, or the token is unknown to this process.
@@ -245,11 +256,19 @@ pub struct SessionContext {
     pub role: Role,
 }
 
+/// In-memory record tracking failed attempts and temporary lockout for a username.
+#[derive(Debug, Clone)]
+pub struct LockoutEntry {
+    pub failed_attempts: u32,
+    pub locked_until: Option<Instant>,
+}
+
 // ── SessionStore ─────────────────────────────────────────────────────────────
 
 /// In-memory session store. Held in `tauri::State` and never persisted.
 pub struct SessionStore {
     entries: Mutex<HashMap<OpaqueToken, SessionEntry>>,
+    lockouts: Mutex<HashMap<String, LockoutEntry>>,
     clock: Box<dyn Clock>,
 }
 
@@ -257,6 +276,7 @@ impl Default for SessionStore {
     fn default() -> Self {
         Self {
             entries: Mutex::new(HashMap::new()),
+            lockouts: Mutex::new(HashMap::new()),
             clock: Box::new(SystemClock),
         }
     }
@@ -269,9 +289,11 @@ impl SessionStore {
     }
 
     /// Test constructor with a controllable clock.
+    #[allow(dead_code)]
     pub fn with_clock(clock: impl Clock + 'static) -> Self {
         Self {
             entries: Mutex::new(HashMap::new()),
+            lockouts: Mutex::new(HashMap::new()),
             clock: Box::new(clock),
         }
     }
@@ -362,6 +384,8 @@ impl SessionStore {
     pub fn invalidate_all(&self) {
         let mut entries = self.entries.lock().unwrap_or_else(|p| p.into_inner());
         entries.clear();
+        let mut lockouts = self.lockouts.lock().unwrap_or_else(|p| p.into_inner());
+        lockouts.clear();
     }
 
     /// Drop expired entries. Called opportunistically by resolve and at known
@@ -374,6 +398,126 @@ impl SessionStore {
             let absolute_expired = now >= entry.absolute_expires_at;
             !(idle_expired || absolute_expired)
         });
+        drop(entries);
+
+        let mut lockouts = self.lockouts.lock().unwrap_or_else(|p| p.into_inner());
+        lockouts.retain(|_, entry| match entry.locked_until {
+            Some(until) => now < until,
+            None => false,
+        });
+    }
+
+    fn normalize_lockout_key(username: &str) -> String {
+        username.trim().to_lowercase()
+    }
+
+    /// Check if authentication is temporarily locked out for `username`.
+    /// Returns `Err(message)` if locked.
+    /// If an existing lockout has expired, it resets the failed attempt count.
+    pub fn check_lockout(&self, username: &str) -> Result<(), String> {
+        let key = Self::normalize_lockout_key(username);
+        if key.is_empty() {
+            return Ok(());
+        }
+        let now = self.clock.now();
+        let mut lockouts = self.lockouts.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(entry) = lockouts.get_mut(&key) {
+            if let Some(deadline) = entry.locked_until {
+                if now < deadline {
+                    let remaining_secs = deadline.duration_since(now).as_secs();
+                    let remaining_mins = remaining_secs.div_ceil(60).max(1);
+                    return Err(format!(
+                        "Account is temporarily locked due to too many failed attempts. Please try again in {} minute{}.",
+                        remaining_mins,
+                        if remaining_mins == 1 { "" } else { "s" }
+                    ));
+                } else {
+                    // Lockout period has elapsed: clear the lock and reset failed attempts
+                    entry.failed_attempts = 0;
+                    entry.locked_until = None;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Record a failed login or authentication attempt for `username`.
+    /// Increments the failure counter. When `MAX_FAILED_LOGIN_ATTEMPTS` (5) is reached,
+    /// sets `locked_until` to `now + LOGIN_LOCKOUT_DURATION` (15 minutes) and returns
+    /// `Err` with the lockout message.
+    pub fn record_failed_attempt(&self, username: &str) -> Result<(), String> {
+        let key = Self::normalize_lockout_key(username);
+        if key.is_empty() {
+            return Ok(());
+        }
+        let now = self.clock.now();
+        let mut lockouts = self.lockouts.lock().unwrap_or_else(|p| p.into_inner());
+
+        // Bounded capacity: prune if map exceeds threshold to prevent memory exhaustion
+        if lockouts.len() > 5000 {
+            lockouts.retain(|_, entry| match entry.locked_until {
+                Some(until) => now < until,
+                None => false,
+            });
+        }
+
+        let entry = lockouts.entry(key).or_insert_with(|| LockoutEntry {
+            failed_attempts: 0,
+            locked_until: None,
+        });
+
+        // If prior lockout expired, reset before incrementing
+        if let Some(deadline) = entry.locked_until {
+            if now >= deadline {
+                entry.failed_attempts = 0;
+                entry.locked_until = None;
+            }
+        }
+
+        entry.failed_attempts = entry.failed_attempts.saturating_add(1);
+        if entry.failed_attempts >= MAX_FAILED_LOGIN_ATTEMPTS {
+            let deadline = now + LOGIN_LOCKOUT_DURATION;
+            entry.locked_until = Some(deadline);
+            return Err("Account is temporarily locked due to too many failed attempts. Please try again in 15 minutes.".to_string());
+        }
+
+        Ok(())
+    }
+
+    /// Record a successful login for `username`: clears any failed attempts and removes any lockout.
+    pub fn record_successful_login(&self, username: &str) {
+        let key = Self::normalize_lockout_key(username);
+        let mut lockouts = self.lockouts.lock().unwrap_or_else(|p| p.into_inner());
+        lockouts.remove(&key);
+    }
+
+    /// Unlock an account (e.g. on admin password reset or successful recovery reset).
+    pub fn unlock_account(&self, username: &str) {
+        let key = Self::normalize_lockout_key(username);
+        let mut lockouts = self.lockouts.lock().unwrap_or_else(|p| p.into_inner());
+        lockouts.remove(&key);
+    }
+
+    /// Query whether an account is currently locked (for test verification or status check).
+    #[allow(dead_code)]
+    pub fn is_account_locked(&self, username: &str) -> bool {
+        let key = Self::normalize_lockout_key(username);
+        let now = self.clock.now();
+        let lockouts = self.lockouts.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(entry) = lockouts.get(&key) {
+            if let Some(deadline) = entry.locked_until {
+                return now < deadline;
+            }
+        }
+        false
+    }
+
+    /// Query the current number of failed attempts for `username`.
+    #[allow(dead_code)]
+    pub fn get_failed_attempts(&self, username: &str) -> u32 {
+        let key = Self::normalize_lockout_key(username);
+        let lockouts = self.lockouts.lock().unwrap_or_else(|p| p.into_inner());
+        lockouts.get(&key).map(|e| e.failed_attempts).unwrap_or(0)
     }
 
     /// Number of live (not pruned) sessions. Test-only convenience.
@@ -963,5 +1107,132 @@ mod tests {
         let dbg = format!("{tok:?}");
         assert!(dbg.contains("redacted"));
         assert!(!dbg.contains("super-secret-value"));
+    }
+
+    // ── SEC-010 Lockout Tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn lockout_triggers_after_5_failed_attempts() {
+        let clock = TestClock::new();
+        let store = SessionStore::with_clock(clock.handle());
+
+        // First 4 failed attempts do not lock
+        for i in 1..=4 {
+            let res = store.record_failed_attempt("alice");
+            assert!(res.is_ok(), "attempt {i} should not trigger lockout");
+            assert_eq!(store.get_failed_attempts("alice"), i);
+            assert!(!store.is_account_locked("alice"));
+            assert!(store.check_lockout("alice").is_ok());
+        }
+
+        // 5th failed attempt triggers lockout
+        let res = store.record_failed_attempt("alice");
+        assert!(res.is_err(), "attempt 5 must trigger lockout");
+        assert!(res.unwrap_err().contains("temporarily locked"));
+        assert!(store.is_account_locked("alice"));
+
+        // Subsequent check_lockout reports remaining time and error
+        let lock_check = store.check_lockout("alice");
+        assert!(lock_check.is_err());
+        assert!(lock_check.unwrap_err().contains("temporarily locked due to too many failed attempts"));
+    }
+
+    #[test]
+    fn lockout_expires_after_15_minutes_and_resets() {
+        let clock = TestClock::new();
+        let store = SessionStore::with_clock(clock.handle());
+
+        for _ in 0..5 {
+            let _ = store.record_failed_attempt("bob");
+        }
+        assert!(store.is_account_locked("bob"));
+
+        // Advance clock by 14 minutes -> still locked
+        clock.advance(Duration::from_secs(14 * 60));
+        assert!(store.is_account_locked("bob"));
+        assert!(store.check_lockout("bob").is_err());
+
+        // Advance 1 more minute (total 15 minutes) -> lockout expires!
+        clock.advance(Duration::from_secs(60));
+        assert!(!store.is_account_locked("bob"));
+        assert!(store.check_lockout("bob").is_ok());
+        assert_eq!(store.get_failed_attempts("bob"), 0);
+    }
+
+    #[test]
+    fn successful_login_clears_failed_attempts() {
+        let store = SessionStore::new();
+
+        for _ in 0..3 {
+            let _ = store.record_failed_attempt("carol");
+        }
+        assert_eq!(store.get_failed_attempts("carol"), 3);
+
+        store.record_successful_login("carol");
+        assert_eq!(store.get_failed_attempts("carol"), 0);
+        assert!(!store.is_account_locked("carol"));
+    }
+
+    #[test]
+    fn admin_unlock_clears_lockout_immediately() {
+        let store = SessionStore::new();
+
+        for _ in 0..5 {
+            let _ = store.record_failed_attempt("david");
+        }
+        assert!(store.is_account_locked("david"));
+
+        store.unlock_account("david");
+        assert!(!store.is_account_locked("david"));
+        assert_eq!(store.get_failed_attempts("david"), 0);
+        assert!(store.check_lockout("david").is_ok());
+    }
+
+    #[test]
+    fn case_insensitivity_and_whitespace_trimmed_in_lockout() {
+        let store = SessionStore::new();
+
+        store.record_failed_attempt("  Eve  ").expect("attempt 1");
+        store.record_failed_attempt("EVE").expect("attempt 2");
+        store.record_failed_attempt("eve").expect("attempt 3");
+        store.record_failed_attempt(" EvE ").expect("attempt 4");
+        let res = store.record_failed_attempt("eve");
+        assert!(res.is_err(), "attempt 5 under any case variant must lock");
+
+        assert!(store.is_account_locked("EVE"));
+        assert!(store.is_account_locked("eve"));
+        assert!(store.is_account_locked("  eve  "));
+    }
+
+    #[test]
+    fn unknown_username_locks_identically() {
+        let store = SessionStore::new();
+
+        for _ in 0..4 {
+            assert!(store.record_failed_attempt("ghost_user").is_ok());
+        }
+        let res = store.record_failed_attempt("ghost_user");
+        assert!(res.is_err());
+        assert!(store.is_account_locked("ghost_user"));
+        assert!(store.check_lockout("ghost_user").is_err());
+    }
+
+    #[test]
+    fn concurrent_failed_attempts_are_thread_safe() {
+        let store = Arc::new(SessionStore::new());
+        let mut handles = Vec::new();
+
+        for _ in 0..10 {
+            let s = Arc::clone(&store);
+            handles.push(std::thread::spawn(move || {
+                let _ = s.record_failed_attempt("concurrent_user");
+            }));
+        }
+        for h in handles {
+            h.join().expect("thread join");
+        }
+
+        assert!(store.is_account_locked("concurrent_user"));
+        assert_eq!(store.get_failed_attempts("concurrent_user"), 10);
     }
 }

@@ -654,7 +654,7 @@ describe("handleAdminResetPassword — actor stays logged in (Phase D3)", () => 
         )
 
         const target = makeAccount({ id: 2, displayName: "Bob", username: "bob", role: "user" })
-        const promptSpy = vi.spyOn(window, "prompt").mockReturnValue("new-secret")
+        const promptSpy = vi.spyOn(window, "prompt").mockReturnValue("new-secret-1234")
         invokeMock.mockResolvedValueOnce(true)
 
         await act(async () => {
@@ -671,5 +671,76 @@ describe("handleAdminResetPassword — actor stays logged in (Phase D3)", () => 
             ([cmd]) => cmd === "admin_reset_local_account_password",
         )
         expect(resetCall).toBeDefined()
+    })
+
+    it("rejects new password shorter than 12 characters", async () => {
+        const onLogout = vi.fn()
+        const setGlobalError = vi.fn()
+        const triggerReload = vi.fn()
+
+        const { result } = renderHook(() => useAuthState({ ...baseOptions, onLogout }))
+        await loginAs(
+            result,
+            makeAccount({ id: 1, username: "admin", displayName: "Admin", role: "super_admin" }),
+        )
+
+        const target = makeAccount({ id: 2, displayName: "Bob", username: "bob", role: "user" })
+        const promptSpy = vi.spyOn(window, "prompt").mockReturnValue("short11char")
+
+        await act(async () => {
+            await result.current.handleAdminResetPassword(target, true, 1, setGlobalError, triggerReload)
+        })
+
+        promptSpy.mockRestore()
+
+        expect(setGlobalError).toHaveBeenCalledWith("New password must be at least 12 characters.")
+        const resetCall = invokeMock.mock.calls.find(
+            ([cmd]) => cmd === "admin_reset_local_account_password",
+        )
+        expect(resetCall).toBeUndefined()
+    })
+})
+
+describe("SEC-010 & SEC-011 frontend integration", () => {
+    it("lockout error message is displayed in loginError rather than masked as incorrect credentials", async () => {
+        const { result } = renderHook(() => useAuthState(baseOptions))
+        await act(async () => { await Promise.resolve(); await Promise.resolve() })
+
+        invokeMock.mockImplementationOnce(async () => {
+            throw new Error("Account is temporarily locked due to too many failed attempts. Please try again in 15 minutes.")
+        })
+        act(() => {
+            result.current.setLoginUsername("alice")
+            result.current.setLoginPassword("some_password")
+        })
+        await act(async () => {
+            await result.current.handleLoginSubmit({ preventDefault: noop } as never)
+        })
+
+        expect(result.current.loginError).toBe(
+            "Account is temporarily locked due to too many failed attempts. Please try again in 15 minutes."
+        )
+        expect(result.current.isAuthenticated).toBe(false)
+    })
+
+    it("forgot password rejects new password shorter than 12 characters", async () => {
+        const setGlobalError = vi.fn()
+        const { result } = renderHook(() => useAuthState(baseOptions))
+
+        act(() => {
+            result.current.setForgotUsername("alice")
+            result.current.setForgotRecoveryCode("REC-CODE-1234")
+            result.current.setForgotNewPassword("short-pw-10")
+        })
+
+        await act(async () => {
+            await result.current.handleForgotPasswordSubmit({ preventDefault: noop } as never, setGlobalError)
+        })
+
+        expect(setGlobalError).toHaveBeenCalledWith("Password must be at least 12 characters.")
+        const forgotCall = invokeMock.mock.calls.find(
+            ([cmd]) => cmd === "forgot_local_account_password",
+        )
+        expect(forgotCall).toBeUndefined()
     })
 })

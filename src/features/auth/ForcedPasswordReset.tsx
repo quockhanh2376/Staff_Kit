@@ -36,8 +36,8 @@ export function ForcedPasswordReset({
             setValidationError("New password is required.")
             return
         }
-        if (newPassword.trim().length < 6) {
-            setValidationError("New password must be at least 6 characters.")
+        if (newPassword.trim().length < 12) {
+            setValidationError("New password must be at least 12 characters.")
             return
         }
         if (newPassword !== confirmPassword) {

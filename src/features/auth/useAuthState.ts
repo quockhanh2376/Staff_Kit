@@ -238,7 +238,9 @@ export function useAuthState({
             // the same message.
             const rawMessage = error instanceof Error ? error.message : String(error)
             const lowerMessage = rawMessage.toLowerCase()
-            if (
+            if (lowerMessage.includes("temporarily locked") || lowerMessage.includes("locked")) {
+                setLoginErrorState(rawMessage)
+            } else if (
                 lowerMessage.includes("incorrect username or password") ||
                 lowerMessage.includes("invalid username") ||
                 lowerMessage.includes("password")
@@ -261,6 +263,10 @@ export function useAuthState({
         const recoveryCode = forgotRecoveryCode.trim()
         const newPassword = forgotNewPassword.trim()
         if (!username || !recoveryCode || !newPassword) {
+            return
+        }
+        if (newPassword.length < 12) {
+            setGlobalError("Password must be at least 12 characters.")
             return
         }
 
@@ -426,8 +432,8 @@ export function useAuthState({
 
         const newPassword = window.prompt(`Reset password for '${account.displayName}'`, "")
         if (!newPassword) return
-        if (newPassword.trim().length < 6) {
-            setGlobalError("New password must be at least 6 characters.")
+        if (newPassword.trim().length < 12) {
+            setGlobalError("New password must be at least 12 characters.")
             return
         }
         const newRecoveryCode = window.prompt("Optional new recovery code", "") ?? ""

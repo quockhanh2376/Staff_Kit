@@ -210,6 +210,15 @@ pub fn delete_local_account(
     actor_account_id: i64,
     id: i64,
 ) -> Result<bool, String> {
+    let conn = open_runtime_connection(app)?;
+    delete_local_account_conn(&conn, actor_account_id, id)
+}
+
+pub(crate) fn delete_local_account_conn(
+    conn: &Connection,
+    actor_account_id: i64,
+    id: i64,
+) -> Result<bool, String> {
     // SEC-001 self-delete guard: the actor is derived from the verified
     // SessionContext at the command layer (lib.rs), never from the frontend.
     // Reject before any DB mutation so the session and data are untouched.
@@ -217,7 +226,6 @@ pub fn delete_local_account(
         return Err(super::super::auth_session::AUTH_CANNOT_DELETE_SELF.to_string());
     }
 
-    let conn = open_runtime_connection(app)?;
     let total: i64 = conn
         .query_row("SELECT COUNT(*) FROM app_local_accounts", [], |row| {
             row.get(0)
@@ -252,7 +260,7 @@ pub fn delete_local_account(
         }
     }
 
-    let active_id = get_active_local_account_id(&conn)?;
+    let active_id = get_active_local_account_id(conn)?;
     let changed = conn
         .execute("DELETE FROM app_local_accounts WHERE id = ?", params![id])
         .map_err(humanize_sqlite_error)?;
@@ -265,7 +273,7 @@ pub fn delete_local_account(
                 |row| row.get(0),
             )
             .map_err(|err| format!("failed to resolve fallback account after deletion: {err}"))?;
-        set_active_local_account_id(&conn, fallback_id)?;
+        set_active_local_account_id(conn, fallback_id)?;
     }
 
     Ok(changed > 0)
@@ -277,36 +285,72 @@ pub fn login_local_account(
     payload: LocalAccountLoginInput,
 ) -> Result<LocalAccountLoginResult, String> {
     let conn = open_runtime_connection(app)?;
-    let username_normalized = normalize_local_account_username(payload.username)
-        .ok_or_else(|| "invalid username".to_string())?;
+    login_local_account_conn(&conn, session_store, payload)
+}
 
-    let maybe = conn
-        .query_row(
-            "SELECT id, password_hash FROM app_local_accounts WHERE username = ? COLLATE NOCASE",
-            params![username_normalized.as_str()],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
-        )
-        .optional()
-        .map_err(|err| format!("failed to query account for login: {err}"))?;
-
-    let Some((id, password_hash)) = maybe else {
-        return Err("incorrect username or password".to_string());
-    };
-
-    if !verify_password(payload.password.as_str(), password_hash.as_str())? {
+pub(crate) fn login_local_account_conn(
+    conn: &Connection,
+    session_store: &crate::auth_session::SessionStore,
+    payload: LocalAccountLoginInput,
+) -> Result<LocalAccountLoginResult, String> {
+    let username_raw = payload.username.trim().to_string();
+    if username_raw.is_empty() {
         return Err("incorrect username or password".to_string());
     }
 
+    // SEC-010: Check temporary lockout status before checking credentials
+    session_store.check_lockout(&username_raw)?;
+
+    let username_normalized = normalize_local_account_username(payload.username);
+
+    let maybe = match &username_normalized {
+        Some(uname) => conn
+            .query_row(
+                "SELECT id, password_hash FROM app_local_accounts WHERE username = ? COLLATE NOCASE",
+                params![uname.as_str()],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()
+            .map_err(|err| format!("failed to query account for login: {err}"))?,
+        None => None,
+    };
+
+    let credentials_valid = match &maybe {
+        Some((_id, password_hash)) => {
+            verify_password(payload.password.as_str(), password_hash.as_str())?
+        }
+        None => {
+            // SEC-010: Constant-time verification against precomputed dummy Argon2id hash
+            // to eliminate timing differences and prevent user enumeration.
+            static DUMMY_HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+            let dummy = DUMMY_HASH.get_or_init(|| {
+                hash_password("staffkit_dummy_constant_time_salt_password").unwrap_or_default()
+            });
+            let _ = verify_password(payload.password.as_str(), dummy);
+            false
+        }
+    };
+
+    if !credentials_valid {
+        session_store.record_failed_attempt(&username_raw)?;
+        return Err("incorrect username or password".to_string());
+    }
+
+    let (id, _password_hash) = maybe.expect("valid credentials guarantee account exists");
+
+    // Clear failed attempts on successful login
+    session_store.record_successful_login(&username_raw);
+
     // Load the verified record to derive identity server-side. The frontend
     // never supplies role/account_key; both come from the DB row.
-    let account = load_local_account_by_id(&conn, id)?;
+    let account = load_local_account_by_id(conn, id)?;
     let role = crate::auth_session::Role::from_db_str(&account.role);
     let session_token = session_store.issue_session(account.id, &account.account_key, role);
 
     // Keep the legacy "active account" UI hint in sync. This DB row is no longer
     // part of the authorization trust path (Phase A); it only drives the login
     // screen's username prefill.
-    set_active_local_account_id(&conn, id)?;
+    set_active_local_account_id(conn, id)?;
 
     // UX-only absolute expiry (wall-clock ISO-8601). The backend SessionStore
     // remains authoritative; the frontend uses this solely for display/redirect.
@@ -360,21 +404,30 @@ pub fn list_login_account_hints(app: &AppHandle) -> Result<Vec<LoginAccountHint>
 
 pub fn change_local_account_password(
     app: &AppHandle,
+    session_store: &crate::auth_session::SessionStore,
     payload: LocalPasswordChangeInput,
 ) -> Result<bool, String> {
     let conn = open_runtime_connection(app)?;
+    change_local_account_password_conn(&conn, session_store, payload)
+}
+
+pub(crate) fn change_local_account_password_conn(
+    conn: &Connection,
+    session_store: &crate::auth_session::SessionStore,
+    payload: LocalPasswordChangeInput,
+) -> Result<bool, String> {
     let new_password = require_local_account_password(payload.new_password)?;
 
     let maybe = conn
         .query_row(
-            "SELECT password_hash FROM app_local_accounts WHERE id = ?",
+            "SELECT username, password_hash FROM app_local_accounts WHERE id = ?",
             params![payload.id],
-            |row| row.get::<_, String>(0),
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
         .optional()
         .map_err(|err| format!("failed to load password for change: {err}"))?;
 
-    let Some(stored_hash) = maybe else {
+    let Some((username, stored_hash)) = maybe else {
         return Err(format!(
             "local account with id {} was not found",
             payload.id
@@ -392,16 +445,44 @@ pub fn change_local_account_password(
     )
     .map_err(humanize_sqlite_error)?;
 
+    // Unlock account upon successful password change
+    session_store.unlock_account(&username);
+
     Ok(true)
 }
 
 pub fn admin_reset_local_account_password(
     app: &AppHandle,
+    session_store: &crate::auth_session::SessionStore,
     payload: LocalPasswordResetInput,
 ) -> Result<bool, String> {
     let conn = open_runtime_connection(app)?;
+    admin_reset_local_account_password_conn(&conn, session_store, payload)
+}
+
+pub(crate) fn admin_reset_local_account_password_conn(
+    conn: &Connection,
+    session_store: &crate::auth_session::SessionStore,
+    payload: LocalPasswordResetInput,
+) -> Result<bool, String> {
     let new_password = require_local_account_password(payload.new_password)?;
     let new_hash = hash_password(new_password.as_str())?;
+
+    let username: Option<String> = conn
+        .query_row(
+            "SELECT username FROM app_local_accounts WHERE id = ?",
+            params![payload.id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|err| format!("failed to load account for reset: {err}"))?;
+
+    let Some(username) = username else {
+        return Err(format!(
+            "local account with id {} was not found",
+            payload.id
+        ));
+    };
 
     let changed = conn
         .execute(
@@ -417,42 +498,84 @@ pub fn admin_reset_local_account_password(
         ));
     }
 
+    // Unlock target account upon admin reset (safe unlock behavior)
+    session_store.unlock_account(&username);
+
     Ok(true)
 }
 
 pub fn forgot_local_account_password(
     app: &AppHandle,
+    session_store: &crate::auth_session::SessionStore,
     payload: LocalForgotPasswordInput,
 ) -> Result<bool, String> {
     let conn = open_runtime_connection(app)?;
-    let new_password = require_local_account_password(payload.new_password)?;
-    let recovery_code = normalize_recovery_code_input(Some(payload.recovery_code))
-        .ok_or_else(|| "recovery code is required".to_string())?;
+    forgot_local_account_password_conn(&conn, session_store, payload)
+}
 
-    let username_normalized = normalize_local_account_username(payload.username)
-        .ok_or_else(|| "invalid username".to_string())?;
-
-    let maybe = conn
-        .query_row(
-            "SELECT id, recovery_code_hash FROM app_local_accounts WHERE username = ? COLLATE NOCASE",
-            params![username_normalized.as_str()],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?)),
-        )
-        .optional()
-        .map_err(|err| format!("failed to query account for recovery: {err}"))?;
-
-    let Some((id, stored_code_hash)) = maybe else {
-        return Err("incorrect username or recovery code".to_string());
-    };
-
-    let Some(stored_hash) = stored_code_hash else {
-        return Err("no recovery code set for this account".to_string());
-    };
-
-    if !verify_password(recovery_code.as_str(), stored_hash.as_str())? {
+pub(crate) fn forgot_local_account_password_conn(
+    conn: &Connection,
+    session_store: &crate::auth_session::SessionStore,
+    payload: LocalForgotPasswordInput,
+) -> Result<bool, String> {
+    let username_raw = payload.username.trim().to_string();
+    if username_raw.is_empty() {
         return Err("incorrect username or recovery code".to_string());
     }
 
+    // SEC-010: Check lockout first to prevent brute-forcing via recovery flow
+    session_store.check_lockout(&username_raw)?;
+
+    // SEC-011: Require minimum 12 characters for new password
+    let new_password = require_local_account_password(payload.new_password)?;
+
+    let recovery_code = normalize_recovery_code_input(Some(payload.recovery_code))
+        .ok_or_else(|| "recovery code is required".to_string())?;
+
+    let username_normalized = normalize_local_account_username(payload.username);
+
+    let maybe = match &username_normalized {
+        Some(uname) => conn
+            .query_row(
+                "SELECT id, recovery_code_hash FROM app_local_accounts WHERE username = ? COLLATE NOCASE",
+                params![uname.as_str()],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?)),
+            )
+            .optional()
+            .map_err(|err| format!("failed to query account for recovery: {err}"))?,
+        None => None,
+    };
+
+    let (id, recovery_valid) = match maybe {
+        Some((id, Some(stored_hash))) => {
+            (Some(id), verify_password(recovery_code.as_str(), stored_hash.as_str())?)
+        }
+        Some((id, None)) => {
+            // No recovery code configured on this account; run dummy verification for constant time
+            static DUMMY_HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+            let dummy = DUMMY_HASH.get_or_init(|| {
+                hash_password("staffkit_dummy_constant_time_salt_recovery").unwrap_or_default()
+            });
+            let _ = verify_password(recovery_code.as_str(), dummy);
+            (Some(id), false)
+        }
+        None => {
+            // User not found; run dummy verification for constant time
+            static DUMMY_HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+            let dummy = DUMMY_HASH.get_or_init(|| {
+                hash_password("staffkit_dummy_constant_time_salt_recovery").unwrap_or_default()
+            });
+            let _ = verify_password(recovery_code.as_str(), dummy);
+            (None, false)
+        }
+    };
+
+    if !recovery_valid {
+        session_store.record_failed_attempt(&username_raw)?;
+        return Err("incorrect username or recovery code".to_string());
+    }
+
+    let id = id.expect("valid recovery guarantee account exists");
     let new_hash = hash_password(new_password.as_str())?;
     conn.execute(
         "UPDATE app_local_accounts SET password_hash = ?, force_password_reset = 0, updated_at = datetime('now') WHERE id = ?",
@@ -460,7 +583,10 @@ pub fn forgot_local_account_password(
     )
     .map_err(humanize_sqlite_error)?;
 
-    set_active_local_account_id(&conn, id)?;
+    // Unlock account upon successful recovery reset
+    session_store.unlock_account(&username_raw);
+
+    set_active_local_account_id(conn, id)?;
     Ok(true)
 }
 
@@ -727,8 +853,8 @@ fn require_local_account_username(value: String) -> Result<String, String> {
 
 fn require_local_account_password(value: String) -> Result<String, String> {
     let password = value.trim().to_string();
-    if password.len() < 6 {
-        return Err("password must be at least 6 characters".to_string());
+    if password.chars().count() < crate::auth_session::MIN_PASSWORD_LENGTH {
+        return Err("password must be at least 12 characters".to_string());
     }
     Ok(password)
 }
@@ -1443,5 +1569,321 @@ mod tests {
             would_reject_self_delete(ctx.account_id, ctx.account_id),
             "the business rule blocks self-delete even after the guard passes"
         );
+    }
+
+    // ── SEC-010 & SEC-011 DB Integration Tests ─────────────────────────────────
+
+    #[test]
+    fn wrong_password_increments_failures_and_locks_at_5() {
+        let conn = seeded_connection();
+        let store = SessionStore::new();
+
+        // 4 failed attempts with wrong password
+        for _ in 0..4 {
+            let res = login_local_account_conn(
+                &conn,
+                &store,
+                LocalAccountLoginInput {
+                    username: "alice".to_string(),
+                    password: "wrong_password".to_string(),
+                },
+            );
+            assert!(res.is_err());
+            assert_eq!(res.unwrap_err(), "incorrect username or password");
+        }
+
+        assert_eq!(store.get_failed_attempts("alice"), 4);
+        assert!(!store.is_account_locked("alice"));
+
+        // 5th failed attempt locks the account
+        let res5 = login_local_account_conn(
+            &conn,
+            &store,
+            LocalAccountLoginInput {
+                username: "alice".to_string(),
+                password: "wrong_password".to_string(),
+            },
+        );
+        assert!(res5.is_err());
+        assert!(res5.unwrap_err().contains("temporarily locked"));
+        assert!(store.is_account_locked("alice"));
+
+        // 6th attempt with CORRECT password is still rejected while locked
+        let res6 = login_local_account_conn(
+            &conn,
+            &store,
+            LocalAccountLoginInput {
+                username: "alice".to_string(),
+                password: "alicepw".to_string(),
+            },
+        );
+        assert!(res6.is_err());
+        assert!(res6.unwrap_err().contains("temporarily locked"));
+    }
+
+    #[test]
+    fn lockout_expiry_allows_successful_login() {
+        let conn = seeded_connection();
+        let clock = crate::auth_session::TestClock::new();
+        let store = SessionStore::with_clock(clock.handle());
+
+        // Lock alice out with 5 failed attempts
+        for _ in 0..5 {
+            let _ = login_local_account_conn(
+                &conn,
+                &store,
+                LocalAccountLoginInput {
+                    username: "alice".to_string(),
+                    password: "wrong_password".to_string(),
+                },
+            );
+        }
+        assert!(store.is_account_locked("alice"));
+
+        // Advance 14 minutes -> still locked
+        clock.advance(std::time::Duration::from_secs(14 * 60));
+        assert!(login_local_account_conn(
+            &conn,
+            &store,
+            LocalAccountLoginInput {
+                username: "alice".to_string(),
+                password: "alicepw".to_string(),
+            },
+        )
+        .is_err());
+
+        // Advance 1 more minute (15 min total) -> lockout expires, login succeeds!
+        clock.advance(std::time::Duration::from_secs(60));
+        let login_res = login_local_account_conn(
+            &conn,
+            &store,
+            LocalAccountLoginInput {
+                username: "alice".to_string(),
+                password: "alicepw".to_string(),
+            },
+        );
+        assert!(login_res.is_ok(), "login must succeed after lockout expiry");
+        assert_eq!(store.get_failed_attempts("alice"), 0);
+        assert!(!store.is_account_locked("alice"));
+    }
+
+    #[test]
+    fn unknown_username_timing_and_lockout() {
+        let conn = seeded_connection();
+        let store = SessionStore::new();
+
+        // 4 failed attempts on nonexistent user
+        for _ in 0..4 {
+            let res = login_local_account_conn(
+                &conn,
+                &store,
+                LocalAccountLoginInput {
+                    username: "nonexistent_user".to_string(),
+                    password: "some_password".to_string(),
+                },
+            );
+            assert_eq!(res.unwrap_err(), "incorrect username or password");
+        }
+
+        // 5th failed attempt on nonexistent user locks out identically
+        let res5 = login_local_account_conn(
+            &conn,
+            &store,
+            LocalAccountLoginInput {
+                username: "nonexistent_user".to_string(),
+                password: "some_password".to_string(),
+            },
+        );
+        assert!(res5.is_err());
+        assert!(res5.unwrap_err().contains("temporarily locked"));
+        assert!(store.is_account_locked("nonexistent_user"));
+    }
+
+    #[test]
+    fn forgot_password_rate_limiting_and_safe_unlock() {
+        let conn = seeded_connection();
+        let store = SessionStore::new();
+
+        // Add recovery code for alice
+        let recovery_hash = hash_password("ALICE-REC-1234").expect("hash recovery");
+        conn.execute(
+            "UPDATE app_local_accounts SET recovery_code_hash = ? WHERE username = 'alice'",
+            params![recovery_hash],
+        )
+        .expect("update recovery code");
+
+        // 4 wrong recovery attempts
+        for _ in 0..4 {
+            let res = forgot_local_account_password_conn(
+                &conn,
+                &store,
+                LocalForgotPasswordInput {
+                    username: "alice".to_string(),
+                    recovery_code: "WRONG-CODE".to_string(),
+                    new_password: "NewSafePassword123!".to_string(),
+                },
+            );
+            assert_eq!(res.unwrap_err(), "incorrect username or recovery code");
+        }
+
+        // 5th wrong recovery attempt locks out
+        let res5 = forgot_local_account_password_conn(
+            &conn,
+            &store,
+            LocalForgotPasswordInput {
+                username: "alice".to_string(),
+                recovery_code: "WRONG-CODE".to_string(),
+                new_password: "NewSafePassword123!".to_string(),
+            },
+        );
+        assert!(res5.unwrap_err().contains("temporarily locked"));
+        assert!(store.is_account_locked("alice"));
+
+        // While locked, even correct recovery code is blocked
+        let res_locked = forgot_local_account_password_conn(
+            &conn,
+            &store,
+            LocalForgotPasswordInput {
+                username: "alice".to_string(),
+                recovery_code: "ALICE-REC-1234".to_string(),
+                new_password: "NewSafePassword123!".to_string(),
+            },
+        );
+        assert!(res_locked.unwrap_err().contains("temporarily locked"));
+
+        // Unlock account (e.g. by Admin reset)
+        let admin_reset_res = admin_reset_local_account_password_conn(
+            &conn,
+            &store,
+            LocalPasswordResetInput {
+                id: 2, // alice
+                new_password: "AdminResetPass123!".to_string(),
+            },
+        );
+        assert!(admin_reset_res.is_ok());
+        assert!(!store.is_account_locked("alice"));
+
+        // Alice can now log in with the new password
+        let login_res = login_local_account_conn(
+            &conn,
+            &store,
+            LocalAccountLoginInput {
+                username: "alice".to_string(),
+                password: "AdminResetPass123!".to_string(),
+            },
+        );
+        assert!(login_res.is_ok());
+    }
+
+    #[test]
+    fn password_length_policy_minimum_12_chars_and_passphrases() {
+        let conn = seeded_connection();
+        let store = SessionStore::new();
+
+        // 1. Rejects passwords shorter than 12 characters
+        let short_res = change_local_account_password_conn(
+            &conn,
+            &store,
+            LocalPasswordChangeInput {
+                id: 2, // alice
+                current_password: "alicepw".to_string(),
+                new_password: "short_pw_11".to_string(), // 11 chars
+            },
+        );
+        assert!(short_res.is_err());
+        assert_eq!(short_res.unwrap_err(), "password must be at least 12 characters");
+
+        // 2. Accepts exactly 12 characters
+        let exact_12 = change_local_account_password_conn(
+            &conn,
+            &store,
+            LocalPasswordChangeInput {
+                id: 2, // alice
+                current_password: "alicepw".to_string(),
+                new_password: "TwelveChars!".to_string(), // 12 chars
+            },
+        );
+        assert!(exact_12.is_ok());
+
+        // 3. Accepts multi-word passphrase with spaces
+        let passphrase = change_local_account_password_conn(
+            &conn,
+            &store,
+            LocalPasswordChangeInput {
+                id: 2, // alice
+                current_password: "TwelveChars!".to_string(),
+                new_password: "correct horse battery staple".to_string(), // 28 chars
+            },
+        );
+        assert!(passphrase.is_ok());
+
+        // 4. Accepts Unicode passphrase (Vietnamese characters)
+        let unicode_passphrase = change_local_account_password_conn(
+            &conn,
+            &store,
+            LocalPasswordChangeInput {
+                id: 2, // alice
+                current_password: "correct horse battery staple".to_string(),
+                new_password: "mật khẩu an toàn 2026".to_string(), // 21 chars
+            },
+        );
+        assert!(unicode_passphrase.is_ok());
+    }
+
+    #[test]
+    fn legacy_accounts_compatibility_preserved() {
+        let conn = seeded_connection();
+        let store = SessionStore::new();
+
+        // Default seeded adman account has 11-char password "Aswhite2026"
+        let adman_login = login_local_account_conn(
+            &conn,
+            &store,
+            LocalAccountLoginInput {
+                username: "adman".to_string(),
+                password: "Aswhite2026".to_string(),
+            },
+        );
+        assert!(adman_login.is_ok(), "legacy account with <12 char password must log in cleanly");
+        let result = adman_login.unwrap();
+        assert_eq!(result.account.username, "adman");
+        assert_eq!(result.account.role, "super_admin");
+    }
+
+    #[test]
+    fn last_super_admin_protection_remains_intact() {
+        let conn = seeded_connection();
+        let clock = crate::auth_session::TestClock::new();
+        let store = SessionStore::with_clock(clock.handle());
+
+        // 1. Lockout on adman is temporary (15 minutes), never permanent
+        for _ in 0..5 {
+            let _ = login_local_account_conn(
+                &conn,
+                &store,
+                LocalAccountLoginInput {
+                    username: "adman".to_string(),
+                    password: "wrong".to_string(),
+                },
+            );
+        }
+        assert!(store.is_account_locked("adman"));
+
+        // Advance 15 minutes -> adman can log in again
+        clock.advance(std::time::Duration::from_secs(15 * 60));
+        assert!(login_local_account_conn(
+            &conn,
+            &store,
+            LocalAccountLoginInput {
+                username: "adman".to_string(),
+                password: "Aswhite2026".to_string(),
+            },
+        )
+        .is_ok());
+
+        // 2. Last super_admin cannot be deleted
+        let del_res = delete_local_account_conn(&conn, 2, 1);
+        assert!(del_res.is_err());
+        assert_eq!(del_res.unwrap_err(), "cannot delete the last remaining super admin");
     }
 }

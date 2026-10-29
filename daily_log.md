@@ -1,5 +1,46 @@
 # Daily Log - 2026-10-29
 
+## 2026-10-29 — Staff Kit TotalSpec Security: SEC-010 (Login Rate Limiting & Account Lockout) + SEC-011 (Password Policy) (Start)
+- Authorized by Zon.
+- Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Goal: Implement SEC-010 (temporary 15-minute authentication lockout after 5 failed attempts) and SEC-011 (minimum 12-character password policy with passphrase support).
+- Approved Rules & Safeguards:
+  1. Temporary lockout for 15 minutes after 5 failed login attempts per username; in-memory thread-safe state.
+  2. Safe unlock behavior: no permanent account lockout; automatic expiry after 15 minutes; safe unlock via admin reset and recovery reset.
+  3. No username enumeration: identical constant-time response for nonexistent usernames via dummy verification; identical generic error message ("incorrect username or password") and identical lockout trigger after 5 failures for unknown usernames.
+  4. Minimum password length of 12 characters enforced on new passwords (creation, change, admin reset, forgot reset, forced reset); full support for passphrases with Unicode and spaces.
+  5. Alternate flow bypass protection: forgot password flow (`forgot_local_account_password`) checks lockout, counts failed recovery code attempts, and enforces 12-char minimum for new passwords.
+  6. Existing account compatibility: no forced periodic changes; existing credentials and active sessions preserved; no silent resets or database rekeying.
+  7. Last Super Admin protection: last Super Admin cannot be permanently locked or lost; full recovery pathways intact.
+  8. Disposable isolated test DB only: 0 access to production or shared database.
+
+## 2026-10-29 — Staff Kit TotalSpec Security: SEC-010 (Login Rate Limiting & Account Lockout) + SEC-011 (Password Policy) (End)
+- Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Implementation completed:
+  1. `src-tauri/src/auth_session.rs`:
+     - Added `MAX_FAILED_LOGIN_ATTEMPTS = 5`, `LOGIN_LOCKOUT_DURATION = Duration::from_secs(15 * 60)`, `MIN_PASSWORD_LENGTH = 12`.
+     - In-memory `Mutex<HashMap<String, LockoutEntry>>` tracks failed attempts and `locked_until` timestamps.
+     - Pruned with expired sessions; capped at 5,000 entries against memory exhaustion.
+     - Methods: `check_lockout`, `record_failed_attempt`, `record_successful_login`, `unlock_account`.
+     - 7 unit tests covering lockout trigger at attempt 5, 15-min expiry, success reset, admin unlock, case insensitivity, unknown username lockout, concurrent thread safety.
+  2. `src-tauri/src/db/auth.rs`:
+     - `require_local_account_password`: minimum 12 characters via `chars().count()` (supports Unicode passphrases and spaces).
+     - `login_local_account`: lockout check before auth, constant-time dummy Argon2id verification for nonexistent usernames, generic `"incorrect username or password"` error, tracks failures and locks on attempt 5, resets failures on success.
+     - `forgot_local_account_password`: protected against lockout and brute-force bypass, enforces 12-char minimum for new passwords, constant-time verification on unknown user, unlocks account on valid recovery code verification.
+     - `change_local_account_password` & `admin_reset_local_account_password`: enforces 12-char minimum, safely unlocks account upon successful change/reset.
+     - 7 integration tests covering wrong password lockout, lockout expiry, unknown username timing/lockout parity, forgot password rate limiting/unlock, password policy (>=12, multi-word passphrases, Unicode), legacy account compatibility (11-char password login succeeds), last super admin protection.
+  3. `src-tauri/src/lib.rs`:
+     - Updated `forgot_local_account_password`, `change_local_account_password`, and `admin_reset_local_account_password` commands to pass `session_store` state to `db::auth` methods.
+  4. Frontend:
+     - `src/features/auth/ForcedPasswordReset.tsx`: Enforces 12-char minimum with validation message.
+     - `src/features/auth/useAuthState.ts`: Surfaces lockout error message in `loginError` (`"temporarily locked"` / `"locked"`), enforces 12-char minimum on client-side forgot password and admin reset.
+     - `src/features/auth/useAuthState.test.tsx`: Verified with 3 new unit tests.
+- Verification & Test Coverage:
+  - `npm run check:quality`: PASSED (eslint clean, tsc -b strict clean, vite build clean, cargo check clean).
+  - `npm run test:unit`: PASSED (45 test files, 341/341 passed).
+  - `npm run test:tauri`: PASSED (431/431 passed, including 35 auth_session tests and 24 db::auth tests).
+- Invariants strictly preserved: No schema migrations, no DB rekeying, 0 production DB touches, test DB isolation maintained.
+
 ## 2026-10-29 — Staff Kit TotalSpec P1.4: Backup Retention, USB Independent Copy, Storage Safety (Start)
 - Authorized by Zon.
 - Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
