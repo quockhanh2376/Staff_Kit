@@ -36,6 +36,9 @@ pub mod import;
 pub mod import_detector;
 pub mod mssql_import;
 mod schema;
+pub(crate) use schema::{
+    USB_BACKUP_DEVICE_ID_SETTING_KEY, USB_BACKUP_ENABLED_SETTING_KEY, USB_BACKUP_PATH_SETTING_KEY,
+};
 pub mod team;
 pub mod historical_assignment_import;
 pub mod asset_metadata_reimport;

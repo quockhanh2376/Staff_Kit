@@ -3,6 +3,7 @@ mod db;
 mod lan_assets;
 mod lan_auth;
 mod lan_server;
+pub mod recovery_ledger;
 use tauri::Manager;
 
 // ── Public commands (no session required: bootstrap/login/diagnostics) ───────

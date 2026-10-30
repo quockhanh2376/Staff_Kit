@@ -1,3 +1,42 @@
+# Daily Log - 2026-10-30
+
+## 2026-10-30 — Staff Kit RC-Phase A: Recovery Revocation Ledger & Journal Foundation (Start)
+- Authorized by Zon.
+- Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Scope: Foundation for rollback-resistant Recovery Codes (D3.20, D3.26–D3.30). Dormant/isolated behind internal interface. Zero user-facing flow activation.
+- Approved Architecture & Safeguards:
+  1. Authenticated, append-only Recovery Revocation Ledger (`ledger.rev`) with magic `SKREV1`, strict sequence validation, SHA-256 chain linking, and HMAC-SHA256 authentication per block.
+  2. Cryptographic separation: `LedgerKey` derived via HKDF-SHA256 from database encryption key with info `b"StaffKit-Recovery-Ledger-HMAC-v1"` and salt `ledger_uuid`. Plaintext keys never written to disk.
+  3. Recovery Transaction Journal foundation: `PREPARED` -> `DB COMMIT` -> `FINALIZED` with staged atomic write (`.tmp` -> `.journal`), durable fsync, and automatic startup reconciliation.
+  4. Fail-closed gate (D3.30): Missing, corrupted, rolled-back, or diverged Ledger immediately disables code-based recovery; password login remains 100% available.
+  5. P1.4 USB mirror verification: When USB backup is enabled, missing or diverged USB mirror locks code recovery (fail-closed); when disabled, local single-host ledger validation applies.
+  6. Crash and fault injection testing at all journal boundaries (power loss, bad HMAC, disk full, missing journal, USB offline).
+  7. Test isolation: disposable SQLCipher DBs and temp directories only. Zero writes to original test or production databases. Existing login sessions, passwords, and backup features 100% preserved.
+
+## 2026-10-30 — Staff Kit RC-Phase A: Recovery Revocation Ledger & Journal Foundation (End)
+- Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Implementation completed:
+  1. `src-tauri/src/recovery_ledger/key_derivation.rs`:
+     - Standard RFC 5869 HKDF-SHA256 implementation deriving 32-byte `LedgerKey` from master key material + `ledger_uuid` salt with domain separation `b"StaffKit-Recovery-Ledger-HMAC-v1"`.
+     - RFC 4231 test vector 2 verified.
+  2. `src-tauri/src/recovery_ledger/block.rs`:
+     - Binary layout: `SKREV1` header, monotonic sequence `seq`, `prev_hash`, timestamp, `account_id`, `LedgerEventType` (BatchActivated, CodeBurned, BatchRevoked, EpochReset), payload, and 32-byte HMAC-SHA256.
+  3. `src-tauri/src/recovery_ledger/ledger.rs`:
+     - Append-only file writer & reader with full cryptographic chain verification (`open_and_verify`), sequence checking, and `sync_all()` durable flush.
+  4. `src-tauri/src/recovery_ledger/journal.rs`:
+     - Two-stage crash-resilient `recovery.journal` with atomic `.tmp` rename and clean finalization.
+  5. `src-tauri/src/recovery_ledger/verification_gate.rs`:
+     - D3.30 & P1.4 USB mirror verification gate: checks local ledger integrity and USB mirror consistency (UUID, sequence, hash). Fails closed (`RecoveryGateStatus::Disabled`) if media is disconnected or diverged.
+  6. `src-tauri/src/recovery_ledger/reconciler.rs`:
+     - Crash boundary reconciliation on startup (`reconcile_on_startup`): safely discards uncommitted journals or forward-commits missing ledger blocks if DB committed.
+  7. `src-tauri/src/recovery_ledger/tests.rs`:
+     - 10 comprehensive tests covering key derivation, block tampering, sequence tampering, append integrity, journal atomic stages, crash boundaries B & D, and USB offline fail-closed gate.
+- Verification & Test Coverage:
+  - `npm run check:quality`: PASSED (eslint clean, tsc -b strict clean, vite build clean, cargo check clean).
+  - `npm run test:unit`: PASSED (45 test files, 346/346 passed).
+  - `npm run test:tauri`: PASSED (450/450 passed, including all 10 recovery_ledger tests).
+- Invariants strictly preserved: 0 user-facing flow changes, 0 production DB writes, zero schema migrations, zero database rekeying.
+
 # Daily Log - 2026-10-29
 
 ## 2026-10-29 — Staff Kit Security Policy: Standard / Strict Policy (Start)
