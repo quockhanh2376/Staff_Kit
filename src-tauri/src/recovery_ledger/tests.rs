@@ -7,7 +7,7 @@ use super::key_derivation::derive_ledger_key;
 use super::ledger::RecoveryLedger;
 use super::reconciler::RecoveryTransactionCoordinator;
 use super::verification_gate::{RecoveryGateStatus, VerificationGate, LEDGER_FILENAME};
-use rusqlite::Connection;
+use rusqlite::{params, Connection};
 use std::fs;
 use std::path::PathBuf;
 
@@ -47,15 +47,19 @@ fn init_mock_sqlite_db() -> Connection {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL,
             password_hash TEXT NOT NULL,
+            recovery_code_hash TEXT DEFAULT NULL,
             token_epoch INTEGER NOT NULL DEFAULT 1,
             force_password_reset INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE app_recovery_codes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             account_id INTEGER NOT NULL,
+            batch_uuid TEXT NOT NULL DEFAULT 'batch-init',
             code_hash TEXT NOT NULL,
             code_index INTEGER NOT NULL,
-            consumed_at TEXT DEFAULT NULL
+            consumed_at TEXT DEFAULT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(account_id, batch_uuid, code_index)
         );
         INSERT INTO app_local_accounts (id, username, password_hash) VALUES (1, 'adman', 'hash_pass');
         INSERT INTO app_recovery_codes (id, account_id, code_hash, code_index) VALUES (101, 1, 'code_hash_1', 1);
@@ -310,3 +314,142 @@ fn test_led_a11_verification_gate_local_only_when_usb_disabled() {
         _ => panic!("Expected gate to be PermittedLocalOnly when USB is disabled"),
     }
 }
+
+#[test]
+fn test_rc_b01_generate_codes_entropy_and_crockford_format() {
+    let mgr = super::activation::RecoveryCodeManager::new();
+    let res = mgr.generate_codes(1, "adman").unwrap();
+
+    assert_eq!(res.codes.len(), 8);
+    for code in &res.codes {
+        // Pattern: XXXXX-XXXXX where each character is in Crockford alphabet
+        assert_eq!(code.len(), 11);
+        assert_eq!(&code[5..6], "-");
+        let normalized = super::activation::RecoveryCodeManager::normalize_code(code);
+        assert_eq!(normalized.len(), 10);
+        for ch in normalized.chars() {
+            assert!(
+                super::activation::CROCKFORD_ALPHABET.contains(&(ch as u8)),
+                "Character '{ch}' must be in Crockford Base32 alphabet"
+            );
+        }
+    }
+
+    // Verify all 8 codes are mutually distinct
+    let mut deduped = res.codes.clone();
+    deduped.sort();
+    deduped.dedup();
+    assert_eq!(deduped.len(), 8, "All 8 generated codes must be unique");
+}
+
+#[test]
+fn test_rc_b02_two_phase_activation_and_atomic_revocation() {
+    let (_dir, path) = create_temp_dir("rc_b02");
+    let ledger_path = path.join(LEDGER_FILENAME);
+    let mut conn = init_mock_sqlite_db();
+
+    let mgr = super::activation::RecoveryCodeManager::new();
+
+    // 1. Generate (Phase 1)
+    let gen_res = mgr.generate_codes(1, "adman").unwrap();
+    assert_eq!(gen_res.codes.len(), 8);
+
+    // Prior to activation: app_recovery_codes still has initial single code
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM app_recovery_codes WHERE account_id = 1", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 1, "Database must not change before Phase 2 activation");
+
+    // 2. Activate (Phase 2)
+    mgr.activate_codes(&mut conn, 1, &gen_res.batch_id, &ledger_path, TEST_MASTER_KEY).unwrap();
+
+    // Check DB state: exactly 8 codes, legacy code revoked
+    let new_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM app_recovery_codes WHERE account_id = 1", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(new_count, 8);
+
+    let status = super::activation::RecoveryCodeManager::query_status(&conn, 1).unwrap();
+    assert_eq!(status.total_codes, 8);
+    assert_eq!(status.remaining_codes, 8);
+    assert!(status.has_active_batch);
+    assert!(!status.legacy_code_configured, "Legacy code hash must be set to NULL");
+
+    // Check Ledger: BATCH_ACTIVATED event logged
+    let ledger = RecoveryLedger::open_and_verify(&ledger_path, TEST_MASTER_KEY).unwrap();
+    assert_eq!(ledger.last_seq, 1);
+    let blocks = ledger.read_all_blocks().unwrap();
+    assert_eq!(blocks[0].event_type, LedgerEventType::BatchActivated);
+    assert_eq!(blocks[0].payload, gen_res.batch_id.as_bytes());
+}
+
+#[test]
+fn test_rc_b03_generation_cancellation_and_crash_leaves_db_untouched() {
+    let conn = init_mock_sqlite_db();
+    let mgr = super::activation::RecoveryCodeManager::new();
+
+    // Generate
+    let _gen_res = mgr.generate_codes(1, "adman").unwrap();
+
+    // Cancel
+    mgr.cancel_generation(1);
+
+    // Verify DB still intact
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM app_recovery_codes WHERE account_id = 1", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 1);
+}
+
+#[test]
+fn test_rc_b04_explicit_revocation_burns_all_codes() {
+    let (_dir, path) = create_temp_dir("rc_b04");
+    let ledger_path = path.join(LEDGER_FILENAME);
+    let mut conn = init_mock_sqlite_db();
+
+    let mgr = super::activation::RecoveryCodeManager::new();
+    let gen_res = mgr.generate_codes(1, "adman").unwrap();
+    mgr.activate_codes(&mut conn, 1, &gen_res.batch_id, &ledger_path, TEST_MASTER_KEY).unwrap();
+
+    // Now explicitly revoke
+    mgr.revoke_codes(&mut conn, 1, &ledger_path, TEST_MASTER_KEY).unwrap();
+
+    let status = super::activation::RecoveryCodeManager::query_status(&conn, 1).unwrap();
+    assert_eq!(status.total_codes, 0);
+    assert_eq!(status.remaining_codes, 0);
+    assert!(!status.has_active_batch);
+
+    let ledger = RecoveryLedger::open_and_verify(&ledger_path, TEST_MASTER_KEY).unwrap();
+    assert_eq!(ledger.last_seq, 2); // 1 = BatchActivated, 2 = BatchRevoked
+    let blocks = ledger.read_all_blocks().unwrap();
+    assert_eq!(blocks[1].event_type, LedgerEventType::BatchRevoked);
+}
+
+#[test]
+fn test_rc_b05_default_legacy_recovery_code_is_rejected_in_forgot_flow() {
+    let conn = init_mock_sqlite_db();
+    let store = crate::auth_session::SessionStore::new();
+
+    // Set alice's recovery code to default "SK-RECOVERY-2026"
+    let default_hash = crate::db::auth::hash_password("SK-RECOVERY-2026").unwrap();
+    conn.execute(
+        "UPDATE app_local_accounts SET recovery_code_hash = ? WHERE username = 'adman'",
+        params![default_hash],
+    )
+    .unwrap();
+
+    // Attempting to reset password using default recovery code must FAIL
+    let res = crate::db::auth::forgot_local_account_password_conn(
+        &conn,
+        &store,
+        crate::db::auth::LocalForgotPasswordInput {
+            username: "adman".to_string(),
+            recovery_code: "SK-RECOVERY-2026".to_string(),
+            new_password: "NewPassword123!".to_string(),
+        },
+    );
+
+    assert!(res.is_err());
+    assert_eq!(res.unwrap_err(), "incorrect username or recovery code");
+}
+

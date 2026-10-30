@@ -18,7 +18,7 @@ pub(super) const DEFAULT_LOCAL_ACCOUNT_NAME: &str = "adman";
 pub(super) const DEFAULT_LOCAL_ACCOUNT_KEY: &str = "adman";
 pub(super) const DEFAULT_LOCAL_ACCOUNT_USERNAME: &str = "adman";
 pub(super) const DEFAULT_LOCAL_ACCOUNT_PASSWORD: &str = "Aswhite2026";
-pub(super) const DEFAULT_LOCAL_ACCOUNT_RECOVERY_CODE: &str = "SK-RECOVERY-2026";
+pub(crate) const DEFAULT_LOCAL_ACCOUNT_RECOVERY_CODE: &str = "SK-RECOVERY-2026";
 pub(super) const DEFAULT_NEW_LOCAL_ACCOUNT_PASSWORD: &str = "Welcome!";
 
 // ── Database encryption ───────────────────────────────────────────────────────
@@ -486,6 +486,17 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   entity_id TEXT NOT NULL,
   payload_json TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS app_recovery_codes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id INTEGER NOT NULL REFERENCES app_local_accounts(id) ON DELETE CASCADE,
+  batch_uuid TEXT NOT NULL,
+  code_hash TEXT NOT NULL,
+  code_index INTEGER NOT NULL,
+  consumed_at TEXT DEFAULT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(account_id, batch_uuid, code_index)
 );
 
 CREATE INDEX IF NOT EXISTS idx_employees_team_id ON employees(team_id);

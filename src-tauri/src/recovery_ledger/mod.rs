@@ -1,5 +1,6 @@
 //! Module declarations and public API for Recovery Revocation Ledger.
 
+pub mod activation;
 pub mod block;
 pub mod journal;
 pub mod key_derivation;
@@ -11,6 +12,9 @@ pub mod verification_gate;
 pub mod tests;
 
 // Re-exports
+pub use activation::{
+    GenerateRecoveryCodesResult, RecoveryCodeManager, RecoveryCodeStatus, CODES_PER_BATCH,
+};
 pub use block::{LedgerBlock, LedgerEventType, LedgerHeader};
 pub use journal::{JournalState, RecoveryJournal, RecoveryJournalEntry};
 pub use key_derivation::derive_ledger_key;

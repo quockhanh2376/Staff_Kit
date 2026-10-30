@@ -1,5 +1,45 @@
 # Daily Log - 2026-10-30
 
+## 2026-10-30 — Staff Kit RC-Phase B: Eight Recovery Codes / Two-Phase Activation (Start)
+- Authorized by Zon.
+- Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Scope: Eight one-time Recovery Codes generation and Two-Phase Activation flow (D3.20, D3.26).
+- Approved Architecture & Safeguards:
+  1. Cryptographically random generation: 8 one-time codes per Super Admin using Crockford Base32 format (`XXXXX-XXXXX`, ~50 bits entropy).
+  2. Two-Phase Activation: Phase 1 generates codes in volatile memory with a 15-minute TTL (`PENDING_BATCH_TTL`); never persisted to SQLite, localStorage, or logs.
+  3. Atomic Confirmation: Phase 2 validates TTL and batch ID, removes previous active batch, clears legacy `recovery_code_hash`, inserts 8 Argon2id salted hashes into `app_recovery_codes`, and records `BATCH_ACTIVATED` in the Recovery Revocation Ledger within an immediate transaction.
+  4. Non-destructive Cancellation/Crash: Unconfirmed batches expire or are dropped cleanly with zero effect on existing database or ledger state.
+  5. Default Legacy Recovery Code Invalidation (D3.26): Known shared default recovery code (`"SK-RECOVERY-2026"`) is blocked in `forgot_local_account_password` using constant-time dummy verification and rate limiting. Valid user passwords and individual recovery codes remain intact.
+  6. Phase Isolation: Code consumption/password reset via new codes (RC-Phase C) remains dormant. Zero SQLCipher rekey, zero Emergency Recovery Package, zero production DB writes.
+
+## 2026-10-30 — Staff Kit RC-Phase B: Eight Recovery Codes / Two-Phase Activation (End)
+- Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Implementation completed:
+  1. `src-tauri/src/recovery_ledger/activation.rs`:
+     - Implemented `RecoveryCodeManager` with thread-safe `pending_batches` memory store (15-min TTL).
+     - Implemented `generate_single_code()` using Crockford Base32 alphabet (`0123456789ABCDEFGHJKMNPQRSTVWXYZ`) formatted as `XXXXX-XXXXX`.
+     - Implemented `normalize_code()` removing hyphens and whitespace.
+     - Implemented `generate_codes()` returning 8 plaintext codes and batch metadata.
+     - Implemented `activate_codes()` running immediate SQLite transaction with table deletion, insertion of 8 Argon2id hashes, legacy hash nullification, and ledger `BATCH_ACTIVATED` block emission.
+     - Implemented `cancel_generation()` dropping pending volatile state.
+     - Implemented `revoke_codes()` deleting DB records and emitting `BATCH_REVOKED` block.
+     - Implemented `query_status()` reporting active code counts and default legacy code status.
+  2. `src-tauri/src/recovery_ledger/mod.rs`:
+     - Registered `activation` module and re-exported `RecoveryCodeManager`, `RecoveryCodeStatus`, `GenerateRecoveryCodesResult`, and `CODES_PER_BATCH`.
+  3. `src-tauri/src/db/auth.rs`:
+     - Updated `forgot_local_account_password_conn` to intercept and reject `"SK-RECOVERY-2026"` with constant-time dummy verification and failed-attempt rate limiting.
+     - Exposed `hash_password` and `verify_password` with `pub(crate)` visibility.
+  4. `src-tauri/src/db/schema.rs` & `src-tauri/src/db/mod.rs`:
+     - Added `app_recovery_codes` table to `BASE_SCHEMA_SQL` with foreign key to `app_local_accounts`, code index, Argon2id hash, and creation timestamp.
+     - Added `ensure_recovery_codes_table()` migration helper and exported `DEFAULT_LOCAL_ACCOUNT_RECOVERY_CODE`.
+  5. `src-tauri/src/recovery_ledger/tests.rs`:
+     - Added 5 comprehensive automated tests (`test_rc_b01` to `test_rc_b05`) verifying Crockford format, two-phase atomic activation, cancellation/crash non-destructive behavior, explicit revocation, and default legacy code rejection.
+- Verification & Test Coverage:
+  - `npm run check:quality`: PASSED (eslint clean, tsc -b strict clean, vite build clean, cargo check clean).
+  - `npm run test:unit`: PASSED (45 test files, 346/346 passed).
+  - `npm run test:tauri`: PASSED (455/455 passed, 0 failed).
+- Invariants strictly preserved: Password reset using new codes dormant (Phase C), zero production DB writes, zero database rekeying.
+
 ## 2026-10-30 — Staff Kit RC-Phase A: Recovery Revocation Ledger & Journal Foundation (Start)
 - Authorized by Zon.
 - Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).

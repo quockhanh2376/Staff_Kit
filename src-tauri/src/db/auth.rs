@@ -584,7 +584,22 @@ pub(crate) fn forgot_local_account_password_conn(
 
     let (id, recovery_valid) = match maybe {
         Some((id, Some(stored_hash))) => {
-            (Some(id), verify_password(recovery_code.as_str(), stored_hash.as_str())?)
+            // D3.26: Invalidate the known shared default legacy recovery code ("SK-RECOVERY-2026").
+            // Never allow the default code to authenticate successfully.
+            let is_default_code = recovery_code.eq_ignore_ascii_case(DEFAULT_LOCAL_ACCOUNT_RECOVERY_CODE)
+                || verify_password(DEFAULT_LOCAL_ACCOUNT_RECOVERY_CODE, stored_hash.as_str()).unwrap_or(false);
+
+            if is_default_code {
+                // Run constant-time dummy verification for timing parity
+                static DUMMY_HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+                let dummy = DUMMY_HASH.get_or_init(|| {
+                    hash_password("staffkit_dummy_constant_time_salt_recovery").unwrap_or_default()
+                });
+                let _ = verify_password(recovery_code.as_str(), dummy);
+                (Some(id), false)
+            } else {
+                (Some(id), verify_password(recovery_code.as_str(), stored_hash.as_str())?)
+            }
         }
         Some((id, None)) => {
             // No recovery code configured on this account; run dummy verification for constant time
@@ -1054,7 +1069,7 @@ fn normalize_recovery_code_input(value: Option<String>) -> Option<String> {
         .map(|item| item.to_uppercase())
 }
 
-fn hash_password(password: &str) -> Result<String, String> {
+pub(crate) fn hash_password(password: &str) -> Result<String, String> {
     let salt = SaltString::generate(&mut OsRng);
     let hash = Argon2::default()
         .hash_password(password.as_bytes(), &salt)
@@ -1062,7 +1077,7 @@ fn hash_password(password: &str) -> Result<String, String> {
     Ok(hash.to_string())
 }
 
-fn verify_password(password: &str, password_hash: &str) -> Result<bool, String> {
+pub(crate) fn verify_password(password: &str, password_hash: &str) -> Result<bool, String> {
     let parsed_hash = PasswordHash::new(password_hash)
         .map_err(|err| format!("stored password hash is invalid: {err}"))?;
     Ok(Argon2::default()

@@ -37,7 +37,8 @@ pub mod import_detector;
 pub mod mssql_import;
 mod schema;
 pub(crate) use schema::{
-    USB_BACKUP_DEVICE_ID_SETTING_KEY, USB_BACKUP_ENABLED_SETTING_KEY, USB_BACKUP_PATH_SETTING_KEY,
+    DEFAULT_LOCAL_ACCOUNT_RECOVERY_CODE, USB_BACKUP_DEVICE_ID_SETTING_KEY,
+    USB_BACKUP_ENABLED_SETTING_KEY, USB_BACKUP_PATH_SETTING_KEY,
 };
 pub mod team;
 pub mod historical_assignment_import;
@@ -496,6 +497,7 @@ pub(crate) fn apply_migrations(conn: &Connection) -> Result<(), String> {
         ensure_employee_columns(conn)?;
         ensure_team_columns(conn)?;
         ensure_local_account_columns(conn)?;
+        ensure_recovery_codes_table(conn)?;
         ensure_asset_model_tables(conn)?;
         ensure_borrow_request_columns(conn)?;
         ensure_phase_c_borrow_schema(conn)?;
@@ -613,6 +615,27 @@ fn ensure_local_account_columns(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|err| format!("failed to ensure username unique index: {err}"))?;
 
+    Ok(())
+}
+
+fn ensure_recovery_codes_table(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS app_recovery_codes (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          account_id INTEGER NOT NULL REFERENCES app_local_accounts(id) ON DELETE CASCADE,
+          batch_uuid TEXT NOT NULL,
+          code_hash TEXT NOT NULL,
+          code_index INTEGER NOT NULL,
+          consumed_at TEXT DEFAULT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(account_id, batch_uuid, code_index)
+        );
+        CREATE INDEX IF NOT EXISTS idx_recovery_codes_account_consumed
+          ON app_recovery_codes(account_id, consumed_at);
+        "#,
+    )
+    .map_err(|err| format!("failed to ensure app_recovery_codes table: {err}"))?;
     Ok(())
 }
 
