@@ -1421,6 +1421,18 @@ pub fn run() {
                     if let Some(store) = app.try_state::<auth_session::SessionStore>() {
                         store.switch_policy(mode);
                     }
+                    if let Ok(db_path) = db::resolve_database_path(app.handle()) {
+                        let local_ledger_path = db_path.with_file_name(recovery_ledger::verification_gate::LEDGER_FILENAME);
+                        let journal_dir = local_ledger_path.parent().unwrap_or_else(|| std::path::Path::new("."));
+                        let journal = recovery_ledger::journal::RecoveryJournal::new(journal_dir.to_path_buf());
+                        let master_key = db::APP_DB_ENCRYPTION_KEY.as_bytes();
+                        let _ = recovery_ledger::reconciler::RecoveryTransactionCoordinator::reconcile_on_startup(
+                            &conn,
+                            &journal,
+                            &local_ledger_path,
+                            master_key,
+                        );
+                    }
                 }
 
                 eprintln!("[Staff Kit Perf] tauri setup took {:?}", setup_start.elapsed());

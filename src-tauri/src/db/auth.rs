@@ -4,20 +4,26 @@ use argon2::{
 };
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use tauri::AppHandle;
 
 use super::schema::{
-    ACTIVE_LOCAL_ACCOUNT_SETTING_KEY, DEFAULT_ADMIN_SEED_SETTING_KEY, DEFAULT_LOCAL_ACCOUNT_KEY,
-    DEFAULT_LOCAL_ACCOUNT_NAME, DEFAULT_LOCAL_ACCOUNT_PASSWORD,
+    ACTIVE_LOCAL_ACCOUNT_SETTING_KEY, APP_DB_ENCRYPTION_KEY, DEFAULT_ADMIN_SEED_SETTING_KEY,
+    DEFAULT_LOCAL_ACCOUNT_KEY, DEFAULT_LOCAL_ACCOUNT_NAME, DEFAULT_LOCAL_ACCOUNT_PASSWORD,
     DEFAULT_LOCAL_ACCOUNT_RECOVERY_CODE, DEFAULT_LOCAL_ACCOUNT_USERNAME,
     DEFAULT_NEW_LOCAL_ACCOUNT_PASSWORD, LOCAL_ACCOUNT_ROLE_ADMIN, LOCAL_ACCOUNT_ROLE_SUPER_ADMIN,
     LOCAL_ACCOUNT_ROLE_USER, SECURITY_POLICY_SETTING_KEY,
 };
 use super::{
     humanize_sqlite_error, normalize_dynamic_key, normalize_optional_text, open_runtime_connection,
-    require_text,
+    require_text, resolve_database_path,
 };
 use crate::auth_session::SecurityPolicyMode;
+use crate::recovery_ledger::activation::RecoveryCodeManager;
+use crate::recovery_ledger::block::LedgerEventType;
+use crate::recovery_ledger::journal::{RecoveryJournal, RecoveryJournalEntry};
+use crate::recovery_ledger::ledger::RecoveryLedger;
+use crate::recovery_ledger::verification_gate::{RecoveryGateStatus, VerificationGate};
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -543,14 +549,25 @@ pub fn forgot_local_account_password(
     session_store: &crate::auth_session::SessionStore,
     payload: LocalForgotPasswordInput,
 ) -> Result<bool, String> {
-    let conn = open_runtime_connection(app)?;
-    forgot_local_account_password_conn(&conn, session_store, payload)
+    let mut conn = open_runtime_connection(app)?;
+    let db_path = resolve_database_path(app)?;
+    let local_ledger_path = db_path.with_file_name(crate::recovery_ledger::verification_gate::LEDGER_FILENAME);
+    let master_key = APP_DB_ENCRYPTION_KEY.as_bytes();
+    forgot_local_account_password_conn(
+        &mut conn,
+        session_store,
+        payload,
+        Some(&local_ledger_path),
+        Some(master_key),
+    )
 }
 
 pub(crate) fn forgot_local_account_password_conn(
-    conn: &Connection,
+    conn: &mut Connection,
     session_store: &crate::auth_session::SessionStore,
     payload: LocalForgotPasswordInput,
+    ledger_path: Option<&Path>,
+    master_key: Option<&[u8]>,
 ) -> Result<bool, String> {
     let username_raw = payload.username.trim().to_string();
     if username_raw.is_empty() {
@@ -565,12 +582,45 @@ pub(crate) fn forgot_local_account_password_conn(
     let policy = resolve_security_policy_fail_safe(conn);
     let new_password = require_local_account_password(payload.new_password, policy.min_password_length())?;
 
-    let recovery_code = normalize_recovery_code_input(Some(payload.recovery_code))
-        .ok_or_else(|| "recovery code is required".to_string())?;
+    let recovery_code_raw = payload.recovery_code.trim();
+    if recovery_code_raw.is_empty() {
+        return Err("recovery code is required".to_string());
+    }
+
+    // D3.26: Invalidate the known shared default legacy recovery code ("SK-RECOVERY-2026").
+    // Never allow the default code to authenticate successfully under any circumstances.
+    let is_default_code = recovery_code_raw.eq_ignore_ascii_case(DEFAULT_LOCAL_ACCOUNT_RECOVERY_CODE)
+        || RecoveryCodeManager::normalize_code(recovery_code_raw)
+            == RecoveryCodeManager::normalize_code(DEFAULT_LOCAL_ACCOUNT_RECOVERY_CODE);
+
+    if is_default_code {
+        static DUMMY_HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        let dummy = DUMMY_HASH.get_or_init(|| {
+            hash_password("staffkit_dummy_constant_time_salt_recovery").unwrap_or_default()
+        });
+        let _ = verify_password(recovery_code_raw, dummy);
+        session_store.record_failed_attempt_with_exemption(&username_raw, is_sole)?;
+        return Err("incorrect username or recovery code".to_string());
+    }
+
+    // D3.30 & P1.4: Recovery Verification Gate (Fail-Closed).
+    // If ledger and master key are configured, verify both local ledger and USB mirror (if USB enabled).
+    if let (Some(l_path), Some(m_key)) = (ledger_path, master_key) {
+        let gate_status = VerificationGate::evaluate(conn, l_path, m_key);
+        match gate_status {
+            RecoveryGateStatus::PermittedDualCopy { .. }
+            | RecoveryGateStatus::PermittedLocalOnly { .. } => {
+                // Gate passed
+            }
+            RecoveryGateStatus::Disabled { reason, .. } => {
+                // Fail closed! Do not burn codes, do not change password.
+                return Err(format!("Recovery code verification unavailable: {reason}"));
+            }
+        }
+    }
 
     let username_normalized = normalize_local_account_username(payload.username);
-
-    let maybe = match &username_normalized {
+    let maybe_account = match &username_normalized {
         Some(uname) => conn
             .query_row(
                 "SELECT id, recovery_code_hash FROM app_local_accounts WHERE username = ? COLLATE NOCASE",
@@ -582,63 +632,283 @@ pub(crate) fn forgot_local_account_password_conn(
         None => None,
     };
 
-    let (id, recovery_valid) = match maybe {
-        Some((id, Some(stored_hash))) => {
-            // D3.26: Invalidate the known shared default legacy recovery code ("SK-RECOVERY-2026").
-            // Never allow the default code to authenticate successfully.
-            let is_default_code = recovery_code.eq_ignore_ascii_case(DEFAULT_LOCAL_ACCOUNT_RECOVERY_CODE)
-                || verify_password(DEFAULT_LOCAL_ACCOUNT_RECOVERY_CODE, stored_hash.as_str()).unwrap_or(false);
-
-            if is_default_code {
-                // Run constant-time dummy verification for timing parity
-                static DUMMY_HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-                let dummy = DUMMY_HASH.get_or_init(|| {
-                    hash_password("staffkit_dummy_constant_time_salt_recovery").unwrap_or_default()
-                });
-                let _ = verify_password(recovery_code.as_str(), dummy);
-                (Some(id), false)
-            } else {
-                (Some(id), verify_password(recovery_code.as_str(), stored_hash.as_str())?)
-            }
-        }
-        Some((id, None)) => {
-            // No recovery code configured on this account; run dummy verification for constant time
-            static DUMMY_HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-            let dummy = DUMMY_HASH.get_or_init(|| {
-                hash_password("staffkit_dummy_constant_time_salt_recovery").unwrap_or_default()
-            });
-            let _ = verify_password(recovery_code.as_str(), dummy);
-            (Some(id), false)
-        }
+    let (account_id, legacy_hash) = match maybe_account {
+        Some((id, hash)) => (id, hash),
         None => {
-            // User not found; run dummy verification for constant time
+            // User not found; run constant-time dummy verification to prevent account enumeration
             static DUMMY_HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
             let dummy = DUMMY_HASH.get_or_init(|| {
                 hash_password("staffkit_dummy_constant_time_salt_recovery").unwrap_or_default()
             });
-            let _ = verify_password(recovery_code.as_str(), dummy);
-            (None, false)
+            let _ = verify_password(recovery_code_raw, dummy);
+            session_store.record_failed_attempt_with_exemption(&username_raw, is_sole)?;
+            return Err("incorrect username or recovery code".to_string());
         }
     };
 
-    if !recovery_valid {
+    // Check for active unconsumed recovery codes in app_recovery_codes
+    let normalized_input = RecoveryCodeManager::normalize_code(recovery_code_raw);
+
+    let mut unconsumed_codes: Vec<(i64, String, i64, String)> = Vec::new();
+    let has_recovery_codes_table: bool = conn
+        .query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = 'app_recovery_codes'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(false);
+
+    let mut total_batch_codes_for_account = 0;
+    if has_recovery_codes_table {
+        total_batch_codes_for_account = conn
+            .query_row(
+                "SELECT COUNT(*) FROM app_recovery_codes WHERE account_id = ?",
+                params![account_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, code_hash, code_index, batch_uuid FROM app_recovery_codes WHERE account_id = ? AND consumed_at IS NULL ORDER BY code_index ASC",
+            )
+            .map_err(|e| format!("failed to prepare recovery code query: {e}"))?;
+
+        let rows = stmt
+            .query_map(params![account_id], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })
+            .map_err(|e| format!("failed to query recovery codes: {e}"))?;
+
+        for r in rows {
+            if let Ok(item) = r {
+                unconsumed_codes.push(item);
+            }
+        }
+    }
+
+    let mut matched_batch_code: Option<(i64, i64, String)> = None; // (code_id, code_index, batch_uuid)
+    for (cid, hash, cindex, buuid) in &unconsumed_codes {
+        if verify_password(&normalized_input, hash).unwrap_or(false) {
+            matched_batch_code = Some((*cid, *cindex, buuid.clone()));
+            break;
+        }
+    }
+
+    let mut is_legacy_matched = false;
+    if matched_batch_code.is_none() && total_batch_codes_for_account == 0 {
+        // Fall back to legacy recovery code hash ONLY if account has no 8-code batch configured
+        if let Some(stored_hash) = legacy_hash {
+            let is_default = verify_password(DEFAULT_LOCAL_ACCOUNT_RECOVERY_CODE, &stored_hash).unwrap_or(false);
+            if !is_default && verify_password(recovery_code_raw, &stored_hash).unwrap_or(false) {
+                is_legacy_matched = true;
+            }
+        }
+    }
+
+    if matched_batch_code.is_none() && !is_legacy_matched {
+        static DUMMY_HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        let dummy = DUMMY_HASH.get_or_init(|| {
+            hash_password("staffkit_dummy_constant_time_salt_recovery").unwrap_or_default()
+        });
+        let _ = verify_password(recovery_code_raw, dummy);
         session_store.record_failed_attempt_with_exemption(&username_raw, is_sole)?;
         return Err("incorrect username or recovery code".to_string());
     }
 
-    let id = id.expect("valid recovery guarantee account exists");
+    // Execute atomic password reset & code burn
     let new_hash = hash_password(new_password.as_str())?;
-    conn.execute(
-        "UPDATE app_local_accounts SET password_hash = ?, force_password_reset = 0, updated_at = datetime('now') WHERE id = ?",
-        params![new_hash.as_str(), id],
-    )
-    .map_err(humanize_sqlite_error)?;
 
-    // Unlock account upon successful recovery reset
-    session_store.unlock_account(&username_raw);
+    if let Some((code_id, code_index, batch_uuid)) = matched_batch_code {
+        let (l_path, m_key) = match (ledger_path, master_key) {
+            (Some(lp), Some(mk)) => (lp, mk),
+            _ => {
+                return Err("Recovery code verification unavailable: recovery ledger required".to_string());
+            }
+        };
 
-    set_active_local_account_id(conn, id)?;
-    Ok(true)
+        let mut ledger = RecoveryLedger::open_and_verify(l_path, m_key)?;
+        let target_seq = ledger.last_seq + 1;
+        let journal_dir = l_path.parent().unwrap_or_else(|| Path::new("."));
+        let journal = RecoveryJournal::new(journal_dir.to_path_buf());
+        let tx_id = format!(
+            "burn_{}_{}_{}",
+            account_id,
+            code_id,
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        );
+        let code_fingerprint = format!("code_{}_{}", code_id, batch_uuid);
+        let journal_entry = RecoveryJournalEntry::new_prepared(
+            tx_id,
+            account_id,
+            username_raw.clone(),
+            code_id,
+            code_fingerprint.clone(),
+            target_seq,
+        );
+
+        // 1. Stage Journal Prepared
+        journal.stage_prepared(&journal_entry)?;
+
+        // 2. Immediate SQLite Transaction
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e| format!("failed to start recovery transaction: {e}"))?;
+
+        let affected = tx
+            .execute(
+                "UPDATE app_recovery_codes SET consumed_at = datetime('now') WHERE id = ? AND consumed_at IS NULL",
+                params![code_id],
+            )
+            .map_err(|e| format!("failed to consume recovery code: {e}"))?;
+
+        if affected != 1 {
+            let _ = tx.rollback();
+            let _ = journal.finalize();
+            session_store.record_failed_attempt_with_exemption(&username_raw, is_sole)?;
+            return Err("incorrect username or recovery code".to_string());
+        }
+
+        let has_token_epoch: bool = tx
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('app_local_accounts') WHERE name = 'token_epoch'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+
+        if has_token_epoch {
+            tx.execute(
+                "UPDATE app_local_accounts SET password_hash = ?, token_epoch = token_epoch + 1, force_password_reset = 0, updated_at = datetime('now') WHERE id = ?",
+                params![new_hash.as_str(), account_id],
+            )
+            .map_err(humanize_sqlite_error)?;
+        } else {
+            tx.execute(
+                "UPDATE app_local_accounts SET password_hash = ?, force_password_reset = 0, updated_at = datetime('now') WHERE id = ?",
+                params![new_hash.as_str(), account_id],
+            )
+            .map_err(humanize_sqlite_error)?;
+        }
+
+        tx.commit()
+            .map_err(|e| format!("failed to commit recovery transaction: {e}"))?;
+
+        // 3. Mark Journal DB Committed
+        let _ = journal.mark_db_committed(journal_entry);
+
+        // 4. Append CodeBurned event to Ledger
+        let payload = code_fingerprint.as_bytes().to_vec();
+        ledger
+            .append_event(account_id, LedgerEventType::CodeBurned, payload)
+            .map_err(|e| format!("failed to append code burned event to ledger: {e}"))?;
+
+        // 5. Sync to USB mirror if configured
+        let _ = VerificationGate::sync_to_usb_mirror(conn, l_path);
+
+        // 6. Finalize Journal
+        let _ = journal.finalize();
+
+        // 7. Revoke active sessions & unlock
+        session_store.unlock_account(&username_raw);
+        session_store.invalidate_account(account_id);
+        set_active_local_account_id(conn, account_id)?;
+
+        // 8. Security Audit Logging
+        let remaining: usize = conn
+            .query_row(
+                "SELECT COUNT(*) FROM app_recovery_codes WHERE account_id = ? AND consumed_at IS NULL",
+                params![account_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        let audit_payload = format!(
+            r#"{{"code_id":{},"code_index":{},"batch_uuid":"{}","remaining_codes":{}}}"#,
+            code_id, code_index, batch_uuid, remaining
+        );
+
+        let _ = super::audit::insert_audit_log_conn(
+            conn,
+            "recovery_codes.consumed",
+            "account",
+            Some(&username_raw),
+            "recovery_code",
+            &code_id.to_string(),
+            Some(&audit_payload),
+        );
+
+        let _ = super::audit::insert_audit_log_conn(
+            conn,
+            "account.password_reset_via_recovery",
+            "account",
+            Some(&username_raw),
+            "account",
+            &account_id.to_string(),
+            None,
+        );
+
+        Ok(true)
+    } else {
+        // Legacy single code matched
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e| format!("failed to start legacy recovery transaction: {e}"))?;
+
+        let has_token_epoch: bool = tx
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('app_local_accounts') WHERE name = 'token_epoch'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+
+        if has_token_epoch {
+            tx.execute(
+                "UPDATE app_local_accounts SET password_hash = ?, recovery_code_hash = NULL, token_epoch = token_epoch + 1, force_password_reset = 0, updated_at = datetime('now') WHERE id = ?",
+                params![new_hash.as_str(), account_id],
+            )
+            .map_err(humanize_sqlite_error)?;
+        } else {
+            tx.execute(
+                "UPDATE app_local_accounts SET password_hash = ?, recovery_code_hash = NULL, force_password_reset = 0, updated_at = datetime('now') WHERE id = ?",
+                params![new_hash.as_str(), account_id],
+            )
+            .map_err(humanize_sqlite_error)?;
+        }
+
+        tx.commit()
+            .map_err(|e| format!("failed to commit legacy recovery transaction: {e}"))?;
+
+        if let (Some(l_path), Some(m_key)) = (ledger_path, master_key) {
+            if let Ok(mut ledger) = RecoveryLedger::open_and_verify(l_path, m_key) {
+                let payload = b"LEGACY_RECOVERY_CODE_BURNED".to_vec();
+                let _ = ledger.append_event(account_id, LedgerEventType::CodeBurned, payload);
+                let _ = VerificationGate::sync_to_usb_mirror(conn, l_path);
+            }
+        }
+
+        session_store.unlock_account(&username_raw);
+        session_store.invalidate_account(account_id);
+        set_active_local_account_id(conn, account_id)?;
+
+        let _ = super::audit::insert_audit_log_conn(
+            conn,
+            "account.password_reset_via_recovery",
+            "account",
+            Some(&username_raw),
+            "account",
+            &account_id.to_string(),
+            Some(r#"{"method":"legacy_recovery_code"}"#),
+        );
+
+        Ok(true)
+    }
 }
 
 // ── pub(super) helpers called by mod.rs during migrations ─────────────────────
@@ -1063,6 +1333,7 @@ pub(crate) fn update_security_policy_conn(
     get_security_policy_conn(conn)
 }
 
+#[allow(dead_code)]
 fn normalize_recovery_code_input(value: Option<String>) -> Option<String> {
     value
         .and_then(|item| normalize_optional_text(Some(item)))
@@ -1908,7 +2179,7 @@ mod tests {
 
     #[test]
     fn forgot_password_rate_limiting_and_safe_unlock() {
-        let conn = seeded_connection();
+        let mut conn = seeded_connection();
         let store = SessionStore::new();
         store.switch_policy(SecurityPolicyMode::Strict);
 
@@ -1923,39 +2194,45 @@ mod tests {
         // 4 wrong recovery attempts
         for _ in 0..4 {
             let res = forgot_local_account_password_conn(
-                &conn,
+                &mut conn,
                 &store,
                 LocalForgotPasswordInput {
                     username: "alice".to_string(),
                     recovery_code: "WRONG-CODE".to_string(),
                     new_password: "NewSafePassword123!".to_string(),
                 },
+                None,
+                None,
             );
             assert_eq!(res.unwrap_err(), "incorrect username or recovery code");
         }
 
         // 5th wrong recovery attempt locks out
         let res5 = forgot_local_account_password_conn(
-            &conn,
+            &mut conn,
             &store,
             LocalForgotPasswordInput {
                 username: "alice".to_string(),
                 recovery_code: "WRONG-CODE".to_string(),
                 new_password: "NewSafePassword123!".to_string(),
             },
+            None,
+            None,
         );
         assert!(res5.unwrap_err().contains("temporarily locked"));
         assert!(store.is_account_locked("alice"));
 
         // While locked, even correct recovery code is blocked
         let res_locked = forgot_local_account_password_conn(
-            &conn,
+            &mut conn,
             &store,
             LocalForgotPasswordInput {
                 username: "alice".to_string(),
                 recovery_code: "ALICE-REC-1234".to_string(),
                 new_password: "NewSafePassword123!".to_string(),
             },
+            None,
+            None,
         );
         assert!(res_locked.unwrap_err().contains("temporarily locked"));
 

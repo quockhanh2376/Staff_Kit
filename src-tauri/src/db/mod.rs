@@ -596,6 +596,7 @@ fn ensure_local_account_columns(conn: &Connection) -> Result<(), String> {
         ("password_hash", "TEXT"),
         ("recovery_code_hash", "TEXT"),
         ("force_password_reset", "INTEGER NOT NULL DEFAULT 0"),
+        ("token_epoch", "INTEGER NOT NULL DEFAULT 1"),
     ];
 
     for (column_name, column_type) in additional_columns {

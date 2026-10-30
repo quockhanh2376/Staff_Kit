@@ -236,6 +236,7 @@ CREATE TABLE IF NOT EXISTS app_local_accounts (
   password_hash TEXT NOT NULL,
   recovery_code_hash TEXT,
   force_password_reset INTEGER NOT NULL DEFAULT 0,
+  token_epoch INTEGER NOT NULL DEFAULT 1,
   role TEXT NOT NULL DEFAULT 'user',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))

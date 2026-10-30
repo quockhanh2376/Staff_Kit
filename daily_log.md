@@ -3701,3 +3701,51 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
   - `npm run test:tauri`: PASSED (353/353 tests passed)
   - `npm run test:supplemental`: PASSED (borrow-lan-autofill & action-icon-ui tests passed)
   - Invariants: 0 DB schema changes, 0 live DB writes, 0 MSSQL writes, all worktrees and untracked files preserved.
+
+## 2026-10-30 Staff Kit RC-Phase C2: One-Time Recovery Code Password Reset — Start
+
+- Branch: `main`
+- Scope: Integrate the approved eight Recovery Codes into Forgot Password ONLY (D3.20, D3.26-D3.30).
+- Objectives:
+  1. Reuse Phase A Ledger/Journal and Phase B/C1 activation engine.
+  2. Require D3.30 Ledger verification before accepting a Recovery Code; enforce registered USB availability when independent USB backup is enabled.
+  3. Verify only active, unconsumed codes; reject shared legacy default code permanently.
+  4. Atomically consume exactly one code and update password_hash in the same SQLCipher transaction, recording durable token_epoch/session revocation.
+  5. Apply current Standard/Strict password policy, generic errors and rate limiting.
+  6. Journal DB Commit -> Ledger CodeBurned -> USB sync -> Finalize, with crash reconciliation and replay protection.
+  7. Invalidate old sessions, record Security Audit and update remaining-code status.
+  8. Fail closed for unverifiable Ledger without modifying codes or passwords.
+  9. Preserve all Employee/Asset/Loan/signature data and SQLCipher encryption key.
+  10. Test wrong codes, duplicate submission, crash boundaries, USB offline, account enumeration and session revocation.
+
+## 2026-10-30 Staff Kit RC-Phase C2: One-Time Recovery Code Password Reset — End
+
+- Implementation:
+  1. `src-tauri/src/db/auth.rs`:
+     - Rewrote `forgot_local_account_password` and `forgot_local_account_password_conn` to enforce Phase A Recovery Ledger verification gate (`VerificationGate::evaluate`) and USB mirror synchronization prior to any recovery action.
+     - Implemented active recovery code lookup from `app_recovery_codes` matching unconsumed hashes with Crockford normalization (`RecoveryCodeManager::normalize_code`).
+     - Permanent rejection of known shared legacy default recovery code (`"SK-RECOVERY-2026"`).
+     - Atomic single-code burn and password update in an `Immediate` SQLite transaction (`UPDATE app_recovery_codes SET consumed_at = datetime('now') WHERE id = ? AND consumed_at IS NULL`).
+     - Staged 3-phase journal transaction: Prepared -> DbCommitted -> Append `CodeBurned` block -> USB mirror sync -> Finalize.
+     - Durable session revocation: incremented `token_epoch` in DB and invoked `session_store.invalidate_account(account_id)` in RAM.
+     - Security audit logging for `recovery_codes.consumed` and `account.password_reset_via_recovery`.
+     - Generic error messages (`"incorrect username or recovery code"`) and progressive delay / lockout protection for non-existent accounts and invalid codes.
+  2. `src-tauri/src/db/schema.rs` & `src-tauri/src/db/mod.rs`:
+     - Added `token_epoch INTEGER NOT NULL DEFAULT 1` to `app_local_accounts` schema and runtime column migration (`ensure_local_account_columns`).
+  3. `src-tauri/src/lib.rs`:
+     - Integrated `reconcile_on_startup` into Tauri application `setup` hook to automatically resolve any in-flight crash journals before user interaction.
+  4. `src-tauri/src/recovery_ledger/tests.rs`:
+     - Added 7 automated tests covering Phase C2 requirements:
+       * `test_rc_c02_password_reset_consumes_exact_single_code`
+       * `test_rc_c03_used_code_replay_rejected`
+       * `test_rc_c04_recovery_fails_closed_when_ledger_diverged_or_usb_offline`
+       * `test_rc_c05_recovery_invalidates_existing_sessions_and_increments_epoch`
+       * `test_rc_c06_account_enumeration_protection_and_generic_errors`
+       * `test_rc_c07_crash_reconciliation_forward_commits_burned_code_to_ledger`
+       * `test_rc_c08_legacy_custom_code_compatibility_and_single_use`
+- Verification:
+  - `npm run check:quality`: PASSED (0 eslint errors, tsc typecheck clean, vite build clean, cargo check clean)
+  - `npm run test:unit`: PASSED (45 files, 353/353 tests passed)
+  - `npm run test:tauri`: PASSED (463/463 tests passed)
+  - Invariants: 0 changes to live/production DB, 0 changes to SQLCipher encryption key, no Emergency Package, no rekey, no new GitHub Release.
+

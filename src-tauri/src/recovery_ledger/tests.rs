@@ -45,11 +45,16 @@ fn init_mock_sqlite_db() -> Connection {
         CREATE TABLE app_settings (setting_key TEXT PRIMARY KEY, setting_value TEXT, updated_at TEXT);
         CREATE TABLE app_local_accounts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_key TEXT NOT NULL DEFAULT 'test_key',
+            display_name TEXT NOT NULL DEFAULT 'Admin',
             username TEXT NOT NULL,
             password_hash TEXT NOT NULL,
             recovery_code_hash TEXT DEFAULT NULL,
             token_epoch INTEGER NOT NULL DEFAULT 1,
-            force_password_reset INTEGER NOT NULL DEFAULT 0
+            force_password_reset INTEGER NOT NULL DEFAULT 0,
+            role TEXT NOT NULL DEFAULT 'super_admin',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
         CREATE TABLE app_recovery_codes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -60,6 +65,16 @@ fn init_mock_sqlite_db() -> Connection {
             consumed_at TEXT DEFAULT NULL,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             UNIQUE(account_id, batch_uuid, code_index)
+        );
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            actor_type TEXT NOT NULL,
+            actor_ref TEXT,
+            entity_type TEXT NOT NULL,
+            entity_id TEXT NOT NULL,
+            payload_json TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
         INSERT INTO app_local_accounts (id, username, password_hash) VALUES (1, 'adman', 'hash_pass');
         INSERT INTO app_recovery_codes (id, account_id, code_hash, code_index) VALUES (101, 1, 'code_hash_1', 1);
@@ -427,7 +442,7 @@ fn test_rc_b04_explicit_revocation_burns_all_codes() {
 
 #[test]
 fn test_rc_b05_default_legacy_recovery_code_is_rejected_in_forgot_flow() {
-    let conn = init_mock_sqlite_db();
+    let mut conn = init_mock_sqlite_db();
     let store = crate::auth_session::SessionStore::new();
 
     // Set alice's recovery code to default "SK-RECOVERY-2026"
@@ -440,13 +455,15 @@ fn test_rc_b05_default_legacy_recovery_code_is_rejected_in_forgot_flow() {
 
     // Attempting to reset password using default recovery code must FAIL
     let res = crate::db::auth::forgot_local_account_password_conn(
-        &conn,
+        &mut conn,
         &store,
         crate::db::auth::LocalForgotPasswordInput {
             username: "adman".to_string(),
             recovery_code: "SK-RECOVERY-2026".to_string(),
             new_password: "NewPassword123!".to_string(),
         },
+        None,
+        None,
     );
 
     assert!(res.is_err());
@@ -518,5 +535,390 @@ fn test_rc_c01_batch_activation_crash_recovery_forward_commits_ledger() {
     let blocks = ledger.read_all_blocks().unwrap();
     assert_eq!(blocks[0].event_type, LedgerEventType::BatchActivated);
     assert_eq!(blocks[0].payload, batch_id.as_bytes());
+}
+
+#[test]
+fn test_rc_c02_password_reset_consumes_exact_single_code() {
+    let (_dir, path) = create_temp_dir("rc_c02");
+    let ledger_path = path.join(LEDGER_FILENAME);
+    let _ledger = RecoveryLedger::create_new(&ledger_path, TEST_MASTER_KEY).unwrap();
+
+    let mut conn = init_mock_sqlite_db();
+    let store = crate::auth_session::SessionStore::new();
+    let manager = super::activation::RecoveryCodeManager::new();
+
+    // Generate and activate 8 recovery codes for adman (account_id = 1)
+    let gen_res = manager.generate_codes(1, "adman").unwrap();
+    manager
+        .activate_codes(
+            &mut conn,
+            1,
+            &gen_res.batch_id,
+            &ledger_path,
+            TEST_MASTER_KEY,
+        )
+        .unwrap();
+
+    // Verify initial status: 8 total, 8 remaining
+    let status_before = super::activation::RecoveryCodeManager::query_status(&conn, 1).unwrap();
+    assert_eq!(status_before.total_codes, 8);
+    assert_eq!(status_before.remaining_codes, 8);
+
+    // Reset password using the first recovery code
+    let code_to_use = &gen_res.codes[0];
+    let new_pass = "BrandNewSafePass123!";
+    let reset_res = crate::db::auth::forgot_local_account_password_conn(
+        &mut conn,
+        &store,
+        crate::db::auth::LocalForgotPasswordInput {
+            username: "adman".to_string(),
+            recovery_code: code_to_use.clone(),
+            new_password: new_pass.to_string(),
+        },
+        Some(&ledger_path),
+        Some(TEST_MASTER_KEY),
+    );
+    assert!(reset_res.is_ok());
+    assert!(reset_res.unwrap());
+
+    // Verify status after reset: 8 total, exactly 7 remaining
+    let status_after = super::activation::RecoveryCodeManager::query_status(&conn, 1).unwrap();
+    assert_eq!(status_after.total_codes, 8);
+    assert_eq!(status_after.remaining_codes, 7);
+
+    // Verify the first code has consumed_at populated, while others are NULL
+    let consumed_count: usize = conn
+        .query_row(
+            "SELECT COUNT(*) FROM app_recovery_codes WHERE account_id = 1 AND consumed_at IS NOT NULL",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(consumed_count, 1);
+
+    // Verify new password was hashed and updated in app_local_accounts
+    let current_hash: String = conn
+        .query_row(
+            "SELECT password_hash FROM app_local_accounts WHERE id = 1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(crate::db::auth::verify_password(new_pass, &current_hash).unwrap());
+
+    // Verify Ledger has CodeBurned event appended
+    let ledger = RecoveryLedger::open_and_verify(&ledger_path, TEST_MASTER_KEY).unwrap();
+    assert_eq!(ledger.last_seq, 2); // 1 = BatchActivated, 2 = CodeBurned
+    let blocks = ledger.read_all_blocks().unwrap();
+    assert_eq!(blocks[1].event_type, LedgerEventType::CodeBurned);
+
+    // Verify Audit Logs contain recovery_codes.consumed and account.password_reset_via_recovery
+    let audit_count: usize = conn
+        .query_row(
+            "SELECT COUNT(*) FROM audit_logs WHERE event_type IN ('recovery_codes.consumed', 'account.password_reset_via_recovery')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(audit_count, 2);
+}
+
+#[test]
+fn test_rc_c03_used_code_replay_rejected() {
+    let (_dir, path) = create_temp_dir("rc_c03");
+    let ledger_path = path.join(LEDGER_FILENAME);
+    let _ledger = RecoveryLedger::create_new(&ledger_path, TEST_MASTER_KEY).unwrap();
+
+    let mut conn = init_mock_sqlite_db();
+    let store = crate::auth_session::SessionStore::new();
+    let manager = super::activation::RecoveryCodeManager::new();
+
+    let gen_res = manager.generate_codes(1, "adman").unwrap();
+    manager
+        .activate_codes(&mut conn, 1, &gen_res.batch_id, &ledger_path, TEST_MASTER_KEY)
+        .unwrap();
+
+    let code_to_use = &gen_res.codes[0];
+    let res1 = crate::db::auth::forgot_local_account_password_conn(
+        &mut conn,
+        &store,
+        crate::db::auth::LocalForgotPasswordInput {
+            username: "adman".to_string(),
+            recovery_code: code_to_use.clone(),
+            new_password: "ValidNewPass123!".to_string(),
+        },
+        Some(&ledger_path),
+        Some(TEST_MASTER_KEY),
+    );
+    assert!(res1.is_ok());
+
+    // Attempting to reuse the exact same code must FAIL
+    let res_replay = crate::db::auth::forgot_local_account_password_conn(
+        &mut conn,
+        &store,
+        crate::db::auth::LocalForgotPasswordInput {
+            username: "adman".to_string(),
+            recovery_code: code_to_use.clone(),
+            new_password: "AnotherNewPass123!".to_string(),
+        },
+        Some(&ledger_path),
+        Some(TEST_MASTER_KEY),
+    );
+    assert!(res_replay.is_err());
+    assert_eq!(res_replay.unwrap_err(), "incorrect username or recovery code");
+
+    // Remaining codes count must remain unchanged at 7
+    let status = super::activation::RecoveryCodeManager::query_status(&conn, 1).unwrap();
+    assert_eq!(status.remaining_codes, 7);
+}
+
+#[test]
+fn test_rc_c04_recovery_fails_closed_when_ledger_diverged_or_usb_offline() {
+    let (_dir, path) = create_temp_dir("rc_c04");
+    let ledger_path = path.join(LEDGER_FILENAME);
+    let _ledger = RecoveryLedger::create_new(&ledger_path, TEST_MASTER_KEY).unwrap();
+
+    let mut conn = init_mock_sqlite_db();
+    let store = crate::auth_session::SessionStore::new();
+    let manager = super::activation::RecoveryCodeManager::new();
+
+    let gen_res = manager.generate_codes(1, "adman").unwrap();
+    manager
+        .activate_codes(&mut conn, 1, &gen_res.batch_id, &ledger_path, TEST_MASTER_KEY)
+        .unwrap();
+
+    // 1. Enable USB backup in DB with offline / non-existent destination
+    conn.execute(
+        "INSERT INTO app_settings (setting_key, setting_value) VALUES ('backup_usb_enabled_v1', '1')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO app_settings (setting_key, setting_value) VALUES ('backup_usb_path_v1', 'Z:\\NonExistentUsbPath')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO app_settings (setting_key, setting_value) VALUES ('backup_usb_device_id_v1', 'DEV_12345')",
+        [],
+    )
+    .unwrap();
+
+    // Password reset via recovery code must fail closed
+    let code_to_use = &gen_res.codes[0];
+    let res_usb_offline = crate::db::auth::forgot_local_account_password_conn(
+        &mut conn,
+        &store,
+        crate::db::auth::LocalForgotPasswordInput {
+            username: "adman".to_string(),
+            recovery_code: code_to_use.clone(),
+            new_password: "ValidNewPass123!".to_string(),
+        },
+        Some(&ledger_path),
+        Some(TEST_MASTER_KEY),
+    );
+
+    assert!(res_usb_offline.is_err());
+    let err_msg = res_usb_offline.unwrap_err();
+    assert!(err_msg.contains("Recovery code verification unavailable"));
+    assert!(err_msg.contains("disconnected or unavailable"));
+
+    // Code was not consumed
+    let status = super::activation::RecoveryCodeManager::query_status(&conn, 1).unwrap();
+    assert_eq!(status.remaining_codes, 8);
+}
+
+#[test]
+fn test_rc_c05_recovery_invalidates_existing_sessions_and_increments_epoch() {
+    let (_dir, path) = create_temp_dir("rc_c05");
+    let ledger_path = path.join(LEDGER_FILENAME);
+    let _ledger = RecoveryLedger::create_new(&ledger_path, TEST_MASTER_KEY).unwrap();
+
+    let mut conn = init_mock_sqlite_db();
+    let store = crate::auth_session::SessionStore::new();
+    let manager = super::activation::RecoveryCodeManager::new();
+
+    let gen_res = manager.generate_codes(1, "adman").unwrap();
+    manager
+        .activate_codes(&mut conn, 1, &gen_res.batch_id, &ledger_path, TEST_MASTER_KEY)
+        .unwrap();
+
+    // Issue active session for adman (id = 1)
+    let token = store.issue_session(1, "adman_key", crate::auth_session::Role::SuperAdmin);
+    assert!(store.resolve_session(&token).is_ok());
+
+    let initial_epoch: i64 = conn
+        .query_row("SELECT token_epoch FROM app_local_accounts WHERE id = 1", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(initial_epoch, 1);
+
+    // Reset password via recovery code
+    let code_to_use = &gen_res.codes[0];
+    let res = crate::db::auth::forgot_local_account_password_conn(
+        &mut conn,
+        &store,
+        crate::db::auth::LocalForgotPasswordInput {
+            username: "adman".to_string(),
+            recovery_code: code_to_use.clone(),
+            new_password: "ValidNewPass123!".to_string(),
+        },
+        Some(&ledger_path),
+        Some(TEST_MASTER_KEY),
+    );
+    assert!(res.is_ok());
+
+    // Active session must now be invalidated
+    assert!(store.resolve_session(&token).is_err());
+
+    // token_epoch must be incremented in DB
+    let new_epoch: i64 = conn
+        .query_row("SELECT token_epoch FROM app_local_accounts WHERE id = 1", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(new_epoch, 2);
+}
+
+#[test]
+fn test_rc_c06_account_enumeration_protection_and_generic_errors() {
+    let (_dir, path) = create_temp_dir("rc_c06");
+    let ledger_path = path.join(LEDGER_FILENAME);
+    let _ledger = RecoveryLedger::create_new(&ledger_path, TEST_MASTER_KEY).unwrap();
+
+    let mut conn = init_mock_sqlite_db();
+    let store = crate::auth_session::SessionStore::new();
+
+    // 1. Non-existent account returns generic error
+    let res_ghost = crate::db::auth::forgot_local_account_password_conn(
+        &mut conn,
+        &store,
+        crate::db::auth::LocalForgotPasswordInput {
+            username: "non_existent_ghost".to_string(),
+            recovery_code: "ABCDE-12345".to_string(),
+            new_password: "ValidNewPass123!".to_string(),
+        },
+        Some(&ledger_path),
+        Some(TEST_MASTER_KEY),
+    );
+    assert_eq!(res_ghost.unwrap_err(), "incorrect username or recovery code");
+
+    // 2. Existing account with wrong recovery code returns exact same generic error
+    let res_wrong_code = crate::db::auth::forgot_local_account_password_conn(
+        &mut conn,
+        &store,
+        crate::db::auth::LocalForgotPasswordInput {
+            username: "adman".to_string(),
+            recovery_code: "WRONG-CODE-999".to_string(),
+            new_password: "ValidNewPass123!".to_string(),
+        },
+        Some(&ledger_path),
+        Some(TEST_MASTER_KEY),
+    );
+    assert_eq!(res_wrong_code.unwrap_err(), "incorrect username or recovery code");
+}
+
+#[test]
+fn test_rc_c07_crash_reconciliation_forward_commits_burned_code_to_ledger() {
+    let (_dir, path) = create_temp_dir("rc_c07");
+    let ledger_path = path.join(LEDGER_FILENAME);
+    let mut ledger = RecoveryLedger::create_new(&ledger_path, TEST_MASTER_KEY).unwrap();
+
+    let conn = init_mock_sqlite_db();
+    let journal = RecoveryJournal::new(path.clone());
+
+    // Setup: code 101 in DB is already marked consumed (DB committed)
+    conn.execute(
+        "UPDATE app_recovery_codes SET consumed_at = datetime('now') WHERE id = 101",
+        [],
+    )
+    .unwrap();
+
+    // Stage in-flight journal representing crash after DB commit but before Ledger append
+    let entry = RecoveryJournalEntry::new_prepared(
+        "burn_tx_crash_test".to_string(),
+        1,
+        "adman".to_string(),
+        101,
+        "code_101_batch-init".to_string(),
+        ledger.last_seq + 1,
+    );
+    journal.stage_prepared(&entry).unwrap();
+
+    // Startup reconciler must detect DB committed and forward-commit CodeBurned block to Ledger
+    let res = RecoveryTransactionCoordinator::reconcile_on_startup(
+        &conn,
+        &journal,
+        &ledger_path,
+        TEST_MASTER_KEY,
+    )
+    .unwrap();
+
+    assert!(res.unwrap().contains("forward finalized"));
+    assert!(!journal.journal_path().exists());
+
+    // Verify Ledger sequence and block
+    ledger = RecoveryLedger::open_and_verify(&ledger_path, TEST_MASTER_KEY).unwrap();
+    assert_eq!(ledger.last_seq, 1);
+    let blocks = ledger.read_all_blocks().unwrap();
+    assert_eq!(blocks[0].event_type, LedgerEventType::CodeBurned);
+    assert_eq!(blocks[0].payload, b"code_101_batch-init");
+}
+
+#[test]
+fn test_rc_c08_legacy_custom_code_compatibility_and_single_use() {
+    let (_dir, path) = create_temp_dir("rc_c08");
+    let ledger_path = path.join(LEDGER_FILENAME);
+    let _ledger = RecoveryLedger::create_new(&ledger_path, TEST_MASTER_KEY).unwrap();
+
+    let mut conn = init_mock_sqlite_db();
+    let store = crate::auth_session::SessionStore::new();
+
+    // Clear any batch codes for adman so it operates in legacy mode
+    conn.execute("DELETE FROM app_recovery_codes WHERE account_id = 1", []).unwrap();
+
+    let legacy_code = "CUSTOM-LEGACY-CODE-2026";
+    let legacy_hash = crate::db::auth::hash_password(legacy_code).unwrap();
+    conn.execute(
+        "UPDATE app_local_accounts SET recovery_code_hash = ? WHERE id = 1",
+        params![legacy_hash],
+    )
+    .unwrap();
+
+    // Reset password with legacy custom recovery code
+    let res = crate::db::auth::forgot_local_account_password_conn(
+        &mut conn,
+        &store,
+        crate::db::auth::LocalForgotPasswordInput {
+            username: "adman".to_string(),
+            recovery_code: legacy_code.to_string(),
+            new_password: "NewPasswordFromLegacy123!".to_string(),
+        },
+        Some(&ledger_path),
+        Some(TEST_MASTER_KEY),
+    );
+    assert!(res.is_ok());
+
+    // Legacy recovery code must now be cleared (single-use enforcement)
+    let stored_hash: Option<String> = conn
+        .query_row(
+            "SELECT recovery_code_hash FROM app_local_accounts WHERE id = 1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(stored_hash.is_none());
+
+    // Attempting to reuse the legacy code must fail
+    let res_reuse = crate::db::auth::forgot_local_account_password_conn(
+        &mut conn,
+        &store,
+        crate::db::auth::LocalForgotPasswordInput {
+            username: "adman".to_string(),
+            recovery_code: legacy_code.to_string(),
+            new_password: "AnotherNewPassword123!".to_string(),
+        },
+        Some(&ledger_path),
+        Some(TEST_MASTER_KEY),
+    );
+    assert!(res_reuse.is_err());
+    assert_eq!(res_reuse.unwrap_err(), "incorrect username or recovery code");
 }
 
