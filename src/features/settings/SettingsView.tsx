@@ -1,5 +1,7 @@
+﻿import { useState } from "react"
 import {
     AlertTriangle,
+    Copy,
     CheckCircle2,
     ChevronDown,
     ChevronUp,
@@ -92,6 +94,8 @@ export function SettingsView({
     const imp = importState
     const adminPortalCard = useIdleCollapse(60000, false)
     const databaseBackupCard = useIdleCollapse(60000, false)
+    const [confirmedSaved, setConfirmedSaved] = useState(false)
+    const [codesCopied, setCodesCopied] = useState(false)
 
     return (
         <section className="bg-[var(--bg)] px-4 py-7 text-[var(--text-secondary)] md:px-8">
@@ -1138,6 +1142,95 @@ export function SettingsView({
                         {settings.isResettingData ? <LoaderCircle className="animate-spin" size={14} /> : null}
                         {settings.isResettingData ? "Resetting..." : "Reset All Data (Temporary)"}
                     </button>
+                </div>
+            )}
+                    {/* Modal: One-Time Recovery Codes Display & Two-Phase Confirmation */}
+            {settings.recoveryCodesModalOpen && settings.pendingRecoveryBatch && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+                    <div className="w-full max-w-lg rounded-[16px] border border-[var(--border)] bg-[var(--surface)] p-6 shadow-2xl space-y-4">
+                        <div className="flex items-center gap-2 border-b border-[var(--border)] pb-3">
+                            <KeyRound className="text-amber-400" size={20} />
+                            <h3 className="text-base font-semibold text-[var(--text-primary)]">
+                                One-Time Recovery Codes (Save Immediately)
+                            </h3>
+                        </div>
+
+                        <div className="rounded-[10px] border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200 space-y-1">
+                            <p className="font-semibold">Important: These codes will only be displayed once.</p>
+                            <p>
+                                Copy or store these 8 codes in a secure password manager. If you close or cancel this window,
+                                the pending codes will be discarded without changing your existing recovery settings.
+                            </p>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 bg-[var(--bg)] p-3 rounded-[12px] border border-[var(--border)]">
+                            {settings.pendingRecoveryBatch.codes.map((code, idx) => (
+                                <div
+                                    key={code}
+                                    className="flex items-center justify-between font-mono text-xs px-2.5 py-1.5 rounded-[8px] bg-[var(--surface-hover)] border border-[var(--border)] text-[var(--text-primary)]"
+                                >
+                                    <span className="text-[var(--text-secondary)] text-[10px]">#{idx + 1}</span>
+                                    <span className="font-semibold tracking-wider select-all">{code}</span>
+                                </div>
+                            ))}
+                        </div>
+
+                        <div className="flex items-center justify-between text-xs text-[var(--text-secondary)]">
+                            <span>Expires in ~15 minutes</span>
+                            <button
+                                type="button"
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-[6px] border border-[var(--border)] bg-[var(--surface-hover)] hover:bg-[var(--border)] text-xs text-[var(--text-primary)] transition"
+                                onClick={() => {
+                                    if (settings.pendingRecoveryBatch) {
+                                        void navigator.clipboard.writeText(settings.pendingRecoveryBatch.codes.join("\n"))
+                                        setCodesCopied(true)
+                                        setTimeout(() => setCodesCopied(false), 2500)
+                                    }
+                                }}
+                            >
+                                <Copy size={13} />
+                                {codesCopied ? "Copied All!" : "Copy All Codes"}
+                            </button>
+                        </div>
+
+                        <label className="flex items-start gap-2.5 text-xs text-[var(--text-primary)] cursor-pointer pt-2 border-t border-[var(--border)]">
+                            <input
+                                type="checkbox"
+                                checked={confirmedSaved}
+                                onChange={(e) => setConfirmedSaved(e.target.checked)}
+                                className="mt-0.5 rounded border-[var(--border)] text-emerald-500 focus:ring-0"
+                            />
+                            <span>
+                                I have safely copied, printed, or stored all 8 recovery codes in a secure location.
+                            </span>
+                        </label>
+
+                        <div className="flex justify-end gap-2 pt-2">
+                            <button
+                                type="button"
+                                className="px-4 py-2 text-xs font-semibold rounded-[8px] border border-[var(--border)] bg-[var(--surface-hover)] hover:brightness-95 text-[var(--text-primary)] transition"
+                                onClick={() => {
+                                    setConfirmedSaved(false)
+                                    void settings.handleCancelRecoveryCodes()
+                                }}
+                                disabled={settings.isActivatingRecoveryCodes}
+                            >
+                                Cancel & Discard
+                            </button>
+
+                            <button
+                                type="button"
+                                className="px-4 py-2 text-xs font-semibold rounded-[8px] bg-emerald-600 hover:bg-emerald-500 text-white transition disabled:opacity-50 disabled:cursor-not-allowed"
+                                onClick={() => {
+                                    void settings.handleConfirmActivateRecoveryCodes()
+                                    setConfirmedSaved(false)
+                                }}
+                                disabled={!confirmedSaved || settings.isActivatingRecoveryCodes}
+                            >
+                                {settings.isActivatingRecoveryCodes ? "Activating..." : "Confirm & Activate Codes"}
+                            </button>
+                        </div>
+                    </div>
                 </div>
             )}
         </section>

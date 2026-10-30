@@ -173,7 +173,19 @@ impl RecoveryCodeManager {
         // 2. Open / verify ledger
         let mut ledger = RecoveryLedger::open_or_create(local_ledger_path, master_key)?;
 
-        // 3. Atomic Database Transaction
+        // 3. Stage journal entry before DB commit (Phase A/C1 crash resilience)
+        let journal_dir = local_ledger_path.parent().unwrap_or_else(|| Path::new("."));
+        let journal = crate::recovery_ledger::journal::RecoveryJournal::new(journal_dir.to_path_buf());
+        let journal_entry = crate::recovery_ledger::journal::RecoveryJournalEntry::new_batch_activation_prepared(
+            format!("act_{}", pending.batch_id),
+            account_id,
+            pending.username.clone(),
+            pending.batch_id.clone(),
+            ledger.last_seq + 1,
+        );
+        journal.stage_prepared(&journal_entry)?;
+
+        // 4. Atomic Database Transaction
         let tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|e| format!("failed to start transaction: {e}"))?;
@@ -208,7 +220,10 @@ impl RecoveryCodeManager {
         tx.commit()
             .map_err(|e| format!("failed to commit recovery codes transaction: {e}"))?;
 
-        // 4. Append BATCH_ACTIVATED to Ledger
+        // Mark journal DB committed
+        let _ = journal.mark_db_committed(journal_entry);
+
+        // 5. Append BATCH_ACTIVATED to Ledger
         let payload = pending.batch_id.as_bytes().to_vec();
         ledger
             .append_event(account_id, LedgerEventType::BatchActivated, payload)
@@ -216,6 +231,9 @@ impl RecoveryCodeManager {
 
         // Sync to USB mirror if configured
         let _ = VerificationGate::sync_to_usb_mirror(conn, local_ledger_path);
+
+        // Finalize journal (clean removal)
+        let _ = journal.finalize();
 
         Ok(())
     }

@@ -302,6 +302,199 @@ fn update_security_policy(
     db::update_security_policy(&app, &session_store, ctx.account_id, payload)
 }
 
+// ── Recovery codes (Super Admin only, D3.20/D3.26/RC-Phase C1) ───────────────
+
+#[tauri::command(async)]
+fn get_recovery_code_status(
+    app: tauri::AppHandle,
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    _recovery_code_manager: tauri::State<'_, recovery_ledger::activation::RecoveryCodeManager>,
+    session_token: String,
+) -> Result<recovery_ledger::activation::RecoveryCodeStatus, String> {
+    let ctx = auth_session::require_super_admin(&session_store, &session_token)?;
+    let conn = db::open_runtime_connection(&app)?;
+    recovery_ledger::activation::RecoveryCodeManager::query_status(&conn, ctx.account_id)
+}
+
+#[tauri::command(async)]
+fn generate_recovery_codes(
+    app: tauri::AppHandle,
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    recovery_code_manager: tauri::State<'_, recovery_ledger::activation::RecoveryCodeManager>,
+    session_token: String,
+    current_password: String,
+) -> Result<recovery_ledger::activation::GenerateRecoveryCodesResult, String> {
+    let ctx = auth_session::require_super_admin(&session_store, &session_token)?;
+    let conn = db::open_runtime_connection(&app)?;
+
+    let (username, password_hash): (String, String) = conn
+        .query_row(
+            "SELECT username, password_hash FROM app_local_accounts WHERE id = ?",
+            rusqlite::params![ctx.account_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|e| format!("failed to load super admin credentials: {e}"))?;
+
+    let is_valid = db::auth::verify_password(&current_password, &password_hash)?;
+    if !is_valid {
+        let _ = db::audit::insert_audit_log_conn(
+            &conn,
+            "recovery_codes.generation_failed",
+            "account",
+            Some(&username),
+            "recovery_codes",
+            "global",
+            Some(r#"{"reason":"incorrect_password"}"#),
+        );
+        return Err("incorrect password for recovery code generation confirmation".to_string());
+    }
+
+    let result = recovery_code_manager.generate_codes(ctx.account_id, &username)?;
+
+    let payload_json = format!(r#"{{"batch_id":"{}"}}"#, result.batch_id);
+    let _ = db::audit::insert_audit_log_conn(
+        &conn,
+        "recovery_codes.generated",
+        "account",
+        Some(&username),
+        "recovery_codes",
+        "global",
+        Some(&payload_json),
+    );
+
+    Ok(result)
+}
+
+#[tauri::command(async)]
+fn activate_recovery_codes(
+    app: tauri::AppHandle,
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    recovery_code_manager: tauri::State<'_, recovery_ledger::activation::RecoveryCodeManager>,
+    session_token: String,
+    batch_id: String,
+) -> Result<(), String> {
+    let ctx = auth_session::require_super_admin(&session_store, &session_token)?;
+    let mut conn = db::open_runtime_connection(&app)?;
+
+    let username: String = conn
+        .query_row(
+            "SELECT username FROM app_local_accounts WHERE id = ?",
+            rusqlite::params![ctx.account_id],
+            |row| row.get(0),
+        )
+        .unwrap_or_else(|_| "super_admin".to_string());
+
+    let db_path = db::resolve_database_path(&app)?;
+    let local_ledger_path = db_path.with_file_name(recovery_ledger::verification_gate::LEDGER_FILENAME);
+    let master_key = db::APP_DB_ENCRYPTION_KEY.as_bytes();
+
+    recovery_code_manager.activate_codes(
+        &mut conn,
+        ctx.account_id,
+        &batch_id,
+        &local_ledger_path,
+        master_key,
+    )?;
+
+    let payload_json = format!(r#"{{"batch_id":"{}"}}"#, batch_id);
+    let _ = db::audit::insert_audit_log_conn(
+        &conn,
+        "recovery_codes.activated",
+        "account",
+        Some(&username),
+        "recovery_codes",
+        "global",
+        Some(&payload_json),
+    );
+
+    Ok(())
+}
+
+#[tauri::command(async)]
+fn cancel_recovery_codes_generation(
+    app: tauri::AppHandle,
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    recovery_code_manager: tauri::State<'_, recovery_ledger::activation::RecoveryCodeManager>,
+    session_token: String,
+) -> Result<(), String> {
+    let ctx = auth_session::require_super_admin(&session_store, &session_token)?;
+    recovery_code_manager.cancel_generation(ctx.account_id);
+
+    if let Ok(conn) = db::open_runtime_connection(&app) {
+        let username: Option<String> = conn
+            .query_row(
+                "SELECT username FROM app_local_accounts WHERE id = ?",
+                rusqlite::params![ctx.account_id],
+                |row| row.get(0),
+            )
+            .ok();
+
+        let _ = db::audit::insert_audit_log_conn(
+            &conn,
+            "recovery_codes.generation_cancelled",
+            "account",
+            username.as_deref(),
+            "recovery_codes",
+            "global",
+            None,
+        );
+    }
+
+    Ok(())
+}
+
+#[tauri::command(async)]
+fn revoke_recovery_codes(
+    app: tauri::AppHandle,
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    recovery_code_manager: tauri::State<'_, recovery_ledger::activation::RecoveryCodeManager>,
+    session_token: String,
+    current_password: String,
+) -> Result<(), String> {
+    let ctx = auth_session::require_super_admin(&session_store, &session_token)?;
+    let mut conn = db::open_runtime_connection(&app)?;
+
+    let (username, password_hash): (String, String) = conn
+        .query_row(
+            "SELECT username, password_hash FROM app_local_accounts WHERE id = ?",
+            rusqlite::params![ctx.account_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|e| format!("failed to load super admin credentials: {e}"))?;
+
+    let is_valid = db::auth::verify_password(&current_password, &password_hash)?;
+    if !is_valid {
+        let _ = db::audit::insert_audit_log_conn(
+            &conn,
+            "recovery_codes.revocation_failed",
+            "account",
+            Some(&username),
+            "recovery_codes",
+            "global",
+            Some(r#"{"reason":"incorrect_password"}"#),
+        );
+        return Err("incorrect password for recovery code revocation confirmation".to_string());
+    }
+
+    let db_path = db::resolve_database_path(&app)?;
+    let local_ledger_path = db_path.with_file_name(recovery_ledger::verification_gate::LEDGER_FILENAME);
+    let master_key = db::APP_DB_ENCRYPTION_KEY.as_bytes();
+
+    recovery_code_manager.revoke_codes(&mut conn, ctx.account_id, &local_ledger_path, master_key)?;
+
+    let _ = db::audit::insert_audit_log_conn(
+        &conn,
+        "recovery_codes.revoked",
+        "account",
+        Some(&username),
+        "recovery_codes",
+        "global",
+        None,
+    );
+
+    Ok(())
+}
+
 // ── Employee columns (read authenticated, mutate admin) ──────────────────────
 
 #[tauri::command(async)]
@@ -1176,6 +1369,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(auth_session::SessionStore::new())
+        .manage(recovery_ledger::activation::RecoveryCodeManager::new())
         .manage(lan_token_store.clone())
         .setup({
             let lan_token_store = lan_token_store.clone();
@@ -1336,7 +1530,12 @@ pub fn run() {
             preview_employee_list_mssql_sync,
             apply_employee_list_mssql_sync,
             get_security_policy,
-            update_security_policy
+            update_security_policy,
+            get_recovery_code_status,
+            generate_recovery_codes,
+            activate_recovery_codes,
+            cancel_recovery_codes_generation,
+            revoke_recovery_codes
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
@@ -1399,6 +1598,11 @@ mod tests {
         "list_local_accounts",
         "change_remote_ee_sync_approved_account",
         "update_security_policy",
+        "get_recovery_code_status",
+        "generate_recovery_codes",
+        "activate_recovery_codes",
+        "cancel_recovery_codes_generation",
+        "revoke_recovery_codes",
     ];
 
     const ADMIN_COMMANDS: &[&str] = &[

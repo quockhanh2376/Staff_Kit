@@ -63,6 +63,20 @@ export interface UpdateSecurityPolicyInput {
   newMode: SecurityPolicyMode
 }
 
+export interface RecoveryCodeStatus {
+  total_codes: number
+  remaining_codes: number
+  has_active_batch: boolean
+  has_legacy_code: boolean
+  is_default_legacy_code: boolean
+}
+
+export interface GenerateRecoveryCodesResult {
+  batch_id: string
+  codes: string[]
+  expires_in_seconds: number
+}
+
 /** LAN server configuration for the Borrow/Return QR flow. */
 export type BorrowLanSettings = {
   enabled: boolean

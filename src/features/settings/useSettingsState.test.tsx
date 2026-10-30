@@ -1011,6 +1011,126 @@ describe("Borrow / Return saved Handle with Care policy", () => {
 
             promptSpy.mockRestore()
         })
+
+        describe("Recovery Codes (RC-Phase C1)", () => {
+            it("handleStartGenerateRecoveryCodes prompts for password and sets pending batch", async () => {
+                setSession({ sessionToken: "test-token", expiresAt: "2099-01-01T00:00:00Z" })
+                const promptSpy = vi.spyOn(window, "prompt").mockReturnValue("MySuperPassword123!")
+                invokeMock.mockImplementation(async (cmd: string) => {
+                    if (cmd === "get_borrow_lan_settings") {
+                        return { enabled: false, host: "127.0.0.1", port: 8787, borrowUrl: "" }
+                    }
+                    if (cmd === "generate_recovery_codes") {
+                        return {
+                            batch_id: "batch_rc_1",
+                            codes: ["A1234-B5678", "C9012-D3456"],
+                            expires_in_seconds: 900,
+                        }
+                    }
+                    return {}
+                })
+
+                const { result } = renderHook(() => useSettingsState(baseOptions))
+
+                await act(async () => {
+                    await result.current.handleStartGenerateRecoveryCodes()
+                })
+
+                expect(promptSpy).toHaveBeenCalled()
+                expect(result.current.recoveryCodesModalOpen).toBe(true)
+                expect(result.current.pendingRecoveryBatch?.batch_id).toBe("batch_rc_1")
+                expect(result.current.pendingRecoveryBatch?.codes.length).toBe(2)
+
+                promptSpy.mockRestore()
+            })
+
+            it("handleConfirmActivateRecoveryCodes activates batch and clears pending state", async () => {
+                setSession({ sessionToken: "test-token", expiresAt: "2099-01-01T00:00:00Z" })
+                const promptSpy = vi.spyOn(window, "prompt").mockReturnValue("MySuperPassword123!")
+                invokeMock.mockImplementation(async (cmd: string) => {
+                    if (cmd === "get_borrow_lan_settings") {
+                        return { enabled: false, host: "127.0.0.1", port: 8787, borrowUrl: "" }
+                    }
+                    if (cmd === "generate_recovery_codes") {
+                        return {
+                            batch_id: "batch_rc_2",
+                            codes: ["A1234-B5678"],
+                            expires_in_seconds: 900,
+                        }
+                    }
+                    if (cmd === "activate_recovery_codes") {
+                        return {}
+                    }
+                    if (cmd === "get_recovery_code_status") {
+                        return {
+                            total_codes: 8,
+                            remaining_codes: 8,
+                            has_active_batch: true,
+                            has_legacy_code: false,
+                            is_default_legacy_code: false,
+                        }
+                    }
+                    return {}
+                })
+
+                const { result } = renderHook(() => useSettingsState(baseOptions))
+
+                await act(async () => {
+                    await result.current.handleStartGenerateRecoveryCodes()
+                })
+
+                expect(result.current.recoveryCodesModalOpen).toBe(true)
+
+                await act(async () => {
+                    await result.current.handleConfirmActivateRecoveryCodes()
+                })
+
+                expect(result.current.recoveryCodesModalOpen).toBe(false)
+                expect(result.current.pendingRecoveryBatch).toBeNull()
+                expect(result.current.recoveryStatusMessage).toBe("8 new Recovery Codes successfully activated.")
+                expect(result.current.recoveryCodeStatus?.has_active_batch).toBe(true)
+
+                promptSpy.mockRestore()
+            })
+
+            it("handleCancelRecoveryCodes cancels generation and discards pending codes", async () => {
+                setSession({ sessionToken: "test-token", expiresAt: "2099-01-01T00:00:00Z" })
+                const promptSpy = vi.spyOn(window, "prompt").mockReturnValue("MySuperPassword123!")
+                invokeMock.mockImplementation(async (cmd: string) => {
+                    if (cmd === "get_borrow_lan_settings") {
+                        return { enabled: false, host: "127.0.0.1", port: 8787, borrowUrl: "" }
+                    }
+                    if (cmd === "generate_recovery_codes") {
+                        return {
+                            batch_id: "batch_rc_3",
+                            codes: ["A1234-B5678"],
+                            expires_in_seconds: 900,
+                        }
+                    }
+                    if (cmd === "cancel_recovery_codes_generation") {
+                        return {}
+                    }
+                    return {}
+                })
+
+                const { result } = renderHook(() => useSettingsState(baseOptions))
+
+                await act(async () => {
+                    await result.current.handleStartGenerateRecoveryCodes()
+                })
+
+                expect(result.current.recoveryCodesModalOpen).toBe(true)
+
+                await act(async () => {
+                    await result.current.handleCancelRecoveryCodes()
+                })
+
+                expect(result.current.recoveryCodesModalOpen).toBe(false)
+                expect(result.current.pendingRecoveryBatch).toBeNull()
+
+                promptSpy.mockRestore()
+            })
+        })
     })
 
 

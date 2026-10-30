@@ -1,5 +1,38 @@
 # Daily Log - 2026-10-30
 
+## 2026-10-30 — Staff Kit RC-Phase C1: Recovery UI & Activation Safety (Start)
+- Authorized by Zon.
+- Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Scope: RC-Phase C1 ONLY — Super Admin-only Settings UI for Generate → one-time display → Confirm Activation of 8 Recovery Codes, password reauth, volatile pending storage, crash reconciliation, and Ledger divergence fail-closed.
+- Key Specifications & Safeguards:
+  1. Super Admin-only Settings UI with current-password reauthentication before code generation.
+  2. One-time display modal with 15-minute countdown, explicit confirmation checkbox, and cancel/discard button.
+  3. Strict confidentiality: codes exist in React state / RAM only; never logged, never stored in localStorage, never persisted in SQLite plaintext.
+  4. Integration with Phase A journal/reconciler for batch activation across SQLite commit, Ledger append, and USB mirror sync.
+  5. Fail-closed on ledger divergence, missing mirror, or corrupted HMAC.
+  6. Zero Phase C2 password reset activation, zero Emergency Recovery Package, zero SQLCipher rekey, zero production DB writes.
+
+## 2026-10-30 — Staff Kit RC-Phase C1: Recovery UI & Activation Safety (End)
+- Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Implementation completed:
+  1. Frontend UI (`SettingsView.tsx`, `useSettingsState.ts`, `staff-api.ts`, `staff.ts`):
+     - Super Admin-only Settings panel for Recovery Codes displaying active batch status, remaining count, and actions.
+     - One-time 8-code display modal with 2-column monospaced grid, copy-all utility, 15-minute countdown indicator, explicit confirmation checkbox, and cancel/discard button.
+     - Strict confidentiality: codes exist transiently in React memory only; zero writes to localStorage, logs, or telemetry.
+  2. Backend IPC Bridge (`src-tauri/src/lib.rs`):
+     - Added 5 guarded Tauri commands: `get_recovery_code_status`, `generate_recovery_codes`, `activate_recovery_codes`, `cancel_recovery_codes_generation`, `revoke_recovery_codes`.
+     - Guarded with `require_super_admin`, Argon2id password reauthentication for generation/revocation, and full Security Audit logging.
+     - Classified all commands under `SUPER_ADMIN_COMMANDS` and registered in `generate_handler!`.
+  3. Journal Staging & Startup Reconciliation (`journal.rs`, `reconciler.rs`, `activation.rs`):
+     - Extended `RecoveryJournalEntry` to support `batch_activation` operation.
+     - Two-phase `activate_codes` stages `Prepared` journal entry, commits SQLite transaction, marks `DbCommitted`, appends to `RecoveryLedger`, syncs to USB mirror, and finalizes cleanly.
+     - `RecoveryTransactionCoordinator::reconcile_on_startup` resolves crash boundaries: forward-commits missing `BatchActivated` event if DB committed, or safely discards journal if DB uncommitted.
+  4. Testing & Verification:
+     - `npm run check:quality`: PASSED (eslint clean, tsc -b strict clean, vite build clean, cargo check clean).
+     - `npm run test:unit`: PASSED (45 test files, 353/353 passed, including 3 new UI flow tests + 4 staff-api tests).
+     - `npm run test:tauri`: PASSED (456/456 passed, including `test_rc_c01_batch_activation_crash_recovery_forward_commits_ledger`).
+- Invariants strictly preserved: No Phase C2 password-reset activation, zero Emergency Recovery Package, zero SQLCipher rekey, zero production DB writes.
+
 ## 2026-10-30 — Staff Kit RC-Phase B: Eight Recovery Codes / Two-Phase Activation (Start)
 - Authorized by Zon.
 - Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).

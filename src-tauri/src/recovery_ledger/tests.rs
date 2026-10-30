@@ -453,3 +453,70 @@ fn test_rc_b05_default_legacy_recovery_code_is_rejected_in_forgot_flow() {
     assert_eq!(res.unwrap_err(), "incorrect username or recovery code");
 }
 
+#[test]
+fn test_rc_c01_batch_activation_crash_recovery_forward_commits_ledger() {
+    let (_dir, path) = create_temp_dir("rc_c01");
+    let ledger_path = path.join(LEDGER_FILENAME);
+    let mut ledger = RecoveryLedger::create_new(&ledger_path, TEST_MASTER_KEY).unwrap();
+
+    let conn = init_mock_sqlite_db();
+    let journal = RecoveryJournal::new(path.clone());
+
+    // 1. Crash boundary: Journal staged as prepared, but DB was never committed (power cut before commit)
+    let entry_uncommitted = RecoveryJournalEntry::new_batch_activation_prepared(
+        "act_uncommitted_123".to_string(),
+        1,
+        "adman".to_string(),
+        "batch_uncommitted".to_string(),
+        ledger.last_seq + 1,
+    );
+    journal.stage_prepared(&entry_uncommitted).unwrap();
+    assert!(journal.journal_path().exists());
+
+    let res_uncommitted = RecoveryTransactionCoordinator::reconcile_on_startup(
+        &conn,
+        &journal,
+        &ledger_path,
+        TEST_MASTER_KEY,
+    )
+    .unwrap();
+    assert!(res_uncommitted.unwrap().contains("aborted cleanly"));
+    assert!(!journal.journal_path().exists()); // Cleanly discarded
+
+    // 2. Crash boundary: DB committed 8 codes, but power cut before Ledger append
+    let batch_id = "batch_committed_789";
+    for i in 1..=8 {
+        conn.execute(
+            "INSERT INTO app_recovery_codes (account_id, batch_uuid, code_hash, code_index) VALUES (1, ?, 'mock_hash', ?)",
+            params![batch_id, i],
+        )
+        .unwrap();
+    }
+
+    let entry_committed = RecoveryJournalEntry::new_batch_activation_prepared(
+        "act_committed_789".to_string(),
+        1,
+        "adman".to_string(),
+        batch_id.to_string(),
+        ledger.last_seq + 1,
+    );
+    journal.stage_prepared(&entry_committed).unwrap();
+
+    let res_committed = RecoveryTransactionCoordinator::reconcile_on_startup(
+        &conn,
+        &journal,
+        &ledger_path,
+        TEST_MASTER_KEY,
+    )
+    .unwrap();
+    assert!(res_committed.unwrap().contains("forward finalized"));
+    assert!(!journal.journal_path().exists());
+
+    // Verify Ledger received the BatchActivated block!
+    ledger = RecoveryLedger::open_and_verify(&ledger_path, TEST_MASTER_KEY).unwrap();
+    assert_eq!(ledger.last_seq, 1);
+    let blocks = ledger.read_all_blocks().unwrap();
+    assert_eq!(blocks[0].event_type, LedgerEventType::BatchActivated);
+    assert_eq!(blocks[0].payload, batch_id.as_bytes());
+}
+

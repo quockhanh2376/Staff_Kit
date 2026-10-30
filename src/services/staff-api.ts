@@ -18,6 +18,8 @@ import type {
   ConfigureUsbBackupInput,
   SecurityPolicyRecord,
   UpdateSecurityPolicyInput,
+  RecoveryCodeStatus,
+  GenerateRecoveryCodesResult,
   BorrowLanSettings,
   BorrowLanSettingsUpdateInput,
   BorrowLanTokenStatus,
@@ -201,6 +203,20 @@ export const staffApi = {
 
   updateSecurityPolicy: (payload: UpdateSecurityPolicyInput) =>
     call<SecurityPolicyRecord>("update_security_policy", { payload }),
+
+  getRecoveryCodeStatus: () => call<RecoveryCodeStatus>("get_recovery_code_status"),
+
+  generateRecoveryCodes: (currentPassword: string) =>
+    call<GenerateRecoveryCodesResult>("generate_recovery_codes", { currentPassword }),
+
+  activateRecoveryCodes: (batchId: string) =>
+    call<void>("activate_recovery_codes", { batchId }),
+
+  cancelRecoveryCodesGeneration: () =>
+    call<void>("cancel_recovery_codes_generation"),
+
+  revokeRecoveryCodes: (currentPassword: string) =>
+    call<void>("revoke_recovery_codes", { currentPassword }),
 
   backupDatabaseNow: () => call<BackupRunResult>("backup_database_now"),
 

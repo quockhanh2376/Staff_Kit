@@ -33,6 +33,8 @@ pub struct RecoveryJournalEntry {
     pub target_seq: u64,
     pub state: JournalState,
     pub created_at_unix: i64,
+    #[serde(default)]
+    pub action: Option<String>,
 }
 
 impl RecoveryJournalEntry {
@@ -53,6 +55,27 @@ impl RecoveryJournalEntry {
             target_seq,
             state: JournalState::Prepared,
             created_at_unix: chrono::Utc::now().timestamp(),
+            action: None,
+        }
+    }
+
+    pub fn new_batch_activation_prepared(
+        tx_id: String,
+        account_id: i64,
+        username: String,
+        batch_id: String,
+        target_seq: u64,
+    ) -> Self {
+        Self {
+            tx_id,
+            account_id,
+            username,
+            code_id: 0,
+            code_fingerprint: batch_id,
+            target_seq,
+            state: JournalState::Prepared,
+            created_at_unix: chrono::Utc::now().timestamp(),
+            action: Some("batch_activation".to_string()),
         }
     }
 }

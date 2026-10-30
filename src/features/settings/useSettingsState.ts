@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog"
 import { staffApi } from "../../services/staff-api"
 import { clearSession } from "../../services/session"
-import type { AssetRecord, AssetSeedItemInput, BackupSettings, BorrowLanServerStatus, BorrowLanSettings, BorrowPolicyRecord, SecurityPolicyMode, SecurityPolicyRecord, SnapshotInfo } from "../../types/staff"
+import type { AssetRecord, AssetSeedItemInput, BackupSettings, BorrowLanServerStatus, BorrowLanSettings, BorrowPolicyRecord, GenerateRecoveryCodesResult, RecoveryCodeStatus, SecurityPolicyMode, SecurityPolicyRecord, SnapshotInfo } from "../../types/staff"
 import { getUserErrorMessage } from "../../lib/errorHandling"
 import { buildBorrowLanUrlPreview } from "./borrowLanAutoFill"
 
@@ -66,6 +66,16 @@ export function useSettingsState({
     const [securityPolicy, setSecurityPolicy] = useState<SecurityPolicyRecord | null>(null)
     const [isSavingSecurityPolicy, setIsSavingSecurityPolicy] = useState(false)
     const [securityPolicyStatusMessage, setSecurityPolicyStatusMessage] = useState("")
+
+    // Recovery Codes (RC-Phase C1)
+    const [recoveryCodeStatus, setRecoveryCodeStatus] = useState<RecoveryCodeStatus | null>(null)
+    const [isLoadingRecoveryStatus, setIsLoadingRecoveryStatus] = useState(false)
+    const [isGeneratingRecoveryCodes, setIsGeneratingRecoveryCodes] = useState(false)
+    const [isActivatingRecoveryCodes, setIsActivatingRecoveryCodes] = useState(false)
+    const [isRevokingRecoveryCodes, setIsRevokingRecoveryCodes] = useState(false)
+    const [recoveryCodesModalOpen, setRecoveryCodesModalOpen] = useState(false)
+    const [pendingRecoveryBatch, setPendingRecoveryBatch] = useState<GenerateRecoveryCodesResult | null>(null)
+    const [recoveryStatusMessage, setRecoveryStatusMessage] = useState("")
 
     // History snapshots
     const [snapshots, setSnapshots] = useState<SnapshotInfo[]>([])
@@ -233,17 +243,19 @@ export function useSettingsState({
 
         void (async () => {
             try {
-                const [backupSettings, customPathValue, lanSettings, tokenStatus, serverStatus, secPolicy] = await Promise.all([
+                const [backupSettings, customPathValue, lanSettings, tokenStatus, serverStatus, secPolicy, recStatus] = await Promise.all([
                     staffApi.getBackupSettings(),
                     staffApi.getDbCustomPath(),
                     staffApi.getBorrowLanSettings(),
                     staffApi.getBorrowLanTokenStatus(),
                     staffApi.getBorrowLanStatus(),
                     staffApi.getSecurityPolicy().catch(() => null),
+                    staffApi.getRecoveryCodeStatus().catch(() => null),
                 ])
                 if (!disposed) {
                     setBackupSettings(backupSettings)
                     setSecurityPolicy(secPolicy)
+                    setRecoveryCodeStatus(recStatus)
                     setBackupDirectoryInput(backupSettings?.backupDirectoryPath ?? "")
                     setBackupAutoEnabled(backupSettings?.autoBackupEnabled ?? false)
                     setUsbBackupDirectoryInput(backupSettings?.usbBackupDirectoryPath ?? "")
@@ -829,6 +841,87 @@ export function useSettingsState({
         }
     }, [setGlobalError])
 
+    // Recovery Codes handlers (RC-Phase C1)
+    const loadRecoveryCodeStatus = useCallback(async () => {
+        try {
+            setIsLoadingRecoveryStatus(true)
+            const status = await staffApi.getRecoveryCodeStatus()
+            setRecoveryCodeStatus(status)
+        } catch {
+            // Not super admin or uninitialized
+        } finally {
+            setIsLoadingRecoveryStatus(false)
+        }
+    }, [])
+
+    const handleStartGenerateRecoveryCodes = useCallback(async () => {
+        const password = window.prompt("Enter your current Super Admin password to generate new Recovery Codes:")
+        if (!password) return
+
+        setIsGeneratingRecoveryCodes(true)
+        setRecoveryStatusMessage("")
+        try {
+            const batch = await staffApi.generateRecoveryCodes(password)
+            setPendingRecoveryBatch(batch)
+            setRecoveryCodesModalOpen(true)
+        } catch (error) {
+            setGlobalError(getUserErrorMessage(error))
+        } finally {
+            setIsGeneratingRecoveryCodes(false)
+        }
+    }, [setGlobalError])
+
+    const handleConfirmActivateRecoveryCodes = useCallback(async () => {
+        if (!pendingRecoveryBatch) return
+
+        setIsActivatingRecoveryCodes(true)
+        setRecoveryStatusMessage("")
+        try {
+            await staffApi.activateRecoveryCodes(pendingRecoveryBatch.batch_id)
+            setPendingRecoveryBatch(null)
+            setRecoveryCodesModalOpen(false)
+            await loadRecoveryCodeStatus()
+            setRecoveryStatusMessage("8 new Recovery Codes successfully activated.")
+        } catch (error) {
+            setGlobalError(getUserErrorMessage(error))
+        } finally {
+            setIsActivatingRecoveryCodes(false)
+        }
+    }, [pendingRecoveryBatch, loadRecoveryCodeStatus, setGlobalError])
+
+    const handleCancelRecoveryCodes = useCallback(async () => {
+        try {
+            await staffApi.cancelRecoveryCodesGeneration()
+        } catch {
+            // ignore
+        } finally {
+            setPendingRecoveryBatch(null)
+            setRecoveryCodesModalOpen(false)
+        }
+    }, [])
+
+    const handleRevokeRecoveryCodes = useCallback(async () => {
+        const confirm = window.confirm(
+            "Are you sure you want to revoke all recovery codes? You will not be able to recover your account with codes until a new set is generated."
+        )
+        if (!confirm) return
+
+        const password = window.prompt("Enter your current Super Admin password to confirm revocation:")
+        if (!password) return
+
+        setIsRevokingRecoveryCodes(true)
+        setRecoveryStatusMessage("")
+        try {
+            await staffApi.revokeRecoveryCodes(password)
+            await loadRecoveryCodeStatus()
+            setRecoveryStatusMessage("All recovery codes have been revoked.")
+        } catch (error) {
+            setGlobalError(getUserErrorMessage(error))
+        } finally {
+            setIsRevokingRecoveryCodes(false)
+        }
+    }, [loadRecoveryCodeStatus, setGlobalError])
+
     return {
         backupSettings,
         backupDirectoryInput,
@@ -856,6 +949,21 @@ export function useSettingsState({
         isSavingSecurityPolicy,
         securityPolicyStatusMessage,
         handleSaveSecurityPolicy,
+        // Recovery Codes (RC-Phase C1)
+        recoveryCodeStatus,
+        isLoadingRecoveryStatus,
+        isGeneratingRecoveryCodes,
+        isActivatingRecoveryCodes,
+        isRevokingRecoveryCodes,
+        recoveryCodesModalOpen,
+        setRecoveryCodesModalOpen,
+        pendingRecoveryBatch,
+        recoveryStatusMessage,
+        loadRecoveryCodeStatus,
+        handleStartGenerateRecoveryCodes,
+        handleConfirmActivateRecoveryCodes,
+        handleCancelRecoveryCodes,
+        handleRevokeRecoveryCodes,
         // History
         snapshots,
         isLoadingSnapshots,

@@ -35,18 +35,27 @@ impl RecoveryTransactionCoordinator {
         );
 
         // Check if database transaction committed
-        // We verify if the matched code was indeed marked consumed_at IS NOT NULL
-        let is_db_consumed: bool = conn
-            .query_row(
+        let is_activation = entry.action.as_deref() == Some("batch_activation") || entry.code_id == 0;
+
+        let is_db_committed: bool = if is_activation {
+            conn.query_row(
+                "SELECT COUNT(*) = 8 FROM app_recovery_codes WHERE account_id = ? AND batch_uuid = ?",
+                rusqlite::params![entry.account_id, entry.code_fingerprint],
+                |row| row.get(0),
+            )
+            .unwrap_or(false)
+        } else {
+            conn.query_row(
                 "SELECT consumed_at IS NOT NULL FROM app_recovery_codes WHERE id = ?",
                 [entry.code_id],
                 |row| row.get(0),
             )
-            .unwrap_or(false);
+            .unwrap_or(false)
+        };
 
-        if !is_db_consumed {
+        if !is_db_committed {
             // DB was never committed before the crash!
-            // Discard stale journal cleanly to restore unconsumed code state.
+            // Discard stale journal cleanly to restore uncommitted state.
             journal.finalize()?;
             eprintln!("[RECOVERY RECONCILER] DB was uncommitted. Journal safely discarded.");
             return Ok(Some(format!(
@@ -58,7 +67,23 @@ impl RecoveryTransactionCoordinator {
         // DB was committed! We must ensure Ledger block is committed forward.
         let mut ledger = RecoveryLedger::open_and_verify(local_ledger_path, master_key)?;
 
-        if ledger.last_seq < entry.target_seq {
+        if is_activation {
+            let already_in_ledger = ledger.read_all_blocks()?.iter().any(|ev| {
+                ev.account_id == entry.account_id
+                    && ev.event_type == LedgerEventType::BatchActivated
+                    && ev.payload == entry.code_fingerprint.as_bytes()
+            });
+
+            if !already_in_ledger {
+                let payload = entry.code_fingerprint.as_bytes().to_vec();
+                ledger.append_event(entry.account_id, LedgerEventType::BatchActivated, payload)?;
+                eprintln!(
+                    "[RECOVERY RECONCILER] Forward-committed missing Ledger BatchActivated event for {}",
+                    entry.code_fingerprint
+                );
+                let _ = VerificationGate::sync_to_usb_mirror(conn, local_ledger_path);
+            }
+        } else if ledger.last_seq < entry.target_seq {
             // Missing block in ledger; append it now
             let payload = entry.code_fingerprint.as_bytes().to_vec();
             ledger.append_event(entry.account_id, LedgerEventType::CodeBurned, payload)?;

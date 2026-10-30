@@ -323,4 +323,52 @@ describe("staffApi Phase C command classification", () => {
             newMode: "strict",
         })
     })
+
+    it("getRecoveryCodeStatus calls get_recovery_code_status with session token", async () => {
+        setSession({ sessionToken: "super-tok", expiresAt: "2099-01-01T00:00:00Z" })
+        invokeMock.mockResolvedValue({
+            total_codes: 8,
+            remaining_codes: 8,
+            has_active_batch: true,
+            has_legacy_code: false,
+            is_default_legacy_code: false,
+        })
+        const res = await staffApi.getRecoveryCodeStatus()
+        expect(res.total_codes).toBe(8)
+        const [cmd, args] = invokeMock.mock.calls[0]
+        expect(cmd).toBe("get_recovery_code_status")
+        expect((args as Record<string, unknown>).sessionToken).toBe("super-tok")
+    })
+
+    it("generateRecoveryCodes calls generate_recovery_codes with currentPassword", async () => {
+        setSession({ sessionToken: "super-tok", expiresAt: "2099-01-01T00:00:00Z" })
+        invokeMock.mockResolvedValue({
+            batch_id: "batch_123",
+            codes: ["A1234-B5678"],
+            expires_in_seconds: 900,
+        })
+        const res = await staffApi.generateRecoveryCodes("SecretPassword123!")
+        expect(res.batch_id).toBe("batch_123")
+        const [cmd, args] = invokeMock.mock.calls[0]
+        expect(cmd).toBe("generate_recovery_codes")
+        expect((args as Record<string, unknown>).currentPassword).toBe("SecretPassword123!")
+    })
+
+    it("activateRecoveryCodes calls activate_recovery_codes with batchId", async () => {
+        setSession({ sessionToken: "super-tok", expiresAt: "2099-01-01T00:00:00Z" })
+        invokeMock.mockResolvedValue(undefined)
+        await staffApi.activateRecoveryCodes("batch_123")
+        const [cmd, args] = invokeMock.mock.calls[0]
+        expect(cmd).toBe("activate_recovery_codes")
+        expect((args as Record<string, unknown>).batchId).toBe("batch_123")
+    })
+
+    it("revokeRecoveryCodes calls revoke_recovery_codes with currentPassword", async () => {
+        setSession({ sessionToken: "super-tok", expiresAt: "2099-01-01T00:00:00Z" })
+        invokeMock.mockResolvedValue(undefined)
+        await staffApi.revokeRecoveryCodes("SecretPassword123!")
+        const [cmd, args] = invokeMock.mock.calls[0]
+        expect(cmd).toBe("revoke_recovery_codes")
+        expect((args as Record<string, unknown>).currentPassword).toBe("SecretPassword123!")
+    })
 })
