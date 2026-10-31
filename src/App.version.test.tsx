@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { render, screen, waitFor } from "@testing-library/react"
 import "@testing-library/jest-dom/vitest"
 import App from "./App"
 import { staffApi } from "./services/staff-api"
@@ -120,9 +120,9 @@ describe("App shell runtime version indicator", () => {
 
     render(<App />)
 
-    const versionEl = await screen.findByTestId("app-version")
-    expect(versionEl).toBeInTheDocument()
-    expect(versionEl).toHaveTextContent("Version 2.2.1")
+    await waitFor(() => {
+      expect(screen.getByTestId("app-version")).toHaveTextContent("Version 2.2.1")
+    })
   })
 
   it("renders exact same version in in-app shell after login", async () => {
@@ -194,9 +194,9 @@ describe("App shell runtime version indicator", () => {
 
     render(<App />)
 
-    const versionEl = await screen.findByTestId("app-version")
-    expect(versionEl).toBeInTheDocument()
-    expect(versionEl).toHaveTextContent("Version 2.2.1-internal-rc1")
+    await waitFor(() => {
+      expect(screen.getByTestId("app-version")).toHaveTextContent("Version 2.2.1-internal-rc1")
+    })
   })
 
   it("renders fallback 'Version unavailable' in in-app shell when reading fails", async () => {
@@ -268,8 +268,8 @@ describe("App shell runtime version indicator", () => {
 
     render(<App />)
 
-    const versionEl = await screen.findByTestId("app-version")
-    expect(versionEl).toBeInTheDocument()
-    expect(versionEl).toHaveTextContent("Version unavailable")
+    await waitFor(() => {
+      expect(screen.getByTestId("app-version")).toHaveTextContent("Version unavailable")
+    })
   })
 })
