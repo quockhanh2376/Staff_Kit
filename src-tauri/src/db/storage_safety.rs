@@ -24,6 +24,59 @@ static SIMULATE_USB_UNPLUG: AtomicBool = AtomicBool::new(false);
 static SIMULATE_USB_CORRUPTION: AtomicBool = AtomicBool::new(false);
 
 #[cfg(test)]
+fn normalize_for_mock(path: &Path) -> PathBuf {
+    let p = if path.exists() {
+        fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    } else if let Some(parent) = path.parent() {
+        if parent.exists() {
+            if let Ok(canon_parent) = fs::canonicalize(parent) {
+                if let Some(file_name) = path.file_name() {
+                    canon_parent.join(file_name)
+                } else {
+                    canon_parent
+                }
+            } else {
+                path.to_path_buf()
+            }
+        } else {
+            path.to_path_buf()
+        }
+    } else {
+        path.to_path_buf()
+    };
+    strip_verbatim_prefix(&p)
+}
+
+#[cfg(test)]
+fn mock_paths_match(query_path: &Path, mock_path: &Path) -> bool {
+    let q_norm = normalize_for_mock(query_path);
+    let m_norm = normalize_for_mock(mock_path);
+
+    let q_str = q_norm.to_string_lossy().to_lowercase();
+    let m_str = m_norm.to_string_lossy().to_lowercase();
+
+    if q_str == m_str || q_str.starts_with(&m_str) || m_str.starts_with(&q_str) {
+        return true;
+    }
+
+    #[cfg(windows)]
+    {
+        let q_root = extract_volume_root(&q_norm)
+            .map(|r| strip_verbatim_prefix(&r).to_string_lossy().to_lowercase());
+        let m_root = extract_volume_root(&m_norm)
+            .map(|r| strip_verbatim_prefix(&r).to_string_lossy().to_lowercase());
+
+        if let (Some(qr), Some(mr)) = (q_root, m_root) {
+            if (m_str == mr || q_str == qr) && qr == mr {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+#[cfg(test)]
 pub fn reset_storage_safety_mocks() {
     *MOCK_VOLUME_IDENTITIES.lock().unwrap() = None;
     *MOCK_AVAILABLE_DISK_SPACE.lock().unwrap() = None;
@@ -35,7 +88,7 @@ pub fn reset_storage_safety_mocks() {
 pub fn set_mock_volume_identity(path: &Path, identity: VolumeIdentity) {
     let mut guard = MOCK_VOLUME_IDENTITIES.lock().unwrap();
     let list = guard.get_or_insert_with(Vec::new);
-    list.retain(|(p, _)| p != path);
+    list.retain(|(p, _)| !mock_paths_match(p, path));
     list.push((path.to_path_buf(), identity));
 }
 
@@ -43,7 +96,7 @@ pub fn set_mock_volume_identity(path: &Path, identity: VolumeIdentity) {
 pub fn set_mock_available_disk_space(path: &Path, space: u64) {
     let mut guard = MOCK_AVAILABLE_DISK_SPACE.lock().unwrap();
     let list = guard.get_or_insert_with(Vec::new);
-    list.retain(|(p, _)| p != path);
+    list.retain(|(p, _)| !mock_paths_match(p, path));
     list.push((path.to_path_buf(), space));
 }
 
@@ -98,10 +151,8 @@ pub fn get_volume_identity(path: &Path) -> Result<VolumeIdentity, String> {
     #[cfg(test)]
     {
         if let Some(mocks) = &*MOCK_VOLUME_IDENTITIES.lock().unwrap() {
-            let normalized_path = strip_verbatim_prefix(path);
             for (p, id) in mocks {
-                let normalized_p = strip_verbatim_prefix(p);
-                if normalized_path.starts_with(&normalized_p) || normalized_p.starts_with(&normalized_path) {
+                if mock_paths_match(path, p) {
                     return Ok(id.clone());
                 }
             }
@@ -186,10 +237,8 @@ pub fn get_available_disk_space(path: &Path) -> Result<u64, String> {
     #[cfg(test)]
     {
         if let Some(mocks) = &*MOCK_AVAILABLE_DISK_SPACE.lock().unwrap() {
-            let normalized_path = strip_verbatim_prefix(path);
             for (p, space) in mocks {
-                let normalized_p = strip_verbatim_prefix(p);
-                if normalized_path.starts_with(&normalized_p) || normalized_p.starts_with(&normalized_path) {
+                if mock_paths_match(path, p) {
                     return Ok(*space);
                 }
             }

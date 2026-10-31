@@ -621,14 +621,15 @@ mod tests {
     #[test]
     fn test_preview_and_apply_asset_metadata_reimport_on_zon_asset_list() {
         let original_db = Path::new(r"D:\Staff_Kit\data\test_db\staff_kit.sqlite3");
-        assert!(original_db.exists(), "original test db must exist");
+        let workbook_path = r"D:\Staff_Kit\00_ExSource\AssetList.xlsx";
+        if !original_db.exists() || !Path::new(workbook_path).exists() {
+            // Optional local diagnostic test requiring local developer database and Excel source
+            return;
+        }
 
         let temp_db = temp_db_path("metadata-reimport-zon");
         std::fs::copy(original_db, &temp_db).expect("copy test db to temp");
         let mut conn = crate::db::open_encrypted_connection(&temp_db).expect("open temp db");
-
-        let workbook_path = r"D:\Staff_Kit\00_ExSource\AssetList.xlsx";
-        assert!(Path::new(workbook_path).exists(), "AssetList.xlsx must exist");
 
         // Baseline counts before preview
         let initial_loans: i64 = conn.query_row("SELECT count(*) FROM asset_loans", [], |r| r.get(0)).unwrap();
@@ -727,10 +728,9 @@ mod tests {
 
     #[test]
     fn test_blank_excel_fields_never_clear_existing_db_values() {
-        let original_db = Path::new(r"D:\Staff_Kit\data\test_db\staff_kit.sqlite3");
-        let temp_db = temp_db_path("blank-fields-safety");
-        std::fs::copy(original_db, &temp_db).expect("copy test db to temp");
-        let conn = crate::db::open_encrypted_connection(&temp_db).expect("open temp db");
+        let conn = rusqlite::Connection::open_in_memory().expect("open memory db");
+        crate::db::configure_connection(&conn).expect("configure pragmas");
+        crate::db::apply_migrations(&conn).expect("apply migrations");
 
         // Insert a monitor with existing brand, model, and serial
         conn.execute(
@@ -835,7 +835,66 @@ mod tests {
         assert_eq!(post_brand.as_deref(), Some("Original Brand"), "Brand must NOT be cleared by blank");
         assert_eq!(post_model.as_deref(), Some("Original Model"), "Model must NOT be cleared by blank");
         assert_eq!(post_serial.as_deref(), Some("SN-ORIGINAL-999"), "Serial must NOT be cleared by blank");
+    }
 
-        let _ = std::fs::remove_file(&temp_db);
+    #[test]
+    fn test_preview_and_apply_asset_metadata_reimport_deterministic_fixture() {
+        let fixture_candidates = [
+            "tests/fixtures/test_asset_metadata.xlsx",
+            "src-tauri/tests/fixtures/test_asset_metadata.xlsx",
+            "../src-tauri/tests/fixtures/test_asset_metadata.xlsx",
+        ];
+        let workbook_path = fixture_candidates
+            .iter()
+            .find(|p| Path::new(p).exists())
+            .expect("test_asset_metadata.xlsx fixture must exist");
+
+        let mut conn = rusqlite::Connection::open_in_memory().expect("open memory db");
+        crate::db::configure_connection(&conn).expect("configure pragmas");
+        crate::db::apply_migrations(&conn).expect("apply migrations");
+
+        // Seed existing monitor
+        conn.execute(
+            "INSERT INTO assets (asset_code, asset_type, display_name, brand, model, serial_number, status)
+             VALUES ('VNMON9999', 'Monitor', 'Old Monitor Name', 'Old Brand', 'Old Model', 'SN-OLD-001', 'assigned')",
+            [],
+        ).unwrap();
+
+        let payload = AssetMetadataImportInput {
+            file_path: workbook_path.to_string(),
+            sheet_name: None,
+        };
+
+        // 1. Preview
+        let preview = preview_asset_metadata_reimport_conn(&conn, &payload).expect("preview must succeed");
+        assert_eq!(preview.summary.total_rows, 3);
+        assert_eq!(preview.summary.metadata_changed, 1);
+        assert_eq!(preview.summary.out_of_scope, 2, "Both H Phone and Laptop rows are out of scope for Monitor reimport");
+        assert_eq!(preview.summary.missing_asset, 0);
+
+        // 2. Apply
+        let report = apply_asset_metadata_reimport_conn(&mut conn, &payload, Some(1)).expect("apply must succeed");
+        assert_eq!(report.total_processed, 3);
+        assert_eq!(report.updated_count, 1);
+        assert_eq!(report.skipped_count, 2);
+        assert!(report.errors.is_empty());
+
+        // Verify update in DB
+        let (name, brand, model, serial): (String, Option<String>, Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT display_name, brand, model, serial_number FROM assets WHERE asset_code = 'VNMON9999'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(name, "Updated Monitor Name");
+        assert_eq!(brand.as_deref(), Some("Dell"));
+        assert_eq!(model.as_deref(), Some("P2419H"));
+        assert_eq!(serial.as_deref(), Some("SN-TEST-001"));
+
+        // 3. Second preview is idempotent (0 metadata changed)
+        let second_preview = preview_asset_metadata_reimport_conn(&conn, &payload).expect("second preview");
+        assert_eq!(second_preview.summary.metadata_changed, 0);
+        assert_eq!(second_preview.summary.unchanged, 1);
     }
 }
