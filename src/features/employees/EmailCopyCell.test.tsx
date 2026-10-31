@@ -57,9 +57,9 @@ describe("EmailCopyCell", () => {
 
         await waitFor(() => {
             expect(clipboard.writeText).toHaveBeenCalledTimes(2)
+            expect(screen.getByRole("tooltip")).toHaveTextContent("Copied")
         })
         expect(spaceEvent.defaultPrevented).toBe(true)
-        expect(screen.getByRole("tooltip")).toHaveTextContent("Copied")
     })
 
     it("shows Copy failed when the clipboard rejects", async () => {
