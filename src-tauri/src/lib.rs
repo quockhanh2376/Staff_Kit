@@ -994,8 +994,8 @@ fn move_database_to(
     session_token: String,
     target_folder: String,
 ) -> Result<String, String> {
-    let _ctx = auth_session::require_super_admin(&session_store, &session_token)?;
-    let result = db::move_database_to(&app, &target_folder)?;
+    let ctx = auth_session::require_super_admin(&session_store, &session_token)?;
+    let result = db::move_database_to(&app, &target_folder, Some(ctx.account_id))?;
     // The active DB location changed — session identity may not transfer.
     session_store.invalidate_all();
     Ok(result)

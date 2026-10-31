@@ -3932,6 +3932,56 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
   - Total Tests: 845/845 passed.
   - Security Invariants: Zero modifications to `RecoveryLedger` (`ledger.rev`), zero live/production DB changes, zero SQLCipher rekey, zero emergency recovery activation.
 
+## 2026-10-31 Staff Kit D5: Maintenance & Recovery Safety Fix — Start
+
+- Planned Scope:
+  1. Interrupted Restore Recovery (P0):
+     - Detect `.orig_bak` / `.restoring` before database initialization in `ensure_database_ready`.
+     - Verify integrity of candidate recovery files (`PRAGMA integrity_check`).
+     - Fail closed if ambiguous; recover verified `.orig_bak` and never silently create a blank database.
+  2. Safe DB Move (P0):
+     - Reuse `try_acquire_restore_lock()` to enter maintenance mode, blocking new local connections and LAN Portal traffic.
+     - Checkpoint WAL (`TRUNCATE`) and invalidate pool to guarantee clean, consistent single-file state.
+     - Copy to `.moving` staged file and verify integrity before swapping/updating path.
+     - Preserve original DB on failure; rollback cleanly.
+  3. Disk Space Preflight (P1):
+     - Call `storage_safety::preflight_disk_space` before copying database in `move_database_to`.
+     - Safely clean up temporary `.moving` file on failure or disk-full condition.
+  4. Security Audit (P1):
+     - Record `security.database.move` (SUCCESS / FAILED) in SQLite `audit_logs` and authenticated external `audit_critical.ledger`.
+     - Sanitize paths and omit secrets.
+- Constraints: TDD with isolated disposable test DBs, zero changes to production DB, zero changes to `RecoveryLedger` (`ledger.rev`), zero rekeys, fail-closed design.
+
+## 2026-10-31 Staff Kit D5: Maintenance & Recovery Safety Fix — End
+
+- Implementation Summary:
+  1. Interrupted Restore Recovery (P0):
+     - Added `recover_interrupted_restore_if_needed(db_path)` in `src-tauri/src/db/backup.rs` called from `ensure_database_ready` and `database_status` before runtime connection opening or schema migration.
+     - Detects transient `.orig_bak` and `.restoring` files. Validates SQLite and SQLCipher integrity (`PRAGMA integrity_check`) before taking any recovery action.
+     - If active DB is intact, cleans up `.orig_bak` and logs resolution to `audit_critical.ledger`.
+     - If active DB is missing or corrupted and `.orig_bak` is verified intact, rolls back `.orig_bak` to active DB path and logs resolution.
+     - If ambiguous or unreadable, fails closed with a critical error and preserves all files for manual intervention, preventing silent blank DB creation.
+  2. Safe DB Move (P0):
+     - `move_database_to` now acquires `try_acquire_restore_lock()`, immediately entering maintenance mode and blocking new local connections and LAN Portal operations.
+     - Checkpoints WAL (`TRUNCATE`) and invalidates connection pool before copying.
+     - Rejects moving to the identical folder.
+     - In copy mode, stages to `{DB_FILE_NAME}.moving`, verifies `PRAGMA integrity_check == "ok"`, and atomically swaps into place.
+     - Preserves source DB intact on any error.
+  3. Disk Space Preflight (P1):
+     - `move_database_to` invokes `preflight_disk_space(&target_dir, current_path)` before copy, ensuring required space (`db_size + max(db_size / 2, 50MB)`) is available.
+     - Safely cleans up temporary staged files on disk-full or verification failures.
+  4. Security Audit (P1):
+     - `move_database_to` records `security.database.move` (SUCCESS / FAILED) in both SQLite `audit_logs` and external tamper-evident journal `audit_critical.ledger` at both source and target locations.
+     - Omits secrets and sensitive payload data.
+- Verification Outcomes:
+  - Quality Gate (`npm run check:quality`): PASSED (0 lint errors, strict tsc clean, vite build clean, cargo check clean).
+  - Frontend Unit Tests (`npm run test:unit`): 359/359 passed (46 test files).
+  - Rust Tauri Tests (`npm run test:tauri`): 495/495 passed (including 9 new unit tests covering interrupted restore recovery, safe DB move, disk preflight, concurrency lock, and audit journal logging).
+  - Total Tests: 854/854 passed.
+  - Security Invariants: Zero modifications to `RecoveryLedger` (`ledger.rev`), zero live/production DB changes, zero SQLCipher rekey, zero emergency recovery activation.
+
+
+
 
 
 

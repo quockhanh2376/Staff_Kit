@@ -153,6 +153,7 @@ pub fn init_database(app: &AppHandle) -> Result<DatabaseStatus, String> {
 
 pub fn database_status(app: &AppHandle) -> Result<DatabaseStatus, String> {
     let db_path = resolve_database_path(app)?;
+    backup::recover_interrupted_restore_if_needed(&db_path)?;
     let initialized = db_path.exists();
 
     if !initialized {
@@ -321,6 +322,9 @@ pub(crate) fn ensure_database_ready(app: &AppHandle) -> Result<(PathBuf, String)
     let result = DB_READY.get_or_init(|| {
         let start = std::time::Instant::now();
         let db_path = resolve_database_path(app)?;
+
+        // Startup recovery for interrupted restores (P0)
+        backup::recover_interrupted_restore_if_needed(&db_path)?;
 
         // Migrate existing unencrypted DB to encrypted before first use
         migrate_to_encrypted(&db_path)?;

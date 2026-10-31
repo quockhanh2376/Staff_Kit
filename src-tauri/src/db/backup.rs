@@ -202,50 +202,221 @@ pub fn set_db_custom_path(app: &AppHandle, new_path: Option<&str>) -> Result<(),
 ///   Copy the current local DB to the new location, then update the setting.
 ///
 /// Returns `(new_full_path, linked)` where `linked = true` means LINK mode was used.
-pub fn move_database_to(app: &AppHandle, target_folder: &str) -> Result<String, String> {
+pub fn move_database_to(
+    app: &AppHandle,
+    target_folder: &str,
+    actor_account_id: Option<i64>,
+) -> Result<String, String> {
+    let current_path = super::resolve_database_path(app)?;
+    let (result_str, _) = move_database_internal(
+        &current_path,
+        target_folder,
+        actor_account_id,
+        Some(app),
+    )?;
+    Ok(result_str)
+}
+
+pub(crate) fn move_database_internal(
+    current_path: &Path,
+    target_folder: &str,
+    actor_account_id: Option<i64>,
+    app: Option<&AppHandle>,
+) -> Result<(String, PathBuf), String> {
     let target_folder = target_folder.trim();
     if target_folder.is_empty() {
         return Err("Target folder path cannot be empty.".to_string());
     }
 
+    // 1. Enter maintenance mode: acquire restore lock to block runtime/LAN connections and concurrent ops
+    let _restore_guard = try_acquire_restore_lock()?;
+
+    let current_dir = current_path
+        .parent()
+        .ok_or_else(|| "current database has no parent directory".to_string())?;
+
     let target_dir = PathBuf::from(target_folder);
+
+    // Prevent moving to the identical folder
+    if let (Ok(c_canon), Ok(t_canon)) = (current_dir.canonicalize(), target_dir.canonicalize()) {
+        if c_canon == t_canon {
+            return Err("Target folder is the current database directory.".to_string());
+        }
+    }
+
     fs::create_dir_all(&target_dir)
         .map_err(|err| format!("failed to create target directory: {err}"))?;
 
     let target_path = target_dir.join(DB_FILE_NAME);
 
+    let journal_path = current_path.with_file_name(super::audit_journal::AUDIT_JOURNAL_FILENAME);
+    let target_journal_path = target_dir.join(super::audit_journal::AUDIT_JOURNAL_FILENAME);
+    let master_key = super::APP_DB_ENCRYPTION_KEY.as_bytes();
+
+    let record_audit = |status: &str, mode: &str, error: Option<&str>| {
+        let payload = json!({
+            "action": "database.move",
+            "mode": mode,
+            "source": current_path.to_string_lossy(),
+            "targetFolder": target_folder,
+            "targetPath": target_path.to_string_lossy(),
+            "status": status,
+            "error": error,
+        })
+        .to_string();
+
+        let _ = super::audit_journal::record_critical_audit_event(
+            &journal_path,
+            master_key,
+            "security.database.move",
+            actor_account_id.map(|id| id.to_string()).as_deref(),
+            "database",
+            &payload,
+        );
+
+        if journal_path != target_journal_path && target_dir.exists() {
+            let _ = super::audit_journal::record_critical_audit_event(
+                &target_journal_path,
+                master_key,
+                "security.database.move",
+                actor_account_id.map(|id| id.to_string()).as_deref(),
+                "database",
+                &payload,
+            );
+        }
+
+        if status == "SUCCESS" {
+            if let Ok(conn) = super::open_encrypted_connection(&target_path) {
+                let _ = audit::insert_audit_log_conn(
+                    &conn,
+                    "security.database.move",
+                    "account",
+                    actor_account_id.map(|id| id.to_string()).as_deref(),
+                    "database",
+                    "main",
+                    Some(&payload),
+                );
+            }
+        } else if let Ok(conn) = super::open_encrypted_connection(current_path) {
+            let _ = audit::insert_audit_log_conn(
+                &conn,
+                "security.database.move",
+                "account",
+                actor_account_id.map(|id| id.to_string()).as_deref(),
+                "database",
+                "main",
+                Some(&payload),
+            );
+        }
+    };
+
     if target_path.exists() {
-        // ── LINK MODE: shared DB already exists → just point to it ──────────
-        // Validate it is a valid (openable) SQLite / SQLCipher file first
-        super::open_encrypted_connection(&target_path).map_err(|_| {
-            "The database at the target path could not be opened. \
-                 Make sure it is a valid Staff Kit database encrypted with the same version."
-                .to_string()
-        })?;
+        // ── LINK MODE ───────────────────────────────────────────────────────
+        let conn = match super::open_encrypted_connection(&target_path) {
+            Ok(c) => c,
+            Err(err) => {
+                let err_msg = "The database at the target path could not be opened. Make sure it is a valid Staff Kit database encrypted with the same version.".to_string();
+                record_audit("FAILED", "LINKED", Some(&err));
+                return Err(err_msg);
+            }
+        };
 
-        set_db_custom_path(app, Some(target_folder))?;
+        let integrity: Result<String, _> = conn.query_row("PRAGMA integrity_check;", [], |r| r.get(0));
+        match integrity {
+            Ok(ref val) if val.eq_ignore_ascii_case("ok") => {}
+            _ => {
+                let err_msg = "Target database failed integrity check.".to_string();
+                record_audit("FAILED", "LINKED", Some(&err_msg));
+                return Err(err_msg);
+            }
+        }
+        drop(conn);
+
+        if let Some(app_handle) = app {
+            if let Err(set_err) = set_db_custom_path(app_handle, Some(target_folder)) {
+                let err_msg = format!("failed to update custom database path: {set_err}");
+                record_audit("FAILED", "LINKED", Some(&err_msg));
+                return Err(err_msg);
+            }
+        }
         super::invalidate_db_cache();
+        record_audit("SUCCESS", "LINKED", None);
 
-        Ok(format!("LINKED:{}", target_path.to_string_lossy()))
+        Ok((format!("LINKED:{}", target_path.to_string_lossy()), target_path))
     } else {
-        // ── COPY MODE: no DB at target → copy local DB there ────────────────
-        let current_path = super::resolve_database_path(app)?;
+        // ── COPY MODE ───────────────────────────────────────────────────────
+        // 1. Preflight disk space with safety margin
+        if let Err(space_err) = preflight_disk_space(&target_dir, current_path) {
+            record_audit("FAILED", "COPIED", Some(&space_err));
+            return Err(space_err);
+        }
 
-        // Checkpoint WAL fully BEFORE copying so the copied file is complete
+        // 2. Checkpoint WAL and drain connection pool
         {
-            let conn = super::open_encrypted_connection(&current_path)?;
+            let conn = super::open_encrypted_connection(current_path)?;
             conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
-                .map_err(|err| format!("failed to checkpoint WAL before move: {err}"))?;
+                .map_err(|err| {
+                    let err_msg = format!("failed to checkpoint WAL before move: {err}");
+                    record_audit("FAILED", "COPIED", Some(&err_msg));
+                    err_msg
+                })?;
         }
         super::invalidate_db_cache();
 
-        fs::copy(&current_path, &target_path)
-            .map_err(|err| format!("failed to copy database to new location: {err}"))?;
+        // 3. Copy to temporary staged file first
+        let staged_target = target_dir.join(format!("{DB_FILE_NAME}.moving"));
+        if staged_target.exists() {
+            let _ = fs::remove_file(&staged_target);
+        }
 
-        set_db_custom_path(app, Some(target_folder))?;
+        if let Err(copy_err) = fs::copy(current_path, &staged_target) {
+            let _ = fs::remove_file(&staged_target);
+            let err_msg = format!("failed to copy database to new location: {copy_err}");
+            record_audit("FAILED", "COPIED", Some(&err_msg));
+            return Err(err_msg);
+        }
+
+        // 4. Verify staged copy
+        let staged_valid = (|| -> Result<(), String> {
+            let conn = super::open_encrypted_connection(&staged_target)
+                .map_err(|e| format!("cannot open copied target database: {e}"))?;
+            let integrity: String = conn
+                .query_row("PRAGMA integrity_check;", [], |r| r.get(0))
+                .map_err(|e| format!("integrity query failed: {e}"))?;
+            if !integrity.eq_ignore_ascii_case("ok") {
+                return Err(format!("copied target database integrity check failed: '{integrity}'"));
+            }
+            Ok(())
+        })();
+
+        if let Err(verify_err) = staged_valid {
+            let _ = fs::remove_file(&staged_target);
+            record_audit("FAILED", "COPIED", Some(&verify_err));
+            return Err(format!("copied database failed integrity verification: {verify_err}"));
+        }
+
+        // 5. Atomic swap staged_target -> target_path
+        if let Err(rename_err) = fs::rename(&staged_target, &target_path) {
+            let _ = fs::remove_file(&staged_target);
+            let err_msg = format!("failed to finalize copied database: {rename_err}");
+            record_audit("FAILED", "COPIED", Some(&err_msg));
+            return Err(err_msg);
+        }
+
+        // 6. Switch custom path
+        if let Some(app_handle) = app {
+            if let Err(set_err) = set_db_custom_path(app_handle, Some(target_folder)) {
+                let _ = fs::remove_file(&target_path);
+                let err_msg = format!("failed to update database custom path setting: {set_err}");
+                record_audit("FAILED", "COPIED", Some(&err_msg));
+                return Err(err_msg);
+            }
+        }
+
         super::invalidate_db_cache();
+        record_audit("SUCCESS", "COPIED", None);
 
-        Ok(format!("COPIED:{}", target_path.to_string_lossy()))
+        Ok((format!("COPIED:{}", target_path.to_string_lossy()), target_path))
     }
 }
 
@@ -861,6 +1032,194 @@ pub(crate) fn restore_database_file(
         None,
         snapshot_info.as_ref().map(|s| s.filename.as_str()),
     )
+}
+
+/// Checks whether an encrypted database exists, can be decrypted with the application key,
+/// and passes PRAGMA integrity_check == "ok".
+pub(crate) fn is_database_healthy(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+    let metadata = match fs::metadata(path) {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+    if metadata.len() == 0 {
+        return false;
+    }
+    let conn = match super::open_encrypted_connection(path) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    let integrity: Result<String, _> = conn.query_row("PRAGMA integrity_check;", [], |r| r.get(0));
+    match integrity {
+        Ok(val) => val.eq_ignore_ascii_case("ok"),
+        Err(_) => false,
+    }
+}
+
+/// Startup recovery for interrupted restore operations (P0).
+/// Detects transient restore files (.orig_bak, .restoring) before runtime database initialization.
+/// Recovers the preserved original database if present and intact; cleans up stale staging files;
+/// or fails closed with an error if files are corrupt or ambiguous, preserving all files.
+pub fn recover_interrupted_restore_if_needed(db_path: &Path) -> Result<(), String> {
+    let parent = match db_path.parent() {
+        Some(p) => p,
+        None => return Ok(()),
+    };
+
+    let file_stem = db_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(DB_FILE_NAME);
+
+    let orig_bak = parent.join(format!("{file_stem}.orig_bak"));
+    let wal_bak = parent.join(format!("{file_stem}-wal.bak"));
+    let shm_bak = parent.join(format!("{file_stem}-shm.bak"));
+    let staged_path = parent.join(format!("{file_stem}.restoring"));
+    let wal_path = parent.join(format!("{file_stem}-wal"));
+    let shm_path = parent.join(format!("{file_stem}-shm"));
+
+    // If none of the transient restore files exist, nothing to recover
+    if !orig_bak.exists() && !staged_path.exists() {
+        return Ok(());
+    }
+
+    let journal_path = db_path.with_file_name(super::audit_journal::AUDIT_JOURNAL_FILENAME);
+    let master_key = super::APP_DB_ENCRYPTION_KEY.as_bytes();
+
+    if orig_bak.exists() {
+        if db_path.exists() {
+            let db_valid = is_database_healthy(db_path);
+            if db_valid {
+                // Restored DB is verified and healthy; restore completed the swap before cleanup.
+                let _ = fs::remove_file(&orig_bak);
+                if wal_bak.exists() {
+                    let _ = fs::remove_file(&wal_bak);
+                }
+                if shm_bak.exists() {
+                    let _ = fs::remove_file(&shm_bak);
+                }
+                if staged_path.exists() {
+                    let _ = fs::remove_file(&staged_path);
+                }
+
+                let payload = json!({
+                    "action": "database.interrupted_restore_recovery",
+                    "resolution": "preserved_healthy_restored_db",
+                    "cleaned_up": orig_bak.to_string_lossy(),
+                })
+                .to_string();
+                let _ = super::audit_journal::record_critical_audit_event(
+                    &journal_path,
+                    master_key,
+                    "security.database.interrupted_restore_recovery",
+                    None,
+                    "database",
+                    &payload,
+                );
+                return Ok(());
+            } else {
+                // db_path exists but is invalid/corrupt. Attempt rollback to orig_bak.
+                if is_database_healthy(&orig_bak) {
+                    let _ = fs::remove_file(db_path);
+                    if wal_path.exists() {
+                        let _ = fs::remove_file(&wal_path);
+                    }
+                    if shm_path.exists() {
+                        let _ = fs::remove_file(&shm_path);
+                    }
+                    fs::rename(&orig_bak, db_path).map_err(|err| {
+                        format!("failed to restore orig_bak during startup recovery: {err}")
+                    })?;
+                    if wal_bak.exists() {
+                        let _ = fs::rename(&wal_bak, &wal_path);
+                    }
+                    if shm_bak.exists() {
+                        let _ = fs::rename(&shm_bak, &shm_path);
+                    }
+                    if staged_path.exists() {
+                        let _ = fs::remove_file(&staged_path);
+                    }
+
+                    let payload = json!({
+                        "action": "database.interrupted_restore_recovery",
+                        "resolution": "rolled_back_to_orig_bak",
+                        "target": db_path.to_string_lossy(),
+                    })
+                    .to_string();
+                    let _ = super::audit_journal::record_critical_audit_event(
+                        &journal_path,
+                        master_key,
+                        "security.database.interrupted_restore_recovery",
+                        None,
+                        "database",
+                        &payload,
+                    );
+                    return Ok(());
+                } else {
+                    return Err(format!(
+                        "CRITICAL: Interrupted restore detected with corrupted active DB and corrupted backup at '{}'. Manual recovery required; all files preserved.",
+                        db_path.display()
+                    ));
+                }
+            }
+        } else {
+            // db_path does not exist; check orig_bak
+            if is_database_healthy(&orig_bak) {
+                fs::rename(&orig_bak, db_path).map_err(|err| {
+                    format!("failed to restore orig_bak during startup recovery: {err}")
+                })?;
+                if wal_bak.exists() {
+                    let _ = fs::rename(&wal_bak, &wal_path);
+                }
+                if shm_bak.exists() {
+                    let _ = fs::rename(&shm_bak, &shm_path);
+                }
+                if staged_path.exists() {
+                    let _ = fs::remove_file(&staged_path);
+                }
+
+                let payload = json!({
+                    "action": "database.interrupted_restore_recovery",
+                    "resolution": "recovered_missing_db_from_orig_bak",
+                    "target": db_path.to_string_lossy(),
+                })
+                .to_string();
+                let _ = super::audit_journal::record_critical_audit_event(
+                    &journal_path,
+                    master_key,
+                    "security.database.interrupted_restore_recovery",
+                    None,
+                    "database",
+                    &payload,
+                );
+                return Ok(());
+            } else {
+                return Err(format!(
+                    "CRITICAL: Interrupted restore detected with missing active DB and unreadable backup at '{}'. Manual recovery required; all files preserved.",
+                    orig_bak.display()
+                ));
+            }
+        }
+    }
+
+    if staged_path.exists() {
+        if db_path.exists() {
+            // Stage phase crashed before original DB was renamed to orig_bak.
+            // Clean up the incomplete staging file.
+            let _ = fs::remove_file(&staged_path);
+            return Ok(());
+        } else {
+            // Active DB is missing and only incomplete staging file exists.
+            return Err(format!(
+                "CRITICAL: Incomplete restore staging file found without active database at '{}'. Manual recovery required; all files preserved.",
+                staged_path.display()
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 // ── Private helpers ───────────────────────────────────────────────────────────
@@ -3099,5 +3458,313 @@ mod tests {
         remove_database_files(&db_path);
         let _ = std::fs::remove_dir_all(&local_dir);
         let _ = std::fs::remove_dir_all(&usb_dir);
+    }
+
+    #[test]
+    fn test_recover_interrupted_restore_healthy_db_cleans_orig_bak() {
+        let _test_lock = acquire_test_lock();
+        let db_path = temp_path("ir-healthy-db.sqlite3");
+        remove_database_files(&db_path);
+
+        let conn = open_encrypted_connection(&db_path).expect("open db");
+        apply_migrations(&conn).expect("migrations");
+        drop(conn);
+
+        let parent = db_path.parent().unwrap();
+        let file_stem = db_path.file_name().unwrap().to_str().unwrap();
+        let orig_bak = parent.join(format!("{file_stem}.orig_bak"));
+        let staged_path = parent.join(format!("{file_stem}.restoring"));
+
+        std::fs::write(&orig_bak, b"dummy old backup bytes").unwrap();
+        std::fs::write(&staged_path, b"dummy staged bytes").unwrap();
+
+        let res = super::recover_interrupted_restore_if_needed(&db_path);
+        assert!(res.is_ok(), "recovery must succeed when active DB is healthy");
+        assert!(db_path.exists(), "active DB must be preserved");
+        assert!(!orig_bak.exists(), "orig_bak must be cleaned up");
+        assert!(!staged_path.exists(), "staged_path must be cleaned up");
+
+        remove_database_files(&db_path);
+    }
+
+    #[test]
+    fn test_recover_interrupted_restore_corrupt_db_rolls_back_to_orig_bak() {
+        let _test_lock = acquire_test_lock();
+        let db_path = temp_path("ir-corrupt-db.sqlite3");
+        remove_database_files(&db_path);
+
+        let parent = db_path.parent().unwrap();
+        let file_stem = db_path.file_name().unwrap().to_str().unwrap();
+        let orig_bak = parent.join(format!("{file_stem}.orig_bak"));
+        let staged_path = parent.join(format!("{file_stem}.restoring"));
+
+        // Create valid DB at orig_bak
+        let conn = open_encrypted_connection(&orig_bak).expect("open orig_bak");
+        apply_migrations(&conn).expect("migrations");
+        conn.execute("INSERT INTO teams (id, name) VALUES (1, 'Team Rollback')", []).unwrap();
+        drop(conn);
+
+        // Corrupt active DB
+        std::fs::write(&db_path, b"corrupted non-sqlite database bytes").unwrap();
+        std::fs::write(&staged_path, b"staged garbage").unwrap();
+
+        let res = super::recover_interrupted_restore_if_needed(&db_path);
+        assert!(res.is_ok(), "recovery must succeed by rolling back to healthy orig_bak");
+        assert!(db_path.exists(), "db_path must now exist");
+        assert!(!orig_bak.exists(), "orig_bak must be swapped to db_path");
+        assert!(!staged_path.exists(), "staged_path must be cleaned up");
+
+        // Verify recovered DB has the team
+        let conn = open_encrypted_connection(&db_path).expect("open recovered db");
+        let name: String = conn.query_row("SELECT name FROM teams WHERE id=1", [], |r| r.get(0)).unwrap();
+        assert_eq!(name, "Team Rollback");
+        drop(conn);
+
+        remove_database_files(&db_path);
+    }
+
+    #[test]
+    fn test_recover_interrupted_restore_missing_db_recovers_from_orig_bak() {
+        let _test_lock = acquire_test_lock();
+        let db_path = temp_path("ir-missing-db.sqlite3");
+        remove_database_files(&db_path);
+
+        let parent = db_path.parent().unwrap();
+        let file_stem = db_path.file_name().unwrap().to_str().unwrap();
+        let orig_bak = parent.join(format!("{file_stem}.orig_bak"));
+
+        let conn = open_encrypted_connection(&orig_bak).expect("open orig_bak");
+        apply_migrations(&conn).expect("migrations");
+        conn.execute("INSERT INTO teams (id, name) VALUES (2, 'Recovered Missing')", []).unwrap();
+        drop(conn);
+
+        assert!(!db_path.exists(), "active db must not exist yet");
+
+        let res = super::recover_interrupted_restore_if_needed(&db_path);
+        assert!(res.is_ok(), "recovery must succeed when orig_bak is healthy");
+        assert!(db_path.exists(), "db_path must be restored from orig_bak");
+        assert!(!orig_bak.exists(), "orig_bak must be moved to db_path");
+
+        let conn = open_encrypted_connection(&db_path).expect("open db");
+        let name: String = conn.query_row("SELECT name FROM teams WHERE id=2", [], |r| r.get(0)).unwrap();
+        assert_eq!(name, "Recovered Missing");
+        drop(conn);
+
+        remove_database_files(&db_path);
+    }
+
+    #[test]
+    fn test_recover_interrupted_restore_missing_db_corrupt_orig_bak_fails_closed() {
+        let _test_lock = acquire_test_lock();
+        let db_path = temp_path("ir-corrupt-orig.sqlite3");
+        remove_database_files(&db_path);
+
+        let parent = db_path.parent().unwrap();
+        let file_stem = db_path.file_name().unwrap().to_str().unwrap();
+        let orig_bak = parent.join(format!("{file_stem}.orig_bak"));
+
+        std::fs::write(&orig_bak, b"bad corrupted backup bytes").unwrap();
+
+        let res = super::recover_interrupted_restore_if_needed(&db_path);
+        assert!(res.is_err(), "must fail closed when orig_bak is corrupt");
+        let err = res.unwrap_err();
+        assert!(err.contains("CRITICAL"), "error must be critical: {err}");
+        assert!(orig_bak.exists(), "corrupted orig_bak must NEVER be deleted");
+        assert!(!db_path.exists(), "must not create a blank db over corrupt backup");
+
+        let _ = std::fs::remove_file(&orig_bak);
+        remove_database_files(&db_path);
+    }
+
+    #[test]
+    fn test_recover_interrupted_restore_missing_db_only_staged_fails_closed() {
+        let _test_lock = acquire_test_lock();
+        let db_path = temp_path("ir-only-staged.sqlite3");
+        remove_database_files(&db_path);
+
+        let parent = db_path.parent().unwrap();
+        let file_stem = db_path.file_name().unwrap().to_str().unwrap();
+        let staged_path = parent.join(format!("{file_stem}.restoring"));
+
+        std::fs::write(&staged_path, b"incomplete staging file").unwrap();
+
+        let res = super::recover_interrupted_restore_if_needed(&db_path);
+        assert!(res.is_err(), "must fail closed when only .restoring exists without db");
+        assert!(staged_path.exists(), "staged_path must be preserved for manual inspection");
+
+        let _ = std::fs::remove_file(&staged_path);
+        remove_database_files(&db_path);
+    }
+
+    #[test]
+    fn test_move_database_internal_copy_mode_success() {
+        let _test_lock = acquire_test_lock();
+        let db_path = temp_path("move-src-db.sqlite3");
+        let target_dir = temp_path("move-target-dir");
+        let _ = std::fs::create_dir_all(&target_dir);
+        remove_database_files(&db_path);
+
+        let conn = open_encrypted_connection(&db_path).expect("open db");
+        apply_migrations(&conn).expect("migrations");
+        conn.execute("INSERT INTO teams (id, name) VALUES (3, 'Moved Team')", []).unwrap();
+        drop(conn);
+
+        let target_str = target_dir.to_string_lossy().to_string();
+        let (res_str, target_path) = super::move_database_internal(
+            &db_path,
+            &target_str,
+            Some(1),
+            None,
+        )
+        .expect("move_database_internal must succeed");
+
+        assert!(res_str.starts_with("COPIED:"));
+        assert!(target_path.exists(), "target db must exist");
+
+        // Verify target database is valid and contains data
+        let conn = open_encrypted_connection(&target_path).expect("open target db");
+        let name: String = conn.query_row("SELECT name FROM teams WHERE id=3", [], |r| r.get(0)).unwrap();
+        assert_eq!(name, "Moved Team");
+        drop(conn);
+
+        // Verify critical audit journal at target
+        let target_journal = target_dir.join(super::super::audit_journal::AUDIT_JOURNAL_FILENAME);
+        assert!(target_journal.exists(), "target audit journal must be created");
+
+        let master_key = super::super::APP_DB_ENCRYPTION_KEY.as_bytes();
+        let journal = super::super::audit_journal::AuditJournal::open_and_verify(&target_journal, master_key).unwrap();
+        let blocks = journal.read_all_blocks().unwrap();
+        assert!(blocks.iter().any(|b| b.event_type == "security.database.move"));
+
+        remove_database_files(&db_path);
+        remove_database_files(&target_path);
+        let _ = std::fs::remove_dir_all(&target_dir);
+    }
+
+    #[test]
+    fn test_move_database_internal_disk_full_fails_closed() {
+        let _test_lock = acquire_test_lock();
+        let db_path = temp_path("move-diskfull-db.sqlite3");
+        let target_dir = temp_path("move-diskfull-dir");
+        let _ = std::fs::create_dir_all(&target_dir);
+        remove_database_files(&db_path);
+
+        let conn = open_encrypted_connection(&db_path).expect("open db");
+        apply_migrations(&conn).expect("migrations");
+        drop(conn);
+
+        // Simulate insufficient disk space (1 byte available)
+        super::storage_safety::reset_storage_safety_mocks();
+        super::storage_safety::set_mock_available_disk_space(&target_dir, 1);
+
+        let target_str = target_dir.to_string_lossy().to_string();
+        let res = super::move_database_internal(
+            &db_path,
+            &target_str,
+            Some(1),
+            None,
+        );
+
+        assert!(res.is_err(), "must fail when disk space is insufficient");
+        let err = res.unwrap_err();
+        assert!(err.contains("insufficient disk space"), "error: {err}");
+
+        // Target DB and .moving file must not exist
+        let target_path = target_dir.join(super::DB_FILE_NAME);
+        let staged_target = target_dir.join(format!("{}.moving", super::DB_FILE_NAME));
+        assert!(!target_path.exists(), "target db must not be created");
+        assert!(!staged_target.exists(), "staged .moving file must not remain");
+
+        // Original DB must be untouched and intact
+        assert!(db_path.exists(), "original database must be preserved");
+        let conn = open_encrypted_connection(&db_path).expect("open db");
+        let integrity: String = conn.query_row("PRAGMA integrity_check;", [], |r| r.get(0)).unwrap();
+        assert_eq!(integrity.to_lowercase(), "ok");
+        drop(conn);
+
+        // Failure must be audited in the source journal
+        let src_journal = db_path.with_file_name(super::super::audit_journal::AUDIT_JOURNAL_FILENAME);
+        let master_key = super::super::APP_DB_ENCRYPTION_KEY.as_bytes();
+        let journal = super::super::audit_journal::AuditJournal::open_and_verify(&src_journal, master_key).unwrap();
+        let blocks = journal.read_all_blocks().unwrap();
+        let fail_block = blocks.iter().find(|b| b.event_type == "security.database.move").expect("must record failed move audit");
+        assert!(fail_block.details_json.contains("FAILED"));
+
+        super::storage_safety::reset_storage_safety_mocks();
+        remove_database_files(&db_path);
+        let _ = std::fs::remove_dir_all(&target_dir);
+    }
+
+    #[test]
+    fn test_move_database_internal_link_mode_success() {
+        let _test_lock = acquire_test_lock();
+        let db_path = temp_path("move-link-src.sqlite3");
+        let target_dir = temp_path("move-link-dir");
+        let _ = std::fs::create_dir_all(&target_dir);
+        remove_database_files(&db_path);
+
+        let conn = open_encrypted_connection(&db_path).expect("open src db");
+        apply_migrations(&conn).expect("migrations");
+        drop(conn);
+
+        // Pre-create target database
+        let target_path = target_dir.join(super::DB_FILE_NAME);
+        remove_database_files(&target_path);
+        let conn_target = open_encrypted_connection(&target_path).expect("open target db");
+        apply_migrations(&conn_target).expect("migrations");
+        conn_target.execute("INSERT INTO teams (id, name) VALUES (4, 'Linked Team')", []).unwrap();
+        drop(conn_target);
+
+        let target_str = target_dir.to_string_lossy().to_string();
+        let (res_str, resolved_path) = super::move_database_internal(
+            &db_path,
+            &target_str,
+            Some(1),
+            None,
+        )
+        .expect("link mode must succeed");
+
+        assert!(res_str.starts_with("LINKED:"));
+        assert_eq!(resolved_path, target_path);
+
+        remove_database_files(&db_path);
+        remove_database_files(&target_path);
+        let _ = std::fs::remove_dir_all(&target_dir);
+    }
+
+    #[test]
+    fn test_move_database_internal_concurrency_lock_blocks() {
+        let _test_lock = acquire_test_lock();
+        let db_path = temp_path("move-lock-db.sqlite3");
+        let target_dir = temp_path("move-lock-dir");
+        let _ = std::fs::create_dir_all(&target_dir);
+        remove_database_files(&db_path);
+
+        let conn = open_encrypted_connection(&db_path).expect("open db");
+        apply_migrations(&conn).expect("migrations");
+        drop(conn);
+
+        // Acquire restore/maintenance lock
+        let _lock = super::try_acquire_restore_lock().expect("acquire lock");
+
+        let target_str = target_dir.to_string_lossy().to_string();
+        let res = super::move_database_internal(
+            &db_path,
+            &target_str,
+            Some(1),
+            None,
+        );
+
+        assert!(res.is_err(), "must fail when another operation holds the restore/maintenance lock");
+        let err = res.unwrap_err();
+        assert!(
+            err.contains("another backup operation is currently in progress")
+                || err.contains("another restore operation is currently in progress"),
+            "err: {err}"
+        );
+
+        drop(_lock);
+        remove_database_files(&db_path);
+        let _ = std::fs::remove_dir_all(&target_dir);
     }
 }
