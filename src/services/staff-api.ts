@@ -611,6 +611,8 @@ export const staffApi = {
       payload: {
         id: payload.targetAccountId,
         newPassword: payload.newPassword,
+        actorPassword: payload.actorPassword,
+        verificationMethod: payload.verificationMethod,
       },
     }),
 

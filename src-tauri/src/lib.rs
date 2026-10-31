@@ -263,9 +263,9 @@ fn admin_reset_local_account_password(
     session_token: String,
     payload: db::LocalPasswordResetInput,
 ) -> Result<bool, String> {
-    let _ctx = auth_session::require_admin(&session_store, &session_token)?;
+    let ctx = auth_session::require_super_admin(&session_store, &session_token)?;
     let target_id = payload.id;
-    let result = db::admin_reset_local_account_password(&app, &session_store, payload)?;
+    let result = db::admin_reset_local_account_password(&app, &session_store, ctx.account_id, payload)?;
     // Invalidate the TARGET account's sessions (not the actor's). The target
     // must re-login with the new password; the admin stays logged in.
     session_store.invalidate_account(target_id);
@@ -1615,6 +1615,7 @@ mod tests {
         "activate_recovery_codes",
         "cancel_recovery_codes_generation",
         "revoke_recovery_codes",
+        "admin_reset_local_account_password",
     ];
 
     const ADMIN_COMMANDS: &[&str] = &[
@@ -1661,7 +1662,6 @@ mod tests {
         "import_employee_asset_seed",
         "upsert_employee_column",
         "delete_employee_column",
-        "admin_reset_local_account_password",
         "inspect_import_columns",
         "import_excel",
         "preview_import_excel",
@@ -1772,6 +1772,8 @@ mod tests {
         }
         assert!(SUPER_ADMIN_COMMANDS.contains(&"change_remote_ee_sync_approved_account"));
         assert!(!ADMIN_COMMANDS.contains(&"change_remote_ee_sync_approved_account"));
+        assert!(SUPER_ADMIN_COMMANDS.contains(&"admin_reset_local_account_password"));
+        assert!(!ADMIN_COMMANDS.contains(&"admin_reset_local_account_password"));
         for removed in [
             "get_mssql_connection_defaults",
             "test_mssql_connection",

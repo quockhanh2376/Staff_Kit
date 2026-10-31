@@ -95,6 +95,10 @@ pub struct LocalPasswordChangeInput {
 pub struct LocalPasswordResetInput {
     pub id: i64,
     pub new_password: String,
+    #[serde(default)]
+    pub actor_password: Option<String>,
+    #[serde(default)]
+    pub verification_method: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -493,53 +497,147 @@ pub(crate) fn change_local_account_password_conn(
 pub fn admin_reset_local_account_password(
     app: &AppHandle,
     session_store: &crate::auth_session::SessionStore,
+    actor_account_id: i64,
     payload: LocalPasswordResetInput,
 ) -> Result<bool, String> {
-    let conn = open_runtime_connection(app)?;
-    admin_reset_local_account_password_conn(&conn, session_store, payload)
+    let mut conn = open_runtime_connection(app)?;
+    admin_reset_local_account_password_conn(&mut conn, session_store, actor_account_id, payload)
 }
 
 pub(crate) fn admin_reset_local_account_password_conn(
-    conn: &Connection,
+    conn: &mut Connection,
     session_store: &crate::auth_session::SessionStore,
+    actor_account_id: i64,
     payload: LocalPasswordResetInput,
 ) -> Result<bool, String> {
+    let target_id = payload.id;
+
+    // D3.21: 1. Block self-reset
+    if actor_account_id == target_id {
+        return Err("cannot assist resetting own password; use recovery code or self profile change".to_string());
+    }
+
+    // D3.21: 2. Validate actor account & role (Super Admin only)
+    let actor_row: Option<(String, String, String)> = conn
+        .query_row(
+            "SELECT username, role, password_hash FROM app_local_accounts WHERE id = ?",
+            params![actor_account_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(|err| format!("failed to load actor account: {err}"))?;
+
+    let Some((actor_username, actor_role, actor_password_hash)) = actor_row else {
+        return Err("acting super admin account not found".to_string());
+    };
+
+    if actor_role != LOCAL_ACCOUNT_ROLE_SUPER_ADMIN {
+        return Err("only super admin can perform assisted password reset".to_string());
+    }
+
+    // D3.21: 3. Require actor password reauthentication
+    let actor_password = payload.actor_password.as_deref().unwrap_or("").trim();
+    if actor_password.is_empty() {
+        return Err("acting super admin password reauthentication is required".to_string());
+    }
+
+    let is_sole_super = is_sole_active_super_admin(conn, &actor_username).unwrap_or(false);
+    let reauth_valid = verify_password(actor_password, &actor_password_hash).unwrap_or(false);
+    if !reauth_valid {
+        let _ = session_store.record_failed_attempt_with_exemption(&actor_username, is_sole_super);
+        let _ = super::audit::insert_audit_log_conn(
+            conn,
+            "account.assisted_reset_actor_reauth_failed",
+            "account",
+            Some(&actor_username),
+            "target_account",
+            &target_id.to_string(),
+            Some(r#"{"outcome":"failed_reauthentication"}"#),
+        );
+        return Err("incorrect super admin password".to_string());
+    }
+
+    // D3.21: 4. Verification method validation: in_person / phone_video / internal_channel
+    let method_raw = payload.verification_method.as_deref().unwrap_or("").trim();
+    let valid_method = match method_raw {
+        "in_person" | "phone_video" | "internal_channel" => method_raw,
+        _ => {
+            return Err("valid verification method is required (in_person, phone_video, internal_channel)".to_string());
+        }
+    };
+
+    // D3.21: 5. Target account verification (Super Admin can assist another Super Admin)
+    let target_row: Option<(String, String)> = conn
+        .query_row(
+            "SELECT username, role FROM app_local_accounts WHERE id = ?",
+            params![target_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|err| format!("failed to load target account for reset: {err}"))?;
+
+    let Some((target_username, target_role)) = target_row else {
+        return Err(format!("local account with id {} was not found", target_id));
+    };
+
+    // D3.21: 6. Enforce current Standard/Strict password policy
     let policy = resolve_security_policy_fail_safe(conn);
     let new_password = require_local_account_password(payload.new_password, policy.min_password_length())?;
     let new_hash = hash_password(new_password.as_str())?;
 
-    let username: Option<String> = conn
+    // D3.21: 7. Atomic transaction: update password_hash, force_password_reset=1, token_epoch=token_epoch+1
+    let tx = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|e| format!("failed to start assisted reset transaction: {e}"))?;
+
+    let has_token_epoch: bool = tx
         .query_row(
-            "SELECT username FROM app_local_accounts WHERE id = ?",
-            params![payload.id],
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('app_local_accounts') WHERE name = 'token_epoch'",
+            [],
             |row| row.get(0),
         )
-        .optional()
-        .map_err(|err| format!("failed to load account for reset: {err}"))?;
+        .unwrap_or(false);
 
-    let Some(username) = username else {
-        return Err(format!(
-            "local account with id {} was not found",
-            payload.id
-        ));
+    let changed = if has_token_epoch {
+        tx.execute(
+            "UPDATE app_local_accounts SET password_hash = ?, force_password_reset = 1, token_epoch = token_epoch + 1, updated_at = datetime('now') WHERE id = ?",
+            params![new_hash.as_str(), target_id],
+        )
+        .map_err(humanize_sqlite_error)?
+    } else {
+        tx.execute(
+            "UPDATE app_local_accounts SET password_hash = ?, force_password_reset = 1, updated_at = datetime('now') WHERE id = ?",
+            params![new_hash.as_str(), target_id],
+        )
+        .map_err(humanize_sqlite_error)?
     };
 
-    let changed = conn
-        .execute(
-            "UPDATE app_local_accounts SET password_hash = ?, force_password_reset = 0, updated_at = datetime('now') WHERE id = ?",
-            params![new_hash.as_str(), payload.id],
-        )
-        .map_err(humanize_sqlite_error)?;
-
     if changed == 0 {
-        return Err(format!(
-            "local account with id {} was not found",
-            payload.id
-        ));
+        return Err(format!("local account with id {} was not found", target_id));
     }
 
-    // Unlock target account upon admin reset (safe unlock behavior)
-    session_store.unlock_account(&username);
+    // D3.21: 8. Record Security Audit (without passwords or secrets)
+    let audit_payload = format!(
+        r#"{{"actor_username":"{}","target_username":"{}","target_role":"{}","verification_method":"{}","forced_password_reset":true,"token_epoch_advanced":true,"security_policy_mode":"{}","outcome":"success"}}"#,
+        actor_username, target_username, target_role, valid_method, policy.as_str()
+    );
+
+    let _ = super::audit::insert_audit_log_conn(
+        &tx,
+        "account.admin_assisted_password_reset",
+        "account",
+        Some(&actor_username),
+        "target_account",
+        &target_id.to_string(),
+        Some(&audit_payload),
+    );
+
+    tx.commit()
+        .map_err(|e| format!("failed to commit assisted reset transaction: {e}"))?;
+
+    // D3.21: 9. Unlock target account and invalidate target sessions
+    session_store.unlock_account(&target_username);
+    session_store.invalidate_account(target_id);
 
     Ok(true)
 }
@@ -2238,11 +2336,14 @@ mod tests {
 
         // Unlock account (e.g. by Admin reset)
         let admin_reset_res = admin_reset_local_account_password_conn(
-            &conn,
+            &mut conn,
             &store,
+            1, // adman (super_admin)
             LocalPasswordResetInput {
                 id: 2, // alice
                 new_password: "AdminResetPass123!".to_string(),
+                actor_password: Some("Aswhite2026".to_string()),
+                verification_method: Some("in_person".to_string()),
             },
         );
         assert!(admin_reset_res.is_ok());
@@ -2639,5 +2740,219 @@ mod tests {
             },
         );
         assert!(login_legacy.is_ok());
+    }
+
+    #[test]
+    fn test_d321_assisted_reset_blocks_self_reset() {
+        let mut conn = seeded_connection();
+        let store = SessionStore::new();
+
+        let res = admin_reset_local_account_password_conn(
+            &mut conn,
+            &store,
+            1, // adman
+            LocalPasswordResetInput {
+                id: 1, // adman self-reset
+                new_password: "NewSafePassword123!".to_string(),
+                actor_password: Some("Aswhite2026".to_string()),
+                verification_method: Some("in_person".to_string()),
+            },
+        );
+        assert!(res.is_err());
+        assert!(res.unwrap_err().contains("cannot assist resetting own password"));
+    }
+
+    #[test]
+    fn test_d321_assisted_reset_requires_super_admin() {
+        let mut conn = seeded_connection();
+        let store = SessionStore::new();
+
+        let res = admin_reset_local_account_password_conn(
+            &mut conn,
+            &store,
+            2, // alice (user role)
+            LocalPasswordResetInput {
+                id: 1,
+                new_password: "NewSafePassword123!".to_string(),
+                actor_password: Some("alicepw".to_string()),
+                verification_method: Some("in_person".to_string()),
+            },
+        );
+        assert!(res.is_err());
+        assert!(res.unwrap_err().contains("only super admin can perform assisted password reset"));
+    }
+
+    #[test]
+    fn test_d321_assisted_reset_reauth_failure() {
+        let mut conn = seeded_connection();
+        let store = SessionStore::new();
+
+        let res = admin_reset_local_account_password_conn(
+            &mut conn,
+            &store,
+            1, // adman
+            LocalPasswordResetInput {
+                id: 2, // alice
+                new_password: "NewSafePassword123!".to_string(),
+                actor_password: Some("WrongPassword999!".to_string()),
+                verification_method: Some("in_person".to_string()),
+            },
+        );
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), "incorrect super admin password");
+
+        let fail_audit: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM audit_logs WHERE event_type = 'account.assisted_reset_actor_reauth_failed'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(fail_audit, 1);
+    }
+
+    #[test]
+    fn test_d321_assisted_reset_verification_method_validation() {
+        let mut conn = seeded_connection();
+        let store = SessionStore::new();
+
+        // Invalid method
+        let res_invalid = admin_reset_local_account_password_conn(
+            &mut conn,
+            &store,
+            1,
+            LocalPasswordResetInput {
+                id: 2,
+                new_password: "NewSafePassword123!".to_string(),
+                actor_password: Some("Aswhite2026".to_string()),
+                verification_method: Some("unknown_method".to_string()),
+            },
+        );
+        assert!(res_invalid.is_err());
+        assert!(res_invalid.unwrap_err().contains("valid verification method is required"));
+
+        // Valid methods: in_person, phone_video, internal_channel
+        for method in ["in_person", "phone_video", "internal_channel"] {
+            let res_valid = admin_reset_local_account_password_conn(
+                &mut conn,
+                &store,
+                1,
+                LocalPasswordResetInput {
+                    id: 2,
+                    new_password: "NewSafePassword123!".to_string(),
+                    actor_password: Some("Aswhite2026".to_string()),
+                    verification_method: Some(method.to_string()),
+                },
+            );
+            assert!(res_valid.is_ok(), "Method {method} must succeed");
+        }
+    }
+
+    #[test]
+    fn test_d321_assisted_reset_peer_super_admin_success() {
+        let mut conn = seeded_connection();
+        let store = SessionStore::new();
+
+        // Seed second super admin
+        let super2_hash = hash_password("SuperAdmin2Pass123!").expect("hash super2");
+        conn.execute(
+            r#"
+            INSERT INTO app_local_accounts(
+              account_key, display_name, username, password_hash,
+              recovery_code_hash, force_password_reset, role, created_at, updated_at
+            )
+            VALUES ('super2', 'Super2', 'super2', ?, NULL, 0, 'super_admin', datetime('now'), datetime('now'))
+            "#,
+            params![super2_hash],
+        )
+        .expect("seed super2");
+
+        let super2_id: i64 = conn
+            .query_row("SELECT id FROM app_local_accounts WHERE username = 'super2'", [], |r| r.get(0))
+            .unwrap();
+
+        // adman (id 1) assists super2 (peer super admin reset)
+        let res = admin_reset_local_account_password_conn(
+            &mut conn,
+            &store,
+            1,
+            LocalPasswordResetInput {
+                id: super2_id,
+                new_password: "ResetPeerSuperPass123!".to_string(),
+                actor_password: Some("Aswhite2026".to_string()),
+                verification_method: Some("phone_video".to_string()),
+            },
+        );
+        assert!(res.is_ok());
+
+        // Target role remains super_admin
+        let role: String = conn
+            .query_row("SELECT role FROM app_local_accounts WHERE id = ?", params![super2_id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(role, "super_admin");
+    }
+
+    #[test]
+    fn test_d321_assisted_reset_enforces_policy_force_reset_and_epoch() {
+        let mut conn = seeded_connection();
+        super::super::set_setting_value(&conn, SECURITY_POLICY_SETTING_KEY, Some("strict")).unwrap();
+        let store = SessionStore::new();
+        store.switch_policy(SecurityPolicyMode::Strict);
+
+        // Reject password shorter than 12 in Strict mode
+        let res_short = admin_reset_local_account_password_conn(
+            &mut conn,
+            &store,
+            1,
+            LocalPasswordResetInput {
+                id: 2,
+                new_password: "short8ch".to_string(),
+                actor_password: Some("Aswhite2026".to_string()),
+                verification_method: Some("internal_channel".to_string()),
+            },
+        );
+        assert!(res_short.is_err());
+        assert!(res_short.unwrap_err().contains("password must be at least 12 characters"));
+
+        // Valid 12+ chars succeeds
+        let initial_epoch: i64 = conn
+            .query_row("SELECT token_epoch FROM app_local_accounts WHERE id = 2", [], |r| r.get(0))
+            .unwrap();
+
+        let res_ok = admin_reset_local_account_password_conn(
+            &mut conn,
+            &store,
+            1,
+            LocalPasswordResetInput {
+                id: 2,
+                new_password: "StrictSafePassword123!".to_string(),
+                actor_password: Some("Aswhite2026".to_string()),
+                verification_method: Some("internal_channel".to_string()),
+            },
+        );
+        assert!(res_ok.is_ok());
+
+        // Verify force_password_reset = 1 and token_epoch incremented
+        let (force_reset, new_epoch, role): (i64, i64, String) = conn
+            .query_row(
+                "SELECT force_password_reset, token_epoch, role FROM app_local_accounts WHERE id = 2",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+
+        assert_eq!(force_reset, 1, "force_password_reset must be set to 1");
+        assert_eq!(new_epoch, initial_epoch + 1, "token_epoch must increment by 1");
+        assert_eq!(role, "user", "role must be preserved untouched");
+
+        // Verify audit log
+        let count_audit: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM audit_logs WHERE event_type = 'account.admin_assisted_password_reset'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count_audit, 1);
     }
 }

@@ -436,7 +436,11 @@ export function useAuthState({
             setGlobalError("New password must be at least 12 characters.")
             return
         }
-        const newRecoveryCode = window.prompt("Optional new recovery code", "") ?? ""
+        const actorPassword = window.prompt("Enter your current Super Admin password to confirm reset", "") ?? ""
+        if (!actorPassword.trim()) {
+            setGlobalError("Super Admin password is required to confirm reset.")
+            return
+        }
 
         try {
             setMutatingAccounts(true)
@@ -445,7 +449,8 @@ export function useAuthState({
                 adminAccountId: activeAccId,
                 targetAccountId: account.id,
                 newPassword: newPassword.trim(),
-                newRecoveryCode: newRecoveryCode.trim() || null,
+                actorPassword: actorPassword.trim(),
+                verificationMethod: "in_person",
             })
             triggerReload()
         } catch (error) {

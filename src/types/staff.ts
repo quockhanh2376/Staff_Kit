@@ -689,6 +689,8 @@ export type LocalPasswordResetInput = {
   targetAccountId: number
   newPassword: string
   newRecoveryCode?: string | null
+  actorPassword?: string
+  verificationMethod?: "in_person" | "phone_video" | "internal_channel"
 }
 
 export type LocalForgotPasswordInput = {

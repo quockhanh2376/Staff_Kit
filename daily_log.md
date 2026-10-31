@@ -3749,3 +3749,48 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
   - `npm run test:tauri`: PASSED (463/463 tests passed)
   - Invariants: 0 changes to live/production DB, 0 changes to SQLCipher encryption key, no Emergency Package, no rekey, no new GitHub Release.
 
+## 2026-10-31 Staff Kit D3.21: Super Admin-Assisted Password Reset — Start
+
+- Branch: `main`
+- Scope: D3.21 Super Admin-Assisted Password Reset ONLY.
+- Objectives:
+  1. Secure existing `admin_reset_local_account_password`: Super Admin only (`require_super_admin`); block self-reset (`actor_id != target_id`).
+  2. Allow a different Super Admin to assist another Super Admin (peer dual control).
+  3. Require actor password reauthentication (Argon2id).
+  4. Verification method only: `in_person` / `phone_video` / `internal_channel`. No ticket ID.
+  5. Enforce Standard/Strict password policy (`min_password_length`).
+  6. Set `force_password_reset = 1` and increment `token_epoch` in DB.
+  7. Revoke target sessions; preserve role, Recovery Codes and business data.
+  8. Record Security Audit without passwords or secrets.
+  9. Focused TDD and isolated disposable DB only.
+
+## 2026-10-31 Staff Kit D3.21: Super Admin-Assisted Password Reset — End
+
+- Implementation:
+  1. `src-tauri/src/db/auth.rs`:
+     - Rewrote `admin_reset_local_account_password` and `admin_reset_local_account_password_conn` to enforce D3.21 rules:
+       * Self-reset strictly blocked (`actor_account_id != target_id`).
+       * Role authorization restricted to Super Admin only.
+       * Required actor password reauthentication (Argon2id).
+       * Validated verification method: `in_person`, `phone_video`, or `internal_channel` (no ticket reference).
+       * Peer Super Admin reset enabled (Super Admin A can assist Super Admin B).
+       * Enforced Standard/Strict password policy (`min_password_length`).
+       * Atomic transaction updating `password_hash`, setting `force_password_reset = 1`, and incrementing `token_epoch = token_epoch + 1`.
+       * Revoked target active sessions (`session_store.invalidate_account`) and safely unlocked target account (`session_store.unlock_account`).
+       * Recorded Security Audit (`account.admin_assisted_password_reset`) with actor, target, verification method, without secrets or passwords.
+     - Added 6 automated tests covering D3.21 requirements (`test_d321_*`).
+  2. `src-tauri/src/lib.rs`:
+     - Moved `admin_reset_local_account_password` from `ADMIN_COMMANDS` to `SUPER_ADMIN_COMMANDS`.
+     - Upgraded command guard from `require_admin` to `require_super_admin`, passing verified `ctx.account_id` as actor.
+     - Added assertion in command classification tests.
+  3. Frontend (`src/types/staff.ts`, `src/services/staff-api.ts`, `src/features/auth/useAuthState.ts`):
+     - Updated types and API wrapper to pass `actorPassword` and `verificationMethod`.
+     - Updated `handleAdminResetPassword` to prompt for actor reauthentication password.
+- Verification:
+  - `npm run check:quality`: PASSED (0 eslint errors, tsc typecheck clean, vite build clean, cargo check clean)
+  - `npm run test:unit`: PASSED (45 files, 353/353 tests passed)
+  - `npm run test:tauri`: PASSED (469/469 tests passed, including 6 new D3.21 tests)
+  - Invariants: 0 schema changes, 0 live DB writes, 0 MSSQL writes, all worktrees and untracked files preserved.
+
+
+
