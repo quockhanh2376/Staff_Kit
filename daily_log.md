@@ -3792,5 +3792,68 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
   - `npm run test:tauri`: PASSED (469/469 tests passed, including 6 new D3.21 tests)
   - Invariants: 0 schema changes, 0 live DB writes, 0 MSSQL writes, all worktrees and untracked files preserved.
 
+## 2026-10-31 Staff Kit D3.7–D3.10: Security Audit Remediation & Export Risk Design Review
+
+- Scope: DESIGN ONLY — Zero code changes, zero DB writes, zero migrations, zero rekeying, zero Release.
+- Design Specification (Victor):
+  1. Remediation of missing audit events:
+     - Authentication: `security.auth.login_success`, `security.auth.login_failed`, `security.auth.logout`, `security.auth.password_change`.
+     - Account Lifecycle: `security.account.created`, `security.account.updated` (role diff), `security.account.deleted`.
+     - Import/Export: `business.import.excel` (row counts, file name), `business.import.mssql` (status, records), `business.export.file` (type, record count, bytes, checksum).
+     - Database Ops: `security.database.backup_manual`, `security.database.move`, `security.database.reset_all_data`.
+  2. Schema & Permission Model:
+     - Reuses existing `audit_logs` table (`id`, `event_type`, `actor_type`, `actor_ref`, `entity_type`, `entity_id`, `payload_json`, `created_at`).
+     - Events classified by prefix: `security.*` vs `business.*`.
+     - Server-side authorization: Super Admin can query all events (`security.*` + `business.*`); Admin query is strictly constrained by backend to `business.*`; any unknown legacy event defaults to Super Admin only.
+  3. Read-only Audit Viewer:
+     - Backend IPC command: `query_audit_logs(session_token, filter)` guarded by `require_admin`.
+     - Parameterized SQL enforces `event_type LIKE 'business.%'` for non-super-admins, ignoring client override attempts.
+     - Simple paginated table UI with sanitized summaries.
+  4. Tamper-evident External Journal:
+     - Dedicated external journal file `audit_critical.ledger` in the database directory, reusing `RecoveryLedger`'s SHA-256 hash chaining and HMAC block integrity.
+     - Dedicated file avoids coupling high-frequency audit logs with `ledger.rev` USB mirror fail-closed requirements.
+     - Mirrored critical events (`database.restore`, `reset_all_data`, `admin_assisted_password_reset`, `role_changed`) survive DB restore without rollback erasure.
+  5. Export Path Restrictions (D3.10):
+     - Replace frontend-supplied arbitrary paths with native Tauri blocking save dialog in Rust (`tauri-plugin-dialog`), preventing path traversal and arbitrary filesystem overwrite.
+     - Record `business.export.file` audit entry upon completion with actor, record count, and file hash.
+  6. 3-Year Retention & Immutability:
+     - Enforced via SQLite triggers: `trg_audit_logs_no_update` (100% immutable) and `trg_audit_logs_no_delete` (blocks deletion of records where `created_at >= datetime('now', '-1095 days')`).
+     - Routine maintenance prune drops records older than 1,095 days.
+- Independent Review (Qeen):
+  - Role bypass through direct IPC: Prevented; role-based filter enforced in Rust command handler.
+  - Missing or sensitive audit data: No passwords, hashes, recovery codes, or session tokens in payloads; minimum PII principle preserved.
+  - Restore rollback / Audit erasure: Mitigated by `audit_critical.ledger` external to SQLite file.
+  - Export arbitrary-path write: Closed by native backend file picker.
+  - Crash safety & compatibility: Local-first external ledger avoids deadlock or USB dependency during normal operations.
+- Verdict: DESIGN PASS.
+
+## 2026-10-31 Staff Kit SA-1: Secure Export & Audit Restore Protection — Start
+
+- Scope: SA-1 implementation only.
+  1. Secure Export path validation + audit in `write_export_file` / native save dialog.
+  2. Audit Restore Protection: authenticated tamper-evident `audit_critical.ledger` preserving critical security events across DB Restore.
+  3. Zero modifications to `RecoveryLedger` / `ledger.rev`.
+  4. Disposable isolated test DB for all automated tests.
+
+## 2026-10-31 Staff Kit SA-1: Secure Export & Audit Restore Protection — End
+
+- Implementation Summary:
+  1. `src-tauri/src/db/audit_journal.rs`:
+     - Standalone authenticated tamper-evident ledger (`audit_critical.ledger`) completely isolated from `RecoveryLedger`.
+     - HMAC-SHA256 authenticated header and chained blocks (`prev_block_hash`), HKDF derived master key, fsync `sync_all()`.
+     - Records critical audit events: `security.database.restore_initiated`, `security.database.restore_completed`, `security.database.restore_failed`.
+     - Survives DB restore and DB file replacement without audit erasure.
+  2. `src-tauri/src/db/backup.rs`:
+     - Integrated `audit_critical.ledger` logging into `restore_database_internal`.
+     - Preserves journal file across DB file swaps and rolls back / records failure on error.
+  3. `src-tauri/src/lib.rs`:
+     - Implemented `validate_export_path` rejecting path traversal (`..`), system directories (`Windows`, `System32`, `Program Files`), internal database directories, null bytes, and non-whitelisted extensions (allowed: `.csv`, `.xlsx`, `.json`, `.txt`, `.pdf`).
+     - Added destination hashing (SHA-256) and audit logging for `business.export.file` in `write_export_file`.
+- Verification Outcomes:
+  - Quality Gate: `npm run check:quality` (0 lint errors, tsc strict clean, vite build clean, cargo check clean).
+  - Frontend Unit Tests: 353/353 passed.
+  - Rust Tauri Tests: 478/478 passed (including 4 new audit journal tests, 5 export validation tests, and 2 restore ledger integration tests).
+  - Total Tests: 831/831 passed.
+  - Security Invariants: Zero modifications to `RecoveryLedger` (`ledger.rev`), zero live/production DB changes, zero MSSQL writes, zero schema migrations.
 
 

@@ -578,6 +578,24 @@ fn execute_staged_replacement_with_rollback(
         let _ = fs::remove_file(&shm_bak);
     }
 
+    // Record restore initiation in external tamper-evident journal (D3.7/D3.9 / SA-1)
+    let journal_path = destination_path.with_file_name(super::audit_journal::AUDIT_JOURNAL_FILENAME);
+    let master_key = super::APP_DB_ENCRYPTION_KEY.as_bytes();
+    let init_payload = json!({
+        "action": "database.restore_initiated",
+        "source": source_path.to_string_lossy(),
+        "safetySnapshot": snapshot_filename,
+    })
+    .to_string();
+    let _ = super::audit_journal::record_critical_audit_event(
+        &journal_path,
+        master_key,
+        "security.database.restore_initiated",
+        actor_account_id.map(|id| id.to_string()).as_deref(),
+        "database",
+        &init_payload,
+    );
+
     let original_existed = destination_path.exists();
     if original_existed {
         fs::rename(destination_path, &orig_bak)
@@ -644,6 +662,22 @@ fn execute_staged_replacement_with_rollback(
             Some(&audit_payload),
         );
 
+        let comp_payload = json!({
+            "action": "database.restore_completed",
+            "source": source_path.to_string_lossy(),
+            "status": "SUCCESS",
+            "safetySnapshot": snapshot_filename,
+        })
+        .to_string();
+        let _ = super::audit_journal::record_critical_audit_event(
+            &journal_path,
+            master_key,
+            "security.database.restore_completed",
+            actor_account_id.map(|id| id.to_string()).as_deref(),
+            "database",
+            &comp_payload,
+        );
+
         Ok(())
     })();
 
@@ -682,6 +716,23 @@ fn execute_staged_replacement_with_rollback(
                 Some(&audit_payload),
             );
         }
+
+        let fail_payload = json!({
+            "action": "database.restore_failed",
+            "source": source_path.to_string_lossy(),
+            "status": "FAILED",
+            "error": verify_err,
+            "safetySnapshot": snapshot_filename,
+        })
+        .to_string();
+        let _ = super::audit_journal::record_critical_audit_event(
+            &journal_path,
+            master_key,
+            "security.database.restore_failed",
+            actor_account_id.map(|id| id.to_string()).as_deref(),
+            "database",
+            &fail_payload,
+        );
 
         return Err(format!(
             "restored database verification failed; original database has been recovered intact: {verify_err}"
@@ -1702,6 +1753,8 @@ mod tests {
             let candidate = PathBuf::from(format!("{}{suffix}", path.to_string_lossy()));
             let _ = std::fs::remove_file(candidate);
         }
+        let journal_path = path.with_file_name(super::super::audit_journal::AUDIT_JOURNAL_FILENAME);
+        let _ = std::fs::remove_file(journal_path);
     }
 
     fn create_legacy_database(path: &Path) {
@@ -2424,6 +2477,17 @@ mod tests {
         ).unwrap();
         assert!(audit_count >= 1, "Failed restore must be audited");
 
+        // Verify external critical audit journal recorded failure across rollback (D3.7/D3.9 / SA-1)
+        let journal_path = destination.with_file_name(super::super::audit_journal::AUDIT_JOURNAL_FILENAME);
+        let master_key = super::super::APP_DB_ENCRYPTION_KEY.as_bytes();
+        let verified_journal = super::super::audit_journal::AuditJournal::open_and_verify(&journal_path, master_key)
+            .expect("critical audit journal must verify after failure");
+        assert!(verified_journal.block_count >= 2);
+        let blocks = verified_journal.read_all_blocks().expect("read journal blocks");
+        assert_eq!(blocks[0].event_type, "security.database.restore_initiated");
+        assert_eq!(blocks[1].event_type, "security.database.restore_failed");
+        let _ = std::fs::remove_file(&journal_path);
+
         remove_database_files(&destination);
         remove_database_files(&source);
     }
@@ -2470,6 +2534,17 @@ mod tests {
         assert_eq!(actor_ref.as_deref(), Some("99"));
         assert!(payload.as_deref().unwrap().contains("SUCCESS"));
 
+        // Verify external critical audit journal survived and verified (D3.7/D3.9 / SA-1)
+        let journal_path = destination.with_file_name(super::super::audit_journal::AUDIT_JOURNAL_FILENAME);
+        let master_key = super::super::APP_DB_ENCRYPTION_KEY.as_bytes();
+        let verified_journal = super::super::audit_journal::AuditJournal::open_and_verify(&journal_path, master_key)
+            .expect("critical audit journal must verify");
+        assert!(verified_journal.block_count >= 2);
+        let blocks = verified_journal.read_all_blocks().expect("read journal blocks");
+        assert_eq!(blocks[0].event_type, "security.database.restore_initiated");
+        assert_eq!(blocks[1].event_type, "security.database.restore_completed");
+
+        let _ = std::fs::remove_file(&journal_path);
         remove_database_files(&destination);
         remove_database_files(&source);
     }

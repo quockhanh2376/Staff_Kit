@@ -26,6 +26,7 @@ use schema::*;
 pub(crate) mod asset;
 pub(crate) mod asset_import;
 pub(crate) mod audit;
+pub mod audit_journal;
 pub mod auth;
 pub mod backup;
 pub mod borrow;
