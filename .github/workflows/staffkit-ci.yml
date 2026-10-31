@@ -1,0 +1,52 @@
+name: Staff Kit CI
+
+on:
+  push:
+    paths:
+      - "src/**"
+      - "src-tauri/**"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig*.json"
+      - "vite.config.ts"
+      - "eslint.config.js"
+      - ".github/workflows/staffkit-ci.yml"
+  pull_request:
+    paths:
+      - "src/**"
+      - "src-tauri/**"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig*.json"
+      - "vite.config.ts"
+      - "eslint.config.js"
+      - ".github/workflows/staffkit-ci.yml"
+
+jobs:
+  quality-gate:
+    name: Quality Gate & Tests (Windows)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Run Quality Gate (lint, typecheck, build, cargo check)
+        run: npm run check:quality
+
+      - name: Run Frontend Unit Tests (Vitest)
+        run: npm run test:unit
+
+      - name: Run Backend Rust Tests (Cargo test)
+        run: npm run test:tauri

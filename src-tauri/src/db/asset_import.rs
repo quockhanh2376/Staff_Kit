@@ -2633,8 +2633,10 @@ fn create_owner_aware_import_loan_tx(
 }
 
 fn normalize_header_key(value: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+
     value
-        .chars()
+        .nfc()
         .filter(|ch| ch.is_alphanumeric())
         .flat_map(|ch| ch.to_lowercase())
         .collect::<String>()

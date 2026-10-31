@@ -1738,20 +1738,24 @@ pub(crate) fn humanize_sqlite_error(err: rusqlite::Error) -> String {
 }
 
 pub(crate) fn require_text(value: String, field_name: &str) -> Result<String, String> {
+    use unicode_normalization::UnicodeNormalization;
+
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return Err(format!("{field_name} is required"));
     }
-    Ok(trimmed.to_string())
+    Ok(trimmed.nfc().collect::<String>())
 }
 
 pub(crate) fn normalize_optional_text(value: Option<String>) -> Option<String> {
+    use unicode_normalization::UnicodeNormalization;
+
     value.and_then(|raw| {
         let trimmed = raw.trim();
         if trimmed.is_empty() || trimmed == "0" {
             None
         } else {
-            Some(trimmed.to_string())
+            Some(trimmed.nfc().collect::<String>())
         }
     })
 }
@@ -1796,10 +1800,13 @@ pub(crate) fn normalize_date_text(value: &str) -> Option<String> {
 }
 
 pub(crate) fn normalize_dynamic_key(value: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+
     let mut output = String::new();
     let mut last_is_separator = false;
+    let nfc = value.trim().nfc().collect::<String>();
 
-    for ch in value.trim().chars() {
+    for ch in nfc.chars() {
         if ch.is_alphanumeric() {
             output.push(ch.to_ascii_lowercase());
             last_is_separator = false;
@@ -1882,8 +1889,10 @@ pub(crate) fn normalize_staff_group(value: &str) -> Option<&'static str> {
 }
 
 fn normalize_header_key(value: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+
     value
-        .chars()
+        .nfc()
         .filter(|ch| ch.is_alphanumeric())
         .flat_map(|ch| ch.to_lowercase())
         .collect::<String>()
@@ -2013,6 +2022,27 @@ mod tests {
             )
             .expect("count legacy fields");
         assert_eq!(legacy_count, 0);
+    }
+
+    #[test]
+    fn unicode_nfc_normalization_preserves_vietnamese_text_from_nfd_input() {
+        use unicode_normalization::UnicodeNormalization;
+
+        let nfc_name = "Nguyễn Văn Đức";
+        let nfd_name: String = nfc_name.nfd().collect();
+        assert_ne!(nfc_name, nfd_name.as_str());
+
+        let normalized_req = require_text(nfd_name.clone(), "name").expect("require text");
+        assert_eq!(normalized_req, nfc_name);
+
+        let normalized_opt = normalize_optional_text(Some(nfd_name.clone())).expect("optional text");
+        assert_eq!(normalized_opt, nfc_name);
+
+        let nfc_header = "Họ và tên";
+        let nfd_header: String = nfc_header.nfd().collect();
+        assert_eq!(normalize_header_key(nfc_header), normalize_header_key(&nfd_header));
+
+        assert_eq!(normalize_dynamic_key(nfc_name), normalize_dynamic_key(&nfd_name));
     }
 
     #[test]

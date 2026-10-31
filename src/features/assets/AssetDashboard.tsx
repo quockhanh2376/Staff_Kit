@@ -981,6 +981,10 @@ function SerializedDashboardTable({
   filteredRows: AssetDashboardState["serializedRows"]
   searchTerm: string
 }) {
+  const [rowsPerPage, setRowsPerPage] = useState<number>(25)
+  const [page, setPage] = useState<number>(1)
+  const [prevFilterKey, setPrevFilterKey] = useState<string>("")
+
   const serializedGrid = useSerializedAssetGridState({
     activeUserScope,
     rows: filteredRows,
@@ -1001,6 +1005,22 @@ function SerializedDashboardTable({
   } = serializedGrid
 
   const firstVisibleColumnKey = orderedColumns[0]?.key ?? null
+
+  const totalPages = Math.max(1, Math.ceil(sortedRows.length / rowsPerPage))
+
+  // Reset to page 1 during render when filters or search change
+  const filterKey = `${filteredRows.length}-${searchTerm}-${rowsPerPage}`
+  if (filterKey !== prevFilterKey) {
+    setPrevFilterKey(filterKey)
+    setPage(1)
+  }
+
+  const currentPage = Math.min(Math.max(1, page), totalPages)
+
+  const paginatedRows = useMemo(() => {
+    const startIndex = (currentPage - 1) * rowsPerPage
+    return sortedRows.slice(startIndex, startIndex + rowsPerPage)
+  }, [sortedRows, currentPage, rowsPerPage])
 
   if (assetDashboard.isLoadingDashboard && assetDashboard.serializedRows.length === 0) {
     return (
@@ -1097,7 +1117,7 @@ function SerializedDashboardTable({
                 </tr>
               </thead>
               <tbody>
-                {sortedRows.map((row) => (
+                {paginatedRows.map((row) => (
                   <tr key={row.assetId} className="border-t border-[var(--border)] align-top">
                     {orderedColumns.map((column) => {
                       const cellText = getCellSearchText(column.key, row)
@@ -1123,6 +1143,48 @@ function SerializedDashboardTable({
                 ))}
               </tbody>
             </table>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-3 px-1 py-1 text-sm text-[var(--text-secondary)]">
+            <div className="text-xs">
+              Showing {sortedRows.length === 0 ? 0 : (currentPage - 1) * rowsPerPage + 1}–{Math.min(currentPage * rowsPerPage, sortedRows.length)} of {sortedRows.length} assets
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-[var(--text-secondary)]">Rows:</label>
+              <select
+                className="rounded-[8px] border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-sm text-[var(--text-primary)]"
+                value={rowsPerPage}
+                onChange={(event) => {
+                  setRowsPerPage(Number(event.target.value))
+                  setPage(1)
+                }}
+                aria-label="Rows per page"
+              >
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+              </select>
+              <div className="ml-3 flex items-center gap-1">
+                <button
+                  className="pager-button"
+                  disabled={currentPage <= 1}
+                  onClick={() => setPage((v) => Math.max(1, v - 1))}
+                  type="button"
+                >
+                  Previous
+                </button>
+                <span className="px-2 text-sm text-[var(--text-secondary)]">
+                  {currentPage}/{totalPages}
+                </span>
+                <button
+                  className="pager-button"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setPage((v) => Math.min(totalPages, v + 1))}
+                  type="button"
+                >
+                  Next
+                </button>
+              </div>
             </div>
           </div>
           <AssetDashboardColumnsDrawer

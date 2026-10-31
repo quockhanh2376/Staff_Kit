@@ -3980,9 +3980,57 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
   - Total Tests: 854/854 passed.
   - Security Invariants: Zero modifications to `RecoveryLedger` (`ledger.rev`), zero live/production DB changes, zero SQLCipher rekey, zero emergency recovery activation.
 
+## 2026-10-31 Staff Kit: Performance & DevOps Focused Fix — Start
+
+- Planned Scope:
+  1. DEVOPS-001 — GitHub Actions CI:
+     - Add `.github/workflows/staffkit-ci.yml` running on `windows-latest`.
+     - Trigger on changes to Staff Kit files (`src/**`, `src-tauri/**`, package files, CI workflow) on push/PR.
+     - Execute `npm run check:quality` and `npm run test:unit`.
+  2. PERF-18 / BUG-002 — Employee Search:
+     - Add 250ms debounce before `staffApi.searchEmployees` IPC in `useEmployeeState.ts`.
+     - Implement monotonic request-id / cancellation guard to prevent stale responses overwriting newer searches.
+  3. BUG-001 — Unicode NFC:
+     - Normalize text inputs and Excel headers to NFC using `unicode_normalization::UnicodeNormalization::nfc` in `src-tauri/src/db/mod.rs` (`normalize_optional_text`, `normalize_dynamic_field_key`, and Excel column mapping).
+  4. PERF-02 — Asset Dashboard:
+     - Add client-side pagination (25 / 50 / 100 rows per page) in `AssetDashboard.tsx` for serialized asset table.
+     - Reset/clamp page index on filter or search updates.
+- Constraints: TDD with isolated disposable test DBs, zero changes to production DB, zero changes to `RecoveryLedger` (`ledger.rev`), zero rekeys.
 
 
 
 
 
 
+
+
+
+## 2026-10-31 Staff Kit: Performance & DevOps Focused Fix — End
+
+- Lead / Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Outcomes & Delivered Fixes:
+  1. DEVOPS-001 — GitHub Actions CI:
+     - Added `.github/workflows/staffkit-ci.yml` running on `windows-latest`.
+     - Triggers on push and pull request for Staff_Kit code paths (`src/**`, `src-tauri/**`, `package.json`, `package-lock.json`, `.npmrc`, `.github/workflows/staffkit-ci.yml`).
+     - Executes `npm ci`, `npm run check:quality` (lint, strict typecheck, Vite build, cargo check), `npm run test:unit`, and `npm run test:tauri`.
+     - Preserved existing `web-build-no-db.yml`. No automated deployment or release publication.
+  2. PERF-18 / BUG-002 — Employee Search Debounce & Stale Response Drop:
+     - In `src/features/employees/useEmployeeState.ts`, added 250ms debounce before `staffApi.searchEmployees` IPC (immediate execution when clearing search term).
+     - Added monotonic `searchRequestIdRef` guard to discard stale in-flight responses if a newer request finishes first.
+     - Preserved all filters, sort orders, and pagination behavior. Added 3 comprehensive Vitest tests in `useEmployeeState.search.test.tsx`.
+  3. BUG-001 — Unicode NFC Normalization:
+     - In `src-tauri/src/db/mod.rs`, `src-tauri/src/db/import.rs`, `src-tauri/src/db/asset_import.rs`, `src-tauri/src/db/employee.rs`, and `src-tauri/src/db/mssql_import.rs`, integrated `unicode_normalization::UnicodeNormalization::nfc`.
+     - Applied NFC normalization to `require_text`, `normalize_optional_text`, `normalize_dynamic_key`, `normalize_header_key`, and `normalize_sync_text`.
+     - Prevents stripped combining marks when filtering alphanumeric characters from decomposed NFD inputs and ensures consistent exact/LIKE searches in Vietnamese accented text.
+     - Added unit test `unicode_nfc_normalization_preserves_vietnamese_text_from_nfd_input` in Rust test suite.
+  4. PERF-02 — Asset Dashboard Client-Side Pagination:
+     - In `src/features/assets/AssetDashboard.tsx` (`SerializedDashboardTable`), added client-side pagination with selectable 25 / 50 / 100 rows per page (default: 25).
+     - Implemented render-phase state adjustment to reset page to 1 whenever filters or search terms change, and clamp page if row count shrinks.
+     - Rendered pager controls ("Showing X–Y of Z assets", rows per page select, Previous/Next buttons).
+     - Added 4 comprehensive Vitest tests in `AssetDashboard.pagination.test.tsx`.
+- Validation Evidence:
+  - Full Quality Gate: `npm run check:quality` PASSED (0 ESLint errors, strict typecheck clean, Vite production bundle clean, cargo check clean).
+  - Vitest: 366/366 passed across 48 test files (+7 new tests).
+  - Rust Backend: All tests passed.
+  - Invariants: Zero writes to production database, zero modifications to `RecoveryLedger` (`ledger.rev`), zero SQLCipher rekey, zero emergency recovery activation.
+- Status: PASS.

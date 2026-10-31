@@ -1338,8 +1338,10 @@ fn normalize_sort_direction(input: Option<&str>) -> &'static str {
 }
 
 fn normalize_header_key(value: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+
     value
-        .chars()
+        .nfc()
         .filter(|ch| ch.is_alphanumeric())
         .flat_map(|ch| ch.to_lowercase())
         .collect::<String>()

@@ -1466,10 +1466,12 @@ fn normalized_staff_code(value: &str) -> String {
 }
 
 fn normalize_sync_text(value: Option<&str>) -> Option<String> {
+    use unicode_normalization::UnicodeNormalization;
+
     value
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(str::to_string)
+        .map(|v| v.nfc().collect::<String>())
 }
 
 fn compare_employee_list(

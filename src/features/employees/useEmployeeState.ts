@@ -24,6 +24,7 @@ export function useEmployeeState({
     const [teams, setTeams] = useState<TeamRecord[]>([])
     const [totalEmployees, setTotalEmployees] = useState(0)
     const [searchTerm, setSearchTerm] = useState("")
+    const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("")
     const [staffGroupFilter, setStaffGroupFilter] = useState<StaffGroupKey>("employee_list")
     const [teamFilter, setTeamFilter] = useState(ALL_TEAMS_OPTION)
     const [teamFilterSearchTerm, setTeamFilterSearchTerm] = useState("")
@@ -52,6 +53,19 @@ export function useEmployeeState({
 
     const teamFilterMenuRef = useRef<HTMLDivElement | null>(null)
     const mssqlAutoDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const searchRequestIdRef = useRef(0)
+
+    // Debounce search term by 250ms (instant on empty)
+    useEffect(() => {
+        if (!searchTerm) {
+            setDebouncedSearchTerm("")
+            return
+        }
+        const timer = setTimeout(() => {
+            setDebouncedSearchTerm(searchTerm)
+        }, 250)
+        return () => clearTimeout(timer)
+    }, [searchTerm])
 
     // Cleanup auto-dismiss timer on unmount
     useEffect(() => {
@@ -104,20 +118,21 @@ export function useEmployeeState({
     // Reset to page 1 when filters change
     useEffect(() => {
         setCurrentPage(1)
-    }, [searchTerm, staffGroupFilter, isFloatingFilterActive, teamFilter, startDateFilter, rowsPerPage, employeeSort])
+    }, [debouncedSearchTerm, staffGroupFilter, isFloatingFilterActive, teamFilter, startDateFilter, rowsPerPage, employeeSort])
 
     // Load employees
     useEffect(() => {
         if (!dbReady || !isAuthenticated) return
 
         let disposed = false
+        const requestId = ++searchRequestIdRef.current
 
         void (async () => {
             try {
                 setLoadingEmployees(true)
 
                 const response = await staffApi.searchEmployees({
-                    query: searchTerm.trim() ? searchTerm.trim() : null,
+                    query: debouncedSearchTerm.trim() ? debouncedSearchTerm.trim() : null,
                     staffGroup: staffGroupFilter,
                     isFloating: isFloatingFilterActive ? true : null,
                     teamName: teamFilter === ALL_TEAMS_OPTION ? null : teamFilter,
@@ -128,13 +143,17 @@ export function useEmployeeState({
                     offset: (currentPage - 1) * rowsPerPage,
                 })
 
-                if (disposed) return
+                if (disposed || requestId !== searchRequestIdRef.current) return
                 setEmployees(response.items)
                 setTotalEmployees(response.total)
             } catch (error) {
-                if (!disposed) setGlobalError(getUserErrorMessage(error))
+                if (!disposed && requestId === searchRequestIdRef.current) {
+                    setGlobalError(getUserErrorMessage(error))
+                }
             } finally {
-                if (!disposed) setLoadingEmployees(false)
+                if (!disposed && requestId === searchRequestIdRef.current) {
+                    setLoadingEmployees(false)
+                }
             }
         })()
 
@@ -142,7 +161,7 @@ export function useEmployeeState({
     }, [
         dbReady,
         isAuthenticated,
-        searchTerm,
+        debouncedSearchTerm,
         staffGroupFilter,
         isFloatingFilterActive,
         teamFilter,
