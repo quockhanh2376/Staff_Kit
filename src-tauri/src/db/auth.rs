@@ -186,6 +186,23 @@ pub fn create_local_account(
     .map_err(humanize_sqlite_error)?;
 
     let inserted_id = conn.last_insert_rowid();
+    let audit_payload = serde_json::json!({
+        "created_username": username,
+        "assigned_role": role,
+        "display_name": display_name,
+        "status": "SUCCESS",
+    })
+    .to_string();
+    let _ = super::audit::insert_audit_log_conn(
+        &conn,
+        "security.account.created",
+        "account",
+        None,
+        "account",
+        &inserted_id.to_string(),
+        Some(&audit_payload),
+    );
+
     load_local_account_by_id(&conn, inserted_id)
 }
 
@@ -229,6 +246,30 @@ pub fn update_local_account(
     )
     .map_err(humanize_sqlite_error)?;
 
+    let is_role_changed = existing.role != role;
+    let audit_payload = serde_json::json!({
+        "target_username": username,
+        "role": role,
+        "previous_role": existing.role,
+        "role_changed": is_role_changed,
+        "status": "SUCCESS",
+    })
+    .to_string();
+    let event_type = if is_role_changed {
+        "security.account.role_changed"
+    } else {
+        "security.account.updated"
+    };
+    let _ = super::audit::insert_audit_log_conn(
+        &conn,
+        event_type,
+        "account",
+        None,
+        "account",
+        &payload.id.to_string(),
+        Some(&audit_payload),
+    );
+
     load_local_account_by_id(&conn, payload.id)
 }
 
@@ -265,16 +306,21 @@ pub(crate) fn delete_local_account_conn(
 
     // Preserve at least one active super_admin so the deployment cannot be
     // locked out of all administrative functions.
-    let target_role: Option<String> = conn
+    let target_row: Option<(String, String)> = conn
         .query_row(
-            "SELECT role FROM app_local_accounts WHERE id = ?",
+            "SELECT username, role FROM app_local_accounts WHERE id = ?",
             params![id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()
-        .map_err(|err| format!("failed to load target account role: {err}"))?;
+        .map_err(|err| format!("failed to load target account: {err}"))?;
 
-    if target_role.as_deref() == Some(LOCAL_ACCOUNT_ROLE_SUPER_ADMIN) {
+    let (target_username, target_role) = match target_row {
+        Some(pair) => (pair.0, pair.1),
+        None => ("unknown".to_string(), "unknown".to_string()),
+    };
+
+    if target_role == LOCAL_ACCOUNT_ROLE_SUPER_ADMIN {
         let super_admin_count: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM app_local_accounts WHERE role = ?",
@@ -292,15 +338,35 @@ pub(crate) fn delete_local_account_conn(
         .execute("DELETE FROM app_local_accounts WHERE id = ?", params![id])
         .map_err(humanize_sqlite_error)?;
 
-    if changed > 0 && active_id == Some(id) {
-        let fallback_id: i64 = conn
-            .query_row(
-                "SELECT id FROM app_local_accounts ORDER BY created_at ASC, id ASC LIMIT 1",
-                [],
-                |row| row.get(0),
-            )
-            .map_err(|err| format!("failed to resolve fallback account after deletion: {err}"))?;
-        set_active_local_account_id(conn, fallback_id)?;
+    if changed > 0 {
+        let audit_payload = serde_json::json!({
+            "deleted_username": target_username,
+            "deleted_role": target_role,
+            "actor_account_id": actor_account_id,
+            "status": "SUCCESS",
+        })
+        .to_string();
+        let actor_str = actor_account_id.to_string();
+        let _ = super::audit::insert_audit_log_conn(
+            conn,
+            "security.account.deleted",
+            "account",
+            Some(&actor_str),
+            "account",
+            &id.to_string(),
+            Some(&audit_payload),
+        );
+
+        if active_id == Some(id) {
+            let fallback_id: i64 = conn
+                .query_row(
+                    "SELECT id FROM app_local_accounts ORDER BY created_at ASC, id ASC LIMIT 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|err| format!("failed to resolve fallback account after deletion: {err}"))?;
+            set_active_local_account_id(conn, fallback_id)?;
+        }
     }
 
     Ok(changed > 0)
@@ -375,6 +441,20 @@ pub(crate) fn login_local_account_conn(
 
     if !credentials_valid {
         session_store.record_failed_attempt_with_exemption(&username_raw, is_sole)?;
+        let fail_payload = serde_json::json!({
+            "reason": "invalid_credentials",
+            "status": "FAILED",
+        })
+        .to_string();
+        let _ = super::audit::insert_audit_log_conn(
+            conn,
+            "security.auth.login_failed",
+            "account",
+            Some(&username_raw),
+            "session",
+            "unknown",
+            Some(&fail_payload),
+        );
         return Err("incorrect username or password".to_string());
     }
 
@@ -388,6 +468,21 @@ pub(crate) fn login_local_account_conn(
     let account = load_local_account_by_id(conn, id)?;
     let role = crate::auth_session::Role::from_db_str(&account.role);
     let session_token = session_store.issue_session(account.id, &account.account_key, role);
+
+    let success_payload = serde_json::json!({
+        "role": account.role,
+        "status": "SUCCESS",
+    })
+    .to_string();
+    let _ = super::audit::insert_audit_log_conn(
+        conn,
+        "security.auth.login_success",
+        "account",
+        Some(&account.username),
+        "session",
+        &account.id.to_string(),
+        Some(&success_payload),
+    );
 
     // Keep the legacy "active account" UI hint in sync. This DB row is no longer
     // part of the authorization trust path (Phase A); it only drives the login
@@ -478,6 +573,20 @@ pub(crate) fn change_local_account_password_conn(
     };
 
     if !verify_password(payload.current_password.as_str(), stored_hash.as_str())? {
+        let fail_payload = serde_json::json!({
+            "reason": "incorrect_password",
+            "status": "FAILED",
+        })
+        .to_string();
+        let _ = super::audit::insert_audit_log_conn(
+            conn,
+            "security.auth.password_change_failed",
+            "account",
+            Some(&username),
+            "account",
+            &payload.id.to_string(),
+            Some(&fail_payload),
+        );
         return Err("current password is incorrect".to_string());
     }
 
@@ -487,6 +596,20 @@ pub(crate) fn change_local_account_password_conn(
         params![new_hash.as_str(), payload.id],
     )
     .map_err(humanize_sqlite_error)?;
+
+    let succ_payload = serde_json::json!({
+        "status": "SUCCESS",
+    })
+    .to_string();
+    let _ = super::audit::insert_audit_log_conn(
+        conn,
+        "security.auth.password_change",
+        "account",
+        Some(&username),
+        "account",
+        &payload.id.to_string(),
+        Some(&succ_payload),
+    );
 
     // Unlock account upon successful password change
     session_store.unlock_account(&username);

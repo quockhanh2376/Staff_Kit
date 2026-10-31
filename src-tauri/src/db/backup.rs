@@ -1499,6 +1499,24 @@ pub(crate) fn run_backup_on_connection(
 
     let retained_files = collect_auto_backup_files(backup_dir).len();
 
+    if !automatic {
+        let audit_payload = serde_json::json!({
+            "destination": final_path.to_string_lossy(),
+            "file_name": file_name,
+            "status": "SUCCESS",
+        })
+        .to_string();
+        let _ = super::audit::insert_audit_log_conn(
+            conn,
+            "security.database.backup_manual",
+            "account",
+            None,
+            "database",
+            &file_name,
+            Some(&audit_payload),
+        );
+    }
+
     Ok(BackupRunResult {
         backup_file_path: final_path.to_string_lossy().to_string(),
         retained_files: retained_files as i64,

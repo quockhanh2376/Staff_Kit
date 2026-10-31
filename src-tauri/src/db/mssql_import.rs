@@ -1889,6 +1889,26 @@ pub async fn apply_employee_list_sync(
         );
     }
     let counts = apply_employee_list_diff_tx(&tx, &source, &local, &non_employee_list_codes)?;
+
+    let audit_payload = serde_json::json!({
+        "new": counts.new,
+        "changed": counts.changed,
+        "unchanged": counts.unchanged,
+        "missing": counts.missing,
+        "conflicts": counts.conflicts,
+        "status": "SUCCESS",
+    })
+    .to_string();
+    let _ = super::audit::insert_audit_log_tx(
+        &tx,
+        "business.import.mssql",
+        "account",
+        None,
+        "sync",
+        "mssql_employee_list",
+        Some(&audit_payload),
+    );
+
     tx.commit()
         .map_err(|err| format!("failed to commit EE List update: {err}"))?;
 

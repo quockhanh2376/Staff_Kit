@@ -33,6 +33,8 @@ import type {
   AssetIntegrityCheckResult,
   SnapshotInfo,
   AssetDirectImportInput,
+  QueryAuditLogsInput,
+  QueryAuditLogsResult,
   AssetDirectImportPreview,
   AssetDirectImportReport,
   AssetImportBatchCreateInput,
@@ -180,6 +182,9 @@ export const staffApi = {
   // ── Guarded commands (require a session token) ─────────────────────────────
   writeExportFile: (path: string, contents: number[]) =>
     call<void>("write_export_file", { path, contents }),
+
+  queryAuditLogs: (filter: QueryAuditLogsInput) =>
+    call<QueryAuditLogsResult>("query_audit_logs", { filter }),
 
   getBackupSettings: () => call<BackupSettings>("get_backup_settings"),
 

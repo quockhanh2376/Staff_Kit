@@ -186,6 +186,18 @@ fn write_export_file(
 }
 
 #[tauri::command(async)]
+fn query_audit_logs(
+    app: tauri::AppHandle,
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    session_token: String,
+    filter: db::audit::QueryAuditLogsInput,
+) -> Result<db::audit::QueryAuditLogsResult, String> {
+    let ctx = auth_session::require_admin(&session_store, &session_token)?;
+    let conn = db::open_runtime_connection(&app)?;
+    db::audit::query_audit_logs(&conn, ctx.role, filter)
+}
+
+#[tauri::command(async)]
 fn init_database(app: tauri::AppHandle) -> Result<db::DatabaseStatus, String> {
     db::init_database(&app)
 }
@@ -364,9 +376,29 @@ fn login_local_account(
 
 #[tauri::command(async)]
 fn logout_local_account(
+    app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
     session_token: String,
 ) -> Result<(), String> {
+    if let Ok(ctx) = session_store.resolve_session(&session_token) {
+        if let Ok(conn) = db::open_runtime_connection(&app) {
+            let actor_str = ctx.account_id.to_string();
+            let payload = serde_json::json!({
+                "actor_account_id": ctx.account_id,
+                "status": "SUCCESS",
+            })
+            .to_string();
+            let _ = db::audit::insert_audit_log_conn(
+                &conn,
+                "security.auth.logout",
+                "account",
+                Some(&actor_str),
+                "session",
+                &actor_str,
+                Some(&payload),
+            );
+        }
+    }
     db::logout_local_account(&session_store, &session_token);
     Ok(())
 }
@@ -1590,6 +1622,7 @@ pub fn run() {
             probe_lan_server,
             // ── Guarded commands ───────────────────────────────────────────────
             write_export_file,
+            query_audit_logs,
             get_backup_settings,
             update_backup_settings,
             backup_database_now,
@@ -1756,6 +1789,7 @@ mod tests {
 
     const ADMIN_COMMANDS: &[&str] = &[
         "write_export_file",
+        "query_audit_logs",
         "get_backup_settings",
         "update_backup_settings",
         "backup_database_now",
@@ -2016,6 +2050,25 @@ mod tests {
 
     #[test]
     fn write_export_file_guard_rejects_no_token_before_filesystem_write() {
+        let store = auth_session::SessionStore::new();
+        assert_eq!(
+            auth_session::require_admin(&store, "").unwrap_err().code(),
+            auth_session::AUTH_REQUIRED
+        );
+    }
+
+    #[test]
+    fn query_audit_logs_guard_rejects_user_before_execution() {
+        let store = auth_session::SessionStore::new();
+        let token = store.issue_session(42, "user_key", auth_session::Role::User);
+        assert_eq!(
+            auth_session::require_admin(&store, &token).unwrap_err().code(),
+            auth_session::AUTH_FORBIDDEN
+        );
+    }
+
+    #[test]
+    fn query_audit_logs_guard_rejects_no_token() {
         let store = auth_session::SessionStore::new();
         assert_eq!(
             auth_session::require_admin(&store, "").unwrap_err().code(),

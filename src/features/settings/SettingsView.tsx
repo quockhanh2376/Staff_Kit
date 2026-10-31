@@ -1,4 +1,4 @@
-﻿import { useState } from "react"
+import { useState } from "react"
 import {
     AlertTriangle,
     Copy,
@@ -16,6 +16,7 @@ import {
     FolderOpen,
     HardDrive,
     Save,
+    Shield,
     ShieldAlert,
     ShieldCheck,
     Trash2,
@@ -33,6 +34,7 @@ import { getGroupCount } from "../../lib/utils"
 import { AssetDashboard } from "../assets/AssetDashboard"
 import { useIdleCollapse } from "./useIdleCollapse"
 import { RemoteEeSyncSettings } from "./RemoteEeSyncSettings"
+import { AuditLogViewer } from "./AuditLogViewer"
 
 import type { DataImportState } from '../import/useDataImportState'
 
@@ -94,6 +96,7 @@ export function SettingsView({
     const imp = importState
     const adminPortalCard = useIdleCollapse(60000, false)
     const databaseBackupCard = useIdleCollapse(60000, false)
+    const auditLogsCard = useIdleCollapse(60000, false)
     const [confirmedSaved, setConfirmedSaved] = useState(false)
     const [codesCopied, setCodesCopied] = useState(false)
 
@@ -1126,6 +1129,37 @@ export function SettingsView({
                 assetImport={assetImport}
                 triggerReload={triggerReload}
             />
+
+            {/* Audit Logs — Super Admin (all) & Admin (business only) */}
+            {auth.canAccessSettings && (
+                <div
+                    {...auditLogsCard.bindActivityHandlers}
+                    className="mt-4 overflow-hidden rounded-[16px] border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text-secondary)] shadow-[0_18px_42px_rgba(0,0,0,0.22)]"
+                >
+                    <div
+                        className={`cursor-pointer transition-colors hover:bg-[var(--surface-hover)] ${settingsCardHeaderClass} ${auditLogsCard.isExpanded ? "border-b border-[var(--border)]" : ""}`}
+                        onClick={() => auditLogsCard.setExpanded((current) => !current)}
+                    >
+                        <div className="flex items-center justify-between gap-3">
+                            <div className={settingsCardHeaderTitleClass}>
+                                <Shield size={20} className="shrink-0 text-emerald-400" />
+                                <div>Security &amp; Business Audit Log</div>
+                                <span className="ml-1 inline-flex items-center justify-center rounded-[8px] border border-[var(--border)] bg-[var(--surface-hover)] p-1 text-[var(--text-secondary)]">
+                                    {auditLogsCard.isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div
+                        className={`origin-top overflow-hidden transition-[max-height,opacity] duration-300 ease-out ${auditLogsCard.isExpanded ? "max-h-[1600px] opacity-100" : "max-h-0 opacity-0"}`}
+                    >
+                        <div className="p-4">
+                            <AuditLogViewer userRole={auth.activeAccount?.role} onError={setGlobalError} />
+                        </div>
+                    </div>
+                </div>
+            )}
             {/* Data Reset — admin only */}
             {auth.canResetData && (
                 <div className="mt-4 max-w-3xl rounded-[12px] border border-red-500/45 bg-red-500/10 p-4">

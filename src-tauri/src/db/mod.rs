@@ -211,8 +211,38 @@ pub fn reset_all_data(app: &AppHandle) -> Result<bool, String> {
     tx.execute_batch(FTS_TRIGGERS_SQL)
         .map_err(|err| format!("failed to recreate FTS triggers during reset: {err}"))?;
 
+    let reset_payload = serde_json::json!({
+        "action": "database.reset_all_data",
+        "status": "SUCCESS",
+    })
+    .to_string();
+
+    let _ = audit::insert_audit_log_tx(
+        &tx,
+        "security.database.reset_all_data",
+        "account",
+        None,
+        "database",
+        "reset_all_data",
+        Some(&reset_payload),
+    );
+
     tx.commit()
         .map_err(|err| format!("failed to commit reset transaction: {err}"))?;
+
+    // Mirror to external tamper-evident journal (survives DB restore / wipe)
+    if let Ok(db_path) = resolve_database_path(app) {
+        let journal_path = db_path.with_file_name(audit_journal::AUDIT_JOURNAL_FILENAME);
+        let master_key = APP_DB_ENCRYPTION_KEY.as_bytes();
+        let _ = audit_journal::record_critical_audit_event(
+            &journal_path,
+            master_key,
+            "security.database.reset_all_data",
+            None,
+            "database",
+            &reset_payload,
+        );
+    }
 
     invalidate_db_cache();
 

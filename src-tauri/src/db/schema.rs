@@ -489,6 +489,23 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TRIGGER IF NOT EXISTS audit_logs_no_update
+BEFORE UPDATE ON audit_logs
+BEGIN
+  SELECT RAISE(ABORT, 'audit_logs entries are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audit_logs_no_delete
+BEFORE DELETE ON audit_logs
+FOR EACH ROW
+WHEN OLD.created_at >= datetime('now', '-1095 days')
+BEGIN
+  SELECT RAISE(ABORT, 'audit_logs entries cannot be deleted within the 3-year retention period');
+END;
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_event_type ON audit_logs(event_type);
+
 CREATE TABLE IF NOT EXISTS app_recovery_codes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   account_id INTEGER NOT NULL REFERENCES app_local_accounts(id) ON DELETE CASCADE,

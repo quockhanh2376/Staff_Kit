@@ -671,6 +671,30 @@ pub fn import_excel(app: &AppHandle, payload: ImportExcelInput) -> Result<Import
         );
     }
 
+    let audit_payload = serde_json::json!({
+        "source_file": report.source_file,
+        "total_rows": report.total_rows,
+        "inserted": report.inserted,
+        "updated": report.updated,
+        "skipped": report.skipped,
+        "failed": report.failed,
+        "status": "SUCCESS",
+    })
+    .to_string();
+    let filename = std::path::Path::new(&report.source_file)
+        .file_name()
+        .map(|f| f.to_string_lossy().to_string())
+        .unwrap_or_else(|| "excel_import".to_string());
+    let _ = super::audit::insert_audit_log_tx(
+        &tx,
+        "business.import.excel",
+        "account",
+        None,
+        "import",
+        &filename,
+        Some(&audit_payload),
+    );
+
     tx.commit()
         .map_err(|err| format!("failed to commit import transaction: {err}"))?;
 

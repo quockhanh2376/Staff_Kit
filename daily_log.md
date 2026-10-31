@@ -3856,4 +3856,45 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
   - Total Tests: 831/831 passed.
   - Security Invariants: Zero modifications to `RecoveryLedger` (`ledger.rev`), zero live/production DB changes, zero MSSQL writes, zero schema migrations.
 
+## 2026-10-31 Staff Kit SA-2: Security Audit Completion — Start
+
+- Scope: SA-2 implementation only.
+  1. Add missing backend audit events:
+     - Authentication: `security.auth.login_success`, `security.auth.login_failed`, `security.auth.logout`, `security.auth.password_change`.
+     - Account Lifecycle: `security.account.created`, `security.account.updated`, `security.account.deleted`.
+     - Import: `business.import.excel`, `business.import.mssql`.
+     - Backup & Reset: `security.database.backup_manual`, `security.database.reset_all_data` (recorded in DB and mirrored to `audit_critical.ledger`).
+  2. Implement read-only Audit Viewer:
+     - Backend IPC `query_audit_logs`: Super Admin can view all; Admin can view `business.*` only; enforced in Rust backend.
+     - Frontend UI in Settings: simple read-only paginated table with filter and details view.
+  3. 3-Year Retention & Immutability:
+     - Triggers `trg_audit_logs_no_update` and `trg_audit_logs_no_delete` (prevent deleting logs < 1095 days old).
+  4. Decoupled from `RecoveryLedger` (`ledger.rev`), preserving SQLCipher safety.
+
+## 2026-10-31 Staff Kit SA-2: Security Audit Completion — End
+
+- Implementation Summary:
+  1. Audit Events & Backend Lifecycle:
+     - Authentication: `security.auth.login_success`, `security.auth.login_failed`, `security.auth.logout`, `security.auth.password_change`, `security.auth.password_change_failed`.
+     - Account Lifecycle: `security.account.created`, `security.account.updated`, `security.account.role_changed`, `security.account.deleted`.
+     - Imports: `business.import.excel`, `business.import.mssql`.
+     - Database Operations: `security.database.backup_manual`, `security.database.reset_all_data` (mirrored to `audit_critical.ledger`).
+  2. Read-Only Audit Viewer:
+     - Frontend component `AuditLogViewer.tsx` integrated into `SettingsView.tsx` for authorized administrators.
+     - Super Admin: full access to Security, Business, and System audit logs.
+     - Admin: strictly forced to `business.%` logs at the SQL query level in Rust IPC.
+     - Direct IPC access guarded with `require_admin` check.
+  3. Retention & Immutability:
+     - SQLite triggers `audit_logs_no_update` and `audit_logs_no_delete` enforce 100% append-only immutability and block deletions for records under 3 years (1095 days).
+     - Pruning utility `prune_audit_logs_older_than` rejects any retention policy under 1095 days.
+  4. Zero PII/Secret Leakage:
+     - Sanitized JSON payloads; passwords, hashes, recovery codes, tokens, and employee PII are never recorded.
+- Verification Outcomes:
+  - Quality Gate (`npm run check:quality`): PASSED (0 lint errors, tsc strict clean, vite build clean in 10.22s, cargo check clean).
+  - Frontend Unit Tests (`npm run test:unit`): 356/356 passed (46 test files).
+  - Rust Tauri Tests (`npm run test:tauri`): 484/484 passed.
+  - Total Tests: 840/840 passed.
+  - Security Invariants: Zero modifications to `RecoveryLedger` (`ledger.rev`), zero live/production DB changes, zero SQLCipher rekey, zero emergency recovery activation.
+
+
 

@@ -49,6 +49,30 @@ export type ConfigureUsbBackupInput = {
   enabled: boolean
 }
 
+/** An entry from the immutable security/business audit log. */
+export type AuditLogRecord = {
+  id: number
+  eventType: string
+  actorType: string
+  actorRef?: string | null
+  entityType: string
+  entityId: string
+  payloadJson?: string | null
+  createdAt: string
+}
+
+export type QueryAuditLogsInput = {
+  limit?: number
+  offset?: number
+  eventCategory?: "all" | "security" | "business"
+  search?: string
+}
+
+export type QueryAuditLogsResult = {
+  logs: AuditLogRecord[]
+  totalCount: number
+}
+
 export type SecurityPolicyMode = "standard" | "strict"
 
 export interface SecurityPolicyRecord {
