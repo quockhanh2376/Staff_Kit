@@ -1274,7 +1274,7 @@ fn update_asset_import_row(
     session_token: String,
     payload: db::AssetImportRowUpdateInput,
 ) -> Result<db::AssetImportRowRecord, String> {
-    let _ctx = auth_session::require_authenticated(&session_store, &session_token)?;
+    let _ctx = auth_session::require_admin(&session_store, &session_token)?;
     db::update_asset_import_row(&app, payload)
 }
 
@@ -1285,7 +1285,7 @@ fn set_asset_import_row_skipped(
     session_token: String,
     payload: db::AssetImportRowSkipInput,
 ) -> Result<db::AssetImportRowRecord, String> {
-    let _ctx = auth_session::require_authenticated(&session_store, &session_token)?;
+    let _ctx = auth_session::require_admin(&session_store, &session_token)?;
     db::set_asset_import_row_skipped(&app, payload)
 }
 
@@ -1842,6 +1842,8 @@ mod tests {
         "test_remote_ee_sync_connection",
         "preview_employee_list_mssql_sync",
         "apply_employee_list_mssql_sync",
+        "update_asset_import_row",
+        "set_asset_import_row_skipped",
     ];
 
     const AUTHENTICATED_COMMANDS: &[&str] = &[
@@ -1860,8 +1862,6 @@ mod tests {
         "delete_team",
         "list_asset_import_batches",
         "get_asset_import_batch_detail",
-        "update_asset_import_row",
-        "set_asset_import_row_skipped",
         "list_asset_categories",
         "list_asset_category_details",
         "get_asset_dashboard_summary",
@@ -2074,6 +2074,26 @@ mod tests {
             auth_session::require_admin(&store, "").unwrap_err().code(),
             auth_session::AUTH_REQUIRED
         );
+    }
+
+    #[test]
+    fn asset_import_staging_mutations_require_admin() {
+        assert!(ADMIN_COMMANDS.contains(&"update_asset_import_row"));
+        assert!(ADMIN_COMMANDS.contains(&"set_asset_import_row_skipped"));
+        assert!(!AUTHENTICATED_COMMANDS.contains(&"update_asset_import_row"));
+        assert!(!AUTHENTICATED_COMMANDS.contains(&"set_asset_import_row_skipped"));
+
+        let store = auth_session::SessionStore::new();
+        let user_tok = store.issue_session(1, "user_key", auth_session::Role::User);
+        let admin_tok = store.issue_session(2, "admin_key", auth_session::Role::Admin);
+
+        assert_eq!(
+            auth_session::require_admin(&store, &user_tok)
+                .unwrap_err()
+                .code(),
+            auth_session::AUTH_FORBIDDEN
+        );
+        assert!(auth_session::require_admin(&store, &admin_tok).is_ok());
     }
 
     #[test]

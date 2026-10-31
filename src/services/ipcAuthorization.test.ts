@@ -113,6 +113,8 @@ describe("role matrix: backend FORBIDDEN preserves session", () => {
         { label: "user → importExcel (admin)", role: "user" as const },
         { label: "user → writeExportFile (admin)", role: "user" as const },
         { label: "user → listPendingBorrowRequests (admin)", role: "user" as const },
+        { label: "user → updateAssetImportRow (admin)", role: "user" as const },
+        { label: "user → setAssetImportRowSkipped (admin)", role: "user" as const },
     ]
 
     for (const tc of mismatches) {

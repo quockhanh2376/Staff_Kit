@@ -210,8 +210,19 @@ pub fn update_local_account(
     app: &AppHandle,
     payload: LocalAccountUpdateInput,
 ) -> Result<LocalAccountRecord, String> {
-    let conn = open_runtime_connection(app)?;
-    let existing = load_local_account_by_id(&conn, payload.id)?;
+    let mut conn = open_runtime_connection(app)?;
+    update_local_account_conn(&mut conn, payload)
+}
+
+pub(crate) fn update_local_account_conn(
+    conn: &mut Connection,
+    payload: LocalAccountUpdateInput,
+) -> Result<LocalAccountRecord, String> {
+    let tx = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|e| format!("failed to start transaction: {e}"))?;
+
+    let existing = load_local_account_by_id(&tx, payload.id)?;
 
     let display_name = if let Some(raw) = payload.display_name {
         require_text(raw, "displayName")?
@@ -221,9 +232,23 @@ pub fn update_local_account(
 
     let role = normalize_local_account_role(payload.role);
 
+    // P0: Last Super Admin Protection — atomic verification inside immediate transaction
+    if existing.role == LOCAL_ACCOUNT_ROLE_SUPER_ADMIN && role != LOCAL_ACCOUNT_ROLE_SUPER_ADMIN {
+        let super_admin_count: i64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM app_local_accounts WHERE role = ?",
+                params![LOCAL_ACCOUNT_ROLE_SUPER_ADMIN],
+                |row| row.get(0),
+            )
+            .map_err(|err| format!("failed to count super admins: {err}"))?;
+        if super_admin_count <= 1 {
+            return Err("cannot demote the last remaining super admin".to_string());
+        }
+    }
+
     let username = if let Some(raw_username) = payload.username {
         let new_username = require_local_account_username(raw_username)?;
-        if local_account_username_exists_excluding(&conn, new_username.as_str(), payload.id)? {
+        if local_account_username_exists_excluding(&tx, new_username.as_str(), payload.id)? {
             return Err("username already taken by another account".to_string());
         }
         new_username
@@ -231,7 +256,7 @@ pub fn update_local_account(
         existing.username.clone()
     };
 
-    conn.execute(
+    tx.execute(
         r#"
         UPDATE app_local_accounts
         SET display_name = ?, username = ?, role = ?, updated_at = datetime('now')
@@ -261,7 +286,7 @@ pub fn update_local_account(
         "security.account.updated"
     };
     let _ = super::audit::insert_audit_log_conn(
-        &conn,
+        &tx,
         event_type,
         "account",
         None,
@@ -270,7 +295,9 @@ pub fn update_local_account(
         Some(&audit_payload),
     );
 
-    load_local_account_by_id(&conn, payload.id)
+    let updated = load_local_account_by_id(&tx, payload.id)?;
+    tx.commit().map_err(|e| format!("failed to commit account update: {e}"))?;
+    Ok(updated)
 }
 
 pub fn delete_local_account(
@@ -278,12 +305,12 @@ pub fn delete_local_account(
     actor_account_id: i64,
     id: i64,
 ) -> Result<bool, String> {
-    let conn = open_runtime_connection(app)?;
-    delete_local_account_conn(&conn, actor_account_id, id)
+    let mut conn = open_runtime_connection(app)?;
+    delete_local_account_conn(&mut conn, actor_account_id, id)
 }
 
 pub(crate) fn delete_local_account_conn(
-    conn: &Connection,
+    conn: &mut Connection,
     actor_account_id: i64,
     id: i64,
 ) -> Result<bool, String> {
@@ -294,7 +321,11 @@ pub(crate) fn delete_local_account_conn(
         return Err(super::super::auth_session::AUTH_CANNOT_DELETE_SELF.to_string());
     }
 
-    let total: i64 = conn
+    let tx = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|e| format!("failed to start transaction: {e}"))?;
+
+    let total: i64 = tx
         .query_row("SELECT COUNT(*) FROM app_local_accounts", [], |row| {
             row.get(0)
         })
@@ -306,7 +337,7 @@ pub(crate) fn delete_local_account_conn(
 
     // Preserve at least one active super_admin so the deployment cannot be
     // locked out of all administrative functions.
-    let target_row: Option<(String, String)> = conn
+    let target_row: Option<(String, String)> = tx
         .query_row(
             "SELECT username, role FROM app_local_accounts WHERE id = ?",
             params![id],
@@ -321,7 +352,7 @@ pub(crate) fn delete_local_account_conn(
     };
 
     if target_role == LOCAL_ACCOUNT_ROLE_SUPER_ADMIN {
-        let super_admin_count: i64 = conn
+        let super_admin_count: i64 = tx
             .query_row(
                 "SELECT COUNT(*) FROM app_local_accounts WHERE role = ?",
                 params![LOCAL_ACCOUNT_ROLE_SUPER_ADMIN],
@@ -333,8 +364,8 @@ pub(crate) fn delete_local_account_conn(
         }
     }
 
-    let active_id = get_active_local_account_id(conn)?;
-    let changed = conn
+    let active_id = get_active_local_account_id(&tx)?;
+    let changed = tx
         .execute("DELETE FROM app_local_accounts WHERE id = ?", params![id])
         .map_err(humanize_sqlite_error)?;
 
@@ -348,7 +379,7 @@ pub(crate) fn delete_local_account_conn(
         .to_string();
         let actor_str = actor_account_id.to_string();
         let _ = super::audit::insert_audit_log_conn(
-            conn,
+            &tx,
             "security.account.deleted",
             "account",
             Some(&actor_str),
@@ -358,17 +389,18 @@ pub(crate) fn delete_local_account_conn(
         );
 
         if active_id == Some(id) {
-            let fallback_id: i64 = conn
+            let fallback_id: i64 = tx
                 .query_row(
                     "SELECT id FROM app_local_accounts ORDER BY created_at ASC, id ASC LIMIT 1",
                     [],
                     |row| row.get(0),
                 )
                 .map_err(|err| format!("failed to resolve fallback account after deletion: {err}"))?;
-            set_active_local_account_id(conn, fallback_id)?;
+            set_active_local_account_id(&tx, fallback_id)?;
         }
     }
 
+    tx.commit().map_err(|e| format!("failed to commit account deletion: {e}"))?;
     Ok(changed > 0)
 }
 
@@ -2563,7 +2595,7 @@ mod tests {
 
     #[test]
     fn last_super_admin_protection_remains_intact() {
-        let conn = seeded_connection();
+        let mut conn = seeded_connection();
         let clock = crate::auth_session::TestClock::new();
         let store = SessionStore::with_clock(clock.handle());
 
@@ -2640,12 +2672,111 @@ mod tests {
         let super2_id: i64 = conn
             .query_row("SELECT id FROM app_local_accounts WHERE username = 'super2'", [], |r| r.get(0))
             .expect("get super2 id");
-        let del_super2 = delete_local_account_conn(&conn, 1, super2_id);
+        let del_super2 = delete_local_account_conn(&mut conn, 1, super2_id);
         assert!(del_super2.is_ok(), "can delete super2 when adman remains");
 
-        let del_res = delete_local_account_conn(&conn, 2, 1);
+        let del_res = delete_local_account_conn(&mut conn, 2, 1);
         assert!(del_res.is_err(), "cannot delete the last remaining super admin");
         assert_eq!(del_res.unwrap_err(), "cannot delete the last remaining super admin");
+    }
+
+    #[test]
+    fn test_last_super_admin_cannot_be_demoted() {
+        let mut conn = seeded_connection();
+
+        // 1. In default seed, 'adman' (id: 1) is the sole super_admin.
+        // Attempting to demote to admin or user must be rejected.
+        let demote_admin = update_local_account_conn(
+            &mut conn,
+            LocalAccountUpdateInput {
+                id: 1,
+                display_name: None,
+                username: None,
+                role: Some("admin".to_string()),
+            },
+        );
+        assert!(demote_admin.is_err());
+        assert_eq!(
+            demote_admin.unwrap_err(),
+            "cannot demote the last remaining super admin"
+        );
+
+        let demote_user = update_local_account_conn(
+            &mut conn,
+            LocalAccountUpdateInput {
+                id: 1,
+                display_name: None,
+                username: None,
+                role: Some("user".to_string()),
+            },
+        );
+        assert!(demote_user.is_err());
+        assert_eq!(
+            demote_user.unwrap_err(),
+            "cannot demote the last remaining super admin"
+        );
+
+        // 2. Updating display name or username while keeping super_admin must succeed.
+        let name_update = update_local_account_conn(
+            &mut conn,
+            LocalAccountUpdateInput {
+                id: 1,
+                display_name: Some("Primary IT Admin".to_string()),
+                username: None,
+                role: Some("super_admin".to_string()),
+            },
+        );
+        assert!(name_update.is_ok());
+        let updated = name_update.unwrap();
+        assert_eq!(updated.display_name, "Primary IT Admin");
+        assert_eq!(updated.role, "super_admin");
+
+        // 3. Insert a second super_admin account.
+        let super2_hash = hash_password("SuperAdmin2Pass123!").expect("hash super2");
+        conn.execute(
+            r#"
+            INSERT INTO app_local_accounts(
+              account_key, display_name, username, password_hash,
+              recovery_code_hash, force_password_reset, role, created_at, updated_at
+            )
+            VALUES ('super2', 'Super Two', 'super2', ?, NULL, 0, 'super_admin', datetime('now'), datetime('now'))
+            "#,
+            params![super2_hash],
+        )
+        .expect("seed super2 account");
+
+        let super2_id: i64 = conn
+            .query_row("SELECT id FROM app_local_accounts WHERE username = 'super2'", [], |r| r.get(0))
+            .expect("get super2 id");
+
+        // 4. With 2 super admins, demoting one of them to admin must succeed.
+        let demote_super2 = update_local_account_conn(
+            &mut conn,
+            LocalAccountUpdateInput {
+                id: super2_id,
+                display_name: None,
+                username: None,
+                role: Some("admin".to_string()),
+            },
+        );
+        assert!(demote_super2.is_ok(), "can demote super2 when adman remains");
+        assert_eq!(demote_super2.unwrap().role, "admin");
+
+        // 5. Now adman is again the sole super_admin; demoting adman must fail again.
+        let demote_adman_again = update_local_account_conn(
+            &mut conn,
+            LocalAccountUpdateInput {
+                id: 1,
+                display_name: None,
+                username: None,
+                role: Some("admin".to_string()),
+            },
+        );
+        assert!(demote_adman_again.is_err());
+        assert_eq!(
+            demote_adman_again.unwrap_err(),
+            "cannot demote the last remaining super admin"
+        );
     }
 
     // ── Security Policy Tests (Standard / Strict) ──────────────────────────────

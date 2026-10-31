@@ -387,7 +387,7 @@ export function useAuthState({
         setEditingAccountId(account.id)
         setEditDraftName(account.displayName)
         setEditDraftUsername(account.username)
-        setEditDraftRole(account.role === "admin" ? "admin" : "user")
+        setEditDraftRole(account.role)
     }
 
     const handleEditCancel = () => {

@@ -3896,5 +3896,43 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
   - Total Tests: 840/840 passed.
   - Security Invariants: Zero modifications to `RecoveryLedger` (`ledger.rev`), zero live/production DB changes, zero SQLCipher rekey, zero emergency recovery activation.
 
+## 2026-10-31 Staff Kit D4: Role Permissions Security Fix — Start
+
+- Scope: 3 confirmed gaps only.
+  1. P0 — Last Super Admin Protection:
+     - Block demoting or deleting the last active Super Admin in Rust backend (`update_local_account`).
+     - Atomic verification in DB transaction to prevent concurrent bypass.
+     - Fix frontend `editDraftRole` in `useAuthState.ts` to preserve `super_admin` role.
+  2. P1 — Settings Permission UI:
+     - Restrict Account Management ("Create Local User", edit/delete/reset) in `SettingsView.tsx` to `isSuperAdminAccount`.
+     - Hide/disable DB Location Move and Snapshot History Restore for regular Admins.
+  3. P1 — Asset Import Staging:
+     - Require `require_admin` for `update_asset_import_row` and `set_asset_import_row_skipped`.
+     - Move to `ADMIN_COMMANDS` and enforce in Rust IPC.
+- Rules: TDD with disposable test DB, zero Emergency Recovery, zero SQLCipher rekey, zero production DB writes.
+
+## 2026-10-31 Staff Kit D4: Role Permissions Security Fix — End
+
+- Implementation Summary:
+  1. P0 — Last Super Admin Protection:
+     - `src-tauri/src/db/auth.rs`: Wrapped `update_local_account_conn` in an `Immediate` transaction and added atomic guard rejecting role demotion when `existing.role == "super_admin" && target_role != "super_admin" && super_admin_count <= 1`.
+     - `src-tauri/src/db/auth.rs`: Wrapped `delete_local_account_conn` in an `Immediate` transaction ensuring atomic delete isolation against concurrency races.
+     - `src/features/auth/useAuthState.ts`: Updated `handleStartEdit` to set `editDraftRole` to `account.role` (preserving `"super_admin"`) rather than defaulting to `"user"`.
+  2. P1 — Settings Permission UI:
+     - `src/features/settings/SettingsView.tsx`: Guarded Account Management ("Create Local User" and "Accounts" list) with `auth.isSuperAdminAccount`; regular Admins see an informative banner explaining restriction to Super Admin.
+     - `src/features/settings/SettingsView.tsx`: Guarded DB Location Move controls with `auth.isSuperAdminAccount`.
+     - `src/features/settings/SettingsView.tsx`: Guarded Snapshot History Restore action buttons with `auth.isSuperAdminAccount`.
+  3. P1 — Asset Import Staging Authorization:
+     - `src-tauri/src/lib.rs`: Changed authorization guards in `update_asset_import_row` and `set_asset_import_row_skipped` from `require_authenticated` to `require_admin`.
+     - `src-tauri/src/lib.rs`: Reclassified both commands into `ADMIN_COMMANDS` from `AUTHENTICATED_COMMANDS`.
+- Verification Outcomes:
+  - Quality Gate (`npm run check:quality`): PASSED (0 lint errors, tsc strict clean, vite build clean, cargo check clean).
+  - Frontend Unit Tests (`npm run test:unit`): 359/359 passed (46 test files).
+  - Rust Tauri Tests (`npm run test:tauri`): 486/486 passed (including `test_last_super_admin_cannot_be_demoted` and `asset_import_staging_mutations_require_admin`).
+  - Total Tests: 845/845 passed.
+  - Security Invariants: Zero modifications to `RecoveryLedger` (`ledger.rev`), zero live/production DB changes, zero SQLCipher rekey, zero emergency recovery activation.
+
+
+
 
 

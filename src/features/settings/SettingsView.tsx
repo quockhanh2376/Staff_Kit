@@ -184,8 +184,10 @@ export function SettingsView({
                             </div>
 
                             <div className="grid gap-4 xl:grid-cols-[minmax(0,0.92fr)_minmax(320px,1.08fr)]">
-                        {/* LEFT — user management */}
-                                <div className="space-y-4">
+                                {/* LEFT — user management (Super Admin only) */}
+                                {auth.isSuperAdminAccount ? (
+                                    <>
+                                        <div className="space-y-4">
                             {/* Create account */}
                             <div className={settingsSubCardClass}>
                                 <div className={`mb-2 ${settingsLabelClass}`}>
@@ -421,6 +423,17 @@ export function SettingsView({
                                 })}
                             </div>
                         </div>
+                                    </>
+                                ) : (
+                                    <div className="space-y-4">
+                                        <div className={settingsSubCardClass}>
+                                            <div className={`mb-1 ${settingsLabelClass}`}>Account Management</div>
+                                            <p className={`text-xs ${settingsMutedTextClass}`}>
+                                                🔒 Managing administrator accounts and access privileges is restricted to Super Admin.
+                                            </p>
+                                        </div>
+                                    </div>
+                                )}
 
                         {/* RIGHT — Import Excel (admin only) */}
                         {/* Security Policy (Standard / Strict) */}
@@ -676,45 +689,51 @@ export function SettingsView({
                                             Only one person should edit
                                         </span>
                                     </div>
-                                    <div className="flex flex-col gap-2 sm:flex-row">
-                                        <input
-                                            className={`${settingsInputClass} min-w-0 font-mono text-sm`}
-                                            value={settings.dbCustomPathInput}
-                                            onChange={(event) => settings.setDbCustomPathInput(event.target.value)}
-                                            placeholder="D:\\OneDrive - Company\\StaffKit"
-                                            disabled={settings.isMovingDb}
-                                        />
-                                        {settings.dbMovePending ? (
-                                            <div className="flex gap-2">
-                                                <button
-                                                    className="inline-flex items-center gap-1 rounded-[10px] border border-emerald-500/45 bg-emerald-500/12 px-3 py-2 text-sm font-semibold text-emerald-300 transition hover:bg-emerald-500/20 disabled:opacity-50"
-                                                    onClick={() => void settings.handleMoveDatabase()}
-                                                    type="button"
-                                                    disabled={settings.isMovingDb}
-                                                >
-                                                    <MoveRight size={15} />
-                                                    {settings.isMovingDb ? "Moving..." : "Confirm Move"}
-                                                </button>
+                                    {auth.isSuperAdminAccount ? (
+                                        <div className="flex flex-col gap-2 sm:flex-row">
+                                            <input
+                                                className={`${settingsInputClass} min-w-0 font-mono text-sm`}
+                                                value={settings.dbCustomPathInput}
+                                                onChange={(event) => settings.setDbCustomPathInput(event.target.value)}
+                                                placeholder="D:\\OneDrive - Company\\StaffKit"
+                                                disabled={settings.isMovingDb}
+                                            />
+                                            {settings.dbMovePending ? (
+                                                <div className="flex gap-2">
+                                                    <button
+                                                        className="inline-flex items-center gap-1 rounded-[10px] border border-emerald-500/45 bg-emerald-500/12 px-3 py-2 text-sm font-semibold text-emerald-300 transition hover:bg-emerald-500/20 disabled:opacity-50"
+                                                        onClick={() => void settings.handleMoveDatabase()}
+                                                        type="button"
+                                                        disabled={settings.isMovingDb}
+                                                    >
+                                                        <MoveRight size={15} />
+                                                        {settings.isMovingDb ? "Moving..." : "Confirm Move"}
+                                                    </button>
+                                                    <button
+                                                        className={settingsSecondaryButtonClass}
+                                                        onClick={settings.handleMoveDatabaseCancel}
+                                                        type="button"
+                                                    >
+                                                        Cancel
+                                                    </button>
+                                                </div>
+                                            ) : (
                                                 <button
                                                     className={settingsSecondaryButtonClass}
-                                                    onClick={settings.handleMoveDatabaseCancel}
+                                                    onClick={() => void settings.handleMoveDatabase()}
                                                     type="button"
+                                                    disabled={settings.isMovingDb || !settings.dbCustomPathInput.trim()}
                                                 >
-                                                    Cancel
+                                                    <MoveRight size={15} />
+                                                    Move
                                                 </button>
-                                            </div>
-                                        ) : (
-                                            <button
-                                                className={settingsSecondaryButtonClass}
-                                                onClick={() => void settings.handleMoveDatabase()}
-                                                type="button"
-                                                disabled={settings.isMovingDb || !settings.dbCustomPathInput.trim()}
-                                            >
-                                                <MoveRight size={15} />
-                                                Move
-                                            </button>
-                                        )}
-                                    </div>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <div className="text-xs text-[var(--text-secondary)] italic">
+                                            🔒 Moving the active database location requires Super Admin privileges.
+                                        </div>
+                                    )}
                                     {settings.dbPathMessage && (
                                         <div className="rounded-[10px] border border-emerald-500/28 bg-emerald-500/8 px-3 py-2 text-xs text-emerald-100">
                                             {settings.dbPathMessage}
@@ -909,15 +928,17 @@ export function SettingsView({
                                                             {snap.label} · {snap.sizeMb.toFixed(1)} MB
                                                         </div>
                                                     </div>
-                                                    <button
-                                                        className="inline-flex shrink-0 items-center gap-1 rounded-[10px] border border-emerald-500/45 bg-emerald-500/10 px-3 py-1.5 text-sm font-semibold text-emerald-300 transition hover:bg-emerald-500/18 disabled:opacity-40"
-                                                        onClick={() => void settings.handleRestoreSnapshot(snap.filename)}
-                                                        type="button"
-                                                        disabled={!!settings.isRestoringSnapshot}
-                                                    >
-                                                        <RotateCcw size={13} />
-                                                        {settings.isRestoringSnapshot === snap.filename ? "Restoring..." : "Restore"}
-                                                    </button>
+                                                    {auth.isSuperAdminAccount && (
+                                                        <button
+                                                            className="inline-flex shrink-0 items-center gap-1 rounded-[10px] border border-emerald-500/45 bg-emerald-500/10 px-3 py-1.5 text-sm font-semibold text-emerald-300 transition hover:bg-emerald-500/18 disabled:opacity-40"
+                                                            onClick={() => void settings.handleRestoreSnapshot(snap.filename)}
+                                                            type="button"
+                                                            disabled={!!settings.isRestoringSnapshot}
+                                                        >
+                                                            <RotateCcw size={13} />
+                                                            {settings.isRestoringSnapshot === snap.filename ? "Restoring..." : "Restore"}
+                                                        </button>
+                                                    )}
                                                 </div>
                                             ))}
                                         </div>

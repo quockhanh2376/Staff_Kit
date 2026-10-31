@@ -743,4 +743,28 @@ describe("SEC-010 & SEC-011 frontend integration", () => {
         )
         expect(forgotCall).toBeUndefined()
     })
+
+    it("handleStartEdit preserves super_admin role and does not demote to user", async () => {
+        const { result } = renderHook(() => useAuthState(baseOptions))
+        await act(async () => {
+            await Promise.resolve()
+            await Promise.resolve()
+        })
+        const superAdminAccount = makeAccount({
+            id: 1,
+            displayName: "System Admin",
+            username: "adman",
+            role: "super_admin",
+            isSuperAdmin: true,
+        })
+
+        act(() => {
+            result.current.handleStartEdit(superAdminAccount)
+        })
+
+        expect(result.current.editingAccountId).toBe(1)
+        expect(result.current.editDraftName).toBe("System Admin")
+        expect(result.current.editDraftUsername).toBe("adman")
+        expect(result.current.editDraftRole).toBe("super_admin")
+    })
 })
