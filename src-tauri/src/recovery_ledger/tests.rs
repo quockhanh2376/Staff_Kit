@@ -1,6 +1,7 @@
 //! Comprehensive tests for Recovery Revocation Ledger, Block format,
 //! Journal state machine, and crash/fault-injection matrices.
 
+use super::activation::RecoveryCodeManager;
 use super::block::{LedgerBlock, LedgerEventType};
 use super::journal::{JournalState, RecoveryJournal, RecoveryJournalEntry};
 use super::key_derivation::derive_ledger_key;
@@ -922,3 +923,155 @@ fn test_rc_c08_legacy_custom_code_compatibility_and_single_use() {
     assert_eq!(res_reuse.unwrap_err(), "incorrect username or recovery code");
 }
 
+
+#[test]
+fn test_rc_c09_legacy_db_user_version_1_migrates_table_and_preserves_business_data() {
+    let (_dir, path) = create_temp_dir("rc_c09");
+    let ledger_path = path.join(LEDGER_FILENAME);
+    let _ledger = RecoveryLedger::create_new(&ledger_path, TEST_MASTER_KEY).unwrap();
+
+    let mut conn = Connection::open_in_memory().unwrap();
+    // Initialize full schema then drop recovery codes to simulate legacy RC2 DB
+    crate::db::apply_migrations(&conn).unwrap();
+    conn.execute_batch(
+        r#"
+        DROP TABLE IF EXISTS app_recovery_codes;
+        PRAGMA user_version = 1;
+
+        INSERT INTO employees (id, employee_id, full_name, email, staff_group)
+        VALUES (999, 'EMP-LEGACY-01', 'Nguyen Van Legacy', 'legacy@company.com', 'employee_list');
+
+        INSERT INTO assets (id, asset_code, asset_type, display_name, status)
+        VALUES (888, 'LEGACY-TAG-01', 'Laptop', 'Legacy Laptop', 'in_stock');
+
+        INSERT INTO borrow_requests (id, request_key, submitted_employee_id, submitted_full_name, status)
+        VALUES (777, 'REQ-LEGACY-01', 'EMP-LEGACY-01', 'Nguyen Van Legacy', 'approved');
+
+        INSERT INTO audit_logs (id, event_type, actor_type, entity_type, entity_id)
+        VALUES (666, 'system_snapshot', 'user', 'system', 'snapshot_01');
+        "#,
+    )
+    .unwrap();
+
+    // Confirm app_recovery_codes does NOT exist initially on this user_version = 1 DB
+    let table_count: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'app_recovery_codes'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(table_count, 0);
+
+    let uv_before: u32 = conn.query_row("PRAGMA user_version;", [], |r| r.get(0)).unwrap();
+    assert_eq!(uv_before, 1);
+
+    // Run migrations — must create app_recovery_codes table idempotently WITHOUT altering user_version or business data
+    crate::db::apply_migrations(&conn).unwrap();
+
+    let table_count_after: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'app_recovery_codes'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(table_count_after, 1);
+
+    let uv_after: u32 = conn.query_row("PRAGMA user_version;", [], |r| r.get(0)).unwrap();
+    assert_eq!(uv_after, 1);
+
+    // Verify all business records remain completely preserved
+    let emp_name: String = conn.query_row("SELECT full_name FROM employees WHERE id = 999", [], |r| r.get(0)).unwrap();
+    assert_eq!(emp_name, "Nguyen Van Legacy");
+
+    let asset_code: String = conn.query_row("SELECT asset_code FROM assets WHERE id = 888", [], |r| r.get(0)).unwrap();
+    assert_eq!(asset_code, "LEGACY-TAG-01");
+
+    let req_key: String = conn.query_row("SELECT request_key FROM borrow_requests WHERE id = 777", [], |r| r.get(0)).unwrap();
+    assert_eq!(req_key, "REQ-LEGACY-01");
+
+    let audit_event: String = conn.query_row("SELECT event_type FROM audit_logs WHERE id = 666", [], |r| r.get(0)).unwrap();
+    assert_eq!(audit_event, "system_snapshot");
+
+    // Verify two-phase activation works seamlessly on this migrated DB
+    let manager = RecoveryCodeManager::new();
+    let batch = manager.generate_codes(1, "adman").unwrap();
+    let act_res = manager.activate_codes(&mut conn, 1, &batch.batch_id, &ledger_path, TEST_MASTER_KEY);
+    assert!(act_res.is_ok());
+
+    let codes_count: i64 = conn.query_row("SELECT count(*) FROM app_recovery_codes WHERE account_id = 1", [], |r| r.get(0)).unwrap();
+    assert_eq!(codes_count, 8);
+    assert!(!manager.has_pending_batch(1));
+}
+
+#[test]
+fn test_rc_c10_activation_failure_preserves_pending_batch_in_ram_and_leaves_db_untouched() {
+    let (_dir, path) = create_temp_dir("rc_c10");
+    let ledger_path = path.join(LEDGER_FILENAME);
+    let _ledger = RecoveryLedger::create_new(&ledger_path, TEST_MASTER_KEY).unwrap();
+
+    let mut conn = init_mock_sqlite_db();
+    let manager = RecoveryCodeManager::new();
+    let batch = manager.generate_codes(1, "adman").unwrap();
+
+    // 1. Batch ID mismatch error preserves pending batch in RAM
+    let mismatch_err = manager.activate_codes(&mut conn, 1, "wrong_batch_id", &ledger_path, TEST_MASTER_KEY);
+    assert!(mismatch_err.is_err());
+    assert_eq!(mismatch_err.unwrap_err(), "Pending batch ID mismatch.");
+    assert!(manager.has_pending_batch(1));
+
+    // 2. Provoke a database failure via abort trigger
+    conn.execute_batch(
+        "CREATE TRIGGER abort_recovery_insert BEFORE INSERT ON app_recovery_codes BEGIN SELECT RAISE(ABORT, 'intentional simulation failure'); END;",
+    )
+    .unwrap();
+
+    let db_err = manager.activate_codes(&mut conn, 1, &batch.batch_id, &ledger_path, TEST_MASTER_KEY);
+    assert!(db_err.is_err());
+    assert!(db_err.unwrap_err().contains("intentional simulation failure"));
+
+    // Pending batch must STILL be in RAM
+    assert!(manager.has_pending_batch(1));
+    assert_eq!(manager.pending_batch_id(1).unwrap(), batch.batch_id);
+
+    // Staged journal must have been cleaned up
+    let journal = crate::recovery_ledger::journal::RecoveryJournal::new(path.clone());
+    assert!(journal.read_active_journal().unwrap().is_none());
+
+    // Database must not contain any new codes (rolled back)
+    let count: i64 = conn.query_row("SELECT count(*) FROM app_recovery_codes WHERE batch_uuid = ?", [&batch.batch_id], |r| r.get(0)).unwrap();
+    assert_eq!(count, 0);
+
+    // 3. Drop trigger and retry activation with the SAME pending batch
+    conn.execute_batch("DROP TRIGGER abort_recovery_insert;").unwrap();
+
+    let retry_res = manager.activate_codes(&mut conn, 1, &batch.batch_id, &ledger_path, TEST_MASTER_KEY);
+    assert!(retry_res.is_ok());
+
+    // Now codes are inserted and batch is cleared from RAM
+    let count_after: i64 = conn.query_row("SELECT count(*) FROM app_recovery_codes WHERE batch_uuid = ?", [&batch.batch_id], |r| r.get(0)).unwrap();
+    assert_eq!(count_after, 8);
+    assert!(!manager.has_pending_batch(1));
+}
+
+#[test]
+fn test_rc_c11_fresh_database_creates_recovery_codes_table() {
+    let conn = Connection::open_in_memory().unwrap();
+    let uv_initial: u32 = conn.query_row("PRAGMA user_version;", [], |r| r.get(0)).unwrap();
+    assert_eq!(uv_initial, 0);
+
+    crate::db::apply_migrations(&conn).unwrap();
+
+    let uv_after: u32 = conn.query_row("PRAGMA user_version;", [], |r| r.get(0)).unwrap();
+    assert_eq!(uv_after, crate::db::SCHEMA_USER_VERSION);
+
+    let table_count: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'app_recovery_codes'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(table_count, 1);
+}

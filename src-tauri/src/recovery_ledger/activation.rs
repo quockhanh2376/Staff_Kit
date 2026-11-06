@@ -139,6 +139,24 @@ impl RecoveryCodeManager {
         lock.remove(&account_id);
     }
 
+    /// Check whether an account has an unexpired pending recovery batch in RAM.
+    pub fn has_pending_batch(&self, account_id: i64) -> bool {
+        let lock = self.pending_batches.lock().unwrap_or_else(|p| p.into_inner());
+        lock.get(&account_id).is_some_and(|b| b.created_at.elapsed() <= PENDING_BATCH_TTL)
+    }
+
+    /// Retrieve the pending batch ID if present in RAM.
+    pub fn pending_batch_id(&self, account_id: i64) -> Option<String> {
+        let lock = self.pending_batches.lock().unwrap_or_else(|p| p.into_inner());
+        lock.get(&account_id).and_then(|b| {
+            if b.created_at.elapsed() <= PENDING_BATCH_TTL {
+                Some(b.batch_id.clone())
+            } else {
+                None
+            }
+        })
+    }
+
     /// Phase 2: Confirm Activation.
     /// Atomically replaces database codes and appends `BATCH_ACTIVATED` to the ledger.
     pub fn activate_codes(
@@ -165,10 +183,12 @@ impl RecoveryCodeManager {
                 return Err("Pending recovery code batch has expired. Please regenerate.".to_string());
             }
 
-            // Remove from memory
-            lock.remove(&account_id);
+            // Keep in RAM until DB + Ledger commit succeed (Phase C1 bugfix)
             batch
         };
+
+        // Defensive preflight: Ensure app_recovery_codes exists even on legacy DBs
+        crate::db::ensure_recovery_codes_table(conn)?;
 
         // 2. Open / verify ledger
         let mut ledger = RecoveryLedger::open_or_create(local_ledger_path, master_key)?;
@@ -186,39 +206,49 @@ impl RecoveryCodeManager {
         journal.stage_prepared(&journal_entry)?;
 
         // 4. Atomic Database Transaction
-        let tx = conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|e| format!("failed to start transaction: {e}"))?;
+        let db_result: Result<(), String> = (|| {
+            let tx = conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(|e| format!("failed to start transaction: {e}"))?;
 
-        // Delete existing codes in app_recovery_codes for this account
-        tx.execute(
-            "DELETE FROM app_recovery_codes WHERE account_id = ?",
-            params![account_id],
-        )
-        .map_err(|e| format!("failed to revoke previous recovery codes: {e}"))?;
-
-        // Revoke legacy recovery code hash
-        tx.execute(
-            "UPDATE app_local_accounts SET recovery_code_hash = NULL WHERE id = ?",
-            params![account_id],
-        )
-        .map_err(|e| format!("failed to clear legacy recovery code hash: {e}"))?;
-
-        // Insert the 8 new code hashes
-        for (i, hash) in pending.code_hashes.iter().enumerate() {
+            // Delete existing codes in app_recovery_codes for this account
             tx.execute(
-                r#"
-                INSERT INTO app_recovery_codes (account_id, batch_uuid, code_hash, code_index, consumed_at)
-                VALUES (?, ?, ?, ?, NULL)
-                "#,
-                params![account_id, &pending.batch_id, hash, (i + 1) as i64],
+                "DELETE FROM app_recovery_codes WHERE account_id = ?",
+                params![account_id],
             )
-            .map_err(|e| format!("failed to insert recovery code {i}: {e}"))?;
-        }
+            .map_err(|e| format!("failed to revoke previous recovery codes: {e}"))?;
 
-        // Commit SQLite transaction
-        tx.commit()
-            .map_err(|e| format!("failed to commit recovery codes transaction: {e}"))?;
+            // Revoke legacy recovery code hash
+            tx.execute(
+                "UPDATE app_local_accounts SET recovery_code_hash = NULL WHERE id = ?",
+                params![account_id],
+            )
+            .map_err(|e| format!("failed to clear legacy recovery code hash: {e}"))?;
+
+            // Insert the 8 new code hashes
+            for (i, hash) in pending.code_hashes.iter().enumerate() {
+                tx.execute(
+                    r#"
+                    INSERT INTO app_recovery_codes (account_id, batch_uuid, code_hash, code_index, consumed_at)
+                    VALUES (?, ?, ?, ?, NULL)
+                    "#,
+                    params![account_id, &pending.batch_id, hash, (i + 1) as i64],
+                )
+                .map_err(|e| format!("failed to insert recovery code {i}: {e}"))?;
+            }
+
+            // Commit SQLite transaction
+            tx.commit()
+                .map_err(|e| format!("failed to commit recovery codes transaction: {e}"))?;
+
+            Ok(())
+        })();
+
+        if let Err(err) = db_result {
+            // DB transaction failed: discard staged journal; pending batch remains in RAM for retry
+            let _ = journal.finalize();
+            return Err(err);
+        }
 
         // Mark journal DB committed
         let _ = journal.mark_db_committed(journal_entry);
@@ -234,6 +264,12 @@ impl RecoveryCodeManager {
 
         // Finalize journal (clean removal)
         let _ = journal.finalize();
+
+        // 6. Only after DB and Ledger commit succeed, remove pending batch from RAM
+        {
+            let mut lock = self.pending_batches.lock().unwrap_or_else(|p| p.into_inner());
+            lock.remove(&account_id);
+        }
 
         Ok(())
     }

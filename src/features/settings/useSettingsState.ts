@@ -76,6 +76,7 @@ export function useSettingsState({
     const [recoveryCodesModalOpen, setRecoveryCodesModalOpen] = useState(false)
     const [pendingRecoveryBatch, setPendingRecoveryBatch] = useState<GenerateRecoveryCodesResult | null>(null)
     const [recoveryStatusMessage, setRecoveryStatusMessage] = useState("")
+    const [recoveryModalError, setRecoveryModalError] = useState("")
 
     // History snapshots
     const [snapshots, setSnapshots] = useState<SnapshotInfo[]>([])
@@ -860,6 +861,7 @@ export function useSettingsState({
 
         setIsGeneratingRecoveryCodes(true)
         setRecoveryStatusMessage("")
+        setRecoveryModalError("")
         try {
             const batch = await staffApi.generateRecoveryCodes(password)
             setPendingRecoveryBatch(batch)
@@ -876,6 +878,7 @@ export function useSettingsState({
 
         setIsActivatingRecoveryCodes(true)
         setRecoveryStatusMessage("")
+        setRecoveryModalError("")
         try {
             const batchId = pendingRecoveryBatch.batch_id || pendingRecoveryBatch.batchId || ""
             await staffApi.activateRecoveryCodes(batchId)
@@ -884,6 +887,8 @@ export function useSettingsState({
             await loadRecoveryCodeStatus()
             setRecoveryStatusMessage("8 new Recovery Codes successfully activated.")
         } catch (error) {
+            const rawMsg = error instanceof Error ? error.message : typeof error === "string" ? error : getUserErrorMessage(error)
+            setRecoveryModalError(rawMsg)
             setGlobalError(getUserErrorMessage(error))
         } finally {
             setIsActivatingRecoveryCodes(false)
@@ -896,6 +901,7 @@ export function useSettingsState({
         } catch {
             // ignore
         } finally {
+            setRecoveryModalError("")
             setPendingRecoveryBatch(null)
             setRecoveryCodesModalOpen(false)
         }
@@ -960,6 +966,8 @@ export function useSettingsState({
         setRecoveryCodesModalOpen,
         pendingRecoveryBatch,
         recoveryStatusMessage,
+        recoveryModalError,
+        setRecoveryModalError,
         loadRecoveryCodeStatus,
         handleStartGenerateRecoveryCodes,
         handleConfirmActivateRecoveryCodes,

@@ -1,5 +1,33 @@
 # Daily Log - 2026-11-06
 
+## 2026-11-06 — Staff Kit RC3 Recovery Codes Activation Hotfix (Start)
+- Authorized by Zon.
+- Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Scope: RC3 Recovery Codes Activation Hotfix ONLY.
+- Key Specifications & Safeguards:
+  1. Fix legacy DB migration: ensure `app_recovery_codes` table is created on databases with `user_version = 1` while preserving `user_version` and all existing data.
+  2. Fix activation transaction safety: defensively preflight `app_recovery_codes` schema before starting the transaction in `activate_codes()`, keep pending batch in RAM until DB + Ledger succeed, and prevent code loss on failure.
+  3. Improve UI error handling: display activation errors directly inside the Recovery Codes modal dialog with alert banner, keep modal open on failure, and refresh active status after success.
+  4. Comprehensive regression tests: existing DB with `user_version = 1`, fresh DB, data preservation, rollback on failure, RAM retention, and modal error/success states.
+  5. Use disposable test databases only; zero writes to Zon's active database or original test DB during testing.
+
+## 2026-11-06 — Staff Kit RC3 Recovery Codes Activation Hotfix (End)
+- Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Implementation & Verification Details:
+  1. Legacy DB Migration: Made `ensure_recovery_codes_table` `pub(crate)` and invoked it unconditionally at the end of `apply_migrations(conn)`. Idempotently creates `app_recovery_codes` table on existing databases with `user_version = 1` without bumping `user_version` or altering existing records.
+  2. Activation Transaction Safety: In `RecoveryCodeManager::activate_codes()`, added defensive preflight of `ensure_recovery_codes_table(conn)`, kept pending batch in RAM during database transaction and ledger append, and ensured `lock.remove(&account_id)` occurs only after successful completion. Cleanly drops staged journal and rolls back DB transaction on error without losing pending codes from RAM. Added `has_pending_batch` and `pending_batch_id` helpers.
+  3. UI Error Handling: Refactored Recovery Codes modal into `<RecoveryCodesModal />` subcomponent to encapsulate dialog state (`confirmedSaved`, `codesCopied`) cleanly without effect synchronization errors. Displayed `recoveryModalError` directly inside the dialog with an `AlertTriangle` warning banner. The modal and confirmation checkbox remain active on failure for seamless retry, and modal closes only after successful activation.
+  4. Regression Tests Added:
+     - `test_rc_c09_legacy_db_user_version_1_migrates_table_and_preserves_business_data`: verified RC2 DB with `user_version = 1` and missing table has table created, preserves all employees, assets, borrow requests, audit logs, and allows activation.
+     - `test_rc_c10_activation_failure_preserves_pending_batch_in_ram_and_leaves_db_untouched`: verified mismatch and abort trigger preserve pending batch in RAM, discard staged journal, roll back DB, and succeed upon retry.
+     - `test_rc_c11_fresh_database_creates_recovery_codes_table`: verified clean DB migration sets `user_version = 1` and creates recovery codes table.
+     - `RecoveryCodesUI.test.tsx` and `useSettingsState.test.tsx`: verified in-modal error display, retention of modal and batch on failure, and success transitions.
+  5. Quality Gates:
+     - `npm run check:quality` (lint → typecheck → build → cargo check) PASSED.
+     - Vitest: 49 test files, 376 tests PASSED.
+     - Recovery ledger cargo tests: 26 passed, 0 failed.
+  6. Data Preservation: Zon's active database `D:\Staff_Kit\data\test_db\staff_kit.sqlite3` was strictly untouched during testing. Zero recovery codes generated, revoked, or consumed on Zon's real account.
+
 ## 2026-11-06 — Staff Kit RC3 Internal Pre-release Preparation (Start)
 - Authorized by Zon.
 - Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).

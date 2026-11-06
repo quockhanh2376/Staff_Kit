@@ -550,6 +550,9 @@ pub(crate) fn apply_migrations(conn: &Connection) -> Result<(), String> {
         ensure_search_index(conn)?;
     }
 
+    // Always ensure idempotent legacy migrations that don't bump user_version
+    ensure_recovery_codes_table(conn)?;
+
     Ok(())
 }
 
@@ -654,7 +657,7 @@ fn ensure_local_account_columns(conn: &Connection) -> Result<(), String> {
     Ok(())
 }
 
-fn ensure_recovery_codes_table(conn: &Connection) -> Result<(), String> {
+pub(crate) fn ensure_recovery_codes_table(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS app_recovery_codes (

@@ -1093,6 +1093,47 @@ describe("Borrow / Return saved Handle with Care policy", () => {
                 promptSpy.mockRestore()
             })
 
+            it("handleConfirmActivateRecoveryCodes sets recoveryModalError and retains modal and batch on activation failure", async () => {
+                setSession({ sessionToken: "test-token", expiresAt: "2099-01-01T00:00:00Z" })
+                const promptSpy = vi.spyOn(window, "prompt").mockReturnValue("MySuperPassword123!")
+                invokeMock.mockImplementation(async (cmd: string) => {
+                    if (cmd === "get_borrow_lan_settings") {
+                        return { enabled: false, host: "127.0.0.1", port: 8787, borrowUrl: "" }
+                    }
+                    if (cmd === "generate_recovery_codes") {
+                        return {
+                            batch_id: "batch_rc_fail",
+                            codes: ["A1234-B5678"],
+                            expires_in_seconds: 900,
+                        }
+                    }
+                    if (cmd === "activate_recovery_codes") {
+                        throw new Error("failed to revoke previous recovery codes: no such table: app_recovery_codes")
+                    }
+                    return {}
+                })
+
+                const { result } = renderHook(() => useSettingsState(baseOptions))
+
+                await act(async () => {
+                    await result.current.handleStartGenerateRecoveryCodes()
+                })
+
+                expect(result.current.recoveryCodesModalOpen).toBe(true)
+                expect(result.current.pendingRecoveryBatch).not.toBeNull()
+
+                await act(async () => {
+                    await result.current.handleConfirmActivateRecoveryCodes()
+                })
+
+                // Modal must remain open, batch retained in memory, and error surfaced
+                expect(result.current.recoveryCodesModalOpen).toBe(true)
+                expect(result.current.pendingRecoveryBatch).not.toBeNull()
+                expect(result.current.recoveryModalError).toContain("failed to revoke previous recovery codes")
+
+                promptSpy.mockRestore()
+            })
+
             it("handleCancelRecoveryCodes cancels generation and discards pending codes", async () => {
                 setSession({ sessionToken: "test-token", expiresAt: "2099-01-01T00:00:00Z" })
                 const promptSpy = vi.spyOn(window, "prompt").mockReturnValue("MySuperPassword123!")

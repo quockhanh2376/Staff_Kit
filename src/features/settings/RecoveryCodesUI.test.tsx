@@ -40,6 +40,8 @@ describe("SettingsView — Recovery Codes UI (RC-Phase C1)", () => {
         setRecoveryCodesModalOpen: vi.fn(),
         pendingRecoveryBatch: null,
         recoveryStatusMessage: "",
+        recoveryModalError: "",
+        setRecoveryModalError: vi.fn(),
         loadRecoveryCodeStatus: vi.fn(),
         handleStartGenerateRecoveryCodes: vi.fn(),
         handleConfirmActivateRecoveryCodes: vi.fn(),
@@ -279,6 +281,30 @@ describe("SettingsView — Recovery Codes UI (RC-Phase C1)", () => {
         const cancelBtn = screen.getByRole("button", { name: /Cancel & Discard/i })
         fireEvent.click(cancelBtn)
         expect(handleCancel).toHaveBeenCalledTimes(1)
+    })
+
+    it("displays recoveryModalError alert banner inside modal when activation fails", () => {
+        const testCodes = [
+            "RC01-AAAA", "RC02-BBBB", "RC03-CCCC", "RC04-DDDD",
+            "RC05-EEEE", "RC06-FFFF", "RC07-GGGG", "RC08-HHHH",
+        ]
+        const settings = createMockSettings({
+            recoveryCodesModalOpen: true,
+            pendingRecoveryBatch: {
+                batch_id: "batch-err-123",
+                codes: testCodes,
+                expires_in_seconds: 900,
+            },
+            recoveryModalError: "failed to revoke previous recovery codes: database locked",
+        })
+        const auth = createMockAuth(true)
+
+        render(<SettingsView {...baseProps} auth={auth} settings={settings} />)
+
+        expect(screen.getByText("failed to revoke previous recovery codes: database locked")).toBeInTheDocument()
+        for (const code of testCodes) {
+            expect(screen.getByText(code)).toBeInTheDocument()
+        }
     })
 
     it("displays recoveryStatusMessage when present", () => {
