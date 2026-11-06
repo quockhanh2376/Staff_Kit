@@ -35,6 +35,7 @@ import { AssetDashboard } from "../assets/AssetDashboard"
 import { useIdleCollapse } from "./useIdleCollapse"
 import { RemoteEeSyncSettings } from "./RemoteEeSyncSettings"
 import { AuditLogViewer } from "./AuditLogViewer"
+import { RecoveryPasswordModal } from "./RecoveryPasswordModal"
 
 import type { DataImportState } from '../import/useDataImportState'
 
@@ -1386,7 +1387,18 @@ export function SettingsView({
                     </button>
                 </div>
             )}
-                    {/* Modal: One-Time Recovery Codes Display & Two-Phase Confirmation */}
+                    {/* Modal: Recovery Codes Password Reauthentication */}
+            {settings.recoveryPasswordModalOpen && (
+                <RecoveryPasswordModal
+                    isOpen={settings.recoveryPasswordModalOpen}
+                    isProcessing={settings.isGeneratingRecoveryCodes}
+                    error={settings.recoveryPasswordModalError}
+                    onConfirm={settings.handleConfirmGenerateRecoveryCodes}
+                    onClose={settings.handleCloseGenerateRecoveryCodesModal}
+                />
+            )}
+
+            {/* Modal: One-Time Recovery Codes Display & Two-Phase Confirmation */}
             {settings.recoveryCodesModalOpen && settings.pendingRecoveryBatch && (
                 <RecoveryCodesModal settings={settings} />
             )}

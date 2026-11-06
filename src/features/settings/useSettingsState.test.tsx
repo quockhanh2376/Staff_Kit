@@ -1013,9 +1013,24 @@ describe("Borrow / Return saved Handle with Care policy", () => {
         })
 
         describe("Recovery Codes (RC-Phase C1)", () => {
-            it("handleStartGenerateRecoveryCodes prompts for password and sets pending batch", async () => {
+            it("handleStartGenerateRecoveryCodes opens password modal without window.prompt", async () => {
+                const promptSpy = vi.spyOn(window, "prompt")
+                const { result } = renderHook(() => useSettingsState(baseOptions))
+
+                await act(async () => {
+                    await result.current.handleStartGenerateRecoveryCodes()
+                })
+
+                expect(promptSpy).not.toHaveBeenCalled()
+                expect(result.current.recoveryPasswordModalOpen).toBe(true)
+                expect(result.current.recoveryCodesModalOpen).toBe(false)
+                expect(result.current.pendingRecoveryBatch).toBeNull()
+
+                promptSpy.mockRestore()
+            })
+
+            it("handleConfirmGenerateRecoveryCodes generates batch, closes password modal, and opens recovery codes modal", async () => {
                 setSession({ sessionToken: "test-token", expiresAt: "2099-01-01T00:00:00Z" })
-                const promptSpy = vi.spyOn(window, "prompt").mockReturnValue("MySuperPassword123!")
                 invokeMock.mockImplementation(async (cmd: string) => {
                     if (cmd === "get_borrow_lan_settings") {
                         return { enabled: false, host: "127.0.0.1", port: 8787, borrowUrl: "" }
@@ -1033,20 +1048,51 @@ describe("Borrow / Return saved Handle with Care policy", () => {
                 const { result } = renderHook(() => useSettingsState(baseOptions))
 
                 await act(async () => {
-                    await result.current.handleStartGenerateRecoveryCodes()
+                    result.current.handleOpenGenerateRecoveryCodesModal()
+                })
+                expect(result.current.recoveryPasswordModalOpen).toBe(true)
+
+                await act(async () => {
+                    await result.current.handleConfirmGenerateRecoveryCodes("MySuperPassword123!")
                 })
 
-                expect(promptSpy).toHaveBeenCalled()
+                expect(result.current.recoveryPasswordModalOpen).toBe(false)
                 expect(result.current.recoveryCodesModalOpen).toBe(true)
                 expect(result.current.pendingRecoveryBatch?.batch_id).toBe("batch_rc_1")
                 expect(result.current.pendingRecoveryBatch?.codes.length).toBe(2)
+            })
 
-                promptSpy.mockRestore()
+            it("handleConfirmGenerateRecoveryCodes sets recoveryPasswordModalError on failure", async () => {
+                setSession({ sessionToken: "test-token", expiresAt: "2099-01-01T00:00:00Z" })
+                invokeMock.mockImplementation(async (cmd: string) => {
+                    if (cmd === "get_borrow_lan_settings") {
+                        return { enabled: false, host: "127.0.0.1", port: 8787, borrowUrl: "" }
+                    }
+                    if (cmd === "generate_recovery_codes") {
+                        throw new Error("Invalid password / Mật khẩu không đúng")
+                    }
+                    return {}
+                })
+
+                const { result } = renderHook(() => useSettingsState(baseOptions))
+
+                await act(async () => {
+                    result.current.handleOpenGenerateRecoveryCodesModal()
+                })
+                expect(result.current.recoveryPasswordModalOpen).toBe(true)
+
+                await act(async () => {
+                    await result.current.handleConfirmGenerateRecoveryCodes("WrongPassword")
+                })
+
+                expect(result.current.recoveryPasswordModalOpen).toBe(true)
+                expect(result.current.recoveryCodesModalOpen).toBe(false)
+                expect(result.current.recoveryPasswordModalError).toBe("Invalid password / Mật khẩu không đúng")
+                expect(result.current.pendingRecoveryBatch).toBeNull()
             })
 
             it("handleConfirmActivateRecoveryCodes activates batch and clears pending state", async () => {
                 setSession({ sessionToken: "test-token", expiresAt: "2099-01-01T00:00:00Z" })
-                const promptSpy = vi.spyOn(window, "prompt").mockReturnValue("MySuperPassword123!")
                 invokeMock.mockImplementation(async (cmd: string) => {
                     if (cmd === "get_borrow_lan_settings") {
                         return { enabled: false, host: "127.0.0.1", port: 8787, borrowUrl: "" }
@@ -1076,7 +1122,7 @@ describe("Borrow / Return saved Handle with Care policy", () => {
                 const { result } = renderHook(() => useSettingsState(baseOptions))
 
                 await act(async () => {
-                    await result.current.handleStartGenerateRecoveryCodes()
+                    await result.current.handleConfirmGenerateRecoveryCodes("MySuperPassword123!")
                 })
 
                 expect(result.current.recoveryCodesModalOpen).toBe(true)
@@ -1089,13 +1135,10 @@ describe("Borrow / Return saved Handle with Care policy", () => {
                 expect(result.current.pendingRecoveryBatch).toBeNull()
                 expect(result.current.recoveryStatusMessage).toBe("8 new Recovery Codes successfully activated.")
                 expect(result.current.recoveryCodeStatus?.has_active_batch).toBe(true)
-
-                promptSpy.mockRestore()
             })
 
             it("handleConfirmActivateRecoveryCodes sets recoveryModalError and retains modal and batch on activation failure", async () => {
                 setSession({ sessionToken: "test-token", expiresAt: "2099-01-01T00:00:00Z" })
-                const promptSpy = vi.spyOn(window, "prompt").mockReturnValue("MySuperPassword123!")
                 invokeMock.mockImplementation(async (cmd: string) => {
                     if (cmd === "get_borrow_lan_settings") {
                         return { enabled: false, host: "127.0.0.1", port: 8787, borrowUrl: "" }
@@ -1116,7 +1159,7 @@ describe("Borrow / Return saved Handle with Care policy", () => {
                 const { result } = renderHook(() => useSettingsState(baseOptions))
 
                 await act(async () => {
-                    await result.current.handleStartGenerateRecoveryCodes()
+                    await result.current.handleConfirmGenerateRecoveryCodes("MySuperPassword123!")
                 })
 
                 expect(result.current.recoveryCodesModalOpen).toBe(true)
@@ -1130,13 +1173,10 @@ describe("Borrow / Return saved Handle with Care policy", () => {
                 expect(result.current.recoveryCodesModalOpen).toBe(true)
                 expect(result.current.pendingRecoveryBatch).not.toBeNull()
                 expect(result.current.recoveryModalError).toContain("failed to revoke previous recovery codes")
-
-                promptSpy.mockRestore()
             })
 
             it("handleCancelRecoveryCodes cancels generation and discards pending codes", async () => {
                 setSession({ sessionToken: "test-token", expiresAt: "2099-01-01T00:00:00Z" })
-                const promptSpy = vi.spyOn(window, "prompt").mockReturnValue("MySuperPassword123!")
                 invokeMock.mockImplementation(async (cmd: string) => {
                     if (cmd === "get_borrow_lan_settings") {
                         return { enabled: false, host: "127.0.0.1", port: 8787, borrowUrl: "" }
@@ -1157,7 +1197,7 @@ describe("Borrow / Return saved Handle with Care policy", () => {
                 const { result } = renderHook(() => useSettingsState(baseOptions))
 
                 await act(async () => {
-                    await result.current.handleStartGenerateRecoveryCodes()
+                    await result.current.handleConfirmGenerateRecoveryCodes("MySuperPassword123!")
                 })
 
                 expect(result.current.recoveryCodesModalOpen).toBe(true)
@@ -1168,8 +1208,6 @@ describe("Borrow / Return saved Handle with Care policy", () => {
 
                 expect(result.current.recoveryCodesModalOpen).toBe(false)
                 expect(result.current.pendingRecoveryBatch).toBeNull()
-
-                promptSpy.mockRestore()
             })
         })
     })

@@ -36,6 +36,13 @@ describe("SettingsView — Recovery Codes UI (RC-Phase C1)", () => {
         isGeneratingRecoveryCodes: false,
         isActivatingRecoveryCodes: false,
         isRevokingRecoveryCodes: false,
+        recoveryPasswordModalOpen: false,
+        setRecoveryPasswordModalOpen: vi.fn(),
+        recoveryPasswordModalError: "",
+        setRecoveryPasswordModalError: vi.fn(),
+        handleOpenGenerateRecoveryCodesModal: vi.fn(),
+        handleCloseGenerateRecoveryCodesModal: vi.fn(),
+        handleConfirmGenerateRecoveryCodes: vi.fn(),
         recoveryCodesModalOpen: false,
         setRecoveryCodesModalOpen: vi.fn(),
         pendingRecoveryBatch: null,
@@ -317,5 +324,130 @@ describe("SettingsView — Recovery Codes UI (RC-Phase C1)", () => {
 
         const msg = screen.getByTestId("recovery-status-message")
         expect(msg).toHaveTextContent("8 new Recovery Codes successfully activated.")
+    })
+
+    describe("Password Reauthentication Modal", () => {
+        it("renders modal with masked input and proper bilingual titles when recoveryPasswordModalOpen is true", () => {
+            const settings = createMockSettings({
+                recoveryPasswordModalOpen: true,
+            })
+            const auth = createMockAuth(true)
+
+            render(<SettingsView {...baseProps} auth={auth} settings={settings} />)
+
+            expect(screen.getByRole("heading", { name: /Confirm Password \/ Xác nhận mật khẩu/i })).toBeInTheDocument()
+            expect(screen.getByText(/Current Super Admin password is required to generate 8 new Recovery Codes/i)).toBeInTheDocument()
+            const input = screen.getByTestId("recovery-reauth-password-input")
+            expect(input).toBeInTheDocument()
+            expect(input).toHaveAttribute("type", "password")
+        })
+
+        it("toggles password visibility with eye icon", () => {
+            const settings = createMockSettings({
+                recoveryPasswordModalOpen: true,
+            })
+            const auth = createMockAuth(true)
+
+            render(<SettingsView {...baseProps} auth={auth} settings={settings} />)
+
+            const input = screen.getByTestId("recovery-reauth-password-input")
+            const toggleBtn = screen.getByTestId("recovery-reauth-toggle-visibility")
+
+            expect(input).toHaveAttribute("type", "password")
+            fireEvent.click(toggleBtn)
+            expect(input).toHaveAttribute("type", "text")
+            fireEvent.click(toggleBtn)
+            expect(input).toHaveAttribute("type", "password")
+        })
+
+        it("submits password to handleConfirmGenerateRecoveryCodes on form submission", () => {
+            const handleConfirm = vi.fn()
+            const settings = createMockSettings({
+                recoveryPasswordModalOpen: true,
+                handleConfirmGenerateRecoveryCodes: handleConfirm,
+            })
+            const auth = createMockAuth(true)
+
+            render(<SettingsView {...baseProps} auth={auth} settings={settings} />)
+
+            const input = screen.getByTestId("recovery-reauth-password-input")
+            const confirmBtn = screen.getByTestId("recovery-reauth-confirm-button")
+
+            // Initially disabled when empty
+            expect(confirmBtn).toBeDisabled()
+
+            // Fill password
+            fireEvent.change(input, { target: { value: "SecretSuperPassword" } })
+            expect(confirmBtn).toBeEnabled()
+
+            fireEvent.click(confirmBtn)
+            expect(handleConfirm).toHaveBeenCalledWith("SecretSuperPassword")
+        })
+
+        it("submits password on Enter key press", () => {
+            const handleConfirm = vi.fn()
+            const settings = createMockSettings({
+                recoveryPasswordModalOpen: true,
+                handleConfirmGenerateRecoveryCodes: handleConfirm,
+            })
+            const auth = createMockAuth(true)
+
+            render(<SettingsView {...baseProps} auth={auth} settings={settings} />)
+
+            const input = screen.getByTestId("recovery-reauth-password-input")
+            fireEvent.change(input, { target: { value: "SecretSuperPassword" } })
+            fireEvent.submit(input.closest("form")!)
+
+            expect(handleConfirm).toHaveBeenCalledWith("SecretSuperPassword")
+        })
+
+        it("calls handleCloseGenerateRecoveryCodesModal when cancel button is clicked", () => {
+            const handleClose = vi.fn()
+            const settings = createMockSettings({
+                recoveryPasswordModalOpen: true,
+                handleCloseGenerateRecoveryCodesModal: handleClose,
+            })
+            const auth = createMockAuth(true)
+
+            render(<SettingsView {...baseProps} auth={auth} settings={settings} />)
+
+            const cancelBtn = screen.getByTestId("recovery-reauth-cancel-button")
+            fireEvent.click(cancelBtn)
+
+            expect(handleClose).toHaveBeenCalledTimes(1)
+        })
+
+        it("displays in-modal error alert banner when recoveryPasswordModalError is set", () => {
+            const settings = createMockSettings({
+                recoveryPasswordModalOpen: true,
+                recoveryPasswordModalError: "Invalid password / Mật khẩu không chính xác",
+            })
+            const auth = createMockAuth(true)
+
+            render(<SettingsView {...baseProps} auth={auth} settings={settings} />)
+
+            const errorBanner = screen.getByTestId("recovery-reauth-error")
+            expect(errorBanner).toBeInTheDocument()
+            expect(errorBanner).toHaveTextContent("Invalid password / Mật khẩu không chính xác")
+        })
+
+        it("disables inputs and buttons during generation processing", () => {
+            const settings = createMockSettings({
+                recoveryPasswordModalOpen: true,
+                isGeneratingRecoveryCodes: true,
+            })
+            const auth = createMockAuth(true)
+
+            render(<SettingsView {...baseProps} auth={auth} settings={settings} />)
+
+            const input = screen.getByTestId("recovery-reauth-password-input")
+            const confirmBtn = screen.getByTestId("recovery-reauth-confirm-button")
+            const cancelBtn = screen.getByTestId("recovery-reauth-cancel-button")
+
+            expect(input).toBeDisabled()
+            expect(confirmBtn).toBeDisabled()
+            expect(cancelBtn).toBeDisabled()
+            expect(screen.getByText("Verifying...")).toBeInTheDocument()
+        })
     })
 })

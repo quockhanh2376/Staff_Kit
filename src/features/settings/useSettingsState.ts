@@ -73,6 +73,8 @@ export function useSettingsState({
     const [isGeneratingRecoveryCodes, setIsGeneratingRecoveryCodes] = useState(false)
     const [isActivatingRecoveryCodes, setIsActivatingRecoveryCodes] = useState(false)
     const [isRevokingRecoveryCodes, setIsRevokingRecoveryCodes] = useState(false)
+    const [recoveryPasswordModalOpen, setRecoveryPasswordModalOpen] = useState(false)
+    const [recoveryPasswordModalError, setRecoveryPasswordModalError] = useState("")
     const [recoveryCodesModalOpen, setRecoveryCodesModalOpen] = useState(false)
     const [pendingRecoveryBatch, setPendingRecoveryBatch] = useState<GenerateRecoveryCodesResult | null>(null)
     const [recoveryStatusMessage, setRecoveryStatusMessage] = useState("")
@@ -855,23 +857,45 @@ export function useSettingsState({
         }
     }, [])
 
-    const handleStartGenerateRecoveryCodes = useCallback(async () => {
-        const password = window.prompt("Enter your current Super Admin password to generate new Recovery Codes:")
-        if (!password) return
+    const handleOpenGenerateRecoveryCodesModal = useCallback(() => {
+        setRecoveryPasswordModalError("")
+        setRecoveryStatusMessage("")
+        setRecoveryPasswordModalOpen(true)
+    }, [])
+
+    const handleCloseGenerateRecoveryCodesModal = useCallback(() => {
+        setRecoveryPasswordModalError("")
+        setRecoveryPasswordModalOpen(false)
+    }, [])
+
+    const handleConfirmGenerateRecoveryCodes = useCallback(async (password: string) => {
+        if (!password || !password.trim()) return
 
         setIsGeneratingRecoveryCodes(true)
+        setRecoveryPasswordModalError("")
         setRecoveryStatusMessage("")
         setRecoveryModalError("")
         try {
-            const batch = await staffApi.generateRecoveryCodes(password)
+            const batch = await staffApi.generateRecoveryCodes(password.trim())
             setPendingRecoveryBatch(batch)
+            setRecoveryPasswordModalOpen(false)
             setRecoveryCodesModalOpen(true)
         } catch (error) {
+            const rawMsg = error instanceof Error ? error.message : typeof error === "string" ? error : getUserErrorMessage(error)
+            setRecoveryPasswordModalError(rawMsg)
             setGlobalError(getUserErrorMessage(error))
         } finally {
             setIsGeneratingRecoveryCodes(false)
         }
     }, [setGlobalError])
+
+    const handleStartGenerateRecoveryCodes = useCallback(async (directPassword?: string) => {
+        if (directPassword && directPassword.trim()) {
+            await handleConfirmGenerateRecoveryCodes(directPassword.trim())
+            return
+        }
+        handleOpenGenerateRecoveryCodesModal()
+    }, [handleConfirmGenerateRecoveryCodes, handleOpenGenerateRecoveryCodesModal])
 
     const handleConfirmActivateRecoveryCodes = useCallback(async () => {
         if (!pendingRecoveryBatch) return
@@ -962,6 +986,13 @@ export function useSettingsState({
         isGeneratingRecoveryCodes,
         isActivatingRecoveryCodes,
         isRevokingRecoveryCodes,
+        recoveryPasswordModalOpen,
+        setRecoveryPasswordModalOpen,
+        recoveryPasswordModalError,
+        setRecoveryPasswordModalError,
+        handleOpenGenerateRecoveryCodesModal,
+        handleCloseGenerateRecoveryCodesModal,
+        handleConfirmGenerateRecoveryCodes,
         recoveryCodesModalOpen,
         setRecoveryCodesModalOpen,
         pendingRecoveryBatch,
