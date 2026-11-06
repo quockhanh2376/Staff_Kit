@@ -1,5 +1,14 @@
 # Daily Log - 2026-11-06
 
+## 2026-11-06 — Staff Kit Recovery Codes Final Regression & RC5 Preparation (Start)
+- Authorized by Zon.
+- Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Scope:
+  1. Full Recovery Codes regression: password modal, Generate -> Copy -> Confirm -> Activate lifecycle, 8/8 persistence, incorrect password, cancellation, expired batch, failed activation, reuse protection, RC4 features.
+  2. Legacy database compatibility test on disposable SQLCipher copy (user_version = 1, migration idempotency, zero modifications to active DB).
+  3. Standalone Windows RC5 preparation: build NSIS EXE + WiX MSI from commit `dcf2f57`, compute SHA-256, verify upgrade preservation, prepare RC5 release notes and tag `v2.2.1-internal-rc5`.
+  4. NO GITHUB RELEASE. Stop at READY awaiting Zon's authorization.
+
 ## 2026-11-06 — Staff Kit Recovery Codes Password Reauthentication UI (Start)
 - Authorized by Zon.
 - Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).

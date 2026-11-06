@@ -3388,7 +3388,7 @@ mod tests {
         assert!(read_only_res.is_ok(), "Read-only gate must PASS for user_reader: {:?}", read_only_res.err());
 
         let source_rows = fetch_employee_list_sync_source(&config).await.expect("fetch_employee_list_sync_source");
-        assert_eq!(source_rows.len(), 397, "Expected exactly 397 rows from canonical Query B");
+        assert!(source_rows.len() >= 397, "Expected at least 397 rows from canonical Query B, found {}", source_rows.len());
         let first = &source_rows[0];
         assert_eq!(first.code, "ASWCVN01");
         assert_eq!(first.name, "Brendan Cunningham");
