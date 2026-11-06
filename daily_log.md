@@ -1,15 +1,24 @@
 # Daily Log - 2026-11-06
 
-## 2026-11-06 — Staff Kit RC5 Internal Pre-release (Start)
+## 2026-11-06 — Staff Kit RC5 Internal Pre-release (Start & End)
 - Authorized by Zon.
 - Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
 - Scope: Publish GitHub Pre-release `v2.2.1-internal-rc5` targeting commit `4a688f3`.
-- Actions:
-  1. Verify tag `v2.2.1-internal-rc5` points exactly to commit `4a688f3`.
-  2. Recalculate SHA-256 for NSIS EXE, WiX MSI, and SHA256SUMS.txt.
-  3. Publish GitHub Pre-release with attached packages and checksums manifest.
-  4. Perform independent QA verification of tag, assets, checksums, and pre-release flag.
-  5. Strictly zero writes to active production/test databases, no credential reset, no rekeying.
+- Status: RELEASE PASS — Published as Pre-release on GitHub.
+- Release URL: https://github.com/quockhanh2376/Staff_Kit/releases/tag/v2.2.1-internal-rc5
+- Target Commit: `4a688f3` (verified annotated tag `v2.2.1-internal-rc5`).
+- Assets Uploaded & Verified:
+  - `Staff Kit_2.2.1_x64-setup.exe` (121,850,332 bytes, SHA-256 `780BFB57CA0E857685655406CE48514A8D8B2173A04353A7652D030FCDDF78FC`)
+  - `Staff Kit_2.2.1_x64_en-US.msi` (126,259,200 bytes, SHA-256 `7062AFAA671677E4D38055247C5A09CDC48497CBE972208FD0CE4DDFB0182761`)
+  - `SHA256SUMS.txt` (192 bytes, SHA-256 `8A846EBA8540A4CF14AF501C5F489AB6240BD97D112BA8A69FEDD2C6473F1183`)
+- Independent QA Verification:
+  - Pre-release flag: verified `isPrerelease = true`.
+  - Draft flag: verified `isDraft = false`.
+  - Checksum match: 100% match against local release build and manifest.
+  - Download access: verified HTTP 200 via direct content CDN.
+  - Historical integrity: RC1, RC2, RC3, RC4, and v2.2.1 Latest preserved without overwrite.
+  - Active database: zero modifications to `D:\Staff_Kit\data\test_db\staff_kit.sqlite3`.
+  - Credentials & Security: zero credential reset, zero SQLCipher rekeying, zero secrets exposed.
 
 ## 2026-11-06 — Staff Kit Recovery Codes Final Regression & RC5 Preparation (Start)
 - Authorized by Zon.
