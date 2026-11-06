@@ -1,5 +1,16 @@
 # Daily Log - 2026-11-06
 
+## 2026-11-06 — Staff Kit RC5 Internal Pre-release (Start)
+- Authorized by Zon.
+- Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Scope: Publish GitHub Pre-release `v2.2.1-internal-rc5` targeting commit `4a688f3`.
+- Actions:
+  1. Verify tag `v2.2.1-internal-rc5` points exactly to commit `4a688f3`.
+  2. Recalculate SHA-256 for NSIS EXE, WiX MSI, and SHA256SUMS.txt.
+  3. Publish GitHub Pre-release with attached packages and checksums manifest.
+  4. Perform independent QA verification of tag, assets, checksums, and pre-release flag.
+  5. Strictly zero writes to active production/test databases, no credential reset, no rekeying.
+
 ## 2026-11-06 — Staff Kit Recovery Codes Final Regression & RC5 Preparation (Start)
 - Authorized by Zon.
 - Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
