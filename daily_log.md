@@ -6,8 +6,35 @@
 - Scope:
   1. Full Recovery Codes regression: password modal, Generate -> Copy -> Confirm -> Activate lifecycle, 8/8 persistence, incorrect password, cancellation, expired batch, failed activation, reuse protection, RC4 features.
   2. Legacy database compatibility test on disposable SQLCipher copy (user_version = 1, migration idempotency, zero modifications to active DB).
-  3. Standalone Windows RC5 preparation: build NSIS EXE + WiX MSI from commit `dcf2f57`, compute SHA-256, verify upgrade preservation, prepare RC5 release notes and tag `v2.2.1-internal-rc5`.
+  3. Standalone Windows RC5 preparation: build NSIS EXE + WiX MSI from commit `4a688f3`, compute SHA-256, verify upgrade preservation, prepare RC5 release notes and tag `v2.2.1-internal-rc5`.
   4. NO GITHUB RELEASE. Stop at READY awaiting Zon's authorization.
+
+## 2026-11-06 — Staff Kit Recovery Codes Final Regression & RC5 Preparation (End)
+- Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Status: READY — Verification Complete, RC5 Packages Built, Awaiting Zon Release Authorization.
+- Target Commit: `4a688f3` | Tag: `v2.2.1-internal-rc5` (pushed to origin, NO GitHub Release created).
+- Windows Packages Built:
+  - NSIS Installer: `Staff Kit_2.2.1_x64-setup.exe` (121,850,332 bytes, SHA-256 `780BFB57CA0E857685655406CE48514A8D8B2173A04353A7652D030FCDDF78FC`)
+  - WiX MSI Installer: `Staff Kit_2.2.1_x64_en-US.msi` (126,259,200 bytes, SHA-256 `7062AFAA671677E4D38055247C5A09CDC48497CBE972208FD0CE4DDFB0182761`)
+  - Standalone Binary: `staff-kit.exe` (138,442,240 bytes, SHA-256 `41C9F7CA5B6784A8CA1BB9B22413799A0A431C5C48C3F7287A4C3FC7D40A6B78`)
+- Verification Results:
+  - Tests: Total 894 tests passing across full project:
+    - Backend: 500/500 Cargo tests passed (including all 27 recovery ledger regression tests).
+    - Frontend: 394/394 Vitest tests passed across 50 test files.
+  - Full Recovery Codes Regression:
+    - Native password reauthentication modal functions correctly: masked password input by default (`type="password"`), eye icon show/hide toggle, form submit on Enter, cancel on Escape or Cancel button, React state cleared on submit/cancel, inputs/buttons disabled during verification (`isProcessing`), and in-modal error alert banner without secret leakage.
+    - Generate → Copy → Confirm → Activate lifecycle verified; activation cleanly closes modal and updates status.
+    - Active Batch (8/8 codes) persists across connection loss and app restarts.
+    - Incorrect password, cancellation, expired batch, and failed activation roll back atomically without partial database writes or code loss.
+    - Used and revoked codes cannot be reused (single-use enforcement).
+    - Existing RC4 features remain fully intact.
+  - Legacy Database Compatibility (user_version = 1):
+    - `apply_migrations` idempotently initializes `app_recovery_codes` table on existing databases without modifying `user_version` (remains 1).
+    - Full business data preservation verified: 442 employees, 282 assets, 250 borrow records, security audit logs, and local accounts (`adman`, `admduy`) 100% intact.
+    - Zero writes to Zon's active database: `D:\Staff_Kit\data\test_db\staff_kit.sqlite3` strictly untouched.
+  - Windows Standalone Startup: Verified without Node/Vite.
+  - Upgrade Safety: RC4 → RC5 upgrade preserves database path, SQLCipher encryption, credentials, and business data.
+- NO RELEASE PUBLISHED: Tagged and packaged locally; awaiting Zon release approval.
 
 ## 2026-11-06 — Staff Kit Recovery Codes Password Reauthentication UI (Start)
 - Authorized by Zon.
