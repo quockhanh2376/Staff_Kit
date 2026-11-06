@@ -1,5 +1,41 @@
 # Daily Log - 2026-11-06
 
+## 2026-11-06 — Staff Kit RC3 Internal Pre-release Preparation (Start)
+- Authorized by Zon.
+- Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Scope: Prepare & verify RC3 internal pre-release ONLY (no release publication).
+- Key Specifications & Safeguards:
+  1. Confirm Recovery Codes UI fix commit is pushed to main.
+  2. Build Staff_Kit v2.2.1 Windows installer (`npm run tauri:build`).
+  3. Prepare tag `v2.2.1-internal-rc3` without overwriting RC2.
+  4. Verify upgrade safety from RC2: preserves existing SQLCipher DB path (`D:\Staff_Kit\data\test_db\staff_kit.sqlite3`), adman password and account roles, 442 employees, 282 assets, 250 borrow records, security audit, and backup settings.
+  5. Ensure Recovery Codes are NOT generated automatically during installation.
+  6. Compute NSIS EXE checksum and package verification.
+  7. Zero changes to active DB, zero rekeying, zero credential reset, zero GitHub release publishing.
+
+## 2026-11-06 — Staff Kit RC3 Internal Pre-release Preparation (End)
+- Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Artifacts & Verification:
+  1. Commit verified on main: `06c953f810dc8299d3f4feeb1c3464ce7f9b19f5`.
+  2. Local annotated tag prepared: `v2.2.1-internal-rc3` pointing to `06c953f`. RC2 preserved without overwrite.
+  3. Windows desktop packages built successfully via `npm run tauri:build`:
+     - NSIS Setup: `Staff Kit_2.2.1_x64-setup.exe` (121,746,473 bytes, SHA-256 `6AABB29B445FEF47105B84AB0D16D2746CD8AB7D934764FD6685ED509F2DD732`)
+     - MSI Package: `Staff Kit_2.2.1_x64_en-US.msi` (126,074,880 bytes, SHA-256 `B95C40D70A32347859A9F59969202160D6950EE9B7D394799E2BD029321E0B24`)
+     - Binary: `staff-kit.exe` (138,249,216 bytes, SHA-256 `A619454E7EA02F741DD20AF972B09CE8FFF52B97B4CA2532A70EECB83923E77A`)
+  4. Upgrade safety verified:
+     - SQLCipher database path preserved from `db_settings.json` (`D:\Staff_Kit\data\test_db\staff_kit.sqlite3`).
+     - Accounts & roles preserved: `adman` (`super_admin`, temporary credentials active, forced reset enabled), `admduy` (`admin`).
+     - Core business data preserved: 442 employees, 282 assets, 250 borrow records.
+     - Security audit (554 events) and existing backup settings intact.
+  5. Recovery codes safety:
+     - Zero automatic recovery code generation on installation/startup.
+     - Code generation is strictly on-demand, gated behind Super Admin authentication and explicit password reauthentication.
+  6. Quality gate & tests:
+     - Frontend Vitest: 49 test files, 374/374 passed.
+     - Backend Cargo tests: 23/23 recovery ledger tests passed.
+     - Total: 397/397 passed.
+
+
 ## 2026-11-06 — Staff Kit Recovery Codes UI Fix (Start)
 - Authorized by Zon.
 - Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
