@@ -1,5 +1,47 @@
 # Daily Log - 2026-11-06
 
+## 2026-11-06 — Staff Kit RC4 Internal Pre-release (Start & End)
+- Authorized by Zon.
+- Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Scope: Publish GitHub Pre-release `v2.2.1-internal-rc4` targeting commit `001255b`.
+- Status: RELEASE PASS — Published as Pre-release on GitHub.
+- Release URL: https://github.com/quockhanh2376/Staff_Kit/releases/tag/v2.2.1-internal-rc4
+- Assets Uploaded & Verified:
+  - `Staff Kit_2.2.1_x64-setup.exe` (121,742,302 bytes, SHA-256 `10C13C24671C5209CD8A727FA12EFC88EBA5BA8E0FEC546A043B44D1F6CADA52`)
+  - `Staff Kit_2.2.1_x64_en-US.msi` (126,152,704 bytes, SHA-256 `E41BD9B8730E32808C4D93F3EB0F0DF75FDFBCA6D81B6D21959AC1A75142A989`)
+  - `SHA256SUMS.txt` (194 bytes, SHA-256 `CE50452F9B158B0537F088C96DF858C274C7812BEBC191D73CD392141A76F043`)
+- Independent QA Verification:
+  - Pre-release flag: verified `isPrerelease = true`.
+  - Checksum match: 100% match against local release build.
+  - Download access: verified HTTP 200 via direct content CDN.
+  - Historical integrity: RC1, RC2, RC3 preserved without overwrite.
+  - Active database: zero modifications to `D:\Staff_Kit\data\test_db\staff_kit.sqlite3`.
+
+## 2026-11-06 — Staff Kit RC4 Hotfix Preparation (Start)
+- Authorized by Zon.
+- Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Scope: Build Windows NSIS EXE and WiX MSI from commit 001255b, verify RC3 -> RC4 upgrade preservation, test recovery code activation on disposable legacy RC2/RC3 DB copy, verify error display / rollback atomicity, and compute SHA-256 checksums. NO RELEASE.
+- Safeguards: Zero writes to Zon's active database, no rekeying, no credentials reset, no release publication.
+
+## 2026-11-06 — Staff Kit RC4 Hotfix Preparation (End)
+- Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Status: READY — Build and verification complete, NO RELEASE.
+- Windows Packages Built from commit `001255b`:
+  - NSIS Setup: `Staff Kit_2.2.1_x64-setup.exe` (121,742,302 bytes, SHA-256 `10C13C24671C5209CD8A727FA12EFC88EBA5BA8E0FEC546A043B44D1F6CADA52`)
+  - WiX MSI: `Staff Kit_2.2.1_x64_en-US.msi` (126,152,704 bytes, SHA-256 `E41BD9B8730E32808C4D93F3EB0F0DF75FDFBCA6D81B6D21959AC1A75142A989`)
+  - Binary: `staff-kit.exe` (138,249,216 bytes, SHA-256 `1952359F92EE940013C7CC7B50A797D1DF05FE453C622A640F416585C4C60CC3`)
+- Upgrade & Migration Verification (E2E Disposable Copy):
+  - Target DB path verified via `db_settings.json`: `D:\Staff_Kit\data\test_db\staff_kit.sqlite3`.
+  - Migration safety: `apply_migrations` on `user_version = 1` database idempotently creates `app_recovery_codes` table without altering `user_version` (remains 1).
+  - Business data preservation: 442 employees, 282 assets, 250 borrow requests, and 560+ security audit records 100% intact.
+  - Accounts preserved: `adman` (`super_admin`), `admduy` (`admin`).
+- Recovery Code Activation Verification:
+  - Failure behavior: Mismatched batch ID or aborted transaction preserves batch in RAM, discards staged journal, leaves database untouched (0 rows inserted), and displays in-modal alert.
+  - Success behavior: Correct activation commits 8/8 codes to `app_recovery_codes`, appends block to recovery ledger, clears pending batch from RAM, and closes modal.
+  - Persistence: After connection drop and application restart, 8 active recovery codes persist.
+  - Safe reuse prevention: Previously exposed / unactivated recovery codes cannot be used.
+- Test Summary: All 376 Vitest tests and 26 Cargo recovery ledger regression tests passed cleanly (402/402 passed). Zero active database writes. No release published.
+
 ## 2026-11-06 — Staff Kit RC3 Recovery Codes Activation Hotfix (Start)
 - Authorized by Zon.
 - Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
