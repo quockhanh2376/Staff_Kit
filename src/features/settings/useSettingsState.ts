@@ -256,6 +256,7 @@ export function useSettingsState({
                     staffApi.getRecoveryCodeStatus().catch(() => null),
                 ])
                 if (!disposed) {
+                    setRecoveryStatusMessage("")
                     setBackupSettings(backupSettings)
                     setSecurityPolicy(secPolicy)
                     setRecoveryCodeStatus(recStatus)
@@ -953,6 +954,10 @@ export function useSettingsState({
         }
     }, [loadRecoveryCodeStatus, setGlobalError])
 
+    const clearRecoveryStatusMessage = useCallback(() => {
+        setRecoveryStatusMessage("")
+    }, [])
+
     return {
         backupSettings,
         backupDirectoryInput,
@@ -997,6 +1002,7 @@ export function useSettingsState({
         setRecoveryCodesModalOpen,
         pendingRecoveryBatch,
         recoveryStatusMessage,
+        clearRecoveryStatusMessage,
         recoveryModalError,
         setRecoveryModalError,
         loadRecoveryCodeStatus,

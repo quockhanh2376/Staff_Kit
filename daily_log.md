@@ -1,5 +1,19 @@
 # Daily Log - 2026-11-06
 
+## 2026-11-06 — Staff Kit Compact Recovery Codes UI (Start & End)
+- Authorized by Zon.
+- Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).
+- Scope:
+  1. Simplify Settings → Security Policy → One-Time Recovery Codes card.
+  2. Remove verbose explanatory paragraph ("8 one-time cryptographic recovery codes are active...").
+  3. Compact status badge: dynamic "7/8 remaining" (X/Y remaining) when active, "Not configured" when no active batch.
+  4. Dynamic button label: "Generate New Codes" when active batch exists, "Generate Recovery Codes" otherwise.
+  5. Remove persistent activation-success banner after leaving Settings (unmount cleanup) or reloading view (`reloadToken`), with dismiss button (`✕`) for manual cleanup, while preserving immediate success/error feedback.
+  6. Reduce unnecessary vertical spacing while preserving Staff_Kit dark styling.
+  7. Zero database writes, no schema changes, no Recovery Ledger changes, no rekeying, no release.
+- Status: PASS — Verification Complete.
+- Tests: 397/397 Frontend Vitest tests passing across 50 test files. ESLint, TypeScript `tsc -b`, and Vite build all clean. Zero database writes or schema modifications.
+
 ## 2026-11-06 — Staff Kit RC5 Internal Pre-release (Start & End)
 - Authorized by Zon.
 - Implementer: Victor (Senior Developer). QA Validator: Qeen (Independent QA Validator).

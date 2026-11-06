@@ -1209,6 +1209,42 @@ describe("Borrow / Return saved Handle with Care policy", () => {
                 expect(result.current.recoveryCodesModalOpen).toBe(false)
                 expect(result.current.pendingRecoveryBatch).toBeNull()
             })
+
+            it("clearRecoveryStatusMessage resets the status message banner", async () => {
+                setSession({ sessionToken: "test-token", expiresAt: "2099-01-01T00:00:00Z" })
+                invokeMock.mockImplementation(async (cmd: string) => {
+                    if (cmd === "get_borrow_lan_settings") {
+                        return { enabled: false, host: "127.0.0.1", port: 8787, borrowUrl: "" }
+                    }
+                    if (cmd === "generate_recovery_codes") {
+                        return { batch_id: "batch_rc_clear", codes: ["A1234-B5678"], expires_in_seconds: 900 }
+                    }
+                    if (cmd === "activate_recovery_codes") {
+                        return {}
+                    }
+                    if (cmd === "get_recovery_code_status") {
+                        return { total_codes: 8, remaining_codes: 8, has_active_batch: true }
+                    }
+                    return {}
+                })
+
+                const { result } = renderHook(() => useSettingsState(baseOptions))
+
+                await act(async () => {
+                    await result.current.handleConfirmGenerateRecoveryCodes("MySuperPassword123!")
+                })
+                await act(async () => {
+                    await result.current.handleConfirmActivateRecoveryCodes()
+                })
+
+                expect(result.current.recoveryStatusMessage).toBe("8 new Recovery Codes successfully activated.")
+
+                act(() => {
+                    result.current.clearRecoveryStatusMessage()
+                })
+
+                expect(result.current.recoveryStatusMessage).toBe("")
+            })
         })
     })
 

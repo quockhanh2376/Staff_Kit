@@ -47,6 +47,7 @@ describe("SettingsView — Recovery Codes UI (RC-Phase C1)", () => {
         setRecoveryCodesModalOpen: vi.fn(),
         pendingRecoveryBatch: null,
         recoveryStatusMessage: "",
+        clearRecoveryStatusMessage: vi.fn(),
         recoveryModalError: "",
         setRecoveryModalError: vi.fn(),
         loadRecoveryCodeStatus: vi.fn(),
@@ -139,8 +140,16 @@ describe("SettingsView — Recovery Codes UI (RC-Phase C1)", () => {
         triggerReload: vi.fn(),
     }
 
-    it("renders 'Generate Recovery Codes' button when user is Super Admin", () => {
-        const settings = createMockSettings()
+    it("renders 'Generate Recovery Codes' button when user is Super Admin and no active batch", () => {
+        const settings = createMockSettings({
+            recoveryCodeStatus: {
+                total_codes: 0,
+                remaining_codes: 0,
+                has_active_batch: false,
+                has_legacy_code: false,
+                is_default_legacy_code: false,
+            },
+        })
         const auth = createMockAuth(true)
 
         render(<SettingsView {...baseProps} auth={auth} settings={settings} />)
@@ -149,6 +158,25 @@ describe("SettingsView — Recovery Codes UI (RC-Phase C1)", () => {
         expect(btn).toBeInTheDocument()
         expect(btn).toHaveTextContent("Generate Recovery Codes")
         expect(screen.queryByText(/Only Super Admin can generate recovery codes/i)).not.toBeInTheDocument()
+    })
+
+    it("renders 'Generate New Codes' button when user is Super Admin and active batch exists", () => {
+        const settings = createMockSettings({
+            recoveryCodeStatus: {
+                total_codes: 8,
+                remaining_codes: 7,
+                has_active_batch: true,
+                has_legacy_code: false,
+                is_default_legacy_code: false,
+            },
+        })
+        const auth = createMockAuth(true)
+
+        render(<SettingsView {...baseProps} auth={auth} settings={settings} />)
+
+        const btn = screen.getByTestId("generate-recovery-codes-button")
+        expect(btn).toBeInTheDocument()
+        expect(btn).toHaveTextContent("Generate New Codes")
     })
 
     it("hides 'Generate Recovery Codes' button and shows notice when user is NOT Super Admin", () => {
@@ -161,11 +189,11 @@ describe("SettingsView — Recovery Codes UI (RC-Phase C1)", () => {
         expect(screen.getByText(/Only Super Admin can generate recovery codes/i)).toBeInTheDocument()
     })
 
-    it("displays 'Active Batch (8/8 codes)' badge when active batch is present", () => {
+    it("displays dynamic '7/8 remaining' badge and removes verbose paragraph when active batch is present", () => {
         const settings = createMockSettings({
             recoveryCodeStatus: {
                 total_codes: 8,
-                remaining_codes: 8,
+                remaining_codes: 7,
                 has_active_batch: true,
                 has_legacy_code: false,
                 is_default_legacy_code: false,
@@ -176,11 +204,11 @@ describe("SettingsView — Recovery Codes UI (RC-Phase C1)", () => {
         render(<SettingsView {...baseProps} auth={auth} settings={settings} />)
 
         const badge = screen.getByTestId("recovery-batch-status-badge")
-        expect(badge).toHaveTextContent("Active Batch (8/8 codes)")
-        expect(screen.getByText(/8 one-time cryptographic recovery codes are active \(8 remaining\)/i)).toBeInTheDocument()
+        expect(badge).toHaveTextContent("7/8 remaining")
+        expect(screen.queryByText(/cryptographic recovery codes are active/i)).not.toBeInTheDocument()
     })
 
-    it("displays 'Not Configured (Default Legacy)' when default unconfigured code is present", () => {
+    it("displays 'Not configured' when default unconfigured code is present", () => {
         const settings = createMockSettings({
             recoveryCodeStatus: {
                 total_codes: 0,
@@ -195,10 +223,10 @@ describe("SettingsView — Recovery Codes UI (RC-Phase C1)", () => {
         render(<SettingsView {...baseProps} auth={auth} settings={settings} />)
 
         const badge = screen.getByTestId("recovery-batch-status-badge")
-        expect(badge).toHaveTextContent("Not Configured (Default Legacy)")
+        expect(badge).toHaveTextContent("Not configured")
     })
 
-    it("displays 'No Active Batch' when recovery codes are uninitialized", () => {
+    it("displays 'Not configured' when recovery codes are uninitialized", () => {
         const settings = createMockSettings({
             recoveryCodeStatus: {
                 total_codes: 0,
@@ -213,7 +241,7 @@ describe("SettingsView — Recovery Codes UI (RC-Phase C1)", () => {
         render(<SettingsView {...baseProps} auth={auth} settings={settings} />)
 
         const badge = screen.getByTestId("recovery-batch-status-badge")
-        expect(badge).toHaveTextContent("No Active Batch")
+        expect(badge).toHaveTextContent("Not configured")
     })
 
     it("wires button click to handleStartGenerateRecoveryCodes", () => {
@@ -314,9 +342,11 @@ describe("SettingsView — Recovery Codes UI (RC-Phase C1)", () => {
         }
     })
 
-    it("displays recoveryStatusMessage when present", () => {
+    it("displays recoveryStatusMessage when present and allows dismissal", () => {
+        const clearMsg = vi.fn()
         const settings = createMockSettings({
             recoveryStatusMessage: "8 new Recovery Codes successfully activated.",
+            clearRecoveryStatusMessage: clearMsg,
         })
         const auth = createMockAuth(true)
 
@@ -324,6 +354,23 @@ describe("SettingsView — Recovery Codes UI (RC-Phase C1)", () => {
 
         const msg = screen.getByTestId("recovery-status-message")
         expect(msg).toHaveTextContent("8 new Recovery Codes successfully activated.")
+
+        const dismissBtn = screen.getByRole("button", { name: /Dismiss status message/i })
+        fireEvent.click(dismissBtn)
+        expect(clearMsg).toHaveBeenCalledTimes(1)
+    })
+
+    it("clears recoveryStatusMessage when SettingsView unmounts", () => {
+        const clearMsg = vi.fn()
+        const settings = createMockSettings({
+            clearRecoveryStatusMessage: clearMsg,
+        })
+        const auth = createMockAuth(true)
+
+        const { unmount } = render(<SettingsView {...baseProps} auth={auth} settings={settings} />)
+        expect(clearMsg).not.toHaveBeenCalled()
+        unmount()
+        expect(clearMsg).toHaveBeenCalledTimes(1)
     })
 
     describe("Password Reauthentication Modal", () => {

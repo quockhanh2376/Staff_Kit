@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import {
     AlertTriangle,
     Copy,
@@ -197,6 +197,13 @@ export function SettingsView({
     const adminPortalCard = useIdleCollapse(60000, false)
     const databaseBackupCard = useIdleCollapse(60000, false)
     const auditLogsCard = useIdleCollapse(60000, false)
+    const { clearRecoveryStatusMessage } = settings
+
+    useEffect(() => {
+        return () => {
+            clearRecoveryStatusMessage?.()
+        }
+    }, [clearRecoveryStatusMessage])
 
     return (
         <section className="bg-[var(--bg)] px-4 py-7 text-[var(--text-secondary)] md:px-8">
@@ -626,7 +633,7 @@ export function SettingsView({
 
                                 {/* Recovery Codes (Super Admin only, D3.20/RC-Phase C1) */}
                                 <div className="rounded-[10px] border border-[var(--border)] bg-[var(--bg)] p-3">
-                                    <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
                                         <div className="flex items-center gap-1.5">
                                             <KeyRound size={14} className="text-amber-400" />
                                             <span className="text-xs font-semibold text-[var(--text-primary)]">
@@ -637,9 +644,7 @@ export function SettingsView({
                                             const status = settings.recoveryCodeStatus
                                             const hasActiveBatch = Boolean(status?.has_active_batch ?? status?.hasActiveBatch)
                                             const remainingCodes = status?.remaining_codes ?? status?.remainingCodes ?? 0
-                                            const totalCodes = status?.total_codes ?? status?.totalCodes ?? 0
-                                            const isDefaultLegacy = Boolean(status?.is_default_legacy_code ?? status?.isDefaultLegacyCode)
-                                            const hasLegacy = Boolean(status?.has_legacy_code ?? status?.legacyCodeConfigured ?? status?.legacy_code_configured)
+                                            const totalCodes = status?.total_codes ?? status?.totalCodes ?? 8
 
                                             return (
                                                 <span
@@ -654,62 +659,60 @@ export function SettingsView({
                                                         <>
                                                             <CheckCircle2 size={11} className="text-emerald-400" />
                                                             <span>
-                                                                Active Batch ({remainingCodes}/{totalCodes} codes)
+                                                                {remainingCodes}/{totalCodes || 8} remaining
                                                             </span>
                                                         </>
-                                                    ) : isDefaultLegacy ? (
-                                                        <span>Not Configured (Default Legacy)</span>
-                                                    ) : hasLegacy ? (
-                                                        <span>Legacy Single Code</span>
                                                     ) : (
-                                                        <span>No Active Batch</span>
+                                                        <span>Not configured</span>
                                                     )}
                                                 </span>
                                             )
                                         })()}
                                     </div>
 
-                                    {(() => {
-                                        const status = settings.recoveryCodeStatus
-                                        const hasActiveBatch = Boolean(status?.has_active_batch ?? status?.hasActiveBatch)
-                                        const remainingCodes = status?.remaining_codes ?? status?.remainingCodes ?? 0
-
-                                        return (
-                                            <p className="text-[11px] text-[var(--text-secondary)] mb-2.5">
-                                                {hasActiveBatch
-                                                    ? `8 one-time cryptographic recovery codes are active (${remainingCodes} remaining). Generating new codes will replace the existing batch upon activation.`
-                                                    : "Generate 8 one-time cryptographic recovery codes to safeguard Super Admin access without single points of failure."}
-                                            </p>
-                                        )
-                                    })()}
-
-                                    {auth.isSuperAdminAccount ? (
-                                        <button
-                                            type="button"
-                                            data-testid="generate-recovery-codes-button"
-                                            className="inline-flex items-center justify-center gap-1.5 rounded-[8px] border border-amber-500/40 bg-amber-500/15 px-3 py-1 text-xs font-medium text-amber-300 hover:bg-amber-500/25 transition disabled:opacity-50"
-                                            onClick={() => void settings.handleStartGenerateRecoveryCodes()}
-                                            disabled={settings.isGeneratingRecoveryCodes}
-                                        >
-                                            {settings.isGeneratingRecoveryCodes ? (
-                                                <LoaderCircle className="animate-spin" size={13} />
-                                            ) : (
-                                                <KeyRound size={13} />
-                                            )}
-                                            <span>Generate Recovery Codes</span>
-                                        </button>
-                                    ) : (
-                                        <div className="text-[11px] text-[var(--text-secondary)] italic">
-                                            🔒 Only Super Admin can generate recovery codes.
-                                        </div>
-                                    )}
+                                    <div className="mt-2.5">
+                                        {auth.isSuperAdminAccount ? (
+                                            <button
+                                                type="button"
+                                                data-testid="generate-recovery-codes-button"
+                                                className="inline-flex items-center justify-center gap-1.5 rounded-[8px] border border-amber-500/40 bg-amber-500/15 px-3 py-1 text-xs font-medium text-amber-300 hover:bg-amber-500/25 transition disabled:opacity-50"
+                                                onClick={() => void settings.handleStartGenerateRecoveryCodes()}
+                                                disabled={settings.isGeneratingRecoveryCodes}
+                                            >
+                                                {settings.isGeneratingRecoveryCodes ? (
+                                                    <LoaderCircle className="animate-spin" size={13} />
+                                                ) : (
+                                                    <KeyRound size={13} />
+                                                )}
+                                                <span>
+                                                    {(settings.recoveryCodeStatus?.has_active_batch ?? settings.recoveryCodeStatus?.hasActiveBatch)
+                                                        ? "Generate New Codes"
+                                                        : "Generate Recovery Codes"}
+                                                </span>
+                                            </button>
+                                        ) : (
+                                            <div className="text-[11px] text-[var(--text-secondary)] italic">
+                                                🔒 Only Super Admin can generate recovery codes.
+                                            </div>
+                                        )}
+                                    </div>
 
                                     {settings.recoveryStatusMessage && (
                                         <div
                                             data-testid="recovery-status-message"
-                                            className="mt-2.5 rounded-[8px] border border-emerald-500/28 bg-emerald-500/8 px-2.5 py-1.5 text-xs text-emerald-200"
+                                            className="mt-2 flex items-center justify-between gap-2 rounded-[8px] border border-emerald-500/28 bg-emerald-500/8 px-2.5 py-1.5 text-xs text-emerald-200"
                                         >
-                                            {settings.recoveryStatusMessage}
+                                            <span>{settings.recoveryStatusMessage}</span>
+                                            {settings.clearRecoveryStatusMessage && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => settings.clearRecoveryStatusMessage?.()}
+                                                    className="p-0.5 text-emerald-400 hover:text-emerald-100 transition text-[11px]"
+                                                    aria-label="Dismiss status message"
+                                                >
+                                                    ✕
+                                                </button>
+                                            )}
                                         </div>
                                     )}
                                 </div>
