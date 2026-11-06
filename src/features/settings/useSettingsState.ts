@@ -877,7 +877,8 @@ export function useSettingsState({
         setIsActivatingRecoveryCodes(true)
         setRecoveryStatusMessage("")
         try {
-            await staffApi.activateRecoveryCodes(pendingRecoveryBatch.batch_id)
+            const batchId = pendingRecoveryBatch.batch_id || pendingRecoveryBatch.batchId || ""
+            await staffApi.activateRecoveryCodes(batchId)
             setPendingRecoveryBatch(null)
             setRecoveryCodesModalOpen(false)
             await loadRecoveryCodeStatus()

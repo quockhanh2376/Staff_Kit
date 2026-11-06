@@ -88,17 +88,25 @@ export interface UpdateSecurityPolicyInput {
 }
 
 export interface RecoveryCodeStatus {
-  total_codes: number
-  remaining_codes: number
-  has_active_batch: boolean
-  has_legacy_code: boolean
-  is_default_legacy_code: boolean
+  total_codes?: number
+  remaining_codes?: number
+  has_active_batch?: boolean
+  has_legacy_code?: boolean
+  legacy_code_configured?: boolean
+  is_default_legacy_code?: boolean
+  totalCodes?: number
+  remainingCodes?: number
+  hasActiveBatch?: boolean
+  legacyCodeConfigured?: boolean
+  isDefaultLegacyCode?: boolean
 }
 
 export interface GenerateRecoveryCodesResult {
-  batch_id: string
+  batch_id?: string
   codes: string[]
-  expires_in_seconds: number
+  expires_in_seconds?: number
+  batchId?: string
+  expiresInSeconds?: number
 }
 
 /** LAN server configuration for the Borrow/Return QR flow. */
