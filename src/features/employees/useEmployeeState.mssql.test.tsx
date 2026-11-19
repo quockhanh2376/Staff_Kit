@@ -216,6 +216,25 @@ describe("employee MSSQL update flow", () => {
         expect(api.applyEmployeeListMssqlSync).not.toHaveBeenCalled()
     })
 
+    it("drops the stale preview and shows a safe error when the post-move refresh fails", async () => {
+        const rawError = "MSSQL network connection failed: password=secret; host=sql.internal"
+        const setGlobalError = vi.fn()
+        const consoleError = vi.spyOn(console, "error").mockImplementation(() => {})
+        const { result } = renderHook(() => useEmployeeState({ ...baseOptions, setGlobalError }))
+        await act(async () => { await result.current.updateEmployeeListFromMssql() })
+        expect(result.current.mssqlSyncPreview).not.toBeNull()
+
+        api.previewEmployeeListMssqlSync.mockRejectedValueOnce(new Error(rawError))
+        await act(async () => { await result.current.refreshMssqlSyncPreview() })
+
+        expect(result.current.mssqlSyncPreview).toBeNull()
+        expect(result.current.mssqlUpdateStatus).toBe("error")
+        expect(result.current.mssqlUpdateMessage).toContain("Cannot connect")
+        expect(setGlobalError).toHaveBeenCalledWith(result.current.mssqlUpdateMessage)
+        expect(JSON.stringify(consoleError.mock.calls)).not.toContain("secret")
+        consoleError.mockRestore()
+    })
+
     it.each([
         ["MSSQL authentication failed: password=secret", "authentication failed"],
         ["MSSQL query failed: SELECT * FROM employee_records", "query failed"],

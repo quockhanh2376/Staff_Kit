@@ -4284,3 +4284,12 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
   - Rust Backend: All tests passed.
   - Invariants: Zero writes to production database, zero modifications to `RecoveryLedger` (`ledger.rev`), zero SQLCipher rekey, zero emergency recovery activation.
 - Status: PASS.
+
+## 2026-11-19 Surface Select All and MSSQL preview refresh errors (BUG-28) — End
+
+- Branch: `fix/select-all-error-surface` (from `main` @ `d1d91ac`). Start record was not written before the work began; this entry covers the whole change.
+- `EmployeeView.handleSelectAllResults`: a failed "Select All" now shows the error via `setGlobalError` instead of an empty `catch` that left a page-only selection.
+- `useEmployeeState.refreshMssqlSyncPreview`: a failed refresh after a bulk move drops the stale preview, sets the error status/message through `getMssqlEmployeeUpdateErrorMessage`, and no longer logs the raw MSSQL error to the console.
+- Tests (written first, watched fail): `EmployeeView.integrityCheck.test.tsx` Select All error case; `useEmployeeState.mssql.test.tsx` refresh failure case.
+- Verification: `npm run check:quality` pass; `npm run test:unit` 399/399 pass.
+- Status: PASS.
