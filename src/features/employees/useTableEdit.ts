@@ -298,7 +298,7 @@ export function useTableEdit({
                 employeeIds: selectedMoveEmployeeIds,
                 targetStaffGroup: moveTargetGroup,
                 action: moveTargetGroup.startsWith("set_floating") || moveTargetGroup === "floating"
-                    ? "floating"
+                    ? "set_floating"
                     : moveTargetGroup === "clear_floating"
                     ? "clear_floating"
                     : moveTargetGroup === "reject_offer"
