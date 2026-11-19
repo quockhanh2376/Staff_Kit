@@ -183,6 +183,21 @@ describe("EmployeeView — Asset & Integrity Check Integration", () => {
         vi.clearAllMocks()
     })
 
+    it("Select All shows an error instead of silently keeping a page-only selection", async () => {
+        const props = defaultProps()
+        const tableEdit = { ...props.tableEdit, isTableEditMode: true, selectEmployeeIds: vi.fn() }
+        const employeeState = {
+            ...props.employeeState,
+            fetchAllFilteredEmployees: vi.fn().mockRejectedValue(new Error("database is locked")),
+        }
+
+        render(<EmployeeView {...props} tableEdit={tableEdit} employeeState={employeeState} />)
+        fireEvent.click(screen.getByRole("button", { name: "Select All (2)" }))
+
+        await waitFor(() => expect(props.setGlobalError).toHaveBeenCalledTimes(1))
+        expect(tableEdit.selectEmployeeIds).not.toHaveBeenCalled()
+    })
+
     it("triggers checkAssetIntegrity and shows PASS state when clean", async () => {
         const cleanResult: AssetIntegrityCheckResult = {
             isClean: true,
