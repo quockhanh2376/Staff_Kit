@@ -4284,3 +4284,13 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
   - Rust Backend: All tests passed.
   - Invariants: Zero writes to production database, zero modifications to `RecoveryLedger` (`ledger.rev`), zero SQLCipher rekey, zero emergency recovery activation.
 - Status: PASS.
+
+## 2026-11-19 Stop silent local fallback for an unreachable shared DB folder (REL-005) — End
+
+- Branch: `fix/offline-shared-db-fallback` (from `main` @ `d1d91ac`). Start record was not written before the work began; this entry covers the whole change.
+- `resolve_database_path`: when a custom DB folder is configured but cannot be reached or created, return an error ("not reachable … reconnect the shared drive") instead of silently opening a fresh local DB with the default admin.
+- `ensure_database_ready`: `DB_READY` is now `Mutex<Option<_>>` via `init_once`; a failed init is no longer cached for the life of the process, so the next login/IPC call retries once the share is back.
+- Not changed: a corrupt `db_settings.json` still falls back to the local path (`if let Ok(Some(..))`); tracked as follow-up.
+- Tests (written first, watched fail): `db::tests::unreachable_custom_db_folder_is_an_error_not_a_local_fallback`, `reachable_custom_db_folder_resolves_to_the_db_file_inside_it`, `failed_database_init_is_retried_instead_of_cached`.
+- Verification: `npm run check:quality` pass; `npm run test:tauri` 503/503 pass. Not checked by hand against a real offline network share.
+- Status: PASS.
