@@ -4284,3 +4284,13 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
   - Rust Backend: All tests passed.
   - Invariants: Zero writes to production database, zero modifications to `RecoveryLedger` (`ledger.rev`), zero SQLCipher rekey, zero emergency recovery activation.
 - Status: PASS.
+
+## 2026-11-19 Fix auth guards and Floating bulk actions (SEC-016, SEC-019, BUG-22, BUG-23) — End
+
+- Branch: `fix/auth-guards-floating-select` (from `main` @ `d1d91ac`). Start record was not written before the work began; this entry covers the whole change.
+- SEC-016: `change_local_account_password` now rejects a target id other than the caller's own, and wrong current passwords count toward the same lockout as login (sole Super Admin exemption kept).
+- SEC-019: `inspect_asset_import_file` now requires admin. New test `every_command_calls_the_guard_its_classification_requires` checks each command's real guard against its classification table; it flagged only this command.
+- BUG-22: `staffApi.moveEmployeesGroup` forwards `action`; callers send `set_floating` (was `floating`), so Mark/Clear Floating work again.
+- BUG-23: "Select all results" (and export / Missing-employees matching, which share the query) now honor the Floating filter.
+- Verification: `npm run check:quality` passed; `npm run test:unit` 401/401; `npm run test:tauri` 503/503. `npm run test:supplemental` fails in `scripts/action-icon-ui.test.ts:47` on a SettingsView wording assertion that is already failing on `main` (unrelated).
+- Committed on `fix/auth-guards-floating-select`. Not exercised in the running app.
