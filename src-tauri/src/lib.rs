@@ -415,9 +415,9 @@ fn change_local_account_password(
     session_token: String,
     payload: db::LocalPasswordChangeInput,
 ) -> Result<bool, String> {
-    let _ctx = auth_session::require_authenticated(&session_store, &session_token)?;
+    let ctx = auth_session::require_authenticated(&session_store, &session_token)?;
     let target_id = payload.id;
-    let result = db::change_local_account_password(&app, &session_store, payload)?;
+    let result = db::change_local_account_password(&app, &session_store, ctx.account_id, payload)?;
     // Invalidate ALL sessions for this account (including the current token) so
     // the user must re-login with the new password.
     session_store.invalidate_account(target_id);
@@ -1154,7 +1154,7 @@ fn inspect_asset_import_file(
     session_token: String,
     payload: db::AssetImportInspectInput,
 ) -> Result<db::AssetImportFileInspection, String> {
-    let _ctx = auth_session::require_authenticated(&session_store, &session_token)?;
+    let _ctx = auth_session::require_admin(&session_store, &session_token)?;
     db::inspect_asset_import_file(payload)
 }
 
@@ -1910,6 +1910,35 @@ mod tests {
             total,
             "duplicate command names in the classification table"
         );
+    }
+
+    #[test]
+    fn every_command_calls_the_guard_its_classification_requires() {
+        // The tables above are only a list; this ties each entry to the guard its body really calls.
+        let src = include_str!("lib.rs");
+        let tests_start = src.find("#[cfg(test)]").expect("tests module present");
+        let commands_src = &src[..tests_start];
+        let mut mismatches = Vec::new();
+        for (commands, guard) in [
+            (SUPER_ADMIN_COMMANDS, "require_super_admin("),
+            (ADMIN_COMMANDS, "require_admin("),
+            (AUTHENTICATED_COMMANDS, "require_authenticated("),
+        ] {
+            for name in commands {
+                let start = commands_src
+                    .find(&format!("fn {name}("))
+                    .unwrap_or_else(|| panic!("command fn '{name}' not found in lib.rs"));
+                let body = &commands_src[start..];
+                let body = &body[..body.find("#[tauri::command").unwrap_or(body.len())];
+                let first_guard = body
+                    .find("auth_session::require_")
+                    .map(|i| &body[i + "auth_session::".len()..]);
+                if !first_guard.is_some_and(|g| g.starts_with(guard)) {
+                    mismatches.push(*name);
+                }
+            }
+        }
+        assert!(mismatches.is_empty(), "commands whose guard does not match their classification: {mismatches:?}");
     }
 
     #[test]
