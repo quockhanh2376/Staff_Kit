@@ -14,7 +14,6 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::OnceLock;
 use std::time::Duration;
 
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
@@ -71,7 +70,7 @@ use std::sync::Mutex;
 static POOL_GENERATION: AtomicU64 = AtomicU64::new(1);
 static IDLE_CONNECTIONS: Mutex<Vec<(u64, Connection)>> = Mutex::new(Vec::new());
 static CACHED_DB_PATH: Mutex<Option<(u64, PathBuf)>> = Mutex::new(None);
-static DB_READY: OnceLock<Result<(PathBuf, String), String>> = OnceLock::new();
+static DB_READY: Mutex<Option<(PathBuf, String)>> = Mutex::new(None);
 
 pub enum DbConnection {
     Pooled {
@@ -319,7 +318,7 @@ pub(crate) fn open_encrypted_read_only_connection(
 }
 
 pub(crate) fn ensure_database_ready(app: &AppHandle) -> Result<(PathBuf, String), String> {
-    let result = DB_READY.get_or_init(|| {
+    init_once(&DB_READY, || {
         let start = std::time::Instant::now();
         let db_path = resolve_database_path(app)?;
 
@@ -369,12 +368,7 @@ pub(crate) fn ensure_database_ready(app: &AppHandle) -> Result<(PathBuf, String)
 
         eprintln!("[Staff Kit Perf] ensure_database_ready took {:?}", start.elapsed());
         Ok((db_path, version))
-    });
-
-    match result {
-        Ok((path, ver)) => Ok((path.clone(), ver.clone())),
-        Err(err) => Err(err.clone()),
-    }
+    })
 }
 
 pub(crate) fn resolve_database_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -389,12 +383,7 @@ pub(crate) fn resolve_database_path(app: &AppHandle) -> Result<PathBuf, String> 
 
     // Check for custom path stored in db_settings.json (not the DB itself)
     let path = if let Ok(Some(custom_folder)) = backup::get_db_custom_path(app) {
-        let custom_dir = PathBuf::from(&custom_folder);
-        if custom_dir.exists() || fs::create_dir_all(&custom_dir).is_ok() {
-            custom_dir.join(DB_FILE_NAME)
-        } else {
-            resolve_default_database_path(app)?
-        }
+        custom_database_path(&custom_folder)?
     } else {
         resolve_default_database_path(app)?
     };
@@ -404,6 +393,36 @@ pub(crate) fn resolve_database_path(app: &AppHandle) -> Result<PathBuf, String> 
     }
 
     Ok(path)
+}
+
+/// A configured folder that cannot be reached (share offline, drive not mapped) is an error.
+/// Falling back to the local default would start a second, empty database.
+fn custom_database_path(custom_folder: &str) -> Result<PathBuf, String> {
+    let custom_dir = PathBuf::from(custom_folder);
+    if !custom_dir.exists() {
+        fs::create_dir_all(&custom_dir).map_err(|err| {
+            format!(
+                "The database folder \"{custom_folder}\" is not reachable ({err}). \
+                 Reconnect the shared drive or network folder, then try again."
+            )
+        })?;
+    }
+    Ok(custom_dir.join(DB_FILE_NAME))
+}
+
+/// Runs `init` until it succeeds once, then returns the cached value.
+/// Errors are not cached, so a retry works after the cause is fixed.
+fn init_once<T: Clone>(
+    slot: &Mutex<Option<T>>,
+    init: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let mut ready = slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(value) = ready.as_ref() {
+        return Ok(value.clone());
+    }
+    let value = init()?;
+    *ready = Some(value.clone());
+    Ok(value)
 }
 
 fn resolve_default_database_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -1904,6 +1923,56 @@ fn normalize_header_key(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unreachable_custom_db_folder_is_an_error_not_a_local_fallback() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        // A folder under a plain file can never be created, like an offline share.
+        let blocker = std::env::temp_dir().join(format!("staff-kit-offline-share-{unique}"));
+        fs::write(&blocker, b"not a folder").expect("create blocker file");
+        let offline = blocker.join("shared-db");
+
+        let result = custom_database_path(offline.to_str().expect("utf-8 temp path"));
+        let _ = fs::remove_file(&blocker);
+
+        let err = result.expect_err("unreachable custom folder must not resolve");
+        assert!(err.contains("not reachable"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn reachable_custom_db_folder_resolves_to_the_db_file_inside_it() {
+        let dir = std::env::temp_dir();
+        let path = custom_database_path(dir.to_str().expect("utf-8 temp path"))
+            .expect("existing folder resolves");
+        assert_eq!(path, dir.join(DB_FILE_NAME));
+    }
+
+    #[test]
+    fn failed_database_init_is_retried_instead_of_cached() {
+        let slot: Mutex<Option<u32>> = Mutex::new(None);
+        let mut calls = 0;
+
+        let first = init_once(&slot, || {
+            calls += 1;
+            Err("share offline".to_string())
+        });
+        let second = init_once(&slot, || {
+            calls += 1;
+            Ok(7)
+        });
+        let third = init_once(&slot, || {
+            calls += 1;
+            Ok(8)
+        });
+
+        assert_eq!(first, Err("share offline".to_string()));
+        assert_eq!(second, Ok(7));
+        assert_eq!(third, Ok(7), "a successful init stays cached");
+        assert_eq!(calls, 2);
+    }
 
     #[test]
     fn encrypted_read_only_connection_rejects_writes_without_changing_data() {
