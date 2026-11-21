@@ -4304,3 +4304,12 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Tests (written first, watched fail): `db::tests::unreachable_custom_db_folder_is_an_error_not_a_local_fallback`, `reachable_custom_db_folder_resolves_to_the_db_file_inside_it`, `failed_database_init_is_retried_instead_of_cached`.
 - Verification: `npm run check:quality` pass; `npm run test:tauri` 503/503 pass. Not checked by hand against a real offline network share.
 - Status: PASS.
+
+## 2026-11-19 Surface Select All and MSSQL preview refresh errors (BUG-28) — End
+
+- Branch: `fix/select-all-error-surface` (from `main` @ `d1d91ac`). Start record was not written before the work began; this entry covers the whole change.
+- `EmployeeView.handleSelectAllResults`: a failed "Select All" now shows the error via `setGlobalError` instead of an empty `catch` that left a page-only selection.
+- `useEmployeeState.refreshMssqlSyncPreview`: a failed refresh after a bulk move drops the stale preview, sets the error status/message through `getMssqlEmployeeUpdateErrorMessage`, and no longer logs the raw MSSQL error to the console.
+- Tests (written first, watched fail): `EmployeeView.integrityCheck.test.tsx` Select All error case; `useEmployeeState.mssql.test.tsx` refresh failure case.
+- Verification: `npm run check:quality` pass; `npm run test:unit` 399/399 pass.
+- Status: PASS.

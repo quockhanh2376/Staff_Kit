@@ -416,7 +416,12 @@ export function useEmployeeState({
                 setMssqlSyncPreview(preview)
             }
         } catch (error) {
-            console.error("[Staff Kit] MSSQL employee preview refresh failed", error)
+            // The old preview no longer matches the list after a move, so drop it.
+            const message = getMssqlEmployeeUpdateErrorMessage(error)
+            setMssqlSyncPreview(null)
+            setMssqlUpdateStatus("error")
+            setMssqlUpdateMessage(message)
+            setGlobalError(message)
         }
     }
 
