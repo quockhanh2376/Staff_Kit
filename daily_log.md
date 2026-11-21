@@ -4325,4 +4325,5 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Highest-priority new items: SEC-016 (password change ignores caller identity), BUG-22 (Floating actions always fail), BUG-23 ("select all" ignores the Floating filter), REL-005 (offline shared DB silently replaced by a local one), SEC-015 (export can overwrite `db_settings.json`).
 - Method: code reading only. Nothing was reproduced at runtime and no tests were added; the files not read are listed in section 6 of the backlog.
 - No product code changed. Committed on `docs/backlog-audit-2026-11-19`.
+- 2026-11-21: after PR #51, #53, #54 merged, moved SEC-016, SEC-019, BUG-22, BUG-23, BUG-28, REL-005 to section 4 (closed) and updated the summary and roadmap.
 

@@ -22,16 +22,16 @@ Nothing in this revision was reproduced by running the app. All statuses come fr
 | Carried over, still open | 25 |
 | Carried over, partially fixed | 13 |
 | Closed since the previous revisions | 19 |
+| Fixed after this audit (PR #51, #53, #54) | 6 |
 
-New findings by severity: High 5, Medium 13, Low 9.
+New findings by severity: High 5, Medium 13, Low 9. Still open after the fixes: High 1, Medium 13, Low 7 (SEC-016, BUG-22, BUG-23, REL-005, SEC-019, BUG-28 closed — see section 4).
 
 ### Recommended next targets
 
-1. **SEC-016**: any logged-in user can try passwords for any account with no lockout. Two-line guard.
-2. **BUG-22**: "Mark as Floating" and "Clear Floating" always fail. One-line fix in the API wrapper.
-3. **BUG-23**: "Select all results" in the Floating view selects the whole employee list, so a bulk move hits the wrong people.
-4. **REL-005**: an unreachable shared DB folder silently becomes a fresh local DB.
-5. **SEC-015**: export can overwrite `db_settings.json`.
+1. **SEC-015**: export can overwrite `db_settings.json`.
+2. **BUG-24, BUG-27, BUG-25, BUG-34**: small, independent data-loss/crash fixes.
+3. **BUG-32, BUG-31, BUG-33**: borrow and reset flows that dead-end.
+4. Follow-up from REL-005: a corrupt `db_settings.json` still falls back to the local DB silently.
 
 ---
 
@@ -41,10 +41,6 @@ New findings by severity: High 5, Medium 13, Low 9.
 
 | ID | Type | Location | Problem (concrete case) | Smallest fix | Checked |
 |---|---|---|---|---|---|
-| SEC-016 | security | `src-tauri/src/lib.rs:412-425`, `db/auth.rs:583` (`change_local_account_password_conn`) | The command only requires a logged-in session and never compares `payload.id` with the caller. A `user` can submit another account's id and guess `current_password` repeatedly; failures are audited but, per the audit, do not count toward login lockout. | Reject when `payload.id != ctx.account_id`; record failed attempts the same way login does. | verified (id check); traced (lockout) |
-| BUG-22 | bug | `src/services/staff-api.ts:667-673`, `src/features/employees/useTableEdit.ts:297-307`, `EmployeeView.tsx:125-136`, backend `db/employee.rs:556-631` | `staffApi.moveEmployeesGroup` forwards only `employeeIds` and `targetStaffGroup` and drops `action`. The UI sends `targetStaffGroup: "set_floating"` / `"clear_floating"`; the backend accepts target `"floating"` or action `"set_floating"`/`"clear_floating"`, so both return "invalid target staff group or transition action". Same failure from the Missing-employees modal. | Forward `action: payload.action ?? null` in the wrapper and send `action = moveTargetGroup` from the callers (they send `"floating"` today, which the backend does not match either). | verified |
-| BUG-23 | data-loss | `src/features/employees/useEmployeeState.ts:233-255` (`fetchAllFilteredEmployees`) | The page query passes `isFloating` (line 137) but the "select all results" query does not. In the Floating view, "Select all results" selects every EE List employee; a following Offboard/Move then changes non-floating staff. Export uses the same query. | Add `isFloating: isFloatingFilterActive ? true : null` to the query and its dependency array. | verified |
-| REL-005 | data-loss | `src-tauri/src/db/mod.rs:391-400` (`resolve_database_path`), `:322` | When a custom DB folder is configured but unreachable at startup (share offline, drive not mapped), the code falls back to the default local path and creates a fresh DB with the default admin. Work done in that session is orphaned at the next launch. Other first-open errors are cached in `DB_READY` until restart. | Return an error when `custom_path` is set but unreachable; do not cache `Err` in `DB_READY`. | verified (fallback); traced (`DB_READY`) |
 | SEC-015 | security | `src-tauri/src/lib.rs:42-101` (`validate_export_path`), `:104-125`, `db/backup.rs:2067+` | Only the DB's own folder is blocked and `.json` is an allowed extension. With a custom DB path, an admin can write the app's `db_settings.json` and point the app at a prepared DB, becoming super_admin. For a not-yet-existing file `canonicalize()` fails and the raw path is compared with a canonical one, so the folder check can also miss. The critical-file list names `staffkit.db`, but the real file is `staff_kit.sqlite3`. | Also block `app_local_data_dir`; canonicalize the parent directory instead of the file. | traced |
 
 ### 1.2 Medium
@@ -69,10 +65,8 @@ New findings by severity: High 5, Medium 13, Low 9.
 
 | ID | Type | Location | Problem (concrete case) | Smallest fix | Checked |
 |---|---|---|---|---|---|
-| SEC-019 | security | `src-tauri/src/lib.rs:1152-1158` vs classification test `:1807` | `inspect_asset_import_file` uses `require_authenticated` while the classification test lists it as admin; the test does not check the real guard. A `user` can have any path parsed. | Change to `require_admin`. | verified |
 | BUG-34 | bug | `src-tauri/src/db/backup.rs:2046-2060` | A stray file such as `snap_a_b_c.sqlite3` in the history folder makes `&date[..4]` panic in snapshot listing and in pruning after every snapshot. | Fall back to the raw name unless the parts are 8 and 6 ASCII digits. | verified |
 | BUG-33 | bug | `src-tauri/src/db/borrow.rs:689-696` | Return requests skip the pending-claim check and the page creates a new `requestId` per tap. A retry after a lost response queues a second return that can never be approved. | Reject a return when a pending return item already exists for the asset. | traced |
-| BUG-28 | bug | `src/features/employees/EmployeeView.tsx:203`, `useEmployeeState.ts:417-419` | A failed "Select all results" is swallowed by an empty `catch`, so the selection silently stays page-only. A failed preview refresh after a bulk move only reaches `console.error` (with the raw MSSQL error object) and the popover keeps the old list. | `setGlobalError(getUserErrorMessage(error))` in both; stop logging the raw error. | traced |
 | BUG-29 | bug | `src/features/settings/AuditLogViewer.tsx:37-58` | Switching category tabs quickly lets a slower earlier response overwrite the list under the newer tab. | Add a `cancelled` flag in the effect cleanup. | plausible |
 | PERF-22 | scale | `src/features/employees/EmployeeView.tsx:658-829`, `useEmployeeState.ts:43` | With 500 rows per page every search or cell-edit keystroke re-renders about 500 × visible-columns unmemoized cells, because `searchTerm` and drafts live in App-level hooks. Not measured. | Extract a `React.memo` row component; highlight with the debounced term. | plausible |
 | PERF-23 | scale | `src-tauri/src/lan_server.rs:571-830` | LAN handlers do blocking DB work on the async runtime. A burst of submits during a long desktop write parks one runtime worker per request for up to the 5 s busy timeout, stalling async commands and the backup timer. | Wrap handler DB work in `spawn_blocking`. | plausible |
@@ -174,6 +168,12 @@ Closed on `main` after reading the implementing code (not from commit messages):
 | PERF-14 | Window shown once after first paint (`src/lib/windowReady.ts`, `main.tsx:27`). |
 | PERF-21 | `[profile.release]` in `Cargo.toml:51-54`. |
 | DEVOPS-001 | `.github/workflows/staffkit-ci.yml`. |
+| SEC-016 | Fixed in PR #51 — `change_local_account_password` only for the caller's own account, wrong current password counts toward lockout. |
+| SEC-019 | Fixed in PR #51 — `inspect_asset_import_file` requires admin; guard/classification test added in `lib.rs`. |
+| BUG-22 | Fixed in PR #51 — `moveEmployeesGroup` forwards `action`; UI sends `set_floating`. |
+| BUG-23 | Fixed in PR #51 — select-all query keeps `isFloating`. |
+| REL-005 | Fixed in PR #53 — unreachable custom DB folder returns an error; failed init no longer cached (`init_once`). |
+| BUG-28 | Fixed in PR #54 — Select All and MSSQL preview refresh failures shown to the user. |
 
 Closed in earlier revisions and unchanged: SEC-001, SEC-004 (authorization), SEC-005, BUG-010, MAINT-002.
 
@@ -185,9 +185,9 @@ Each row is one small branch/PR.
 
 | Order | Target | Why first | Effort |
 |---|---|---|---|
-| 1 | SEC-016, SEC-019 | Guard fixes of a few lines each; SEC-016 bypasses login lockout. | S |
-| 2 | BUG-22, BUG-23, BUG-28 | Floating actions are broken today and "select all" can move the wrong employees. | S |
-| 3 | REL-005 | Silent data split when the shared folder is offline. | S |
+| ~~1~~ | ~~SEC-016, SEC-019~~ (done, #51) | Guard fixes of a few lines each; SEC-016 bypasses login lockout. | S |
+| ~~2~~ | ~~BUG-22, BUG-23, BUG-28~~ (done, #51, #54) | Floating actions are broken today and "select all" can move the wrong employees. | S |
+| ~~3~~ | ~~REL-005~~ (done, #53) | Silent data split when the shared folder is offline. | S |
 | 4 | SEC-015 (+ rest of SEC-009 / SEC-004-path) | Export can redirect the app to another DB. | M |
 | 5 | BUG-24, BUG-27, BUG-25, BUG-34 | Small, independent data-loss/crash fixes. | S |
 | 6 | BUG-32, BUG-31, BUG-33 | Borrow and reset flows that currently dead-end. | S–M |
