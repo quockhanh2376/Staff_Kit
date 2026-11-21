@@ -52,6 +52,23 @@ describe("staffApi session injection", () => {
         expect(getSessionToken()).toBeNull()
     })
 
+    it("moveEmployeesGroup forwards the transition action to the backend", async () => {
+        setSession({ sessionToken: "real-token", expiresAt: "2099-01-01T00:00:00Z" })
+        invokeMock.mockResolvedValue(1)
+        await staffApi.moveEmployeesGroup({
+            employeeIds: [7],
+            targetStaffGroup: "clear_floating",
+            action: "clear_floating",
+        })
+        const [command, args] = invokeMock.mock.calls[0]
+        expect(command).toBe("move_employees_group")
+        expect((args as { payload: Record<string, unknown> }).payload).toEqual({
+            employeeIds: [7],
+            targetStaffGroup: "clear_floating",
+            action: "clear_floating",
+        })
+    })
+
     it('showMainWindow is public and invokes the startup window command', async () => {
         invokeMock.mockResolvedValue(undefined)
         await staffApi.showMainWindow()

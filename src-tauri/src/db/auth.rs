@@ -574,17 +574,23 @@ pub fn list_login_account_hints(app: &AppHandle) -> Result<Vec<LoginAccountHint>
 pub fn change_local_account_password(
     app: &AppHandle,
     session_store: &crate::auth_session::SessionStore,
+    actor_account_id: i64,
     payload: LocalPasswordChangeInput,
 ) -> Result<bool, String> {
     let conn = open_runtime_connection(app)?;
-    change_local_account_password_conn(&conn, session_store, payload)
+    change_local_account_password_conn(&conn, session_store, actor_account_id, payload)
 }
 
 pub(crate) fn change_local_account_password_conn(
     conn: &Connection,
     session_store: &crate::auth_session::SessionStore,
+    actor_account_id: i64,
     payload: LocalPasswordChangeInput,
 ) -> Result<bool, String> {
+    // Other accounts are reset via admin_reset_local_account_password (super_admin + reauth).
+    if payload.id != actor_account_id {
+        return Err("you can only change your own password".to_string());
+    }
     let policy = resolve_security_policy_fail_safe(conn);
     let new_password = require_local_account_password(payload.new_password, policy.min_password_length())?;
 
@@ -604,6 +610,10 @@ pub(crate) fn change_local_account_password_conn(
         ));
     };
 
+    // Same lockout rules as login, so this path cannot be used to guess passwords.
+    let is_sole = is_sole_active_super_admin(conn, &username).unwrap_or(false);
+    session_store.check_lockout_with_exemption(&username, is_sole)?;
+
     if !verify_password(payload.current_password.as_str(), stored_hash.as_str())? {
         let fail_payload = serde_json::json!({
             "reason": "incorrect_password",
@@ -619,6 +629,7 @@ pub(crate) fn change_local_account_password_conn(
             &payload.id.to_string(),
             Some(&fail_payload),
         );
+        session_store.record_failed_attempt_with_exemption(&username, is_sole)?;
         return Err("current password is incorrect".to_string());
     }
 
@@ -2527,6 +2538,7 @@ mod tests {
         let short_res = change_local_account_password_conn(
             &conn,
             &store,
+            2, // actor: alice changes her own password
             LocalPasswordChangeInput {
                 id: 2, // alice
                 current_password: "alicepw".to_string(),
@@ -2540,6 +2552,7 @@ mod tests {
         let exact_12 = change_local_account_password_conn(
             &conn,
             &store,
+            2, // actor: alice changes her own password
             LocalPasswordChangeInput {
                 id: 2, // alice
                 current_password: "alicepw".to_string(),
@@ -2552,6 +2565,7 @@ mod tests {
         let passphrase = change_local_account_password_conn(
             &conn,
             &store,
+            2, // actor: alice changes her own password
             LocalPasswordChangeInput {
                 id: 2, // alice
                 current_password: "TwelveChars!".to_string(),
@@ -2564,6 +2578,7 @@ mod tests {
         let unicode_passphrase = change_local_account_password_conn(
             &conn,
             &store,
+            2, // actor: alice changes her own password
             LocalPasswordChangeInput {
                 id: 2, // alice
                 current_password: "correct horse battery staple".to_string(),
@@ -2571,6 +2586,63 @@ mod tests {
             },
         );
         assert!(unicode_passphrase.is_ok());
+    }
+
+    #[test]
+    fn change_password_rejects_another_accounts_id() {
+        let conn = seeded_connection();
+        let store = SessionStore::new();
+
+        // alice (id 2) targets adman (id 1) with the known default password.
+        let res = change_local_account_password_conn(
+            &conn,
+            &store,
+            2,
+            LocalPasswordChangeInput {
+                id: 1,
+                current_password: DEFAULT_LOCAL_ACCOUNT_PASSWORD.to_string(),
+                new_password: "TakenOver2026!".to_string(),
+            },
+        );
+
+        assert_eq!(res.unwrap_err(), "you can only change your own password");
+        let adman_hash: String = conn
+            .query_row("SELECT password_hash FROM app_local_accounts WHERE id = 1", [], |row| row.get(0))
+            .unwrap();
+        assert!(verify_password(DEFAULT_LOCAL_ACCOUNT_PASSWORD, &adman_hash).unwrap());
+    }
+
+    #[test]
+    fn change_password_wrong_current_password_counts_toward_lockout() {
+        let conn = seeded_connection();
+        let store = SessionStore::new();
+        let max = store.current_policy().max_failed_login_attempts();
+
+        for _ in 0..max {
+            let _ = change_local_account_password_conn(
+                &conn,
+                &store,
+                2,
+                LocalPasswordChangeInput {
+                    id: 2,
+                    current_password: "wrong-guess".to_string(),
+                    new_password: "NewPassword2026!".to_string(),
+                },
+            );
+        }
+
+        assert!(store.is_account_locked("alice"));
+        let res = change_local_account_password_conn(
+            &conn,
+            &store,
+            2,
+            LocalPasswordChangeInput {
+                id: 2,
+                current_password: "alicepw".to_string(),
+                new_password: "NewPassword2026!".to_string(),
+            },
+        );
+        assert!(res.unwrap_err().contains("temporarily locked"));
     }
 
     #[test]
@@ -2934,6 +3006,7 @@ mod tests {
         let res_short_std = change_local_account_password_conn(
             &conn,
             &store,
+            2, // actor: alice changes her own password
             LocalPasswordChangeInput {
                 id: 2,
                 current_password: "alicepw".to_string(),
@@ -2947,6 +3020,7 @@ mod tests {
         let res_8 = change_local_account_password_conn(
             &conn,
             &store,
+            2, // actor: alice changes her own password
             LocalPasswordChangeInput {
                 id: 2,
                 current_password: "alicepw".to_string(),
@@ -2963,6 +3037,7 @@ mod tests {
         let res_11 = change_local_account_password_conn(
             &conn,
             &store,
+            2, // actor: alice changes her own password
             LocalPasswordChangeInput {
                 id: 2,
                 current_password: "exact8ch".to_string(),
@@ -2976,6 +3051,7 @@ mod tests {
         let res_passphrase = change_local_account_password_conn(
             &conn,
             &store,
+            2, // actor: alice changes her own password
             LocalPasswordChangeInput {
                 id: 2,
                 current_password: "exact8ch".to_string(),

@@ -669,6 +669,7 @@ export const staffApi = {
       payload: {
         employeeIds: payload.employeeIds,
         targetStaffGroup: payload.targetStaffGroup,
+        action: payload.action,
       },
     }),
 
