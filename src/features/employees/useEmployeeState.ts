@@ -239,6 +239,7 @@ export function useEmployeeState({
             const response = await staffApi.searchEmployees({
                 query: searchTerm.trim() ? searchTerm.trim() : null,
                 staffGroup: staffGroupFilter,
+                isFloating: isFloatingFilterActive ? true : null,
                 teamName: teamFilter === ALL_TEAMS_OPTION ? null : teamFilter,
                 startDateFrom: startDateFilter || null,
                 sortKey: employeeSort?.key ?? null,
@@ -252,7 +253,7 @@ export function useEmployeeState({
             if (response.items.length === 0) break
         } while (offset < total)
         return items
-    }, [employeeSort, searchTerm, staffGroupFilter, startDateFilter, teamFilter, totalEmployees])
+    }, [employeeSort, isFloatingFilterActive, searchTerm, staffGroupFilter, startDateFilter, teamFilter, totalEmployees])
 
     useEffect(() => {
         if (currentPage > totalPages) {

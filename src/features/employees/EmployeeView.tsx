@@ -127,7 +127,7 @@ export function EmployeeView({
             employeeIds,
             targetStaffGroup: targetGroup,
             action: targetGroup.startsWith("set_floating") || targetGroup === "floating"
-                ? "floating"
+                ? "set_floating"
                 : targetGroup === "clear_floating"
                 ? "clear_floating"
                 : targetGroup === "reject_offer"
