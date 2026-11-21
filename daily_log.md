@@ -4313,3 +4313,17 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Tests (written first, watched fail): `EmployeeView.integrityCheck.test.tsx` Select All error case; `useEmployeeState.mssql.test.tsx` refresh failure case.
 - Verification: `npm run check:quality` pass; `npm run test:unit` 399/399 pass.
 - Status: PASS.
+
+## 2026-11-19 Backlog reconciliation and full-project audit — Start
+
+- Branch: `docs/backlog-audit-2026-11-19` (from `main` @ `d1d91ac`).
+- Scope: documentation only. Re-verify every item of `optimization-backlog.md` and `TotalSpec.md` against current `main`, audit `src/` and `src-tauri/src/` for issues not yet listed, and rewrite `optimization-backlog.md` as the single current backlog. No product code changes.
+
+## 2026-11-19 Backlog reconciliation and full-project audit — End
+
+- `optimization-backlog.md` rewritten against `main` @ `d1d91ac`: 27 new findings (5 High, 13 Medium, 9 Low), 25 carried-over items still open, 13 partially fixed, 19 closed after reading the implementing code.
+- Highest-priority new items: SEC-016 (password change ignores caller identity), BUG-22 (Floating actions always fail), BUG-23 ("select all" ignores the Floating filter), REL-005 (offline shared DB silently replaced by a local one), SEC-015 (export can overwrite `db_settings.json`).
+- Method: code reading only. Nothing was reproduced at runtime and no tests were added; the files not read are listed in section 6 of the backlog.
+- No product code changed. Committed on `docs/backlog-audit-2026-11-19`.
+- 2026-11-21: after PR #51, #53, #54 merged, moved SEC-016, SEC-019, BUG-22, BUG-23, BUG-28, REL-005 to section 4 (closed) and updated the summary and roadmap.
+
