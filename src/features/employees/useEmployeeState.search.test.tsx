@@ -177,4 +177,20 @@ describe("useEmployeeState search debounce and race condition handling", () => {
             expect.objectContaining({ query: null }),
         )
     })
+
+    it("select-all query keeps the Floating filter so bulk actions only hit floating staff", async () => {
+        const { result } = renderHook(() => useEmployeeState(baseOptions))
+        act(() => {
+            result.current.setIsFloatingFilterActive(true)
+        })
+        api.searchEmployees.mockClear()
+
+        await act(async () => {
+            await result.current.fetchAllFilteredEmployees()
+        })
+
+        expect(api.searchEmployees).toHaveBeenCalledWith(
+            expect.objectContaining({ isFloating: true }),
+        )
+    })
 })

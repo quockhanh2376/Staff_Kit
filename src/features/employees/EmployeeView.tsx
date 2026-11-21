@@ -127,7 +127,7 @@ export function EmployeeView({
             employeeIds,
             targetStaffGroup: targetGroup,
             action: targetGroup.startsWith("set_floating") || targetGroup === "floating"
-                ? "floating"
+                ? "set_floating"
                 : targetGroup === "clear_floating"
                 ? "clear_floating"
                 : targetGroup === "reject_offer"
@@ -200,10 +200,10 @@ export function EmployeeView({
         try {
             const employees = await emp.fetchAllFilteredEmployees()
             edit.selectEmployeeIds(employees.map((employee) => employee.id))
-        } catch {
-            // The existing global employee-loading error path remains authoritative.
+        } catch (error) {
+            setGlobalError(getUserErrorMessage(error))
         }
-    }, [edit, emp])
+    }, [edit, emp, setGlobalError])
 
     const handleExport = useCallback(async (format: "csv" | "xlsx") => {
         if (edit.selectedMoveEmployeeIds.length === 0 || isExporting) return

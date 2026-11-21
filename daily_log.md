@@ -4285,6 +4285,35 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
   - Invariants: Zero writes to production database, zero modifications to `RecoveryLedger` (`ledger.rev`), zero SQLCipher rekey, zero emergency recovery activation.
 - Status: PASS.
 
+## 2026-11-19 Fix auth guards and Floating bulk actions (SEC-016, SEC-019, BUG-22, BUG-23) — End
+
+- Branch: `fix/auth-guards-floating-select` (from `main` @ `d1d91ac`). Start record was not written before the work began; this entry covers the whole change.
+- SEC-016: `change_local_account_password` now rejects a target id other than the caller's own, and wrong current passwords count toward the same lockout as login (sole Super Admin exemption kept).
+- SEC-019: `inspect_asset_import_file` now requires admin. New test `every_command_calls_the_guard_its_classification_requires` checks each command's real guard against its classification table; it flagged only this command.
+- BUG-22: `staffApi.moveEmployeesGroup` forwards `action`; callers send `set_floating` (was `floating`), so Mark/Clear Floating work again.
+- BUG-23: "Select all results" (and export / Missing-employees matching, which share the query) now honor the Floating filter.
+- Verification: `npm run check:quality` passed; `npm run test:unit` 401/401; `npm run test:tauri` 503/503. `npm run test:supplemental` fails in `scripts/action-icon-ui.test.ts:47` on a SettingsView wording assertion that is already failing on `main` (unrelated).
+- Committed on `fix/auth-guards-floating-select`. Not exercised in the running app.
+
+## 2026-11-19 Stop silent local fallback for an unreachable shared DB folder (REL-005) — End
+
+- Branch: `fix/offline-shared-db-fallback` (from `main` @ `d1d91ac`). Start record was not written before the work began; this entry covers the whole change.
+- `resolve_database_path`: when a custom DB folder is configured but cannot be reached or created, return an error ("not reachable … reconnect the shared drive") instead of silently opening a fresh local DB with the default admin.
+- `ensure_database_ready`: `DB_READY` is now `Mutex<Option<_>>` via `init_once`; a failed init is no longer cached for the life of the process, so the next login/IPC call retries once the share is back.
+- Not changed: a corrupt `db_settings.json` still falls back to the local path (`if let Ok(Some(..))`); tracked as follow-up.
+- Tests (written first, watched fail): `db::tests::unreachable_custom_db_folder_is_an_error_not_a_local_fallback`, `reachable_custom_db_folder_resolves_to_the_db_file_inside_it`, `failed_database_init_is_retried_instead_of_cached`.
+- Verification: `npm run check:quality` pass; `npm run test:tauri` 503/503 pass. Not checked by hand against a real offline network share.
+- Status: PASS.
+
+## 2026-11-19 Surface Select All and MSSQL preview refresh errors (BUG-28) — End
+
+- Branch: `fix/select-all-error-surface` (from `main` @ `d1d91ac`). Start record was not written before the work began; this entry covers the whole change.
+- `EmployeeView.handleSelectAllResults`: a failed "Select All" now shows the error via `setGlobalError` instead of an empty `catch` that left a page-only selection.
+- `useEmployeeState.refreshMssqlSyncPreview`: a failed refresh after a bulk move drops the stale preview, sets the error status/message through `getMssqlEmployeeUpdateErrorMessage`, and no longer logs the raw MSSQL error to the console.
+- Tests (written first, watched fail): `EmployeeView.integrityCheck.test.tsx` Select All error case; `useEmployeeState.mssql.test.tsx` refresh failure case.
+- Verification: `npm run check:quality` pass; `npm run test:unit` 399/399 pass.
+- Status: PASS.
+
 ## 2026-11-19 Backlog reconciliation and full-project audit — Start
 
 - Branch: `docs/backlog-audit-2026-11-19` (from `main` @ `d1d91ac`).
