@@ -4327,3 +4327,11 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - No product code changed. Committed on `docs/backlog-audit-2026-11-19`.
 - 2026-11-21: after PR #51, #53, #54 merged, moved SEC-016, SEC-019, BUG-22, BUG-23, BUG-28, REL-005 to section 4 (closed) and updated the summary and roadmap.
 
+
+## 2026-11-22 Pin default admin password for fresh installs — End
+
+- Branch: `test/pin-default-admin-password` (from `main` @ `a0a8d3a`). Start record was not written before the work began; this entry covers the whole change.
+- Decision: every release must seed a brand-new database with `adman` / `Aswhite2026`. Checked all GitHub release tags (v2.1.0, v2.2.1, v2.2.1-internal-rc1..rc5) and `main`: all already use this value in `schema.rs`.
+- Added `db::auth::tests::fresh_database_seeds_adman_with_the_fixed_default_password`, which checks the literal `Aswhite2026` against the seeded hash. Confirmed it fails when the constant is changed.
+- Note: the default only applies when no database exists. The installer keeps `%LOCALAPPDATA%\io.staffkit.app`, and `tauri:dev` uses the same folder, so a reinstall over an existing DB keeps that DB's password.
+- Status: PASS.
