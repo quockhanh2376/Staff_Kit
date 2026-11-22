@@ -4335,3 +4335,13 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Added `db::auth::tests::fresh_database_seeds_adman_with_the_fixed_default_password`, which checks the literal `Aswhite2026` against the seeded hash. Confirmed it fails when the constant is changed.
 - Note: the default only applies when no database exists. The installer keeps `%LOCALAPPDATA%\io.staffkit.app`, and `tauri:dev` uses the same folder, so a reinstall over an existing DB keeps that DB's password.
 - Status: PASS.
+
+## 2026-11-22 SEC-015 export path can overwrite db_settings.json — End
+
+- Branch: `fix/sec-015-export-path` (from `main` @ `4284c9a`). Start record was not written before the work began; this entry covers the whole change.
+- Problem: `validate_export_path` blocked only the DB folder, and for a file that does not exist yet it compared the raw path with a canonical one, so the check missed. With a custom DB location an admin could export to `%LOCALAPPDATA%\io.staffkit.app\db_settings.json` and point the app at another database.
+- Fix (`src-tauri/src/lib.rs`): block a list of folders (DB folder and `app_local_data_dir`); canonicalize the parent folder when the file itself does not exist; reject the file name `db_settings.json` anywhere. Removed the stale `staffkit.db` name (real file is `staff_kit.sqlite3`, already blocked by extension).
+- Tests: 2 new tests, seen failing before the fix. Full Rust suite 509/509 pass.
+- Also checked the "Degraded" backup badge: it means local auto-backup is fresh but there is no current USB copy (`compute_protection_status`, `db/backup.rs`). Working as designed.
+- Not fixed here: "Move DB" shows only "An unexpected error occurred" because `classifyError` hides backend messages that do not start with a known prefix. Root cause of the user's failed move not yet known.
+- Status: PASS.

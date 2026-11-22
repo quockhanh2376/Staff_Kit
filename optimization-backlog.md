@@ -24,11 +24,11 @@ Nothing in this revision was reproduced by running the app. All statuses come fr
 | Closed since the previous revisions | 19 |
 | Fixed after this audit (PR #51, #53, #54) | 6 |
 
-New findings by severity: High 5, Medium 13, Low 9. Still open after the fixes: High 1, Medium 13, Low 7 (SEC-016, BUG-22, BUG-23, REL-005, SEC-019, BUG-28 closed — see section 4).
+New findings by severity: High 5, Medium 13, Low 9. Still open after the fixes: High 0, Medium 13, Low 7 (SEC-016, BUG-22, BUG-23, REL-005, SEC-019, BUG-28, SEC-015 closed — see section 4).
 
 ### Recommended next targets
 
-1. **SEC-015**: export can overwrite `db_settings.json`.
+1. ~~**SEC-015**: export can overwrite `db_settings.json`.~~ Fixed.
 2. **BUG-24, BUG-27, BUG-25, BUG-34**: small, independent data-loss/crash fixes.
 3. **BUG-32, BUG-31, BUG-33**: borrow and reset flows that dead-end.
 4. Follow-up from REL-005: a corrupt `db_settings.json` still falls back to the local DB silently.
@@ -41,7 +41,6 @@ New findings by severity: High 5, Medium 13, Low 9. Still open after the fixes: 
 
 | ID | Type | Location | Problem (concrete case) | Smallest fix | Checked |
 |---|---|---|---|---|---|
-| SEC-015 | security | `src-tauri/src/lib.rs:42-101` (`validate_export_path`), `:104-125`, `db/backup.rs:2067+` | Only the DB's own folder is blocked and `.json` is an allowed extension. With a custom DB path, an admin can write the app's `db_settings.json` and point the app at a prepared DB, becoming super_admin. For a not-yet-existing file `canonicalize()` fails and the raw path is compared with a canonical one, so the folder check can also miss. The critical-file list names `staffkit.db`, but the real file is `staff_kit.sqlite3`. | Also block `app_local_data_dir`; canonicalize the parent directory instead of the file. | traced |
 
 ### 1.2 Medium
 
@@ -152,6 +151,7 @@ Closed on `main` after reading the implementing code (not from commit messages):
 
 | ID | Evidence |
 |---|---|
+| SEC-015 | `lib.rs` `validate_export_path` now blocks both the DB folder and `app_local_data_dir`, canonicalizes the parent folder of a not-yet-existing file, and rejects the file name `db_settings.json` anywhere. Tests `validate_export_path_blocks_app_data_dir_for_new_files`, `..._blocks_real_app_file_names_anywhere`. |
 | SEC-002 | `lan_server.rs:483` bearer check, `:210` connect-info, `:573-743` peer rate limits, replay check. Still binds `0.0.0.0` by design. |
 | SEC-006 | 14 audit calls in `db/auth.rs`, 13 in `backup.rs`, reset at `mod.rs:221`. |
 | SEC-007 | `mssql_import.rs:1575` `EncryptionLevel::Required`; no `TrustServerCertificate`. |
@@ -188,7 +188,7 @@ Each row is one small branch/PR.
 | ~~1~~ | ~~SEC-016, SEC-019~~ (done, #51) | Guard fixes of a few lines each; SEC-016 bypasses login lockout. | S |
 | ~~2~~ | ~~BUG-22, BUG-23, BUG-28~~ (done, #51, #54) | Floating actions are broken today and "select all" can move the wrong employees. | S |
 | ~~3~~ | ~~REL-005~~ (done, #53) | Silent data split when the shared folder is offline. | S |
-| 4 | SEC-015 (+ rest of SEC-009 / SEC-004-path) | Export can redirect the app to another DB. | M |
+| ~~4~~ | ~~SEC-015~~ (rest of SEC-009 / SEC-004-path still open) | Export can redirect the app to another DB. | M |
 | 5 | BUG-24, BUG-27, BUG-25, BUG-34 | Small, independent data-loss/crash fixes. | S |
 | 6 | BUG-32, BUG-31, BUG-33 | Borrow and reset flows that currently dead-end. | S–M |
 | 7 | SEC-013, SEC-014 | Recovery codes and passwords shown on screen. | S |
