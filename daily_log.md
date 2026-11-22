@@ -4353,3 +4353,11 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Fix: `useSettingsState.handleMoveDatabase` shows `classifyError(error).rawMessage`. The screen is super-admin only, so the raw reason is safe to show and is what they need to act on.
 - Test: extended `preserves the session when the move fails` to assert the message; seen failing before the fix. Vitest 403/403 pass.
 - Status: PASS.
+
+## 2026-11-22 Edit Asset (super admin) — End
+
+- Branch: `feat/edit-asset` (worktree `.worktrees/edit-asset`, from `main` @ `6cf52ce`). Spec `docs/superpowers/specs/2026-11-22-edit-asset-design.md`, plan `docs/superpowers/plans/2026-11-22-edit-asset.md`.
+- Problem: H Phone 001/004 were entered as "Samsung Galaxy A18/A19" (should be A17) and there was no way to fix a non-Monitor asset (Update Metadata is Monitor-only on purpose).
+- Change: new `update_asset_details` command (`require_super_admin`) edits name, short name, brand, model, serial, adapter, location, notes in one transaction and writes audit `asset.update_details` with before/after of changed fields only; no change = no write. Asset Dashboard Serialized tab shows an Edit button per row for super admin, opening `EditAssetDrawer`. Asset code, category, status stay read-only. Dashboard rows now include `brand`.
+- Tests: 4 Rust + 1 staffApi + 4 UI tests, each seen failing first. Vitest 408/408. Rust 512/513: `backup::test_move_database_internal_disk_full_fails_closed` flaky under parallel run, passes alone.
+- Status: PASS (not yet checked in the running app).

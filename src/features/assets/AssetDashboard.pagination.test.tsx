@@ -15,6 +15,7 @@ function createMockSerializedRow(index: number): SerializedRow {
     categoryName: "Laptop",
     displayName: `MacBook Pro ${index + 1}`,
     displayNameShort: `MBP-${index + 1}`,
+    brand: null,
     computerName: `MAC-${index + 1}`,
     model: "M3",
     serialNumber: `SN${index + 1000}`,
@@ -81,6 +82,7 @@ describe("AssetDashboard SerializedAssetTable client-side pagination", () => {
 
   const mockAuth = {
     isAdminAccount: true,
+    isSuperAdminAccount: false,
     canImportData: true,
   }
 

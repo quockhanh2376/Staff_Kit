@@ -52,6 +52,27 @@ describe("staffApi session injection", () => {
         expect(getSessionToken()).toBeNull()
     })
 
+    it("updateAssetDetails sends the asset id and edited fields with the session token", async () => {
+        setSession({ sessionToken: "real-token", expiresAt: "2099-01-01T00:00:00Z" })
+        invokeMock.mockResolvedValue({ id: 7 })
+        const payload = {
+            displayName: "Samsung Galaxy A17",
+            displayNameShort: null,
+            brand: "Samsung",
+            model: "A17",
+            serialNumber: null,
+            adapterNumber: null,
+            usageLocation: null,
+            notes: null,
+        }
+        await staffApi.updateAssetDetails(7, payload)
+        expect(invokeMock).toHaveBeenCalledWith("update_asset_details", {
+            sessionToken: "real-token",
+            assetId: 7,
+            payload,
+        })
+    })
+
     it("moveEmployeesGroup forwards the transition action to the backend", async () => {
         setSession({ sessionToken: "real-token", expiresAt: "2099-01-01T00:00:00Z" })
         invokeMock.mockResolvedValue(1)

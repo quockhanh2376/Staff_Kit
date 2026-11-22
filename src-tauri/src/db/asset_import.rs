@@ -626,6 +626,16 @@ pub fn create_asset_manually(
     Ok(record)
 }
 
+pub fn update_asset_details(
+    app: &AppHandle,
+    asset_id: i64,
+    payload: asset::AssetDetailsUpdateInput,
+) -> Result<AssetRecord, String> {
+    let mut conn = open_runtime_connection(app)?;
+    let actor_ref = active_actor_ref(&conn)?;
+    asset::update_asset_details_conn(&mut conn, asset_id, payload, actor_ref.as_deref())
+}
+
 pub(crate) fn create_asset_import_batch_seed_conn(
     conn: &mut Connection,
     input: AssetImportBatchSeedInput,

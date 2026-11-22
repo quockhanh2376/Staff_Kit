@@ -6,6 +6,7 @@ import type {
   AssetDashboardQuantityRecord,
   AssetDashboardSerializedRecord,
   AssetDashboardSummary,
+  AssetDetailsUpdateInput,
   StockItemQuantityUpdateInput,
 } from "../../types/staff"
 import { getUserErrorMessage } from "../../lib/errorHandling"
@@ -37,6 +38,10 @@ export function useAssetDashboardState({
   const [isLoadingCategories, setLoadingCategories] = useState(false)
   const [isSavingCategory, setSavingCategory] = useState(false)
   const [isDeactivatingCategoryId, setDeactivatingCategoryId] = useState<number | null>(null)
+  const [isSavingAssetId, setSavingAssetId] = useState<number | null>(null)
+  // Shown inside the Edit drawer: the global banner is hidden behind the drawer overlay.
+  const [assetEditError, setAssetEditError] = useState<string | null>(null)
+  const clearAssetEditError = useCallback(() => setAssetEditError(null), [])
   const [statusMessage, setStatusMessage] = useState("")
 
   const loadDashboard = useCallback(
@@ -153,6 +158,25 @@ export function useAssetDashboardState({
     [loadCategoryDetails, loadDashboard, setGlobalError],
   )
 
+  const updateAssetDetails = useCallback(
+    async (assetId: number, payload: AssetDetailsUpdateInput) => {
+      try {
+        setSavingAssetId(assetId)
+        setAssetEditError(null)
+        const updatedAsset = await staffApi.updateAssetDetails(assetId, payload)
+        setStatusMessage(`Updated asset ${updatedAsset.assetCode}.`)
+        await loadDashboard({ refresh: true })
+        return updatedAsset
+      } catch (error) {
+        setAssetEditError(getUserErrorMessage(error))
+        return null
+      } finally {
+        setSavingAssetId(null)
+      }
+    },
+    [loadDashboard],
+  )
+
   const deactivateAssetCategory = useCallback(
     async (categoryId: number) => {
       try {
@@ -185,10 +209,14 @@ export function useAssetDashboardState({
     isLoadingCategories,
     isSavingCategory,
     isDeactivatingCategoryId,
+    isSavingAssetId,
+    assetEditError,
+    clearAssetEditError,
     statusMessage,
     refreshDashboard,
     updateStockItemQuantity,
     saveAssetCategory,
     deactivateAssetCategory,
+    updateAssetDetails,
   }
 }

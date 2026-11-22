@@ -53,12 +53,13 @@ import {
 import { AssetDashboardColumnsDrawer } from "./AssetDashboardColumnsDrawer"
 import { HistoricalAssignmentImportModal } from "./HistoricalAssignmentImportModal"
 import { AssetMetadataUpdateModal } from "./AssetMetadataUpdateModal"
+import { EditAssetDrawer } from "./EditAssetDrawer"
 import { useAssetDashboardColumnPrefs } from "./useAssetDashboardColumnPrefs"
 import { useSerializedAssetGridState } from "./useSerializedAssetGridState"
 
 type AssetDashboardProps = {
   activeUserScope: string
-  auth: Pick<AuthState, "canImportData" | "isAdminAccount">
+  auth: Pick<AuthState, "canImportData" | "isAdminAccount" | "isSuperAdminAccount">
   assetDashboard: AssetDashboardState
   assetImport: AssetImportState
   triggerReload?: () => void
@@ -282,6 +283,11 @@ export function AssetDashboard({
 }: AssetDashboardProps) {
   const [activeTab, setActiveTab] = useState<AssetDashboardTabKey>("serialized")
   const [isHistoricalImportOpen, setIsHistoricalImportOpen] = useState(false)
+  const [editingAssetId, setEditingAssetId] = useState<number | null>(null)
+  const editingAssetRow =
+    editingAssetId == null
+      ? null
+      : assetDashboard.serializedRows.find((row) => row.assetId === editingAssetId) ?? null
   const [serializedSearchTerm, setSerializedSearchTerm] = useState("")
   const [serializedCategoryFilter, setSerializedCategoryFilter] = useState(
     ALL_SERIALIZED_ASSET_CATEGORY_FILTER,
@@ -843,6 +849,14 @@ export function AssetDashboard({
             assetDashboard={assetDashboard}
             filteredRows={filteredSerializedRows}
             searchTerm={serializedSearchTerm}
+            onEditRow={
+              auth.isSuperAdminAccount
+                ? (row) => {
+                    assetDashboard.clearAssetEditError()
+                    setEditingAssetId(row.assetId)
+                  }
+                : undefined
+            }
           />
         ) : activeTab === "quantity" ? (
           <QuantityDashboardTable
@@ -873,6 +887,25 @@ export function AssetDashboard({
           />
         )}
       </div>
+      {editingAssetRow && (
+        <EditAssetDrawer
+          key={editingAssetRow.assetId}
+          row={editingAssetRow}
+          isSaving={assetDashboard.isSavingAssetId === editingAssetRow.assetId}
+          error={assetDashboard.assetEditError}
+          onClose={() => {
+            assetDashboard.clearAssetEditError()
+            setEditingAssetId(null)
+          }}
+          onSave={(payload) => {
+            void assetDashboard
+              .updateAssetDetails(editingAssetRow.assetId, payload)
+              .then((saved) => {
+                if (saved) setEditingAssetId(null)
+              })
+          }}
+        />
+      )}
       <HistoricalAssignmentImportModal
         open={isHistoricalImportOpen}
         onClose={() => setIsHistoricalImportOpen(false)}
@@ -975,11 +1008,13 @@ function SerializedDashboardTable({
   assetDashboard,
   filteredRows,
   searchTerm,
+  onEditRow,
 }: {
   activeUserScope: string
   assetDashboard: AssetDashboardState
   filteredRows: AssetDashboardState["serializedRows"]
   searchTerm: string
+  onEditRow?: (row: AssetDashboardState["serializedRows"][number]) => void
 }) {
   const [rowsPerPage, setRowsPerPage] = useState<number>(25)
   const [page, setPage] = useState<number>(1)
@@ -1114,6 +1149,11 @@ function SerializedDashboardTable({
                       </th>
                     )
                   })}
+                  {onEditRow && (
+                    <th className="px-3 py-2.5 text-[13px] font-black uppercase tracking-wider text-[var(--primary)]">
+                      Actions
+                    </th>
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -1139,6 +1179,18 @@ function SerializedDashboardTable({
                         </td>
                       )
                     })}
+                    {onEditRow && (
+                      <td className="px-3 py-2.5 align-top">
+                        <button
+                          className="rounded-[8px] border border-[var(--border)] px-2.5 py-1 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)]"
+                          onClick={() => onEditRow(row)}
+                          type="button"
+                          aria-label={`Edit ${row.assetCode}`}
+                        >
+                          Edit
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
