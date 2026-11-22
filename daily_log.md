@@ -4353,3 +4353,10 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Fix: `useSettingsState.handleMoveDatabase` shows `classifyError(error).rawMessage`. The screen is super-admin only, so the raw reason is safe to show and is what they need to act on.
 - Test: extended `preserves the session when the move fails` to assert the message; seen failing before the fix. Vitest 403/403 pass.
 - Status: PASS.
+
+## 2026-11-22 Manual installer build workflow — End
+
+- Branch: `ci/build-installer-workflow` (from `main` @ `6cf52ce`). Start record was not written before the work began; this entry covers the whole change.
+- Problem: local `npm run tauri:build` fails on this machine. Security software locks every freshly built cargo build-script exe ("Access denied", file then removed), even for an empty crate. Windows Defender shows no detection. Not a code problem; not bypassed.
+- Change: `.github/workflows/build-installer.yml`, `workflow_dispatch` only. Builds on `windows-latest` with `npm run tauri:build` and uploads the NSIS `.exe` and `.msi` as a run artifact (kept 14 days). No secrets needed: MSSQL settings are read at runtime.
+- Status: PASS (workflow not yet run; it can only be dispatched once it is on `main`).
