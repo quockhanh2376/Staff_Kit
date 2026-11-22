@@ -167,7 +167,7 @@ textarea {
   flex-shrink: 0;
   text-align: right;
   color: var(--count-text);
-  font-size: 0.95rem;
+  font-size: 1rem;
   font-weight: 800;
   line-height: 1.35;
   font-variant-numeric: tabular-nums;
