@@ -4345,3 +4345,11 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Also checked the "Degraded" backup badge: it means local auto-backup is fresh but there is no current USB copy (`compute_protection_status`, `db/backup.rs`). Working as designed.
 - Not fixed here: "Move DB" shows only "An unexpected error occurred" because `classifyError` hides backend messages that do not start with a known prefix. Root cause of the user's failed move not yet known.
 - Status: PASS.
+
+## 2026-11-22 Move DB shows the real backend error — End
+
+- Branch: `fix/move-db-error-message` (from `main` @ `4284c9a`). Start record was not written before the work began; this entry covers the whole change.
+- Problem: a failed "Move DB" showed only "An unexpected error occurred", because `classifyError` hides backend messages that do not start with a known prefix (e.g. `failed to create target directory: ...`, `another backup operation is currently in progress`). The user could not tell why moving to `D:\OneDrive - Company\StaffKit` failed.
+- Fix: `useSettingsState.handleMoveDatabase` shows `classifyError(error).rawMessage`. The screen is super-admin only, so the raw reason is safe to show and is what they need to act on.
+- Test: extended `preserves the session when the move fails` to assert the message; seen failing before the fix. Vitest 403/403 pass.
+- Status: PASS.

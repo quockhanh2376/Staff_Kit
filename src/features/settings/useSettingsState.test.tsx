@@ -300,6 +300,8 @@ describe("move_database_to — clears ALL sessions on success (Phase D3)", () =>
 
         expect(getSessionToken()).toBe("super-token")
         expect(onLogout).not.toHaveBeenCalled()
+        // Super-admin maintenance screen: show the backend reason, not the generic text.
+        expect(result.current.dbPathMessage).toBe("❌ disk full")
     })
 })
 
