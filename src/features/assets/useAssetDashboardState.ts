@@ -39,6 +39,9 @@ export function useAssetDashboardState({
   const [isSavingCategory, setSavingCategory] = useState(false)
   const [isDeactivatingCategoryId, setDeactivatingCategoryId] = useState<number | null>(null)
   const [isSavingAssetId, setSavingAssetId] = useState<number | null>(null)
+  // Shown inside the Edit drawer: the global banner is hidden behind the drawer overlay.
+  const [assetEditError, setAssetEditError] = useState<string | null>(null)
+  const clearAssetEditError = useCallback(() => setAssetEditError(null), [])
   const [statusMessage, setStatusMessage] = useState("")
 
   const loadDashboard = useCallback(
@@ -159,18 +162,19 @@ export function useAssetDashboardState({
     async (assetId: number, payload: AssetDetailsUpdateInput) => {
       try {
         setSavingAssetId(assetId)
+        setAssetEditError(null)
         const updatedAsset = await staffApi.updateAssetDetails(assetId, payload)
         setStatusMessage(`Updated asset ${updatedAsset.assetCode}.`)
         await loadDashboard({ refresh: true })
         return updatedAsset
       } catch (error) {
-        setGlobalError(getUserErrorMessage(error))
+        setAssetEditError(getUserErrorMessage(error))
         return null
       } finally {
         setSavingAssetId(null)
       }
     },
-    [loadDashboard, setGlobalError],
+    [loadDashboard],
   )
 
   const deactivateAssetCategory = useCallback(
@@ -206,6 +210,8 @@ export function useAssetDashboardState({
     isSavingCategory,
     isDeactivatingCategoryId,
     isSavingAssetId,
+    assetEditError,
+    clearAssetEditError,
     statusMessage,
     refreshDashboard,
     updateStockItemQuantity,

@@ -849,7 +849,14 @@ export function AssetDashboard({
             assetDashboard={assetDashboard}
             filteredRows={filteredSerializedRows}
             searchTerm={serializedSearchTerm}
-            onEditRow={auth.isSuperAdminAccount ? (row) => setEditingAssetId(row.assetId) : undefined}
+            onEditRow={
+              auth.isSuperAdminAccount
+                ? (row) => {
+                    assetDashboard.clearAssetEditError()
+                    setEditingAssetId(row.assetId)
+                  }
+                : undefined
+            }
           />
         ) : activeTab === "quantity" ? (
           <QuantityDashboardTable
@@ -885,7 +892,11 @@ export function AssetDashboard({
           key={editingAssetRow.assetId}
           row={editingAssetRow}
           isSaving={assetDashboard.isSavingAssetId === editingAssetRow.assetId}
-          onClose={() => setEditingAssetId(null)}
+          error={assetDashboard.assetEditError}
+          onClose={() => {
+            assetDashboard.clearAssetEditError()
+            setEditingAssetId(null)
+          }}
           onSave={(payload) => {
             void assetDashboard
               .updateAssetDetails(editingAssetRow.assetId, payload)

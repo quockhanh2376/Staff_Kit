@@ -30,11 +30,13 @@ function buildDraft(row: SerializedRow): Record<DraftKey, string> {
 export function EditAssetDrawer({
   row,
   isSaving,
+  error,
   onClose,
   onSave,
 }: {
   row: SerializedRow
   isSaving: boolean
+  error: string | null
   onClose: () => void
   onSave: (payload: AssetDetailsUpdateInput) => void
 }) {
@@ -85,6 +87,11 @@ export function EditAssetDrawer({
             )
           })}
         </div>
+        {error && (
+          <p role="alert" className="rounded-[8px] border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+            {error}
+          </p>
+        )}
         <div className="flex justify-end gap-2">
           <button
             className="rounded-[8px] border border-[var(--border)] px-3 py-2 text-sm font-medium text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)]"

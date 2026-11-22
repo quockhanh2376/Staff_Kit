@@ -50,7 +50,11 @@ describe("AssetDashboard Edit asset", () => {
     })
   })
 
-  function renderDashboard(isSuperAdminAccount: boolean, updateAssetDetails = vi.fn()) {
+  function renderDashboard(
+    isSuperAdminAccount: boolean,
+    updateAssetDetails = vi.fn(),
+    assetEditError: string | null = null,
+  ) {
     const assetDashboard = {
       summary: null,
       serializedRows: [
@@ -62,6 +66,8 @@ describe("AssetDashboard Edit asset", () => {
       categoryDetails: [],
       isLoadingDashboard: false,
       isSavingAssetId: null,
+      assetEditError,
+      clearAssetEditError: vi.fn(),
       statusMessage: "",
       refreshDashboard: vi.fn(),
       updateAssetDetails,
@@ -122,6 +128,12 @@ describe("AssetDashboard Edit asset", () => {
     await vi.waitFor(() => expect(updateAssetDetails).toHaveBeenCalled())
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(screen.getByLabelText("Display name")).toHaveValue("Samsung Galaxy A17")
+  })
+
+  it("shows the save error inside the drawer", () => {
+    renderDashboard(true, vi.fn(), "Not found: asset 4")
+    fireEvent.click(screen.getByRole("button", { name: "Edit AST-0004" }))
+    expect(screen.getByRole("alert")).toHaveTextContent("Not found: asset 4")
   })
 
   it("disables save when the display name is blank", () => {
