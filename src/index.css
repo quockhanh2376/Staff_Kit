@@ -21,8 +21,6 @@
   --search-highlight-cell-bg: rgba(255, 216, 77, 0.18);
   --search-highlight-cell-ring: rgba(173, 123, 0, 0.22);
   --count-text: #075985;
-  --count-bg: #e0f2fe;
-  --count-border: #7dd3fc;
 }
 
 .dark {
@@ -42,8 +40,6 @@
   --highlight-bg: rgba(34, 197, 94, 0.14);
   --highlight-text: #bbf7d0;
   --count-text: #7dd3fc;
-  --count-bg: rgba(56, 189, 248, 0.14);
-  --count-border: rgba(125, 211, 252, 0.4);
   --search-highlight-mark-bg: #ffd84d;
   --search-highlight-mark-text: #211600;
   --search-highlight-cell-bg: rgba(255, 216, 77, 0.16);
@@ -168,14 +164,9 @@ textarea {
 }
 
 .group-capsule-count {
-  min-width: 2.2rem;
   flex-shrink: 0;
-  text-align: center;
-  border-radius: 999px;
-  border: 1px solid var(--count-border);
-  background: var(--count-bg);
+  text-align: right;
   color: var(--count-text);
-  padding: 0.12rem 0.6rem;
   font-size: 0.95rem;
   font-weight: 800;
   line-height: 1.35;
@@ -183,8 +174,6 @@ textarea {
 }
 
 .group-capsule-button-active .group-capsule-count {
-  border-color: color-mix(in oklab, var(--primary) 58%, transparent);
-  background: color-mix(in oklab, var(--primary) 24%, var(--surface) 76%);
   color: var(--primary);
 }
 
