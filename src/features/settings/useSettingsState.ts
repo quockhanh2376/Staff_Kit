@@ -3,7 +3,7 @@ import { open as openFileDialog } from "@tauri-apps/plugin-dialog"
 import { staffApi } from "../../services/staff-api"
 import { clearSession } from "../../services/session"
 import type { AssetRecord, AssetSeedItemInput, BackupSettings, BorrowLanServerStatus, BorrowLanSettings, BorrowPolicyRecord, GenerateRecoveryCodesResult, RecoveryCodeStatus, SecurityPolicyMode, SecurityPolicyRecord, SnapshotInfo } from "../../types/staff"
-import { getUserErrorMessage } from "../../lib/errorHandling"
+import { classifyError, getUserErrorMessage } from "../../lib/errorHandling"
 import { buildBorrowLanUrlPreview } from "./borrowLanAutoFill"
 
 export type BorrowLanAutoStartState = "idle" | "starting" | "ready" | "error"
@@ -468,7 +468,8 @@ export function useSettingsState({
             setGlobalError("Database was reset/restored. Please sign in again.")
             onLogout()
         } catch (error) {
-            setDbPathMessage(`❌ ${getUserErrorMessage(error)}`)
+            // Super-admin only: the backend reason (path, lock, permission) is what they need to act on.
+            setDbPathMessage(`❌ ${classifyError(error).rawMessage}`)
             setDbMovePending(false)
         } finally {
             setMovingDb(false)

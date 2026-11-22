@@ -4335,3 +4335,11 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Added `db::auth::tests::fresh_database_seeds_adman_with_the_fixed_default_password`, which checks the literal `Aswhite2026` against the seeded hash. Confirmed it fails when the constant is changed.
 - Note: the default only applies when no database exists. The installer keeps `%LOCALAPPDATA%\io.staffkit.app`, and `tauri:dev` uses the same folder, so a reinstall over an existing DB keeps that DB's password.
 - Status: PASS.
+
+## 2026-11-22 Move DB shows the real backend error — End
+
+- Branch: `fix/move-db-error-message` (from `main` @ `4284c9a`). Start record was not written before the work began; this entry covers the whole change.
+- Problem: a failed "Move DB" showed only "An unexpected error occurred", because `classifyError` hides backend messages that do not start with a known prefix (e.g. `failed to create target directory: ...`, `another backup operation is currently in progress`). The user could not tell why moving to `D:\OneDrive - Company\StaffKit` failed.
+- Fix: `useSettingsState.handleMoveDatabase` shows `classifyError(error).rawMessage`. The screen is super-admin only, so the raw reason is safe to show and is what they need to act on.
+- Test: extended `preserves the session when the move fails` to assert the message; seen failing before the fix. Vitest 403/403 pass.
+- Status: PASS.
