@@ -11,6 +11,7 @@ import {
   setSession,
 } from "./session"
 import type {
+  AssetDetailsUpdateInput,
   DatabaseStatus,
   BackupRunResult,
   BackupSettings,
@@ -422,6 +423,9 @@ export const staffApi = {
         notes: payload.notes ?? null,
       },
     }),
+
+  updateAssetDetails: (assetId: number, payload: AssetDetailsUpdateInput) =>
+    call<AssetRecord>("update_asset_details", { assetId, payload }),
 
   upsertAssets: (payload: AssetSeedItemInput[]) =>
     call<AssetRecord[]>("upsert_assets", {

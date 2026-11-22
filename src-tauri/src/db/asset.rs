@@ -128,6 +128,7 @@ pub struct AssetDashboardSerializedRecord {
     pub computer_name: Option<String>,
     pub display_name: String,
     pub display_name_short: Option<String>,
+    pub brand: Option<String>,
     pub model: Option<String>,
     pub serial_number: Option<String>,
     pub adapter_number: Option<String>,
@@ -1628,7 +1629,8 @@ pub(crate) fn list_asset_dashboard_serialized_conn(
               a.status,
               e.employee_id,
               e.full_name,
-              COALESCE(br.signature_status, CASE WHEN al.id IS NOT NULL THEN 'signed' ELSE NULL END) AS signature_status
+              COALESCE(br.signature_status, CASE WHEN al.id IS NOT NULL THEN 'signed' ELSE NULL END) AS signature_status,
+              a.brand
             FROM assets a
             LEFT JOIN asset_categories c ON c.id = a.category_id
             LEFT JOIN asset_loans al
@@ -1663,6 +1665,7 @@ pub(crate) fn list_asset_dashboard_serialized_conn(
                 holder_employee_id: row.get(13)?,
                 holder_full_name: row.get(14)?,
                 signature_status: row.get(15)?,
+                brand: row.get(16)?,
             })
         })
         .map_err(|err| format!("failed to query serialized dashboard rows: {err}"))?;

@@ -6,6 +6,7 @@ import type {
   AssetDashboardQuantityRecord,
   AssetDashboardSerializedRecord,
   AssetDashboardSummary,
+  AssetDetailsUpdateInput,
   StockItemQuantityUpdateInput,
 } from "../../types/staff"
 import { getUserErrorMessage } from "../../lib/errorHandling"
@@ -37,6 +38,7 @@ export function useAssetDashboardState({
   const [isLoadingCategories, setLoadingCategories] = useState(false)
   const [isSavingCategory, setSavingCategory] = useState(false)
   const [isDeactivatingCategoryId, setDeactivatingCategoryId] = useState<number | null>(null)
+  const [isSavingAssetId, setSavingAssetId] = useState<number | null>(null)
   const [statusMessage, setStatusMessage] = useState("")
 
   const loadDashboard = useCallback(
@@ -153,6 +155,24 @@ export function useAssetDashboardState({
     [loadCategoryDetails, loadDashboard, setGlobalError],
   )
 
+  const updateAssetDetails = useCallback(
+    async (assetId: number, payload: AssetDetailsUpdateInput) => {
+      try {
+        setSavingAssetId(assetId)
+        const updatedAsset = await staffApi.updateAssetDetails(assetId, payload)
+        setStatusMessage(`Updated asset ${updatedAsset.assetCode}.`)
+        await loadDashboard({ refresh: true })
+        return updatedAsset
+      } catch (error) {
+        setGlobalError(getUserErrorMessage(error))
+        return null
+      } finally {
+        setSavingAssetId(null)
+      }
+    },
+    [loadDashboard, setGlobalError],
+  )
+
   const deactivateAssetCategory = useCallback(
     async (categoryId: number) => {
       try {
@@ -185,10 +205,12 @@ export function useAssetDashboardState({
     isLoadingCategories,
     isSavingCategory,
     isDeactivatingCategoryId,
+    isSavingAssetId,
     statusMessage,
     refreshDashboard,
     updateStockItemQuantity,
     saveAssetCategory,
     deactivateAssetCategory,
+    updateAssetDetails,
   }
 }

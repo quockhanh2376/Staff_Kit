@@ -255,6 +255,7 @@ export type AssetDashboardSerializedRecord = {
   computerName: string | null
   displayName: string
   displayNameShort: string | null
+  brand: string | null
   model: string | null
   serialNumber: string | null
   adapterNumber: string | null
@@ -264,6 +265,18 @@ export type AssetDashboardSerializedRecord = {
   holderEmployeeId: string | null
   holderFullName: string | null
   signatureStatus?: string | null
+}
+
+/** Descriptive fields a super admin may edit on one serialized asset. */
+export type AssetDetailsUpdateInput = {
+  displayName: string
+  displayNameShort: string | null
+  brand: string | null
+  model: string | null
+  serialNumber: string | null
+  adapterNumber: string | null
+  usageLocation: string | null
+  notes: string | null
 }
 
 export type AssetDashboardQuantityRecord = {
