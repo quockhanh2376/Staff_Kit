@@ -39,7 +39,7 @@ fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
 
 use sha2::Digest;
 
-pub(crate) fn validate_export_path(raw_path: &str, app_db_dir: Option<&std::path::Path>) -> Result<std::path::PathBuf, String> {
+pub(crate) fn validate_export_path(raw_path: &str, blocked_dirs: &[&std::path::Path]) -> Result<std::path::PathBuf, String> {
     if raw_path.trim().is_empty() {
         return Err("export path cannot be empty".to_string());
     }
@@ -79,17 +79,26 @@ pub(crate) fn validate_export_path(raw_path: &str, app_db_dir: Option<&std::path
     }
 
     // Check against internal DB directory
-    if let Some(db_dir) = app_db_dir {
-        let norm_path = path.canonicalize().unwrap_or_else(|_| path.clone());
+    // A new file cannot be canonicalized, so canonicalize its folder and re-attach the name.
+    let norm_path = path.canonicalize().unwrap_or_else(|_| {
+        match (path.parent(), path.file_name()) {
+            (Some(parent), Some(name)) => parent
+                .canonicalize()
+                .map(|dir| dir.join(name))
+                .unwrap_or_else(|_| path.clone()),
+            _ => path.clone(),
+        }
+    });
+    for db_dir in blocked_dirs {
         let norm_db = db_dir.canonicalize().unwrap_or_else(|_| db_dir.to_path_buf());
         if norm_path.starts_with(&norm_db) {
             return Err("export path cannot be inside internal database directory".to_string());
         }
     }
 
-    // Check against critical system files (e.g. staffkit.db, ledger.rev, audit_critical.ledger)
+    // Check against the app's own files wherever they live (db_settings.json picks which DB opens)
     let file_name = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
-    if file_name.eq_ignore_ascii_case("staffkit.db")
+    if file_name.eq_ignore_ascii_case("db_settings.json")
         || file_name.eq_ignore_ascii_case("ledger.rev")
         || file_name.eq_ignore_ascii_case("audit_critical.ledger")
         || file_name.eq_ignore_ascii_case("recovery.journal")
@@ -110,11 +119,19 @@ fn write_export_file(
 ) -> Result<(), String> {
     let ctx = auth_session::require_admin(&session_store, &session_token)?;
 
-    let app_db_dir = db::resolve_database_path(&app)
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+    // The DB folder and the app data folder (db_settings.json, ledgers) are both off limits.
+    let blocked_dirs: Vec<std::path::PathBuf> = [
+        db::resolve_database_path(&app)
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf())),
+        app.path().app_local_data_dir().ok(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let blocked_refs: Vec<&std::path::Path> = blocked_dirs.iter().map(|d| d.as_path()).collect();
 
-    let validated_path = match validate_export_path(&path, app_db_dir.as_deref()) {
+    let validated_path = match validate_export_path(&path, &blocked_refs) {
         Ok(p) => p,
         Err(err) => {
             // Audit failed export attempt
@@ -2127,46 +2144,64 @@ mod tests {
 
     #[test]
     fn validate_export_path_rejects_empty_and_null() {
-        assert!(validate_export_path("", None).is_err());
-        assert!(validate_export_path("   ", None).is_err());
-        assert!(validate_export_path("test\0.csv", None).is_err());
+        assert!(validate_export_path("", &[]).is_err());
+        assert!(validate_export_path("   ", &[]).is_err());
+        assert!(validate_export_path("test\0.csv", &[]).is_err());
     }
 
     #[test]
     fn validate_export_path_rejects_directory_traversal() {
-        assert!(validate_export_path("../evil.csv", None).is_err());
-        assert!(validate_export_path("folder/../../evil.csv", None).is_err());
+        assert!(validate_export_path("../evil.csv", &[]).is_err());
+        assert!(validate_export_path("folder/../../evil.csv", &[]).is_err());
     }
 
     #[test]
     fn validate_export_path_rejects_unsafe_extensions() {
-        assert!(validate_export_path("test.exe", None).is_err());
-        assert!(validate_export_path("test.dll", None).is_err());
-        assert!(validate_export_path("test.bat", None).is_err());
-        assert!(validate_export_path("test.db", None).is_err());
-        assert!(validate_export_path("test.rev", None).is_err());
-        assert!(validate_export_path("test.ledger", None).is_err());
-        assert!(validate_export_path("no_extension", None).is_err());
+        assert!(validate_export_path("test.exe", &[]).is_err());
+        assert!(validate_export_path("test.dll", &[]).is_err());
+        assert!(validate_export_path("test.bat", &[]).is_err());
+        assert!(validate_export_path("test.db", &[]).is_err());
+        assert!(validate_export_path("test.rev", &[]).is_err());
+        assert!(validate_export_path("test.ledger", &[]).is_err());
+        assert!(validate_export_path("no_extension", &[]).is_err());
     }
 
     #[test]
     fn validate_export_path_rejects_system_and_internal_db_dirs() {
-        assert!(validate_export_path("C:/Windows/System32/evil.csv", None).is_err());
-        assert!(validate_export_path("C:/Program Files/app/evil.csv", None).is_err());
+        assert!(validate_export_path("C:/Windows/System32/evil.csv", &[]).is_err());
+        assert!(validate_export_path("C:/Program Files/app/evil.csv", &[]).is_err());
 
         let fake_db_dir = std::path::PathBuf::from("C:/StaffKitData/db");
-        assert!(validate_export_path("C:/StaffKitData/db/dump.csv", Some(&fake_db_dir)).is_err());
-        assert!(validate_export_path("staffkit.db", None).is_err());
-        assert!(validate_export_path("ledger.rev", None).is_err());
-        assert!(validate_export_path("audit_critical.ledger", None).is_err());
+        assert!(validate_export_path("C:/StaffKitData/db/dump.csv", &[fake_db_dir.as_path()]).is_err());
+        assert!(validate_export_path("staffkit.db", &[]).is_err());
+        assert!(validate_export_path("ledger.rev", &[]).is_err());
+        assert!(validate_export_path("audit_critical.ledger", &[]).is_err());
+    }
+
+    #[test]
+    fn validate_export_path_blocks_app_data_dir_for_new_files() {
+        // SEC-015: db_settings.json does not exist yet, so the file itself cannot be canonicalized.
+        let app_data = std::env::temp_dir().join(format!("sk-sec015-{}", std::process::id()));
+        std::fs::create_dir_all(&app_data).unwrap();
+        let target = app_data.join("db_settings.json");
+        let result = validate_export_path(target.to_str().unwrap(), &[app_data.as_path()]);
+        let _ = std::fs::remove_dir_all(&app_data);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_export_path_blocks_real_app_file_names_anywhere() {
+        assert!(validate_export_path("D:/share/db_settings.json", &[]).is_err());
+        assert!(validate_export_path("D:/share/staff_kit.sqlite3.json", &[]).is_ok());
+        assert!(validate_export_path("D:/share/DB_SETTINGS.JSON", &[]).is_err());
     }
 
     #[test]
     fn validate_export_path_accepts_valid_export_locations() {
-        assert!(validate_export_path("C:/tmp/export.csv", None).is_ok());
-        assert!(validate_export_path("C:/Users/user/Downloads/report.xlsx", None).is_ok());
-        assert!(validate_export_path("D:/exports/data.json", None).is_ok());
-        assert!(validate_export_path("E:/reports/audit.pdf", None).is_ok());
+        assert!(validate_export_path("C:/tmp/export.csv", &[]).is_ok());
+        assert!(validate_export_path("C:/Users/user/Downloads/report.xlsx", &[]).is_ok());
+        assert!(validate_export_path("D:/exports/data.json", &[]).is_ok());
+        assert!(validate_export_path("E:/reports/audit.pdf", &[]).is_ok());
     }
 
     #[test]
