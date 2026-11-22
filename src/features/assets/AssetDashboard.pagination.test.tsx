@@ -82,6 +82,7 @@ describe("AssetDashboard SerializedAssetTable client-side pagination", () => {
 
   const mockAuth = {
     isAdminAccount: true,
+    isSuperAdminAccount: false,
     canImportData: true,
   }
 
