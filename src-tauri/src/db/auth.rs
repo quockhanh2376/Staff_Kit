@@ -1916,6 +1916,24 @@ mod tests {
         conn
     }
 
+    /// Product decision (2026-11-22): every release seeds a fresh database with
+    /// adman / Aswhite2026. The literal is pinned so a change here is deliberate.
+    #[test]
+    fn fresh_database_seeds_adman_with_the_fixed_default_password() {
+        let conn = Connection::open_in_memory().expect("open in-memory sqlite database");
+        super::super::configure_connection(&conn).expect("configure sqlite pragmas");
+        super::super::apply_migrations(&conn).expect("apply database migrations");
+
+        let hash: String = conn
+            .query_row(
+                "SELECT password_hash FROM app_local_accounts WHERE username = 'adman'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("fresh database has the adman account");
+        assert!(verify_password("Aswhite2026", &hash).unwrap());
+    }
+
     #[test]
     fn login_account_hints_expose_only_username_and_display_name() {
         let conn = seeded_connection();
