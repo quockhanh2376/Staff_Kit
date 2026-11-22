@@ -1342,6 +1342,18 @@ fn create_asset_manually(
 }
 
 #[tauri::command(async)]
+fn update_asset_details(
+    app: tauri::AppHandle,
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    session_token: String,
+    asset_id: i64,
+    payload: db::AssetDetailsUpdateInput,
+) -> Result<db::AssetRecord, String> {
+    let _ctx = auth_session::require_super_admin(&session_store, &session_token)?;
+    db::update_asset_details(&app, asset_id, payload)
+}
+
+#[tauri::command(async)]
 fn upsert_assets(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
@@ -1673,6 +1685,7 @@ pub fn run() {
             import_asset_import_batch_valid_rows,
             delete_asset_import_batch,
             create_asset_manually,
+            update_asset_details,
             upsert_assets,
             list_asset_categories,
             list_asset_category_details,
@@ -1802,6 +1815,7 @@ mod tests {
         "cancel_recovery_codes_generation",
         "revoke_recovery_codes",
         "admin_reset_local_account_password",
+        "update_asset_details",
     ];
 
     const ADMIN_COMMANDS: &[&str] = &[

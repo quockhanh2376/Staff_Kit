@@ -28,6 +28,19 @@ pub struct AssetUpsertInput {
     pub notes: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetDetailsUpdateInput {
+    pub display_name: String,
+    pub display_name_short: Option<String>,
+    pub brand: Option<String>,
+    pub model: Option<String>,
+    pub serial_number: Option<String>,
+    pub adapter_number: Option<String>,
+    pub usage_location: Option<String>,
+    pub notes: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetRecord {
@@ -355,6 +368,106 @@ fn load_asset_record_by_id_conn(
             },
         )
         .map_err(|err| format!("failed to load asset with id {asset_id}: {err}"))
+}
+
+// Column order shared by the SELECT, the UPDATE and the audit diff below.
+const EDITABLE_ASSET_DETAIL_FIELDS: [(&str, &str); 8] = [
+    ("display_name", "displayName"),
+    ("display_name_short", "displayNameShort"),
+    ("brand", "brand"),
+    ("model", "model"),
+    ("serial_number", "serialNumber"),
+    ("adapter_number", "adapterNumber"),
+    ("usage_location", "usageLocation"),
+    ("notes", "notes"),
+];
+
+pub(crate) fn update_asset_details_conn(
+    conn: &mut Connection,
+    asset_id: i64,
+    input: AssetDetailsUpdateInput,
+    actor_ref: Option<&str>,
+) -> Result<AssetRecord, String> {
+    let display_name = require_text(input.display_name, "display name")
+        .map_err(|_| "Invalid display name: it cannot be empty".to_string())?;
+    // Trim + NFC like require_text, but keep literal values such as "0" (normalize_optional_text drops them).
+    let optional = |value: Option<String>| -> Result<Option<String>, String> {
+        match value {
+            Some(raw) if !raw.trim().is_empty() => require_text(raw, "field").map(Some),
+            _ => Ok(None),
+        }
+    };
+    let after: [Option<String>; 8] = [
+        Some(display_name),
+        optional(input.display_name_short)?,
+        optional(input.brand)?,
+        optional(input.model)?,
+        optional(input.serial_number)?,
+        optional(input.adapter_number)?,
+        optional(input.usage_location)?,
+        optional(input.notes)?,
+    ];
+
+    let tx = conn
+        .transaction()
+        .map_err(|err| format!("failed to start asset update transaction: {err}"))?;
+    let columns = EDITABLE_ASSET_DETAIL_FIELDS.map(|(column, _)| column).join(", ");
+    let before = tx
+        .query_row(
+            &format!("SELECT asset_code, {columns} FROM assets WHERE id = ?"),
+            params![asset_id],
+            |row| {
+                let mut values: [Option<String>; 8] = Default::default();
+                for (index, value) in values.iter_mut().enumerate() {
+                    *value = row.get(index + 1)?;
+                }
+                Ok((row.get::<_, String>(0)?, values))
+            },
+        )
+        .optional()
+        .map_err(|err| format!("failed to load asset {asset_id}: {err}"))?;
+    let Some((asset_code, before)) = before else {
+        return Err(format!("Not found: asset {asset_id}"));
+    };
+
+    let mut changes = serde_json::Map::new();
+    for (index, (_, key)) in EDITABLE_ASSET_DETAIL_FIELDS.iter().enumerate() {
+        if before[index] != after[index] {
+            changes.insert(
+                key.to_string(),
+                serde_json::json!({ "before": before[index], "after": after[index] }),
+            );
+        }
+    }
+
+    if !changes.is_empty() {
+        let assignments = EDITABLE_ASSET_DETAIL_FIELDS
+            .map(|(column, _)| format!("{column} = ?"))
+            .join(", ");
+        let mut values: Vec<&dyn rusqlite::ToSql> = after.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
+        values.push(&asset_id);
+        tx.execute(
+            &format!("UPDATE assets SET {assignments}, updated_at = datetime('now') WHERE id = ?"),
+            values.as_slice(),
+        )
+        .map_err(humanize_sqlite_error)?;
+
+        let payload = serde_json::json!({ "assetCode": asset_code, "changes": changes }).to_string();
+        super::audit::insert_audit_log_conn(
+            &tx,
+            "asset.update_details",
+            "local_account",
+            actor_ref,
+            "asset",
+            asset_id.to_string().as_str(),
+            Some(payload.as_str()),
+        )?;
+    }
+
+    let record = load_asset_record_by_id_conn(&tx, asset_id)?;
+    tx.commit()
+        .map_err(|err| format!("failed to commit asset update: {err}"))?;
+    Ok(record)
 }
 
 pub(crate) fn load_asset_category_by_code_or_name_tx(
@@ -3469,6 +3582,120 @@ mod tests {
         assert_eq!(result.affected_employee_ids.len(), 0);
         assert_eq!(result.total_assets_checked, 2);
         assert_eq!(result.total_active_loans_checked, 2);
+    }
+
+    fn seed_editable_asset(conn: &mut Connection) -> i64 {
+        let records = upsert_assets_conn(
+            conn,
+            vec![AssetUpsertInput {
+                asset_code: "001".to_string(),
+                category_id: None,
+                asset_type: "H Phone".to_string(),
+                display_name: "Samsung Galaxy A18".to_string(),
+                display_name_short: None,
+                brand: Some("Samsung".to_string()),
+                model: Some("A18".to_string()),
+                serial_number: Some("SN-001".to_string()),
+                usage_location: None,
+                adapter_number: None,
+                warehouse: None,
+                notes: Some("x".to_string()),
+            }],
+        )
+        .expect("seed asset");
+        records[0].id
+    }
+
+    fn details_input(display_name: &str, model: Option<&str>, notes: Option<&str>) -> AssetDetailsUpdateInput {
+        AssetDetailsUpdateInput {
+            display_name: display_name.to_string(),
+            display_name_short: Some("".to_string()),
+            brand: Some("Samsung".to_string()),
+            model: model.map(str::to_string),
+            serial_number: Some("SN-001".to_string()),
+            adapter_number: None,
+            usage_location: Some("  ".to_string()),
+            notes: notes.map(str::to_string),
+        }
+    }
+
+    fn audit_payloads(conn: &Connection) -> Vec<String> {
+        let mut stmt = conn
+            .prepare("SELECT payload_json FROM audit_logs WHERE event_type = 'asset.update_details'")
+            .expect("prepare audit query");
+        stmt.query_map([], |row| row.get::<_, String>(0))
+            .expect("query audit")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect audit")
+    }
+
+    #[test]
+    fn update_asset_details_conn_updates_fields_and_audits_changes() {
+        let mut conn = open_test_connection();
+        let asset_id = seed_editable_asset(&mut conn);
+
+        let record = update_asset_details_conn(
+            &mut conn,
+            asset_id,
+            details_input("  Samsung Galaxy A17 ", Some("A17"), None),
+            Some("adman"),
+        )
+        .expect("update asset details");
+
+        assert_eq!(record.display_name, "Samsung Galaxy A17");
+        assert_eq!(record.model.as_deref(), Some("A17"));
+        assert_eq!(record.notes, None);
+
+        let payloads = audit_payloads(&conn);
+        assert_eq!(payloads.len(), 1);
+        let payload: serde_json::Value = serde_json::from_str(&payloads[0]).expect("audit json");
+        assert_eq!(payload["assetCode"], "001");
+        assert_eq!(payload["changes"]["displayName"]["before"], "Samsung Galaxy A18");
+        assert_eq!(payload["changes"]["displayName"]["after"], "Samsung Galaxy A17");
+        assert!(payload["changes"].get("serialNumber").is_none());
+    }
+
+    #[test]
+    fn update_asset_details_conn_rejects_blank_display_name() {
+        let mut conn = open_test_connection();
+        let asset_id = seed_editable_asset(&mut conn);
+
+        let err = update_asset_details_conn(&mut conn, asset_id, details_input("   ", Some("A17"), None), None)
+            .expect_err("blank name must fail");
+
+        assert!(err.starts_with("Invalid"), "unexpected error: {err}");
+        let name: String = conn
+            .query_row("SELECT display_name FROM assets WHERE id = ?", params![asset_id], |row| row.get(0))
+            .expect("load name");
+        assert_eq!(name, "Samsung Galaxy A18");
+        assert!(audit_payloads(&conn).is_empty());
+    }
+
+    #[test]
+    fn update_asset_details_conn_without_changes_writes_nothing() {
+        let mut conn = open_test_connection();
+        let asset_id = seed_editable_asset(&mut conn);
+        conn.execute("UPDATE assets SET updated_at = '2000-01-01 00:00:00' WHERE id = ?", params![asset_id])
+            .expect("pin updated_at");
+
+        update_asset_details_conn(&mut conn, asset_id, details_input("Samsung Galaxy A18", Some("A18"), Some("x")), None)
+            .expect("no-op update");
+
+        assert!(audit_payloads(&conn).is_empty());
+        let updated_at: String = conn
+            .query_row("SELECT updated_at FROM assets WHERE id = ?", params![asset_id], |row| row.get(0))
+            .expect("load updated_at");
+        assert_eq!(updated_at, "2000-01-01 00:00:00");
+    }
+
+    #[test]
+    fn update_asset_details_conn_missing_asset_is_not_found() {
+        let mut conn = open_test_connection();
+
+        let err = update_asset_details_conn(&mut conn, 9999, details_input("Samsung Galaxy A17", None, None), None)
+            .expect_err("missing asset must fail");
+
+        assert!(err.starts_with("Not found"), "unexpected error: {err}");
     }
 }
 
