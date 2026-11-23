@@ -84,6 +84,19 @@ describe("EmployeeSyncDrawer", () => {
         expect(screen.getByText("Unchanged 12")).toBeInTheDocument()
     })
 
+    it("shows the local group on conflict and missing rows and marks floating rows", () => {
+        setup([
+            row({ id: 3, staffCode: "A3", kind: "conflict", action: "move_to_employee_list", localGroup: "offboarding" }),
+            row({
+                id: 6, staffCode: "A6", kind: "missing", action: "none", source: [],
+                local: fields("Floater"), localGroup: "employee_list", isFloating: true,
+            }),
+        ])
+        expect(screen.getByText("From Offboarding")).toBeInTheDocument()
+        expect(screen.getByText("From Employee list")).toBeInTheDocument()
+        expect(screen.getByText("Floating")).toBeInTheDocument()
+    })
+
     it("changing action saves the row", () => {
         const { emp } = setup(mixedRows)
         fireEvent.change(screen.getByLabelText("Action for A4"), { target: { value: "none" } })

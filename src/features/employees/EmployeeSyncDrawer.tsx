@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { Drawer } from "../../components/Drawer"
+import { STAFF_GROUP_BUTTONS } from "../../lib/constants"
 import type { EmployeeSyncFields, EmployeeSyncStagedRow } from "../../types/staff"
 import type { EmployeeState } from "./useEmployeeState"
 
@@ -12,6 +13,8 @@ const ACTION_LABELS: Record<string, string> = {
     move_to_offboarding: "Move to Offboarding",
     none: "Keep",
 }
+
+const groupLabel = (group: string) => STAFF_GROUP_BUTTONS.find((g) => g.key === group)?.label ?? group
 
 const KIND_LABELS: Record<string, string> = { new: "New", changed: "Changed", missing: "Missing", conflict: "Conflicts" }
 
@@ -154,7 +157,13 @@ export function EmployeeSyncDrawer({ open, onClose, employeeState: emp, setGloba
                                     >
                                         <td className="px-2 py-2 font-medium">{row.staffCode}</td>
                                         <td className="px-2 py-2 text-[var(--text-secondary)]">{KIND_LABELS[row.kind] ?? row.kind}</td>
-                                        <td className="px-2 py-2">{row.local?.fullName ?? "-"}</td>
+                                        <td className="px-2 py-2">
+                                            {row.local?.fullName ?? "-"}
+                                            {(row.kind === "conflict" || row.kind === "missing") && row.localGroup && (
+                                                <div className="text-[var(--text-secondary)]">{`From ${groupLabel(row.localGroup)}`}</div>
+                                            )}
+                                            {row.isFloating && <div className="text-[var(--text-secondary)]">Floating</div>}
+                                        </td>
                                         <td className="px-2 py-2">{row.source.map((s) => s.fullName).join(" / ") || "-"}</td>
                                         {FIELD_COLUMNS.map(({ key: field, label }) => (
                                             <td key={field} className="px-2 py-2">

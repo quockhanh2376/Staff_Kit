@@ -48,6 +48,7 @@ export function useEmployeeState({
     const [isLoadingTeams, setLoadingTeams] = useState(false)
     const [syncBatch, setSyncBatch] = useState<EmployeeSyncBatch | null>(null)
     const [isSyncBusy, setSyncBusy] = useState(false)
+    const syncInFlightRef = useRef(0)
     const [syncError, setSyncError] = useState<string | null>(null)
     const [mssqlRefreshToken, setMssqlRefreshToken] = useState(0)
 
@@ -305,6 +306,7 @@ export function useEmployeeState({
     }
 
     const runSync = async <T,>(task: () => Promise<T>): Promise<{ ok: true; value: T } | { ok: false }> => {
+        syncInFlightRef.current += 1
         setSyncBusy(true)
         setSyncError(null)
         setGlobalError(null)
@@ -316,7 +318,8 @@ export function useEmployeeState({
             setGlobalError(message)
             return { ok: false }
         } finally {
-            setSyncBusy(false)
+            syncInFlightRef.current -= 1
+            setSyncBusy(syncInFlightRef.current > 0)
         }
     }
 
@@ -439,9 +442,9 @@ export function getMssqlEmployeeUpdateErrorMessage(error: unknown): string {
     const normalized = raw.toLowerCase()
 
     if (
-        // Local staging errors (stale rows, nothing to write, bad action or name) carry no MSSQL secrets.
+        // Local staging errors (Cannot / Invalid / Not found) carry no MSSQL secrets.
         (normalized.startsWith("read-only permission diagnostic:") ||
-            /^(cannot apply:|invalid action|invalid full name)/.test(normalized)) &&
+            /^(cannot |invalid |not found:)/.test(normalized)) &&
         raw.length <= 350 &&
         !/[\r\n]/.test(raw) &&
         !/(?:password|token|secret)\s*=/.test(normalized)

@@ -161,6 +161,26 @@ describe("staged EE List sync state", () => {
         expect(result.current.syncBatch?.rows[0].state).toBe("stale")
     })
 
+    it("keeps isSyncBusy true until every overlapping sync call finishes", async () => {
+        const { result } = renderHook(() => useEmployeeState(baseOptions))
+        await act(async () => { await result.current.startEmployeeSync() })
+        let resolveFirst: (value: unknown) => void = () => {}
+        let resolveSecond: (value: unknown) => void = () => {}
+        api.updateEmployeeSyncRow.mockReturnValueOnce(new Promise((resolve) => { resolveFirst = resolve }))
+        api.refreshEmployeeSyncRow.mockReturnValueOnce(new Promise((resolve) => { resolveSecond = resolve }))
+        let first: Promise<unknown> = Promise.resolve()
+        let second: Promise<unknown> = Promise.resolve()
+        act(() => {
+            first = result.current.updateSyncRow(1, { action: "skip" })
+            second = result.current.refreshSyncRow(2)
+        })
+        expect(result.current.isSyncBusy).toBe(true)
+        await act(async () => { resolveFirst(row(1, "skip")); await first })
+        expect(result.current.isSyncBusy).toBe(true)
+        await act(async () => { resolveSecond(row(2)); await second })
+        expect(result.current.isSyncBusy).toBe(false)
+    })
+
     it("shows a safe error and stages nothing when the source query fails", async () => {
         const rawError = "MSSQL network connection failed: password=secret; host=sql.internal"
         api.stageEmployeeListSync.mockRejectedValue(new Error(rawError))
@@ -186,6 +206,14 @@ describe("employee MSSQL error mapping", () => {
         )
         expect(message).not.toContain("secret")
         expect(message).toContain("must be read-only")
+    })
+
+    it.each([
+        "Cannot load: the HR source returned no employees",
+        "Cannot load: an EE List sync is already open. Continue it or discard it first.",
+        "Not found: EE List sync",
+    ])("shows the staging error %s as-is", (rawError) => {
+        expect(getMssqlEmployeeUpdateErrorMessage(new Error(rawError))).toBe(rawError)
     })
 
     it.each([
