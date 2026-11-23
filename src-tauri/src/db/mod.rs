@@ -537,7 +537,7 @@ fn sqlite_version(conn: &Connection) -> Result<String, String> {
         .map_err(|err| format!("failed to query sqlite version: {err}"))
 }
 
-pub(crate) const SCHEMA_USER_VERSION: u32 = 1;
+pub(crate) const SCHEMA_USER_VERSION: u32 = 3;
 
 pub(crate) fn apply_migrations(conn: &Connection) -> Result<(), String> {
     let current_version: u32 = conn
@@ -805,6 +805,7 @@ fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
         ("warehouse", "TEXT"),
         ("usage_location", "TEXT"),
         ("adapter_number", "TEXT"),
+        ("condition", "TEXT NOT NULL DEFAULT 'spare' CHECK (condition IN ('new','spare','broken'))"),
     ] {
         if existing.iter().any(|name| name == column_name) {
             continue;
@@ -908,6 +909,8 @@ fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
             "TEXT NOT NULL DEFAULT 'not_applicable'",
         ),
         ("owner_warnings_json", "TEXT NOT NULL DEFAULT '[]'"),
+        ("condition", "TEXT"),
+        ("review_notes_json", "TEXT NOT NULL DEFAULT '[]'"),
     ] {
         if existing_row_columns.iter().any(|name| name == column_name) {
             continue;
@@ -2968,6 +2971,77 @@ mod tests {
         assert!(pool.is_empty(), "idle connections must be cleared on invalidate");
         let path_cache = CACHED_DB_PATH.lock().unwrap();
         assert!(path_cache.is_none(), "path cache must be None on invalidate");
+    }
+
+    #[test]
+    fn apply_migrations_adds_spare_condition_to_existing_assets() {
+        let conn = Connection::open_in_memory().expect("open legacy database");
+        configure_connection(&conn).expect("configure sqlite pragmas");
+        conn.execute_batch(
+            r#"
+            CREATE TABLE assets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                asset_code TEXT NOT NULL UNIQUE,
+                asset_type TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                model TEXT,
+                serial_number TEXT,
+                notes TEXT,
+                status TEXT NOT NULL DEFAULT 'in_stock',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            INSERT INTO assets (asset_code, asset_type, display_name) VALUES ('VNLAP001', 'Laptop', 'Old laptop');
+            PRAGMA user_version = 1;
+            "#,
+        )
+        .expect("create v1 database");
+
+        apply_migrations(&conn).expect("apply migrations to v1 database");
+
+        let condition: String = conn
+            .query_row("SELECT condition FROM assets WHERE asset_code = 'VNLAP001'", [], |r| r.get(0))
+            .expect("read migrated condition");
+        assert_eq!(condition, "spare");
+        let version: u32 = conn
+            .query_row("PRAGMA user_version;", [], |r| r.get(0))
+            .expect("read user_version");
+        assert_eq!(version, SCHEMA_USER_VERSION);
+    }
+
+    #[test]
+    fn apply_migrations_adds_import_condition_columns_to_v2_db() {
+        let conn = Connection::open_in_memory().expect("open in-memory db");
+        apply_migrations(&conn).expect("apply migrations on fresh db");
+        conn.execute_batch(
+            r#"
+            ALTER TABLE asset_import_rows DROP COLUMN condition;
+            ALTER TABLE asset_import_rows DROP COLUMN review_notes_json;
+            PRAGMA user_version = 2;
+            "#,
+        )
+        .expect("rewind to a v2 import table");
+
+        apply_migrations(&conn).expect("apply migrations to v2 database");
+
+        assert!(column_exists(&conn, "asset_import_rows", "condition"));
+        assert!(column_exists(&conn, "asset_import_rows", "review_notes_json"));
+        let version: u32 = conn
+            .query_row("PRAGMA user_version;", [], |r| r.get(0))
+            .expect("read user_version");
+        assert_eq!(version, SCHEMA_USER_VERSION);
+    }
+
+    #[test]
+    fn apply_migrations_fresh_db_has_condition_column() {
+        let conn = Connection::open_in_memory().expect("open in-memory db");
+        apply_migrations(&conn).expect("apply migrations on fresh db");
+        conn.query_row("SELECT condition FROM assets LIMIT 1", [], |_| Ok(()))
+            .or_else(|err| match err {
+                rusqlite::Error::QueryReturnedNoRows => Ok(()),
+                other => Err(other),
+            })
+            .expect("assets.condition column exists");
     }
 }
 

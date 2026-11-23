@@ -26,6 +26,9 @@ pub struct AssetUpsertInput {
     pub adapter_number: Option<String>,
     pub warehouse: Option<String>,
     pub notes: Option<String>,
+    // Manual create only; bulk upsert ignores it.
+    #[serde(default)]
+    pub condition: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -41,6 +44,10 @@ pub struct AssetDetailsUpdateInput {
     pub notes: Option<String>,
 }
 
+pub(crate) const ASSET_CONDITION_NEW: &str = "new";
+pub(crate) const ASSET_CONDITION_SPARE: &str = "spare";
+pub(crate) const ASSET_CONDITION_BROKEN: &str = "broken";
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetRecord {
@@ -52,6 +59,7 @@ pub struct AssetRecord {
     pub serial_number: Option<String>,
     pub notes: Option<String>,
     pub status: String,
+    pub condition: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -138,6 +146,8 @@ pub struct AssetDashboardSerializedRecord {
     pub holder_employee_id: Option<String>,
     pub holder_full_name: Option<String>,
     pub signature_status: Option<String>,
+    pub condition: String,
+    pub holder_team_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -219,6 +229,7 @@ pub(crate) struct AssetLookupRecord {
     pub id: i64,
     pub asset_code: String,
     pub status: String,
+    pub condition: String,
 }
 
 pub(crate) fn load_asset_by_code_tx(
@@ -226,13 +237,14 @@ pub(crate) fn load_asset_by_code_tx(
     asset_code: &str,
 ) -> Result<Option<AssetLookupRecord>, String> {
     tx.query_row(
-        "SELECT id, asset_code, status FROM assets WHERE asset_code = ? COLLATE NOCASE",
+        "SELECT id, asset_code, status, condition FROM assets WHERE asset_code = ? COLLATE NOCASE",
         params![asset_code],
         |row| {
             Ok(AssetLookupRecord {
                 id: row.get(0)?,
                 asset_code: row.get(1)?,
                 status: row.get(2)?,
+                condition: row.get(3)?,
             })
         },
     )
@@ -245,13 +257,14 @@ pub(crate) fn load_asset_by_id_tx(
     asset_id: i64,
 ) -> Result<Option<AssetLookupRecord>, String> {
     tx.query_row(
-        "SELECT id, asset_code, status FROM assets WHERE id = ?",
+        "SELECT id, asset_code, status, condition FROM assets WHERE id = ?",
         params![asset_id],
         |row| {
             Ok(AssetLookupRecord {
                 id: row.get(0)?,
                 asset_code: row.get(1)?,
                 status: row.get(2)?,
+                condition: row.get(3)?,
             })
         },
     )
@@ -266,7 +279,17 @@ pub(crate) fn set_asset_status_tx(
 ) -> Result<(), String> {
     let changed = tx
         .execute(
-            "UPDATE assets SET status = ?, updated_at = datetime('now') WHERE id = ?",
+            r#"
+            UPDATE assets
+            SET status = ?1,
+                condition = CASE
+                  WHEN ?1 = 'assigned' AND condition = 'new' THEN 'spare'
+                  WHEN ?1 = 'in_stock' AND condition <> 'broken' THEN 'spare'
+                  ELSE condition
+                END,
+                updated_at = datetime('now')
+            WHERE id = ?2
+            "#,
             params![status, asset_id],
         )
         .map_err(humanize_sqlite_error)?;
@@ -292,6 +315,7 @@ fn insert_asset_stmt(
     adapter_number: Option<&str>,
     warehouse: Option<&str>,
     notes: Option<&str>,
+    condition: &str,
 ) -> Result<i64, String> {
     executor
         .execute(
@@ -310,10 +334,11 @@ fn insert_asset_stmt(
               warehouse,
               notes,
               status,
+              condition,
               created_at,
               updated_at
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'in_stock', datetime('now'), datetime('now'))
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'in_stock', ?, datetime('now'), datetime('now'))
             "#,
             params![
                 asset_code,
@@ -327,7 +352,8 @@ fn insert_asset_stmt(
                 usage_location,
                 adapter_number,
                 warehouse,
-                notes
+                notes,
+                condition
             ],
         )
         .map_err(humanize_sqlite_error)?;
@@ -350,7 +376,8 @@ fn load_asset_record_by_id_conn(
               model,
               serial_number,
               notes,
-              status
+              status,
+              condition
             FROM assets
             WHERE id = ?
             "#,
@@ -365,6 +392,7 @@ fn load_asset_record_by_id_conn(
                     serial_number: row.get(5)?,
                     notes: row.get(6)?,
                     status: row.get(7)?,
+                    condition: row.get(8)?,
                 })
             },
         )
@@ -468,6 +496,86 @@ pub(crate) fn update_asset_details_conn(
     let record = load_asset_record_by_id_conn(&tx, asset_id)?;
     tx.commit()
         .map_err(|err| format!("failed to commit asset update: {err}"))?;
+    Ok(record)
+}
+
+pub(crate) fn parse_asset_condition(raw: &str) -> Option<&'static str> {
+    use unicode_normalization::UnicodeNormalization;
+    match raw.trim().nfc().collect::<String>().to_lowercase().as_str() {
+        "new" | "mới" | "moi" => Some(ASSET_CONDITION_NEW),
+        "spare" | "dự phòng" | "du phong" | "dựphòng" => Some(ASSET_CONDITION_SPARE),
+        "broken" | "hỏng" | "hong" | "hư" | "hu" => Some(ASSET_CONDITION_BROKEN),
+        _ => None,
+    }
+}
+
+/// `new` means never handed out: still in stock and no loan ever recorded.
+pub(crate) fn asset_can_be_new_conn(conn: &Connection, asset_id: i64) -> Result<bool, String> {
+    conn.query_row(
+        "SELECT status = 'in_stock' AND NOT EXISTS (SELECT 1 FROM asset_loans WHERE asset_id = ?1)
+         FROM assets WHERE id = ?1",
+        params![asset_id],
+        |row| row.get(0),
+    )
+    .map_err(|err| format!("failed to check asset {asset_id} hand-out history: {err}"))
+}
+
+/// `source` is "manual" or "import"; it is recorded in the audit payload.
+pub(crate) fn set_asset_condition_conn(
+    conn: &mut Connection,
+    asset_id: i64,
+    condition: &str,
+    source: &str,
+    actor_ref: Option<&str>,
+) -> Result<AssetRecord, String> {
+    let after = parse_asset_condition(condition)
+        .ok_or_else(|| format!("Invalid condition: {condition}"))?;
+
+    let tx = conn
+        .transaction()
+        .map_err(|err| format!("failed to start asset condition transaction: {err}"))?;
+    let current = tx
+        .query_row(
+            "SELECT asset_code, condition FROM assets WHERE id = ?",
+            params![asset_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()
+        .map_err(|err| format!("failed to load asset {asset_id}: {err}"))?;
+    let Some((asset_code, before)) = current else {
+        return Err(format!("Not found: asset {asset_id}"));
+    };
+
+    if before != after {
+        if after == ASSET_CONDITION_NEW && !asset_can_be_new_conn(&tx, asset_id)? {
+            return Err("Cannot set condition to new after first hand-out".to_string());
+        }
+        tx.execute(
+            "UPDATE assets SET condition = ?, updated_at = datetime('now') WHERE id = ?",
+            params![after, asset_id],
+        )
+        .map_err(humanize_sqlite_error)?;
+
+        let payload = serde_json::json!({
+            "assetCode": asset_code,
+            "changes": { "condition": { "before": before, "after": after } },
+            "source": source,
+        })
+        .to_string();
+        super::audit::insert_audit_log_conn(
+            &tx,
+            "asset.update_condition",
+            "local_account",
+            actor_ref,
+            "asset",
+            asset_id.to_string().as_str(),
+            Some(payload.as_str()),
+        )?;
+    }
+
+    let record = load_asset_record_by_id_conn(&tx, asset_id)?;
+    tx.commit()
+        .map_err(|err| format!("failed to commit asset condition update: {err}"))?;
     Ok(record)
 }
 
@@ -722,6 +830,10 @@ pub(crate) fn create_asset_tx(
     let adapter_number = normalize_optional_text(input.adapter_number.clone());
     let warehouse = normalize_optional_text(input.warehouse.clone());
     let notes = normalize_optional_text(input.notes.clone());
+    let condition = match input.condition.as_deref().filter(|raw| !raw.trim().is_empty()) {
+        Some(raw) => parse_asset_condition(raw).ok_or_else(|| format!("Invalid condition: {raw}"))?,
+        None => ASSET_CONDITION_SPARE,
+    };
 
     let asset_id = insert_asset_stmt(
         tx,
@@ -737,6 +849,7 @@ pub(crate) fn create_asset_tx(
         adapter_number.as_deref(),
         warehouse.as_deref(),
         notes.as_deref(),
+        condition,
     )?;
 
     load_asset_record_by_id_conn(tx, asset_id)
@@ -898,7 +1011,8 @@ pub(crate) fn upsert_assets_conn(
                   model,
                   serial_number,
                   notes,
-                  status
+                  status,
+                  condition
                 FROM assets
                 WHERE asset_code = ? COLLATE NOCASE
                 "#,
@@ -913,6 +1027,7 @@ pub(crate) fn upsert_assets_conn(
                         serial_number: row.get(5)?,
                         notes: row.get(6)?,
                         status: row.get(7)?,
+                        condition: row.get(8)?,
                     })
                 },
             )
@@ -948,10 +1063,12 @@ pub(crate) fn search_in_stock_assets_conn(
               a.model,
               a.serial_number,
               a.notes,
-              a.status
+              a.status,
+              a.condition
             FROM assets a
             LEFT JOIN asset_categories c ON c.id = a.category_id
             WHERE a.status = 'in_stock'
+              AND a.condition <> 'broken'
               AND (
                 ? IS NULL
                 OR UPPER(a.asset_code) LIKE ?
@@ -989,6 +1106,7 @@ pub(crate) fn search_in_stock_assets_conn(
                     serial_number: row.get(5)?,
                     notes: row.get(6)?,
                     status: row.get(7)?,
+                    condition: row.get(8)?,
                 })
             },
         )
@@ -1024,7 +1142,8 @@ pub(crate) fn search_assigned_assets_conn(
               a.model,
               a.serial_number,
               a.notes,
-              a.status
+              a.status,
+              a.condition
             FROM assets a
             LEFT JOIN asset_categories c ON c.id = a.category_id
             WHERE a.status = 'assigned'
@@ -1065,6 +1184,7 @@ pub(crate) fn search_assigned_assets_conn(
                     serial_number: row.get(5)?,
                     notes: row.get(6)?,
                     status: row.get(7)?,
+                    condition: row.get(8)?,
                 })
             },
         )
@@ -1630,13 +1750,16 @@ pub(crate) fn list_asset_dashboard_serialized_conn(
               e.employee_id,
               e.full_name,
               COALESCE(br.signature_status, CASE WHEN al.id IS NOT NULL THEN 'signed' ELSE NULL END) AS signature_status,
-              a.brand
+              a.brand,
+              a.condition,
+              t.name AS holder_team_name
             FROM assets a
             LEFT JOIN asset_categories c ON c.id = a.category_id
             LEFT JOIN asset_loans al
               ON al.asset_id = a.id
              AND al.returned_at IS NULL
             LEFT JOIN employees e ON e.id = al.employee_id_fk
+            LEFT JOIN teams t ON t.id = e.team_id
             LEFT JOIN borrow_requests br ON br.id = al.borrow_request_id
             ORDER BY
               COALESCE(c.category_name, a.asset_type) COLLATE NOCASE ASC,
@@ -1666,6 +1789,8 @@ pub(crate) fn list_asset_dashboard_serialized_conn(
                 holder_full_name: row.get(14)?,
                 signature_status: row.get(15)?,
                 brand: row.get(16)?,
+                condition: row.get(17)?,
+                holder_team_name: row.get(18)?,
             })
         })
         .map_err(|err| format!("failed to query serialized dashboard rows: {err}"))?;
@@ -2439,6 +2564,7 @@ mod tests {
                 adapter_number: None,
                 warehouse: None,
                 notes: Some("Seed import".to_string()),
+                condition: None,
             }],
         )
         .expect("upsert assets");
@@ -2470,6 +2596,7 @@ mod tests {
                     adapter_number: None,
                     warehouse: None,
                     notes: None,
+                    condition: None,
                 },
                 AssetUpsertInput {
                     asset_code: "VNLAP327".to_string(),
@@ -2484,6 +2611,7 @@ mod tests {
                     adapter_number: None,
                     warehouse: None,
                     notes: None,
+                    condition: None,
                 },
                 AssetUpsertInput {
                     asset_code: "VNLAP369".to_string(),
@@ -2498,6 +2626,7 @@ mod tests {
                     adapter_number: None,
                     warehouse: None,
                     notes: None,
+                    condition: None,
                 },
                 AssetUpsertInput {
                     asset_code: "VNLAP900".to_string(),
@@ -2512,6 +2641,7 @@ mod tests {
                     adapter_number: None,
                     warehouse: None,
                     notes: None,
+                    condition: None,
                 },
             ],
         )
@@ -2578,6 +2708,7 @@ mod tests {
                 adapter_number: None,
                 warehouse: None,
                 notes: None,
+                condition: None,
             }],
         )
         .expect("insert initial asset");
@@ -2603,6 +2734,7 @@ mod tests {
                 adapter_number: None,
                 warehouse: None,
                 notes: Some("Updated metadata".to_string()),
+                condition: None,
             }],
         )
         .expect("update existing asset");
@@ -2728,6 +2860,7 @@ mod tests {
                     adapter_number: Some("ADP-709".to_string()),
                     warehouse: None,
                     notes: None,
+                    condition: None,
                 },
                 AssetUpsertInput {
                     asset_code: "VNLAP050".to_string(),
@@ -2742,6 +2875,7 @@ mod tests {
                     adapter_number: Some("LAP-ADP-050".to_string()),
                     warehouse: Some("HCM".to_string()),
                     notes: None,
+                    condition: None,
                 },
             ],
         )
@@ -3603,6 +3737,7 @@ mod tests {
                 adapter_number: None,
                 warehouse: None,
                 notes: Some("x".to_string()),
+                condition: None,
             }],
         )
         .expect("seed asset");
@@ -3699,6 +3834,187 @@ mod tests {
             .expect_err("missing asset must fail");
 
         assert!(err.starts_with("Not found"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn serialized_dashboard_rows_include_condition_and_holder_team() {
+        let mut conn = open_test_connection();
+        let team_id = seed_team(&conn, "IT");
+        let employee_row_id = seed_employee(&conn, "ASWVN1400", "Tran Van B", team_id);
+        let request_id = seed_borrow_request(&conn, employee_row_id, "ASWVN1400", "Tran Van B");
+        let laptop_category_id = category_id(&conn, "laptop");
+        let assets = upsert_assets_conn(
+            &mut conn,
+            vec![AssetUpsertInput {
+                asset_code: "VNLAP400".to_string(),
+                category_id: Some(laptop_category_id),
+                asset_type: "Laptop".to_string(),
+                display_name: "Laptop 400".to_string(),
+                display_name_short: None,
+                brand: None,
+                model: None,
+                serial_number: None,
+                usage_location: None,
+                adapter_number: None,
+                warehouse: None,
+                notes: None,
+                condition: None,
+            }],
+        )
+        .expect("seed asset");
+        conn.execute(
+            "INSERT INTO asset_loans(asset_id, employee_id_fk, borrow_request_id, borrowed_at) VALUES(?, ?, ?, datetime('now'))",
+            params![assets[0].id, employee_row_id, request_id],
+        )
+        .expect("insert active loan");
+
+        let rows = list_asset_dashboard_serialized_conn(&conn).expect("load dashboard rows");
+        let row = rows.iter().find(|r| r.asset_code == "VNLAP400").expect("find row");
+        assert_eq!(row.condition, "spare");
+        assert_eq!(row.holder_team_name.as_deref(), Some("IT"));
+        assert_eq!(assets[0].condition, "spare");
+    }
+
+    #[test]
+    fn lan_search_hides_broken_assets() {
+        let conn = open_test_connection();
+        conn.execute_batch(
+            "INSERT INTO assets (asset_code, asset_type, display_name, status, condition) VALUES ('VNLAP701', 'Laptop', 'Good', 'in_stock', 'spare');
+             INSERT INTO assets (asset_code, asset_type, display_name, status, condition) VALUES ('VNLAP702', 'Laptop', 'Bad', 'in_stock', 'broken');",
+        )
+        .unwrap();
+        let found = search_in_stock_assets_conn(&conn, Some("VNLAP70"), 12).unwrap();
+        let codes: Vec<_> = found.iter().map(|r| r.asset_code.as_str()).collect();
+        assert_eq!(codes, vec!["VNLAP701"]);
+    }
+
+    fn condition_audits(conn: &Connection) -> Vec<String> {
+        let mut stmt = conn
+            .prepare("SELECT payload_json FROM audit_logs WHERE event_type = 'asset.update_condition'")
+            .expect("prepare");
+        stmt.query_map([], |row| row.get::<_, String>(0))
+            .expect("query")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect")
+    }
+
+    #[test]
+    fn set_asset_condition_audits_change() {
+        let mut conn = open_test_connection();
+        let id = seed_editable_asset(&mut conn);
+        let record = set_asset_condition_conn(&mut conn, id, " Broken ", "manual", Some("adman")).expect("set");
+        assert_eq!(record.condition, "broken");
+        let payloads = condition_audits(&conn);
+        assert_eq!(payloads.len(), 1);
+        let payload: serde_json::Value = serde_json::from_str(&payloads[0]).unwrap();
+        assert_eq!(payload["assetCode"], "001");
+        assert_eq!(payload["source"], "manual");
+        assert_eq!(payload["changes"]["condition"]["before"], "spare");
+        assert_eq!(payload["changes"]["condition"]["after"], "broken");
+    }
+
+    #[test]
+    fn set_asset_condition_same_value_writes_nothing() {
+        let mut conn = open_test_connection();
+        let id = seed_editable_asset(&mut conn);
+        let record = set_asset_condition_conn(&mut conn, id, "spare", "manual", None).expect("set");
+        assert_eq!(record.condition, "spare");
+        assert!(condition_audits(&conn).is_empty());
+    }
+
+    #[test]
+    fn set_asset_condition_rejects_invalid() {
+        let mut conn = open_test_connection();
+        let id = seed_editable_asset(&mut conn);
+        let err = set_asset_condition_conn(&mut conn, id, "repair", "manual", None).unwrap_err();
+        assert!(err.starts_with("Invalid condition"), "{err}");
+    }
+
+    #[test]
+    fn set_asset_condition_missing_asset_not_found() {
+        let mut conn = open_test_connection();
+        let err = set_asset_condition_conn(&mut conn, 9999, "broken", "manual", None).unwrap_err();
+        assert_eq!(err, "Not found: asset 9999");
+    }
+
+    #[test]
+    fn set_asset_condition_new_allowed_for_never_loaned_stock() {
+        let mut conn = open_test_connection();
+        let id = seed_editable_asset(&mut conn);
+        let record = set_asset_condition_conn(&mut conn, id, "new", "manual", None).expect("spare -> new");
+        assert_eq!(record.condition, "new");
+        assert_eq!(condition_audits(&conn).len(), 1);
+        let record = set_asset_condition_conn(&mut conn, id, "new", "manual", None).expect("noop");
+        assert_eq!(record.condition, "new");
+        assert_eq!(condition_audits(&conn).len(), 1);
+    }
+
+    #[test]
+    fn set_asset_condition_cannot_set_new_after_returned_loan() {
+        let mut conn = open_test_connection();
+        let id = seed_editable_asset(&mut conn);
+        let team_id = seed_team(&conn, "IT");
+        let employee_row_id = seed_employee(&conn, "ASWVN1500", "Tran Van C", team_id);
+        let request_id = seed_borrow_request(&conn, employee_row_id, "ASWVN1500", "Tran Van C");
+        conn.execute(
+            "INSERT INTO asset_loans(asset_id, employee_id_fk, borrow_request_id, borrowed_at, returned_at) VALUES(?, ?, ?, datetime('now'), datetime('now'))",
+            params![id, employee_row_id, request_id],
+        )
+        .expect("insert returned loan");
+        let err = set_asset_condition_conn(&mut conn, id, "new", "manual", None).unwrap_err();
+        assert_eq!(err, "Cannot set condition to new after first hand-out");
+        assert!(condition_audits(&conn).is_empty());
+    }
+
+    #[test]
+    fn set_asset_condition_cannot_set_new_when_assigned() {
+        let mut conn = open_test_connection();
+        let id = seed_editable_asset(&mut conn);
+        conn.execute("UPDATE assets SET status = 'assigned' WHERE id = ?", params![id]).unwrap();
+        let err = set_asset_condition_conn(&mut conn, id, "new", "manual", None).unwrap_err();
+        assert_eq!(err, "Cannot set condition to new after first hand-out");
+        assert!(condition_audits(&conn).is_empty());
+    }
+
+    #[test]
+    fn parse_asset_condition_accepts_case_and_spaces() {
+        assert_eq!(parse_asset_condition(" BROKEN "), Some("broken"));
+        assert_eq!(parse_asset_condition("New"), Some("new"));
+        for raw in ["mới", "Mới", " MOI ", "mo\u{031B}\u{0301}i"] {
+            assert_eq!(parse_asset_condition(raw), Some("new"), "{raw}");
+        }
+        for raw in ["dự phòng", "Dự Phòng", "du phong", "dựphòng"] {
+            assert_eq!(parse_asset_condition(raw), Some("spare"), "{raw}");
+        }
+        for raw in ["hỏng", "HỎNG", "hong", "hư", "Hu"] {
+            assert_eq!(parse_asset_condition(raw), Some("broken"), "{raw}");
+        }
+        assert_eq!(parse_asset_condition(""), None);
+        assert_eq!(parse_asset_condition("repair"), None);
+    }
+
+    #[test]
+    fn create_asset_manually_conn_uses_input_condition() {
+        let mut conn = open_test_connection();
+        let make = |code: &str, condition: Option<&str>| AssetUpsertInput {
+            asset_code: code.to_string(),
+            category_id: None,
+            asset_type: "H Phone".to_string(),
+            display_name: "Phone".to_string(),
+            display_name_short: None,
+            brand: None,
+            model: None,
+            serial_number: None,
+            usage_location: None,
+            adapter_number: None,
+            warehouse: None,
+            notes: None,
+            condition: condition.map(str::to_string),
+        };
+        assert_eq!(create_asset_conn(&mut conn, make("N1", Some("new"))).unwrap().condition, "new");
+        assert_eq!(create_asset_conn(&mut conn, make("N2", None)).unwrap().condition, "spare");
+        let err = create_asset_conn(&mut conn, make("N3", Some("repair"))).unwrap_err();
+        assert!(err.starts_with("Invalid condition"), "{err}");
     }
 }
 
