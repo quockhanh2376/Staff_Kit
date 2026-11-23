@@ -149,6 +149,7 @@ describe("EmployeeView — HR Lifecycle UI Label Cleanup", () => {
         canEditEmployeeComputerName: true,
         isAdminAccount: true,
         setGlobalError: vi.fn(),
+        setGlobalNotice: vi.fn(),
         selectedGroupLabel: "Offboarding",
         selectedGroupTotal: 1,
     })

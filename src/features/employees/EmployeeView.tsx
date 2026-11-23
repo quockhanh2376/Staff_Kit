@@ -78,6 +78,7 @@ type EmployeeViewProps = {
     canEditEmployeeComputerName: boolean
     isAdminAccount: boolean
     setGlobalError: (message: string | null) => void
+    setGlobalNotice: (message: string | null) => void
     selectedGroupLabel: string
     selectedGroupTotal: number
 }
@@ -90,6 +91,7 @@ export function EmployeeView({
     canEditEmployeeComputerName,
     isAdminAccount,
     setGlobalError,
+    setGlobalNotice,
     selectedGroupLabel,
     selectedGroupTotal,
 }: EmployeeViewProps) {
@@ -223,13 +225,13 @@ export function EmployeeView({
             } else {
                 savedPath = await downloadXlsx(options, `${filename}.xlsx`)
             }
-            if (savedPath) setGlobalError(`Saved to ${savedPath}`)
+            if (savedPath) setGlobalNotice(`Saved to ${savedPath}`)
         } catch (error) {
             setGlobalError(getUserErrorMessage(error))
         } finally {
             setIsExporting(false)
         }
-    }, [col.visibleColumns, edit, emp, isExporting, setGlobalError])
+    }, [col.visibleColumns, edit, emp, isExporting, setGlobalError, setGlobalNotice])
 
     const handleCheckDuplicates = useCallback(async () => {
         setIsCheckingDuplicates(true)

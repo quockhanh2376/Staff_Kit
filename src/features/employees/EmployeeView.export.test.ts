@@ -21,6 +21,13 @@ describe("Employee List export integration contract", () => {
         expect(employeeView).toContain("setGlobalError(getUserErrorMessage(error))")
     })
 
+    it("shows the save confirmation as a success notice, not an error", () => {
+        expect(employeeView).toContain("if (savedPath) setGlobalNotice(`Saved to ${savedPath}`)")
+        expect(employeeView).not.toContain("setGlobalError(`Saved to")
+        // cancel (null path) never reaches either setter
+        expect(employeeView).toMatch(/if \(savedPath\) setGlobalNotice/)
+    })
+
     it("keeps export controls admin-only and selection ID-based", () => {
         expect(employeeView).toContain("{isAdminAccount && (")
         expect(employeeView).toContain("edit.selectedMoveEmployeeIds.length")

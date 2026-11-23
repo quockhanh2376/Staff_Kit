@@ -177,6 +177,7 @@ describe("EmployeeView — Asset & Integrity Check Integration", () => {
         selectedGroupLabel: "All Staff",
         selectedGroupTotal: 2,
         setGlobalError: vi.fn(),
+        setGlobalNotice: vi.fn(),
     })
 
     beforeEach(() => {

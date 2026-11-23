@@ -50,6 +50,7 @@ function App() {
   const [dbReady, setDbReady] = useState(false)
   const [isBootstrapping, setBootstrapping] = useState(true)
   const [globalError, setGlobalError] = useState<string | null>(null)
+  const [globalNotice, setGlobalNotice] = useState<string | null>(null)
   const [reloadToken, setReloadToken] = useState(0)
   const [sidebarNote, setSidebarNote] = useState("")
   const [noteSaved, setNoteSaved] = useState(false)
@@ -62,6 +63,13 @@ function App() {
     const timer = setTimeout(() => setGlobalError(null), 10000)
     return () => clearTimeout(timer)
   }, [globalError])
+
+  // Auto-clear globalNotice after 10s
+  useEffect(() => {
+    if (!globalNotice) return
+    const timer = setTimeout(() => setGlobalNotice(null), 10000)
+    return () => clearTimeout(timer)
+  }, [globalNotice])
 
   // ── Theme ────────────────────────────────────────────────────────────────────
   // Kept here as a placeholder — actual setTheme defined after activeUserScope below
@@ -502,6 +510,17 @@ function App() {
             </div>
           )}
 
+          {globalNotice && (
+            <div
+              className="mx-4 mt-4 cursor-pointer rounded-[10px] border border-emerald-500/50 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300 md:mx-8"
+              onClick={() => setGlobalNotice(null)}
+              title="Click to dismiss"
+            >
+              {globalNotice}
+              <span className="ml-2 opacity-50 text-xs">(auto-dismiss in 10s · click to close)</span>
+            </div>
+          )}
+
           {isBootstrapping && (
             <div className="mx-4 mt-4 flex items-center gap-2 rounded-[10px] border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-sm text-[var(--text-secondary)] md:mx-8">
               <LoaderCircle className="animate-spin" size={16} />
@@ -526,6 +545,7 @@ function App() {
                 canEditEmployeeComputerName={auth.canEditEmployeeComputerName}
                 isAdminAccount={auth.isAdminAccount}
                 setGlobalError={setGlobalError}
+                setGlobalNotice={setGlobalNotice}
                 selectedGroupLabel={selectedGroupLabel}
                 selectedGroupTotal={selectedGroupTotal}
               />
