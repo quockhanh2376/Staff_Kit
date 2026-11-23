@@ -80,6 +80,10 @@ pub struct HistoricalAssignmentItem {
     pub suggested_action: Option<String>,
     #[serde(default)]
     pub selected_action: Option<String>,
+    #[serde(default)]
+    pub current_condition: Option<String>,
+    #[serde(default)]
+    pub review_note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -480,12 +484,12 @@ pub fn preview_historical_assignment_import_conn(
                 .map_err(|err| format!("Error querying employee for '{effective_staff_id}': {err}"))?;
 
             // 2. Resolve Asset by canonical Asset Code
-            let asset_info: Option<(i64, String)> = {
+            let asset_info: Option<(i64, String, String)> = {
                 let exact_canonical = conn
                     .query_row(
-                        "SELECT id, asset_code FROM assets WHERE asset_code = ? COLLATE NOCASE",
+                        "SELECT id, asset_code, condition FROM assets WHERE asset_code = ? COLLATE NOCASE",
                         params![canonical_code],
-                        |r| Ok((r.get(0)?, r.get(1)?)),
+                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
                     )
                     .optional()
                     .map_err(|err| format!("Error querying asset '{canonical_code}': {err}"))?;
@@ -494,9 +498,9 @@ pub fn preview_historical_assignment_import_conn(
                     exact_canonical
                 } else {
                     conn.query_row(
-                        "SELECT id, asset_code FROM assets WHERE asset_code = ? COLLATE NOCASE",
+                        "SELECT id, asset_code, condition FROM assets WHERE asset_code = ? COLLATE NOCASE",
                         params![effective_asset_code],
-                        |r| Ok((r.get(0)?, r.get(1)?)),
+                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
                     )
                     .optional()
                     .map_err(|err| format!("Error querying asset '{effective_asset_code}': {err}"))?
@@ -523,6 +527,11 @@ pub fn preview_historical_assignment_import_conn(
                 current_loan_id: None,
                 suggested_action: Some("approve".to_string()),
                 selected_action: Some("approve".to_string()),
+                current_condition: asset_info.as_ref().map(|a| a.2.clone()),
+                review_note: asset_info
+                    .as_ref()
+                    .filter(|a| a.2 == crate::db::asset::ASSET_CONDITION_BROKEN)
+                    .map(|_| "Asset is Broken — check before assigning".to_string()),
             };
 
             // Check Employee validity and identity match
@@ -574,7 +583,7 @@ pub fn preview_historical_assignment_import_conn(
                         item.suggested_action = Some("approve".to_string());
                     }
                 }
-                Some((asset_id, db_asset_code)) => {
+                Some((asset_id, db_asset_code, _)) => {
                     // Check active loan in asset_loans
                     let active_loan: Option<(i64, String, String, Option<String>, i64)> = conn
                         .query_row(
@@ -710,6 +719,8 @@ pub fn preview_historical_assignment_import_conn(
                 current_loan_id: Some(loan_id),
                 suggested_action: Some("review".to_string()),
                 selected_action: Some("review".to_string()),
+                current_condition: None,
+                review_note: None,
             });
         }
     }
@@ -2775,6 +2786,33 @@ mod tests {
             .query_row("SELECT condition FROM assets WHERE id = ?", params![asset_id], |r| r.get(0))
             .unwrap();
         assert_eq!(condition, "spare");
+    }
+
+    #[test]
+    fn historical_preview_flags_broken_asset() {
+        let conn = open_test_conn();
+        conn.execute(
+            "INSERT INTO employees(employee_id, full_name, email, is_floating) VALUES('ASWVN1112', 'VŨ TUẤN KHANG', 'khang@example.com', 0)",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO assets(asset_code, asset_type, display_name, status, condition) VALUES('VNMON700', 'Monitor', 'Dell', 'in_stock', 'broken')",
+            [],
+        ).unwrap();
+
+        let preview = preview_historical_assignment_import_conn(
+            &conn,
+            &HistoricalAssignmentImportInput {
+                file_path: get_test_assignment_fixture_path(),
+                ..Default::default()
+            },
+        ).unwrap();
+
+        let item = preview.items.iter().find(|i| i.canonical_asset_code.as_deref() == Some("VNMON700")).expect("VNMON700");
+        assert_eq!(item.current_condition.as_deref(), Some("broken"));
+        assert_eq!(item.review_note.as_deref(), Some("Asset is Broken — check before assigning"));
+        assert_eq!(item.status, HistoricalAssignmentRowStatus::NewAssignment);
+        assert_eq!(item.suggested_action.as_deref(), Some("approve"));
     }
 }
 

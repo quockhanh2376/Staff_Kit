@@ -537,7 +537,7 @@ fn sqlite_version(conn: &Connection) -> Result<String, String> {
         .map_err(|err| format!("failed to query sqlite version: {err}"))
 }
 
-pub(crate) const SCHEMA_USER_VERSION: u32 = 2;
+pub(crate) const SCHEMA_USER_VERSION: u32 = 3;
 
 pub(crate) fn apply_migrations(conn: &Connection) -> Result<(), String> {
     let current_version: u32 = conn
@@ -909,6 +909,8 @@ fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
             "TEXT NOT NULL DEFAULT 'not_applicable'",
         ),
         ("owner_warnings_json", "TEXT NOT NULL DEFAULT '[]'"),
+        ("condition", "TEXT"),
+        ("review_notes_json", "TEXT NOT NULL DEFAULT '[]'"),
     ] {
         if existing_row_columns.iter().any(|name| name == column_name) {
             continue;
@@ -3004,7 +3006,30 @@ mod tests {
         let version: u32 = conn
             .query_row("PRAGMA user_version;", [], |r| r.get(0))
             .expect("read user_version");
-        assert_eq!(version, 2);
+        assert_eq!(version, SCHEMA_USER_VERSION);
+    }
+
+    #[test]
+    fn apply_migrations_adds_import_condition_columns_to_v2_db() {
+        let conn = Connection::open_in_memory().expect("open in-memory db");
+        apply_migrations(&conn).expect("apply migrations on fresh db");
+        conn.execute_batch(
+            r#"
+            ALTER TABLE asset_import_rows DROP COLUMN condition;
+            ALTER TABLE asset_import_rows DROP COLUMN review_notes_json;
+            PRAGMA user_version = 2;
+            "#,
+        )
+        .expect("rewind to a v2 import table");
+
+        apply_migrations(&conn).expect("apply migrations to v2 database");
+
+        assert!(column_exists(&conn, "asset_import_rows", "condition"));
+        assert!(column_exists(&conn, "asset_import_rows", "review_notes_json"));
+        let version: u32 = conn
+            .query_row("PRAGMA user_version;", [], |r| r.get(0))
+            .expect("read user_version");
+        assert_eq!(version, SCHEMA_USER_VERSION);
     }
 
     #[test]
