@@ -286,6 +286,7 @@ CREATE TABLE IF NOT EXISTS assets (
   warehouse TEXT,
   notes TEXT,
   status TEXT NOT NULL DEFAULT 'in_stock',
+  condition TEXT NOT NULL DEFAULT 'spare' CHECK (condition IN ('new','spare','broken')),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

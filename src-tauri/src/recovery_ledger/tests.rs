@@ -966,7 +966,7 @@ fn test_rc_c09_legacy_db_user_version_1_migrates_table_and_preserves_business_da
     let uv_before: u32 = conn.query_row("PRAGMA user_version;", [], |r| r.get(0)).unwrap();
     assert_eq!(uv_before, 1);
 
-    // Run migrations — must create app_recovery_codes table idempotently WITHOUT altering user_version or business data
+    // Run migrations — must create app_recovery_codes table idempotently WITHOUT altering business data (user_version advances to the current schema version)
     crate::db::apply_migrations(&conn).unwrap();
 
     let table_count_after: i64 = conn
@@ -979,7 +979,7 @@ fn test_rc_c09_legacy_db_user_version_1_migrates_table_and_preserves_business_da
     assert_eq!(table_count_after, 1);
 
     let uv_after: u32 = conn.query_row("PRAGMA user_version;", [], |r| r.get(0)).unwrap();
-    assert_eq!(uv_after, 1);
+    assert_eq!(uv_after, crate::db::SCHEMA_USER_VERSION);
 
     // Verify all business records remain completely preserved
     let emp_name: String = conn.query_row("SELECT full_name FROM employees WHERE id = 999", [], |r| r.get(0)).unwrap();

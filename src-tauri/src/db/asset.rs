@@ -41,6 +41,13 @@ pub struct AssetDetailsUpdateInput {
     pub notes: Option<String>,
 }
 
+#[allow(dead_code)] // consumed by later condition tasks
+pub(crate) const ASSET_CONDITION_NEW: &str = "new";
+#[allow(dead_code)]
+pub(crate) const ASSET_CONDITION_SPARE: &str = "spare";
+#[allow(dead_code)]
+pub(crate) const ASSET_CONDITION_BROKEN: &str = "broken";
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetRecord {
@@ -52,6 +59,7 @@ pub struct AssetRecord {
     pub serial_number: Option<String>,
     pub notes: Option<String>,
     pub status: String,
+    pub condition: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -138,6 +146,8 @@ pub struct AssetDashboardSerializedRecord {
     pub holder_employee_id: Option<String>,
     pub holder_full_name: Option<String>,
     pub signature_status: Option<String>,
+    pub condition: String,
+    pub holder_team_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -350,7 +360,8 @@ fn load_asset_record_by_id_conn(
               model,
               serial_number,
               notes,
-              status
+              status,
+              condition
             FROM assets
             WHERE id = ?
             "#,
@@ -365,6 +376,7 @@ fn load_asset_record_by_id_conn(
                     serial_number: row.get(5)?,
                     notes: row.get(6)?,
                     status: row.get(7)?,
+                    condition: row.get(8)?,
                 })
             },
         )
@@ -898,7 +910,8 @@ pub(crate) fn upsert_assets_conn(
                   model,
                   serial_number,
                   notes,
-                  status
+                  status,
+                  condition
                 FROM assets
                 WHERE asset_code = ? COLLATE NOCASE
                 "#,
@@ -913,6 +926,7 @@ pub(crate) fn upsert_assets_conn(
                         serial_number: row.get(5)?,
                         notes: row.get(6)?,
                         status: row.get(7)?,
+                        condition: row.get(8)?,
                     })
                 },
             )
@@ -948,7 +962,8 @@ pub(crate) fn search_in_stock_assets_conn(
               a.model,
               a.serial_number,
               a.notes,
-              a.status
+              a.status,
+              a.condition
             FROM assets a
             LEFT JOIN asset_categories c ON c.id = a.category_id
             WHERE a.status = 'in_stock'
@@ -989,6 +1004,7 @@ pub(crate) fn search_in_stock_assets_conn(
                     serial_number: row.get(5)?,
                     notes: row.get(6)?,
                     status: row.get(7)?,
+                    condition: row.get(8)?,
                 })
             },
         )
@@ -1024,7 +1040,8 @@ pub(crate) fn search_assigned_assets_conn(
               a.model,
               a.serial_number,
               a.notes,
-              a.status
+              a.status,
+              a.condition
             FROM assets a
             LEFT JOIN asset_categories c ON c.id = a.category_id
             WHERE a.status = 'assigned'
@@ -1065,6 +1082,7 @@ pub(crate) fn search_assigned_assets_conn(
                     serial_number: row.get(5)?,
                     notes: row.get(6)?,
                     status: row.get(7)?,
+                    condition: row.get(8)?,
                 })
             },
         )
@@ -1630,13 +1648,16 @@ pub(crate) fn list_asset_dashboard_serialized_conn(
               e.employee_id,
               e.full_name,
               COALESCE(br.signature_status, CASE WHEN al.id IS NOT NULL THEN 'signed' ELSE NULL END) AS signature_status,
-              a.brand
+              a.brand,
+              a.condition,
+              t.name AS holder_team_name
             FROM assets a
             LEFT JOIN asset_categories c ON c.id = a.category_id
             LEFT JOIN asset_loans al
               ON al.asset_id = a.id
              AND al.returned_at IS NULL
             LEFT JOIN employees e ON e.id = al.employee_id_fk
+            LEFT JOIN teams t ON t.id = e.team_id
             LEFT JOIN borrow_requests br ON br.id = al.borrow_request_id
             ORDER BY
               COALESCE(c.category_name, a.asset_type) COLLATE NOCASE ASC,
@@ -1666,6 +1687,8 @@ pub(crate) fn list_asset_dashboard_serialized_conn(
                 holder_full_name: row.get(14)?,
                 signature_status: row.get(15)?,
                 brand: row.get(16)?,
+                condition: row.get(17)?,
+                holder_team_name: row.get(18)?,
             })
         })
         .map_err(|err| format!("failed to query serialized dashboard rows: {err}"))?;
@@ -3699,6 +3722,44 @@ mod tests {
             .expect_err("missing asset must fail");
 
         assert!(err.starts_with("Not found"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn serialized_dashboard_rows_include_condition_and_holder_team() {
+        let mut conn = open_test_connection();
+        let team_id = seed_team(&conn, "IT");
+        let employee_row_id = seed_employee(&conn, "ASWVN1400", "Tran Van B", team_id);
+        let request_id = seed_borrow_request(&conn, employee_row_id, "ASWVN1400", "Tran Van B");
+        let laptop_category_id = category_id(&conn, "laptop");
+        let assets = upsert_assets_conn(
+            &mut conn,
+            vec![AssetUpsertInput {
+                asset_code: "VNLAP400".to_string(),
+                category_id: Some(laptop_category_id),
+                asset_type: "Laptop".to_string(),
+                display_name: "Laptop 400".to_string(),
+                display_name_short: None,
+                brand: None,
+                model: None,
+                serial_number: None,
+                usage_location: None,
+                adapter_number: None,
+                warehouse: None,
+                notes: None,
+            }],
+        )
+        .expect("seed asset");
+        conn.execute(
+            "INSERT INTO asset_loans(asset_id, employee_id_fk, borrow_request_id, borrowed_at) VALUES(?, ?, ?, datetime('now'))",
+            params![assets[0].id, employee_row_id, request_id],
+        )
+        .expect("insert active loan");
+
+        let rows = list_asset_dashboard_serialized_conn(&conn).expect("load dashboard rows");
+        let row = rows.iter().find(|r| r.asset_code == "VNLAP400").expect("find row");
+        assert_eq!(row.condition, "spare");
+        assert_eq!(row.holder_team_name.as_deref(), Some("IT"));
+        assert_eq!(assets[0].condition, "spare");
     }
 }
 
