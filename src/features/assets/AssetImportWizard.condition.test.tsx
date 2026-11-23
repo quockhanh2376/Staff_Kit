@@ -54,7 +54,10 @@ function previewRow(
     }
 }
 
-function preview(rows: AssetDirectImportPreviewRow[]): AssetDirectImportPreview {
+function preview(
+    rows: AssetDirectImportPreviewRow[],
+    over: Partial<AssetDirectImportPreview> = {},
+): AssetDirectImportPreview {
     return {
         fileName: "assets.xlsx",
         sheetName: "Assets",
@@ -63,11 +66,20 @@ function preview(rows: AssetDirectImportPreviewRow[]): AssetDirectImportPreview 
         validRows: rows.length,
         errorRows: 0,
         skippedRows: 0,
+        conditionUpdateRows: 0,
         newCategories: [],
         rows,
         errors: [],
+        ...over,
     }
 }
+
+const existingRow = (rowNumber: number, condition: AssetDirectImportPreviewRow["condition"]) => ({
+    ...previewRow(rowNumber, condition),
+    status: "skipped" as const,
+})
+const existingOnly = (rows: AssetDirectImportPreviewRow[], conditionUpdateRows: number) =>
+    preview(rows, { validRows: 0, skippedRows: rows.length, conditionUpdateRows })
 
 const current: { state: AssetImportState | null } = { state: null }
 const state = () => current.state as AssetImportState
@@ -161,6 +173,49 @@ describe("AssetImportWizard condition review", () => {
             expect.objectContaining({ conditionOverrides: overrides }),
         )
         expect(screen.getByText("Condition Updated: 1")).toBeInTheDocument()
+    })
+
+    it("existing-only file with no condition changes cannot be approved", async () => {
+        mocks.previewAssetImportFile.mockResolvedValue(existingOnly([existingRow(2, "spare")], 0))
+        await renderPreview()
+
+        expect(screen.getByRole("button", { name: /approve/i })).toBeDisabled()
+    })
+
+    it("existing-only file with a condition change can be approved and imports the override", async () => {
+        mocks.previewAssetImportFile
+            .mockResolvedValueOnce(existingOnly([existingRow(2, "spare"), existingRow(3, "spare")], 0))
+            .mockResolvedValueOnce(existingOnly([existingRow(2, "broken"), existingRow(3, "spare")], 1))
+        mocks.importAssetImportFile.mockResolvedValue({
+            fileName: "assets.xlsx",
+            sheetName: "Assets",
+            importType: "serialized",
+            totalRows: 2,
+            imported: 0,
+            skipped: 2,
+            failed: 0,
+            importedAssetCodes: [],
+            errors: [],
+            conditionUpdatedRows: 1,
+        })
+        await renderPreview()
+        expect(screen.getByRole("button", { name: /approve/i })).toBeDisabled()
+
+        await act(async () => {
+            fireEvent.change(screen.getByRole("combobox", { name: "Condition row 2" }), {
+                target: { value: "broken" },
+            })
+        })
+        expect(screen.getByText("Condition Changes").nextElementSibling).toHaveTextContent("1")
+        const approve = screen.getByRole("button", { name: /approve/i })
+        expect(approve).toBeEnabled()
+
+        await act(async () => {
+            fireEvent.click(approve)
+        })
+        expect(mocks.importAssetImportFile).toHaveBeenCalledWith(
+            expect.objectContaining({ conditionOverrides: [{ rowNumber: 2, condition: "broken" }] }),
+        )
     })
 
     it("manual create defaults to New and sends the picked condition", async () => {

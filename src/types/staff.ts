@@ -498,6 +498,8 @@ export type AssetDirectImportPreview = {
   validRows: number
   errorRows: number
   skippedRows: number
+  /** Existing assets whose stored condition this import would change. */
+  conditionUpdateRows: number
   newCategories: AssetDirectImportNewCategorySummary[]
   rows: AssetDirectImportPreviewRow[]
   errors: AssetDirectImportErrorItem[]

@@ -311,8 +311,9 @@ export function useAssetDirectImportState({
     }, [manualAssetForm, triggerReload])
 
     const canPreviewCurrentFile = Boolean(selectedFilePath) && !isInspectingFile
+    // A file of existing assets only is still worth approving when it changes their condition.
     const previewApproveDisabled =
-        (preview?.validRows ?? 0) === 0 ||
+        ((preview?.validRows ?? 0) === 0 && (preview?.conditionUpdateRows ?? 0) === 0) ||
         (preview?.importType === "serialized" && (preview?.errorRows ?? 0) > 0)
     const selectedFiles = useMemo(
         () => (selectedFilePath ? [selectedFilePath] : []),

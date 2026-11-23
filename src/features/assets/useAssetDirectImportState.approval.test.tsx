@@ -29,6 +29,7 @@ const inspection = {
 function previewForStatuses(
     statuses: string[],
     importType: AssetDirectImportPreview["importType"] = "serialized",
+    conditionUpdateRows = 0,
 ): AssetDirectImportPreview {
     const rows: AssetDirectImportPreviewRow[] = statuses.map((status, index) => ({
         rowNumber: index + 2,
@@ -57,6 +58,7 @@ function previewForStatuses(
         validRows: rows.filter((row) => row.status === "valid").length,
         errorRows: rows.filter((row) => row.status === "error").length,
         skippedRows: rows.filter((row) => row.status === "skipped").length,
+        conditionUpdateRows,
         newCategories: [],
         rows,
         errors: [],
@@ -66,9 +68,10 @@ function previewForStatuses(
 async function previewAssetRows(
     statuses: string[],
     importType: AssetDirectImportPreview["importType"] = "serialized",
+    conditionUpdateRows = 0,
 ) {
     mocks.inspectAssetImportFile.mockResolvedValue(inspection)
-    mocks.previewAssetImportFile.mockResolvedValue(previewForStatuses(statuses, importType))
+    mocks.previewAssetImportFile.mockResolvedValue(previewForStatuses(statuses, importType, conditionUpdateRows))
 
     const hook = renderHook(() =>
         useAssetDirectImportState({
@@ -109,6 +112,18 @@ describe("useAssetDirectImportState approval gating", () => {
         const hook = await previewAssetRows(statuses as string[])
 
         expect(hook.result.current.previewApproveDisabled).toBe(expectedDisabled)
+    })
+
+    it("enables approval for existing rows when a condition change is pending", async () => {
+        const hook = await previewAssetRows(["skipped", "skipped"], "serialized", 1)
+
+        expect(hook.result.current.previewApproveDisabled).toBe(false)
+    })
+
+    it("keeps approval disabled for condition changes beside an error row", async () => {
+        const hook = await previewAssetRows(["skipped", "error"], "serialized", 1)
+
+        expect(hook.result.current.previewApproveDisabled).toBe(true)
     })
 
     it("keeps quantity approval enabled when invalid rows are skippable", async () => {
