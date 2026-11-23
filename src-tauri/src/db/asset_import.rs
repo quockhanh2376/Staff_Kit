@@ -94,6 +94,8 @@ const USAGE_LOCATION_ALIASES: &[&str] = &[
     "workinglocation",
 ];
 const NOTES_ALIASES: &[&str] = &["notes", "note", "remark", "remarks", "ghichu"];
+const CONDITION_ALIASES: &[&str] =
+    &["status", "condition", "tinhtrang", "tìnhtrạng", "trangthai", "trạngthái"];
 const OWNER_STAFF_ID_ALIASES: &[&str] =
     &["staffid", "eeid", "employeeid", "mãnhânviên", "manhanvien"];
 const OWNER_FULL_NAME_ALIASES: &[&str] = &[
@@ -130,6 +132,7 @@ pub struct AssetImportFieldMapping {
     pub quantity: Option<String>,
     pub warehouse: Option<String>,
     pub notes: Option<String>,
+    pub condition: Option<String>,
 }
 
 pub(crate) struct AssetHeaderEvidence {
@@ -203,6 +206,8 @@ pub struct AssetImportRowSeedInput {
     pub submitted_full_name: Option<String>,
     pub submitted_team: Option<String>,
     pub submitted_phone_number: Option<String>,
+    /// Status cell as typed in the file; parsed during review.
+    pub condition: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -261,6 +266,8 @@ pub struct AssetImportRowRecord {
     pub is_edited: bool,
     pub edited_fields: Vec<String>,
     pub imported_asset_id: Option<i64>,
+    pub condition: Option<String>,
+    pub review_notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -297,6 +304,7 @@ pub struct AssetImportCommitResult {
     pub imported_count: i64,
     pub remaining_error_rows: i64,
     pub batch_status: String,
+    pub condition_updated_rows: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -306,6 +314,16 @@ pub struct AssetDirectImportInput {
     pub import_type: AssetImportMode,
     pub file_path: String,
     pub sheet_name: Option<String>,
+    #[serde(default)]
+    pub condition_overrides: Vec<AssetConditionOverride>,
+}
+
+/// IT's per-row condition pick in the preview, keyed on the file's row number.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetConditionOverride {
+    pub row_number: i64,
+    pub condition: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -333,6 +351,8 @@ pub struct AssetDirectImportPreviewRow {
     pub status: String,
     pub holder_label: Option<String>,
     pub validation_errors: Vec<String>,
+    pub condition: Option<String>,
+    pub review_notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -369,6 +389,7 @@ pub struct AssetDirectImportReport {
     pub failed: i64,
     pub imported_asset_codes: Vec<String>,
     pub errors: Vec<AssetDirectImportErrorItem>,
+    pub condition_updated_rows: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -386,6 +407,7 @@ struct AssetImportResolvedMapping {
     quantity_index: Option<usize>,
     warehouse_index: Option<usize>,
     notes_index: Option<usize>,
+    condition_index: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -414,12 +436,15 @@ struct AssetImportRowState {
     submitted_staff_id: Option<String>,
     submitted_full_name: Option<String>,
     submitted_team: Option<String>,
+    /// Raw status cell; kept raw so the "unknown status" note can quote it.
+    condition: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 struct ExistingAssetIdentity {
     id: i64,
     serial_number: Option<String>,
+    condition: String,
 }
 
 #[derive(Debug, Default)]
@@ -431,7 +456,7 @@ struct ExistingAssetIdentities {
 #[derive(Debug, PartialEq, Eq)]
 enum SerializedAssetImportClassification {
     New,
-    Existing { asset_id: i64 },
+    Existing { asset_id: i64, condition: String },
     Conflict(String),
 }
 
@@ -526,9 +551,10 @@ pub fn preview_asset_import_file(
     )?;
 
     let mut conn = open_runtime_connection(app)?;
-    preview_asset_import_seed_conn(
+    preview_asset_import_seed_with_overrides_conn(
         &mut conn,
         asset_import_seed_from_parsed(parsed, payload.import_type),
+        &payload.condition_overrides,
     )
 }
 
@@ -546,9 +572,10 @@ pub fn import_asset_import_file(
     )?;
 
     let mut conn = open_runtime_connection(app)?;
-    import_asset_import_seed_conn(
+    import_asset_import_seed_with_overrides_conn(
         &mut conn,
         asset_import_seed_from_parsed(parsed, payload.import_type),
+        &payload.condition_overrides,
     )
 }
 
@@ -600,8 +627,15 @@ pub fn create_asset_manually(
     payload: AssetUpsertInput,
 ) -> Result<AssetRecord, String> {
     let mut conn = open_runtime_connection(app)?;
-    let actor_ref = active_actor_ref(&conn)?;
-    let record = asset::create_asset_conn(&mut conn, payload)?;
+    create_asset_manually_conn(&mut conn, payload)
+}
+
+fn create_asset_manually_conn(
+    conn: &mut Connection,
+    payload: AssetUpsertInput,
+) -> Result<AssetRecord, String> {
+    let actor_ref = active_actor_ref(conn)?;
+    let record = asset::create_asset_conn(conn, payload)?;
 
     let payload_json = json!({
         "assetCode": record.asset_code,
@@ -610,11 +644,12 @@ pub fn create_asset_manually(
         "model": record.model,
         "serialNumber": record.serial_number,
         "notes": record.notes,
+        "condition": record.condition,
     })
     .to_string();
 
     audit::insert_audit_log_conn(
-        &conn,
+        conn,
         "asset.create_manual",
         "local_account",
         actor_ref.as_deref(),
@@ -634,6 +669,16 @@ pub fn update_asset_details(
     let mut conn = open_runtime_connection(app)?;
     let actor_ref = active_actor_ref(&conn)?;
     asset::update_asset_details_conn(&mut conn, asset_id, payload, actor_ref.as_deref())
+}
+
+pub fn update_asset_condition(
+    app: &AppHandle,
+    asset_id: i64,
+    condition: String,
+) -> Result<AssetRecord, String> {
+    let mut conn = open_runtime_connection(app)?;
+    let actor_ref = active_actor_ref(&conn)?;
+    asset::set_asset_condition_conn(&mut conn, asset_id, &condition, "manual", actor_ref.as_deref())
 }
 
 pub(crate) fn create_asset_import_batch_seed_conn(
@@ -720,10 +765,11 @@ pub(crate) fn create_asset_import_batch_seed_conn(
               status,
               edited,
               edited_fields_json,
+              condition,
               created_at,
               updated_at
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, '[]', '[]', ?, 0, '[]', datetime('now'), datetime('now'))
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, '[]', '[]', ?, 0, '[]', ?, datetime('now'), datetime('now'))
             "#,
             params![
                 batch_id,
@@ -748,6 +794,7 @@ pub(crate) fn create_asset_import_batch_seed_conn(
                 normalize_optional_asset_text(row.submitted_phone_number),
                 OWNER_MATCH_NOT_APPLICABLE,
                 ROW_STATUS_VALID,
+                normalize_optional_asset_text(row.condition),
             ],
         )
         .map_err(humanize_sqlite_error)?;
@@ -923,6 +970,7 @@ pub(crate) fn update_asset_import_row_conn(
         "submittedFullName" => "submitted_full_name",
         "submittedTeam" => "submitted_team",
         "submittedPhoneNumber" => "submitted_phone_number",
+        "condition" => "condition",
         _ => return Err("unsupported asset import field".to_string()),
     };
 
@@ -1018,7 +1066,7 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
         .map_err(|err| format!("failed to start asset import commit transaction: {err}"))?;
     let reviewer_account_id = auth::get_active_local_account_id(&tx)?;
 
-    revalidate_batch_tx(&tx, batch_id)?;
+    let condition_updates = revalidate_batch_tx(&tx, batch_id)?;
     let summary = load_batch_summary_tx(&tx, batch_id)?;
 
     let mut imported_row_ids = Vec::new();
@@ -1152,6 +1200,7 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
             imported_asset_codes,
             remaining_error_rows: summary.error_rows,
             batch_status: summary.status,
+            condition_updated_rows: 0,
         });
     }
 
@@ -1178,7 +1227,8 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
               submitted_phone_number,
               resolved_employee_id,
               resolved_employee_row_id,
-              resolved_full_name
+              resolved_full_name,
+              condition
             FROM asset_import_rows
             WHERE batch_id = ? AND status = ?
             ORDER BY row_number ASC, id ASC
@@ -1209,6 +1259,7 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
                 row.get::<_, Option<String>>(17)?,
                 row.get::<_, Option<i64>>(18)?,
                 row.get::<_, Option<String>>(19)?,
+                row.get::<_, Option<String>>(20)?,
             ))
         })
         .map_err(|err| format!("failed to query valid asset import rows: {err}"))?
@@ -1217,12 +1268,7 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
 
     drop(stmt);
 
-    if rows.iter().any(
-        |(row_id, asset_code, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _)| {
-            let _ = row_id;
-            asset_code.as_deref().is_none()
-        },
-    ) {
+    if rows.iter().any(|row| row.1.is_none()) {
         return Err("serialized asset rows require assetCode before import".to_string());
     }
 
@@ -1247,6 +1293,7 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
         resolved_employee_id,
         resolved_employee_row_id,
         resolved_full_name,
+        raw_condition,
     ) in rows
     {
         let category_value = asset_type
@@ -1280,6 +1327,7 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
                 adapter_number,
                 warehouse,
                 notes,
+                condition: parsed_import_condition(raw_condition.as_deref()).map(str::to_string),
             },
         )?;
 
@@ -1348,6 +1396,12 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
     tx.commit()
         .map_err(|err| format!("failed to commit asset import batch rows: {err}"))?;
 
+    // shortcut: runs after the commit because set_asset_condition_conn opens its own
+    // transaction; a failure here leaves the imported rows in place.
+    for (asset_id, condition) in &condition_updates {
+        asset::set_asset_condition_conn(conn, *asset_id, condition, "import", actor_ref.as_deref())?;
+    }
+
     Ok(AssetImportCommitResult {
         batch_id,
         imported_count: imported_row_ids.len() as i64,
@@ -1355,6 +1409,7 @@ pub(crate) fn import_asset_import_batch_valid_rows_conn(
         imported_asset_codes,
         remaining_error_rows: summary.error_rows,
         batch_status: summary.status,
+        condition_updated_rows: condition_updates.len() as i64,
     })
 }
 
@@ -1396,6 +1451,56 @@ where
     }
 
     Ok(preview)
+}
+
+fn preview_asset_import_seed_with_overrides_conn(
+    conn: &mut Connection,
+    input: AssetImportBatchSeedInput,
+    overrides: &[AssetConditionOverride],
+) -> Result<AssetDirectImportPreview, String> {
+    let mut input = input;
+    let invalid = apply_condition_overrides(&mut input.rows, overrides);
+    let mut preview = preview_asset_import_seed_conn(conn, input)?;
+    for row in &mut preview.rows {
+        if let Some(note) = invalid.get(&row.row_number) {
+            row.review_notes.push(note.clone());
+        }
+    }
+    Ok(preview)
+}
+
+fn import_asset_import_seed_with_overrides_conn(
+    conn: &mut Connection,
+    input: AssetImportBatchSeedInput,
+    overrides: &[AssetConditionOverride],
+) -> Result<AssetDirectImportReport, String> {
+    let mut input = input;
+    apply_condition_overrides(&mut input.rows, overrides);
+    import_asset_import_seed_conn(conn, input)
+}
+
+/// Puts IT's preview picks in place of the file's status cells.
+/// Returns a note per row whose pick does not parse; that row keeps the file value.
+fn apply_condition_overrides(
+    rows: &mut [AssetImportRowSeedInput],
+    overrides: &[AssetConditionOverride],
+) -> HashMap<i64, String> {
+    let mut invalid = HashMap::new();
+    for item in overrides {
+        let Some(row) = rows.iter_mut().find(|row| row.row_number == item.row_number) else {
+            continue;
+        };
+        match asset::parse_asset_condition(&item.condition) {
+            Some(condition) => row.condition = Some(condition.to_string()),
+            None => {
+                invalid.insert(
+                    item.row_number,
+                    format!("Invalid override \"{}\" — ignored", item.condition.trim()),
+                );
+            }
+        }
+    }
+    invalid
 }
 
 pub(crate) fn import_asset_import_seed_conn(
@@ -1566,6 +1671,7 @@ fn asset_direct_report_from_batch_detail(
         failed: batch.summary.error_rows - legacy_quantity_skipped,
         imported_asset_codes: result.imported_asset_codes.clone(),
         errors: asset_direct_error_items_from_rows(&batch.rows),
+        condition_updated_rows: result.condition_updated_rows,
     }
 }
 
@@ -1592,6 +1698,8 @@ fn asset_direct_preview_row_from_record(row: &AssetImportRowRecord) -> AssetDire
         status: row.status.clone(),
         holder_label,
         validation_errors: row.validation_errors.clone(),
+        condition: row.condition.clone(),
+        review_notes: row.review_notes.clone(),
     }
 }
 
@@ -2068,6 +2176,9 @@ fn build_row_seed_from_raw_values(
             .and_then(|value| normalize_optional_asset_text(Some(value))),
         submitted_phone_number: find_value_by_header_alias(&raw_values, OWNER_PHONE_NUMBER_ALIASES)
             .and_then(|value| normalize_optional_asset_text(Some(value))),
+        condition: mapping
+            .condition_index
+            .and_then(|index| mapped_value(&raw_values, index)),
         raw_values,
     }
 }
@@ -2164,6 +2275,10 @@ fn resolve_mapping(
                 merged.warehouse.as_deref(),
             ),
             notes_index: resolve_optional_header_index(&header_indices, merged.notes.as_deref()),
+            condition_index: resolve_optional_header_index(
+                &header_indices,
+                merged.condition.as_deref(),
+            ),
             mapping: merged,
         });
     };
@@ -2244,6 +2359,10 @@ fn detect_field_mapping(headers: &[String]) -> AssetImportFieldMapping {
         }
         if mapping.notes.is_none() && NOTES_ALIASES.contains(&normalized.as_str()) {
             mapping.notes = Some(header.clone());
+            continue;
+        }
+        if mapping.condition.is_none() && CONDITION_ALIASES.contains(&normalized.as_str()) {
+            mapping.condition = Some(header.clone());
         }
     }
 
@@ -2290,6 +2409,7 @@ fn merge_field_mapping(
         quantity: normalized_mapping_choice(override_mapping.quantity).or(detected.quantity),
         warehouse: normalized_mapping_choice(override_mapping.warehouse).or(detected.warehouse),
         notes: normalized_mapping_choice(override_mapping.notes).or(detected.notes),
+        condition: normalized_mapping_choice(override_mapping.condition).or(detected.condition),
     }
 }
 
@@ -2414,7 +2534,8 @@ fn normalize_import_field_key(value: &str) -> Result<String, String> {
         | "submittedStaffId"
         | "submittedFullName"
         | "submittedTeam"
-        | "submittedPhoneNumber" => Ok(value.trim().to_string()),
+        | "submittedPhoneNumber"
+        | "condition" => Ok(value.trim().to_string()),
         _ => Err(format!("unsupported asset import field '{value}'")),
     }
 }
@@ -2859,10 +2980,25 @@ fn resolve_owner_state(
     }
 }
 
-fn revalidate_batch_tx(tx: &Transaction<'_>, batch_id: i64) -> Result<(), String> {
+/// Returns the (asset_id, condition) updates that importing would apply to existing assets.
+fn revalidate_batch_tx(
+    tx: &Transaction<'_>,
+    batch_id: i64,
+) -> Result<Vec<(i64, &'static str)>, String> {
     let rows = load_batch_row_states_tx(tx, batch_id)?;
     let existing_assets = load_existing_asset_identities_tx(tx)?;
     let employee_lookup = load_employee_owner_lookup_tx(tx)?;
+    let mapping_json: String = tx
+        .query_row(
+            "SELECT mapping_json FROM asset_import_batches WHERE id = ?",
+            params![batch_id],
+            |row| row.get(0),
+        )
+        .map_err(|err| format!("failed to load asset import batch mapping: {err}"))?;
+    let has_status_column = from_json::<AssetImportFieldMapping>(Some(mapping_json))?
+        .condition
+        .is_some();
+    let mut condition_updates = Vec::new();
 
     let mut duplicate_counts: HashMap<String, usize> = HashMap::new();
     let mut duplicate_serial_counts: HashMap<String, usize> = HashMap::new();
@@ -2900,6 +3036,7 @@ fn revalidate_batch_tx(tx: &Transaction<'_>, batch_id: i64) -> Result<(), String
         }
 
         let owner_state = resolve_owner_state(row, &employee_lookup);
+        let mut review_notes = Vec::new();
         let (validation_errors, next_status) = if row.import_type == AssetImportMode::Serialized {
             match classify_serialized_asset_row(
                 row,
@@ -2907,7 +3044,21 @@ fn revalidate_batch_tx(tx: &Transaction<'_>, batch_id: i64) -> Result<(), String
                 &duplicate_asset_codes,
                 &duplicate_serial_numbers,
             ) {
-                SerializedAssetImportClassification::Existing { .. } => {
+                SerializedAssetImportClassification::Existing {
+                    asset_id,
+                    condition,
+                } => {
+                    let can_be_new = asset::asset_can_be_new_conn(tx, asset_id)?;
+                    let (notes, update) = review_import_condition(
+                        row.condition.as_deref(),
+                        has_status_column,
+                        Some((condition.as_str(), can_be_new)),
+                        false,
+                    );
+                    review_notes = notes;
+                    if let Some(next) = update {
+                        condition_updates.push((asset_id, next));
+                    }
                     (Vec::new(), ROW_STATUS_SKIPPED)
                 }
                 SerializedAssetImportClassification::Conflict(conflict) => {
@@ -2925,6 +3076,13 @@ fn revalidate_batch_tx(tx: &Transaction<'_>, batch_id: i64) -> Result<(), String
                     )
                 }
                 SerializedAssetImportClassification::New => {
+                    review_notes = review_import_condition(
+                        row.condition.as_deref(),
+                        has_status_column,
+                        None,
+                        row.submitted_staff_id.is_some(),
+                    )
+                    .0;
                     let mut errors = validate_staged_row(row);
                     if let Some(blocking_error) = owner_state.blocking_error.as_ref() {
                         errors.push(blocking_error.clone());
@@ -2966,6 +3124,7 @@ fn revalidate_batch_tx(tx: &Transaction<'_>, batch_id: i64) -> Result<(), String
               owner_warnings_json = ?,
               validation_errors_json = ?,
               status = ?,
+              review_notes_json = ?,
               updated_at = datetime('now')
             WHERE id = ?
             "#,
@@ -2978,13 +3137,87 @@ fn revalidate_batch_tx(tx: &Transaction<'_>, batch_id: i64) -> Result<(), String
                 to_json(&owner_state.owner_warnings)?,
                 to_json(&validation_errors)?,
                 next_status,
+                to_json(&review_notes)?,
                 row.id
             ],
         )
         .map_err(humanize_sqlite_error)?;
     }
 
-    refresh_batch_summary_tx(tx, batch_id)
+    refresh_batch_summary_tx(tx, batch_id)?;
+    Ok(condition_updates)
+}
+
+/// Status cell as imported: blank stays None, unknown text falls back to Spare.
+fn parsed_import_condition(raw: Option<&str>) -> Option<&'static str> {
+    raw.map(|value| asset::parse_asset_condition(value).unwrap_or(asset::ASSET_CONDITION_SPARE))
+}
+
+fn condition_label(condition: &str) -> &'static str {
+    match condition {
+        asset::ASSET_CONDITION_NEW => "New",
+        asset::ASSET_CONDITION_BROKEN => "Broken",
+        _ => "Spare",
+    }
+}
+
+/// Review notes for a row's status cell, plus the condition to write when the row
+/// matches an existing asset (`existing` holds that asset's current condition and
+/// whether it may still be set to `new`).
+fn review_import_condition(
+    raw: Option<&str>,
+    has_status_column: bool,
+    existing: Option<(&str, bool)>,
+    has_owner: bool,
+) -> (Vec<String>, Option<&'static str>) {
+    let mut notes = Vec::new();
+    let Some((current, can_be_new)) = existing else {
+        match raw {
+            None if has_status_column => notes.push("Blank status — imported as Spare".to_string()),
+            Some(value) if asset::parse_asset_condition(value).is_none() => {
+                notes.push(format!("Unknown status \"{value}\" — imported as Spare"))
+            }
+            _ => {}
+        }
+        match parsed_import_condition(raw) {
+            Some(asset::ASSET_CONDITION_BROKEN) if has_owner => {
+                notes.push("Assigned on import while Broken — check with IT".to_string())
+            }
+            Some(asset::ASSET_CONDITION_NEW) if has_owner => {
+                notes.push("New with an owner — becomes Spare on hand-out".to_string())
+            }
+            _ => {}
+        }
+        return (notes, None);
+    };
+
+    // Blank or unknown status never changes an existing asset.
+    let Some(raw) = raw else {
+        return (notes, None);
+    };
+    let Some(next) = asset::parse_asset_condition(raw) else {
+        notes.push(format!(
+            "Unknown status \"{raw}\" — kept {}",
+            condition_label(current)
+        ));
+        return (notes, None);
+    };
+    if next == current {
+        return (notes, None);
+    }
+    if next == asset::ASSET_CONDITION_NEW && !can_be_new {
+        notes.push(format!(
+            "Cannot set New after first hand-out — kept {}",
+            condition_label(current)
+        ));
+        return (notes, None);
+    }
+    notes.push(format!(
+        "Condition will change: {} → {}",
+        condition_label(current),
+        condition_label(next)
+    ));
+    (notes, Some(next))
 }
 
 fn validate_staged_row(row: &AssetImportRowState) -> Vec<String> {
@@ -3014,7 +3247,7 @@ fn load_existing_asset_identities_tx(
     tx: &Transaction<'_>,
 ) -> Result<ExistingAssetIdentities, String> {
     let mut stmt = tx
-        .prepare("SELECT id, asset_code, serial_number FROM assets")
+        .prepare("SELECT id, asset_code, serial_number, condition FROM assets")
         .map_err(|err| format!("failed to prepare asset identity lookup query: {err}"))?;
     let rows = stmt
         .query_map([], |row| {
@@ -3022,17 +3255,19 @@ fn load_existing_asset_identities_tx(
                 row.get::<_, i64>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, Option<String>>(2)?,
+                row.get::<_, String>(3)?,
             ))
         })
         .map_err(|err| format!("failed to query existing asset identities: {err}"))?;
 
     let mut items = ExistingAssetIdentities::default();
     for row in rows {
-        let (id, asset_code, serial_number) =
+        let (id, asset_code, serial_number, condition) =
             row.map_err(|err| format!("failed to read existing asset identity row: {err}"))?;
         let identity = ExistingAssetIdentity {
             id,
             serial_number: serial_number.and_then(|value| normalize_optional_text(Some(value))),
+            condition,
         };
         items.by_code.insert(
             normalize_identity_key(asset_code.as_str()),
@@ -3076,6 +3311,7 @@ fn classify_serialized_asset_row(
             if serial_matches_existing(code_asset, serial_key.as_deref()) {
                 SerializedAssetImportClassification::Existing {
                     asset_id: code_asset.id,
+                    condition: code_asset.condition.clone(),
                 }
             } else {
                 SerializedAssetImportClassification::Conflict(format!(
@@ -3089,6 +3325,7 @@ fn classify_serialized_asset_row(
             if serial_key.is_none() || code_asset.serial_number.is_none() {
                 SerializedAssetImportClassification::Existing {
                     asset_id: code_asset.id,
+                    condition: code_asset.condition.clone(),
                 }
             } else {
                 SerializedAssetImportClassification::Conflict(format!(
@@ -3153,7 +3390,8 @@ fn load_batch_row_states_tx(
               r.serial_number,
               r.submitted_staff_id,
               r.submitted_full_name,
-              r.submitted_team
+              r.submitted_team,
+              r.condition
             FROM asset_import_rows r
             INNER JOIN asset_import_batches b ON b.id = r.batch_id
             WHERE r.batch_id = ?
@@ -3175,6 +3413,7 @@ fn load_batch_row_states_tx(
                 submitted_staff_id: row.get(8)?,
                 submitted_full_name: row.get(9)?,
                 submitted_team: row.get(10)?,
+                condition: row.get(11)?,
             })
         })
         .map_err(|err| format!("failed to query staged asset rows: {err}"))?;
@@ -3329,7 +3568,8 @@ fn load_asset_import_rows_for_batch(
               submitted_staff_id, submitted_full_name, submitted_team, submitted_phone_number,
               resolved_employee_id, resolved_employee_row_id, resolved_full_name, resolved_team_name,
               owner_match_status, owner_warnings_json,
-              validation_errors_json, status, edited, edited_fields_json, imported_asset_id
+              validation_errors_json, status, edited, edited_fields_json, imported_asset_id,
+              condition, review_notes_json
             FROM asset_import_rows
             WHERE batch_id = ?
             ORDER BY row_number ASC, id ASC
@@ -3359,7 +3599,8 @@ fn load_asset_import_row_record_conn(
           submitted_staff_id, submitted_full_name, submitted_team, submitted_phone_number,
           resolved_employee_id, resolved_employee_row_id, resolved_full_name, resolved_team_name,
           owner_match_status, owner_warnings_json,
-          validation_errors_json, status, edited, edited_fields_json, imported_asset_id
+          validation_errors_json, status, edited, edited_fields_json, imported_asset_id,
+          condition, review_notes_json
         FROM asset_import_rows
         WHERE id = ?
         "#,
@@ -3405,6 +3646,9 @@ fn map_asset_import_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AssetImport
         is_edited: row.get::<_, i64>(29)? > 0,
         edited_fields: from_json_row(Some(row.get(30)?))?,
         imported_asset_id: row.get(31)?,
+        condition: parsed_import_condition(row.get::<_, Option<String>>(32)?.as_deref())
+            .map(str::to_string),
+        review_notes: from_json_row(Some(row.get(33)?))?,
     })
 }
 
@@ -3515,7 +3759,9 @@ mod tests {
         import_asset_import_seed_conn, import_asset_import_seed_conn_with_cleanup,
         load_asset_import_batch_detail_conn, parse_asset_import_source,
         preview_asset_import_seed_conn, preview_asset_import_seed_conn_with_cleanup,
-        update_asset_import_row_conn, AssetImportBatchSeedInput, AssetImportFieldMapping,
+        update_asset_import_row_conn, create_asset_manually_conn,
+        import_asset_import_seed_with_overrides_conn, preview_asset_import_seed_with_overrides_conn,
+        AssetConditionOverride, AssetImportBatchSeedInput, AssetImportFieldMapping,
         AssetImportMode, AssetImportRawValue, AssetImportRowSeedInput, AssetImportRowUpdateInput,
     };
 
@@ -3584,6 +3830,7 @@ mod tests {
             quantity: Some("Quantity".to_string()),
             warehouse: Some("Warehouse".to_string()),
             notes: Some("Notes".to_string()),
+            condition: None,
         }
     }
 
@@ -3660,6 +3907,7 @@ mod tests {
             submitted_full_name: None,
             submitted_team: None,
             submitted_phone_number: None,
+            condition: None,
         }
     }
 
@@ -3717,6 +3965,7 @@ mod tests {
             submitted_full_name: None,
             submitted_team: None,
             submitted_phone_number: None,
+            condition: None,
         }
     }
 
@@ -3771,6 +4020,7 @@ mod tests {
             submitted_full_name: None,
             submitted_team: None,
             submitted_phone_number: None,
+            condition: None,
         }
     }
 
@@ -3886,6 +4136,7 @@ mod tests {
             submitted_full_name: Some(submitted_full_name.to_string()),
             submitted_team: None,
             submitted_phone_number: None,
+            condition: None,
         }
     }
 
@@ -3953,6 +4204,7 @@ mod tests {
             submitted_full_name: Some(submitted_full_name.to_string()),
             submitted_team: Some(submitted_team.to_string()),
             submitted_phone_number: Some("0900000000".to_string()),
+            condition: None,
         }
     }
 
@@ -5439,6 +5691,7 @@ mod tests {
                     submitted_full_name: None,
                     submitted_team: None,
                     submitted_phone_number: None,
+                    condition: None,
                 }],
             ),
         )
@@ -5518,6 +5771,7 @@ mod tests {
                 submitted_full_name: None,
                 submitted_team: None,
                 submitted_phone_number: None,
+                condition: None,
             })
             .collect();
 
@@ -5638,6 +5892,7 @@ mod tests {
                 submitted_full_name: None,
                 submitted_team: None,
                 submitted_phone_number: None,
+                condition: None,
             },
         ];
 
@@ -5862,5 +6117,459 @@ mod tests {
         assert_eq!(data_rows[0].serial_number.as_deref(), Some("359545150098862"));
         assert_eq!(data_rows[1].asset_code.as_deref(), Some("VNMON761"));
         assert_eq!(data_rows[1].serial_number, None);
+    }
+
+    fn with_status(mut seed: AssetImportRowSeedInput, status: Option<&str>) -> AssetImportRowSeedInput {
+        seed.condition = status.map(str::to_string);
+        seed
+    }
+
+    fn status_batch(rows: Vec<AssetImportRowSeedInput>) -> AssetImportBatchSeedInput {
+        let mut batch = sample_batch(AssetImportMode::Serialized, rows);
+        batch.mapping.condition = Some("Status".to_string());
+        batch
+    }
+
+    fn asset_condition(conn: &Connection, asset_code: &str) -> String {
+        conn.query_row(
+            "SELECT condition FROM assets WHERE asset_code = ?",
+            params![asset_code],
+            |row| row.get(0),
+        )
+        .expect("load asset condition")
+    }
+
+    fn condition_audit_count(conn: &Connection) -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM audit_logs WHERE event_type = 'asset.update_condition'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count condition audits")
+    }
+
+    #[test]
+    fn detect_field_mapping_reads_status_aliases() {
+        for header in ["Status", "Condition", "Tinh Trang", "trang_thai", "Tình trạng", "Trạng thái"] {
+            let mapping = super::detect_field_mapping(&[header.to_string()]);
+            assert_eq!(mapping.condition.as_deref(), Some(header));
+        }
+    }
+
+    #[test]
+    fn direct_import_new_rows_take_file_condition() {
+        let mut conn = open_test_connection();
+        let report = import_asset_import_seed_conn(
+            &mut conn,
+            status_batch(vec![
+                with_status(row(2, "VNLAP001", "Laptop", "A"), Some("New")),
+                with_status(row(3, "VNLAP002", "Laptop", "B"), Some(" spare ")),
+                with_status(row(4, "VNLAP003", "Laptop", "C"), Some("BROKEN")),
+            ]),
+        )
+        .expect("import rows with status");
+
+        assert_eq!(report.imported, 3);
+        assert_eq!(asset_condition(&conn, "VNLAP001"), "new");
+        assert_eq!(asset_condition(&conn, "VNLAP002"), "spare");
+        assert_eq!(asset_condition(&conn, "VNLAP003"), "broken");
+    }
+
+    #[test]
+    fn direct_import_unknown_and_blank_status_become_spare_with_note() {
+        let mut conn = open_test_connection();
+        let rows = vec![
+            with_status(row(2, "VNLAP001", "Laptop", "A"), Some("Brokn")),
+            with_status(row(3, "VNLAP002", "Laptop", "B"), None),
+        ];
+
+        let preview = preview_asset_import_seed_conn(&mut conn, status_batch(rows.clone()))
+            .expect("preview rows with odd status");
+        assert_eq!(preview.valid_rows, 2);
+        assert_eq!(preview.rows[0].condition.as_deref(), Some("spare"));
+        assert_eq!(
+            preview.rows[0].review_notes,
+            vec!["Unknown status \"Brokn\" — imported as Spare".to_string()]
+        );
+        assert_eq!(
+            preview.rows[1].review_notes,
+            vec!["Blank status — imported as Spare".to_string()]
+        );
+
+        let report = import_asset_import_seed_conn(&mut conn, status_batch(rows))
+            .expect("import rows with odd status");
+        assert_eq!(report.imported, 2);
+        assert_eq!(asset_condition(&conn, "VNLAP001"), "spare");
+        assert_eq!(asset_condition(&conn, "VNLAP002"), "spare");
+    }
+
+    #[test]
+    fn direct_import_existing_asset_updates_only_condition() {
+        let mut conn = open_test_connection();
+        let asset_id = seed_asset_with_identity(&conn, "VNLAP001", None, "in_stock");
+        conn.execute(
+            "UPDATE assets SET display_name = 'Old' WHERE id = ?",
+            params![asset_id],
+        )
+        .expect("rename seeded asset");
+
+        let report = import_asset_import_seed_conn(
+            &mut conn,
+            status_batch(vec![with_status(
+                row(2, "VNLAP001", "Laptop", "Other"),
+                Some("Broken"),
+            )]),
+        )
+        .expect("import existing asset row");
+
+        assert_eq!(report.imported, 0);
+        assert_eq!(report.skipped, 1);
+        assert_eq!(report.condition_updated_rows, 1);
+        let display_name: String = conn
+            .query_row(
+                "SELECT display_name FROM assets WHERE id = ?",
+                params![asset_id],
+                |row| row.get(0),
+            )
+            .expect("load display name");
+        assert_eq!(display_name, "Old");
+        assert_eq!(asset_condition(&conn, "VNLAP001"), "broken");
+
+        let payload: String = conn
+            .query_row(
+                "SELECT payload_json FROM audit_logs WHERE event_type = 'asset.update_condition'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("load single condition audit");
+        let payload: serde_json::Value = serde_json::from_str(&payload).expect("parse payload");
+        assert_eq!(payload["source"], "import");
+    }
+
+    #[test]
+    fn direct_import_existing_blank_status_keeps_condition() {
+        let mut conn = open_test_connection();
+        let asset_id = seed_asset_with_identity(&conn, "VNLAP001", None, "in_stock");
+        conn.execute(
+            "UPDATE assets SET condition = 'broken' WHERE id = ?",
+            params![asset_id],
+        )
+        .expect("mark seeded asset broken");
+        let rows = vec![with_status(row(2, "VNLAP001", "Laptop", "A"), None)];
+
+        let preview = preview_asset_import_seed_conn(&mut conn, status_batch(rows.clone()))
+            .expect("preview existing blank status");
+        assert!(preview.rows[0].review_notes.is_empty());
+
+        let report = import_asset_import_seed_conn(&mut conn, status_batch(rows))
+            .expect("import existing blank status");
+        assert_eq!(report.condition_updated_rows, 0);
+        assert_eq!(asset_condition(&conn, "VNLAP001"), "broken");
+        assert_eq!(condition_audit_count(&conn), 0);
+    }
+
+    #[test]
+    fn direct_import_existing_new_status_is_kept_with_note() {
+        let mut conn = open_test_connection();
+        let asset_id = seed_asset_with_identity(&conn, "VNLAP001", None, "assigned");
+        conn.execute(
+            "UPDATE assets SET condition = 'broken' WHERE id = ?",
+            params![asset_id],
+        )
+        .expect("mark seeded asset broken");
+        let rows = vec![with_status(row(2, "VNLAP001", "Laptop", "A"), Some("New"))];
+
+        let preview = preview_asset_import_seed_conn(&mut conn, status_batch(rows.clone()))
+            .expect("preview existing new status");
+        assert_eq!(
+            preview.rows[0].review_notes,
+            vec!["Cannot set New after first hand-out — kept Broken".to_string()]
+        );
+
+        let report = import_asset_import_seed_conn(&mut conn, status_batch(rows))
+            .expect("import existing new status");
+        assert_eq!(report.failed, 0);
+        assert_eq!(report.condition_updated_rows, 0);
+        assert_eq!(asset_condition(&conn, "VNLAP001"), "broken");
+    }
+
+    #[test]
+    fn reimport_same_file_is_noop_for_condition() {
+        let mut conn = open_test_connection();
+        seed_asset_with_identity(&conn, "VNLAP001", None, "in_stock");
+        let rows = vec![
+            with_status(row(2, "VNLAP001", "Laptop", "A"), Some("Broken")),
+            with_status(row(3, "VNLAP002", "Laptop", "B"), Some("New")),
+        ];
+
+        let first = import_asset_import_seed_conn(&mut conn, status_batch(rows.clone()))
+            .expect("first import");
+        assert_eq!(first.condition_updated_rows, 1);
+        assert_eq!(condition_audit_count(&conn), 1);
+
+        let second = import_asset_import_seed_conn(&mut conn, status_batch(rows))
+            .expect("second import");
+        assert_eq!(second.imported, 0);
+        assert_eq!(second.condition_updated_rows, 0);
+        assert_eq!(condition_audit_count(&conn), 1);
+        assert_eq!(asset_condition(&conn, "VNLAP001"), "broken");
+        assert_eq!(asset_condition(&conn, "VNLAP002"), "new");
+    }
+
+    #[test]
+    fn owner_row_broken_is_imported_with_note() {
+        let mut conn = open_test_connection();
+        seed_employee(&conn, "ASWVN1302", "Lư Thế Hùng", "Examworks", "onboarding");
+        let rows = vec![with_status(
+            owner_row(2, "ASW1302", "Lư Thế Hùng", "ExamWorks", "VNLAP235"),
+            Some("Broken"),
+        )];
+
+        let preview = preview_asset_import_seed_conn(&mut conn, status_batch(rows.clone()))
+            .expect("preview broken owner row");
+        assert_eq!(preview.rows[0].status, "valid");
+        assert_eq!(
+            preview.rows[0].review_notes,
+            vec!["Assigned on import while Broken — check with IT".to_string()]
+        );
+
+        let report = import_asset_import_seed_conn(&mut conn, status_batch(rows))
+            .expect("import broken owner row");
+        assert_eq!(report.imported, 1);
+        let status: String = conn
+            .query_row(
+                "SELECT status FROM assets WHERE asset_code = 'VNLAP235'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("load status");
+        assert_eq!(status, "assigned");
+        assert_eq!(asset_condition(&conn, "VNLAP235"), "broken");
+    }
+
+    #[test]
+    fn owner_row_new_becomes_spare_with_note() {
+        let mut conn = open_test_connection();
+        seed_employee(&conn, "ASWVN1302", "Lư Thế Hùng", "Examworks", "onboarding");
+        let rows = vec![with_status(
+            owner_row(2, "ASW1302", "Lư Thế Hùng", "ExamWorks", "VNLAP235"),
+            Some("New"),
+        )];
+
+        let preview = preview_asset_import_seed_conn(&mut conn, status_batch(rows.clone()))
+            .expect("preview new owner row");
+        assert_eq!(
+            preview.rows[0].review_notes,
+            vec!["New with an owner — becomes Spare on hand-out".to_string()]
+        );
+
+        let report = import_asset_import_seed_conn(&mut conn, status_batch(rows))
+            .expect("import new owner row");
+        assert_eq!(report.imported, 1);
+        assert_eq!(asset_condition(&conn, "VNLAP235"), "spare");
+    }
+
+    #[test]
+    fn preview_existing_condition_change_has_note() {
+        let mut conn = open_test_connection();
+        seed_asset_with_identity(&conn, "VNLAP001", None, "in_stock");
+
+        let preview = preview_asset_import_seed_conn(
+            &mut conn,
+            status_batch(vec![with_status(
+                row(2, "VNLAP001", "Laptop", "A"),
+                Some("Broken"),
+            )]),
+        )
+        .expect("preview existing condition change");
+
+        assert_eq!(preview.rows[0].status, "skipped");
+        assert_eq!(preview.rows[0].condition.as_deref(), Some("broken"));
+        assert_eq!(
+            preview.rows[0].review_notes,
+            vec!["Condition will change: Spare → Broken".to_string()]
+        );
+        assert_eq!(asset_condition(&conn, "VNLAP001"), "spare");
+        assert_eq!(condition_audit_count(&conn), 0);
+    }
+
+    #[test]
+    fn reimport_new_for_never_loaned_spare_becomes_new() {
+        let mut conn = open_test_connection();
+        seed_asset_with_identity(&conn, "VNLAP001", None, "in_stock");
+        let rows = vec![with_status(row(2, "VNLAP001", "Laptop", "A"), Some("Mới"))];
+
+        let preview = preview_asset_import_seed_conn(&mut conn, status_batch(rows.clone()))
+            .expect("preview new for spare");
+        assert_eq!(
+            preview.rows[0].review_notes,
+            vec!["Condition will change: Spare → New".to_string()]
+        );
+
+        let report = import_asset_import_seed_conn(&mut conn, status_batch(rows))
+            .expect("import new for spare");
+        assert_eq!(report.condition_updated_rows, 1);
+        assert_eq!(asset_condition(&conn, "VNLAP001"), "new");
+        assert_eq!(condition_audit_count(&conn), 1);
+    }
+
+    #[test]
+    fn direct_import_existing_unknown_status_keeps_condition() {
+        let mut conn = open_test_connection();
+        let asset_id = seed_asset_with_identity(&conn, "VNLAP001", None, "in_stock");
+        conn.execute(
+            "UPDATE assets SET condition = 'broken' WHERE id = ?",
+            params![asset_id],
+        )
+        .expect("mark seeded asset broken");
+        let rows = vec![with_status(row(2, "VNLAP001", "Laptop", "A"), Some("Brokn"))];
+
+        let preview = preview_asset_import_seed_conn(&mut conn, status_batch(rows.clone()))
+            .expect("preview existing unknown status");
+        assert_eq!(
+            preview.rows[0].review_notes,
+            vec!["Unknown status \"Brokn\" — kept Broken".to_string()]
+        );
+
+        let report = import_asset_import_seed_conn(&mut conn, status_batch(rows))
+            .expect("import existing unknown status");
+        assert_eq!(report.condition_updated_rows, 0);
+        assert_eq!(asset_condition(&conn, "VNLAP001"), "broken");
+        assert_eq!(condition_audit_count(&conn), 0);
+    }
+
+    fn condition_override(row_number: i64, condition: &str) -> AssetConditionOverride {
+        AssetConditionOverride {
+            row_number,
+            condition: condition.to_string(),
+        }
+    }
+
+    fn override_rows(conn: &Connection) -> Vec<AssetImportRowSeedInput> {
+        seed_asset_with_identity(conn, "VNLAP001", None, "in_stock");
+        seed_asset_with_identity(conn, "VNLAP004", None, "assigned");
+        vec![
+            with_status(row(2, "VNLAP001", "Laptop", "A"), Some("Spare")),
+            with_status(row(3, "VNLAP003", "Laptop", "C"), Some("Spare")),
+            with_status(row(4, "VNLAP004", "Laptop", "D"), Some("Spare")),
+        ]
+    }
+
+    fn overrides() -> Vec<AssetConditionOverride> {
+        vec![
+            condition_override(2, "Broken"),
+            condition_override(3, "repair"),
+            condition_override(4, "new"),
+        ]
+    }
+
+    #[test]
+    fn preview_applies_condition_overrides() {
+        let mut conn = open_test_connection();
+        let rows = override_rows(&conn);
+
+        let preview =
+            preview_asset_import_seed_with_overrides_conn(&mut conn, status_batch(rows), &overrides())
+                .expect("preview with overrides");
+
+        assert_eq!(preview.rows[0].condition.as_deref(), Some("broken"));
+        assert_eq!(
+            preview.rows[0].review_notes,
+            vec!["Condition will change: Spare → Broken".to_string()]
+        );
+        assert_eq!(preview.rows[1].condition.as_deref(), Some("spare"));
+        assert_eq!(
+            preview.rows[1].review_notes,
+            vec!["Invalid override \"repair\" — ignored".to_string()]
+        );
+        assert_eq!(
+            preview.rows[2].review_notes,
+            vec!["Cannot set New after first hand-out — kept Spare".to_string()]
+        );
+        assert_eq!(condition_audit_count(&conn), 0);
+    }
+
+    #[test]
+    fn import_applies_condition_overrides() {
+        let mut conn = open_test_connection();
+        let rows = override_rows(&conn);
+
+        let report =
+            import_asset_import_seed_with_overrides_conn(&mut conn, status_batch(rows), &overrides())
+                .expect("import with overrides");
+
+        assert_eq!(report.imported, 1);
+        assert_eq!(report.condition_updated_rows, 1);
+        assert_eq!(asset_condition(&conn, "VNLAP001"), "broken");
+        assert_eq!(asset_condition(&conn, "VNLAP003"), "spare");
+        assert_eq!(asset_condition(&conn, "VNLAP004"), "spare");
+        let payload: String = conn
+            .query_row(
+                "SELECT payload_json FROM audit_logs WHERE event_type = 'asset.update_condition'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("load single condition audit");
+        let payload: serde_json::Value = serde_json::from_str(&payload).expect("parse payload");
+        assert_eq!(payload["source"], "import");
+        assert_eq!(payload["changes"]["condition"]["after"], "broken");
+    }
+
+    #[test]
+    fn override_to_current_condition_is_noop() {
+        let mut conn = open_test_connection();
+        let asset_id = seed_asset_with_identity(&conn, "VNLAP001", None, "in_stock");
+        conn.execute(
+            "UPDATE assets SET condition = 'broken' WHERE id = ?",
+            params![asset_id],
+        )
+        .expect("mark seeded asset broken");
+        let rows = vec![with_status(row(2, "VNLAP001", "Laptop", "A"), Some("Spare"))];
+
+        let report = import_asset_import_seed_with_overrides_conn(
+            &mut conn,
+            status_batch(rows),
+            &[condition_override(2, "Hỏng")],
+        )
+        .expect("import with same-value override");
+
+        assert_eq!(report.condition_updated_rows, 0);
+        assert_eq!(asset_condition(&conn, "VNLAP001"), "broken");
+        assert_eq!(condition_audit_count(&conn), 0);
+    }
+
+    #[test]
+    fn create_asset_manually_audit_records_condition() {
+        let mut conn = open_test_connection();
+        let record = create_asset_manually_conn(
+            &mut conn,
+            crate::db::asset::AssetUpsertInput {
+                asset_code: "VNLAP900".to_string(),
+                category_id: None,
+                asset_type: "Laptop".to_string(),
+                display_name: "Laptop 900".to_string(),
+                display_name_short: None,
+                brand: None,
+                model: None,
+                serial_number: None,
+                usage_location: None,
+                adapter_number: None,
+                warehouse: None,
+                notes: None,
+                condition: Some("broken".to_string()),
+            },
+        )
+        .expect("create asset manually");
+        assert_eq!(record.condition, "broken");
+
+        let payload: String = conn
+            .query_row(
+                "SELECT payload_json FROM audit_logs WHERE event_type = 'asset.create_manual'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("load create audit");
+        let payload: serde_json::Value = serde_json::from_str(&payload).expect("parse payload");
+        assert_eq!(payload["condition"], "broken");
     }
 }

@@ -289,6 +289,7 @@ pub(crate) fn import_employee_asset_seed_conn(
                 adapter_number: None,
                 warehouse: None,
                 notes: Some(format!("Created from EE list employee {}", row.employee_id)),
+                condition: None,
             },
         ) {
             Ok(record) => {
