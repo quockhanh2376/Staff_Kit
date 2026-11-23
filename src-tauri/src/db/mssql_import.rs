@@ -815,7 +815,9 @@ fn cleanup_legacy_remote_ee_account_settings(conn: &rusqlite::Connection) -> Res
 
 fn invalidate_pending_employee_list_syncs(conn: &rusqlite::Connection) {
     // Best effort: a batch loaded through the old SQL login is stale anyway.
-    let _ = conn.execute("DELETE FROM employee_sync_batches", []);
+    if let Err(err) = conn.execute("DELETE FROM employee_sync_batches", []) {
+        eprintln!("[Staff Kit EE Sync] Could not discard the open EE List sync: {err}");
+    }
 }
 
 fn validate_mssql_server(server: &str) -> Result<(), String> {

@@ -66,7 +66,7 @@ const DUPLICATE_CODE_NOTE: &str = "Duplicate Staff Code in HR source";
 const STALE_NOTE: &str = "Changed in the app after this list was loaded — review again";
 
 /// Local `employees` row as seen at staging time. Serialised into `local_json`;
-/// `staffGroup` and `updatedAt` complete the drift fingerprint checked at Approve.
+/// `staffGroup`, `updatedAt` and `isFloating` complete the drift fingerprint checked at Approve.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LocalSnapshot {
@@ -78,7 +78,6 @@ struct LocalSnapshot {
     id: i64,
     #[serde(skip)]
     code: String,
-    #[serde(skip)]
     is_floating: bool,
     #[serde(skip)]
     assets_held: i64,
@@ -522,8 +521,11 @@ pub(crate) fn refresh_employee_sync_row_conn(
         Some(local) if local.staff_group == STAFF_GROUP_EMPLOYEE_LIST => "changed",
         Some(_) => "conflict",
     };
-    let action = if row.kind == "missing" && local.is_none() {
-        // The employee is gone: there is no one left to offboard.
+    let action = if row.kind == "missing"
+        && !local.is_some_and(|local| {
+            local.staff_group == STAFF_GROUP_EMPLOYEE_LIST && !local.is_floating
+        }) {
+        // Gone, moved out of the EE List or now floating: never re-arm offboarding unseen.
         "none"
     } else if kind != row.kind {
         default_action(kind, local.is_some_and(|local| local.is_floating))
@@ -603,9 +605,15 @@ fn is_stale(
     // Every fingerprint field counts: Azure AD edits do not bump updated_at.
     let staged: serde_json::Value = serde_json::from_str(staged)
         .map_err(|err| format!("failed to read EE List sync row: {err}"))?;
-    let current = serde_json::to_value(current)
+    let current_json = serde_json::to_value(current)
         .map_err(|err| format!("failed to encode EE List sync row: {err}"))?;
-    Ok(staged != current)
+    if staged != current_json {
+        return Ok(true);
+    }
+    // Offboarding only ever applies to an EE List employee with the asset count the owner saw.
+    Ok(row.kind == "missing"
+        && (current.staff_group != STAFF_GROUP_EMPLOYEE_LIST
+            || current.assets_held != row.assets_held))
 }
 
 fn write_row(
@@ -669,7 +677,7 @@ pub(crate) fn apply_employee_sync_batch_conn(
     if exists.is_none() {
         return Err("Not found: EE List sync".to_string());
     }
-    // local_json is read raw: it holds the full drift fingerprint (group, updatedAt).
+    // local_json is read raw: it holds the full drift fingerprint (group, updatedAt, isFloating).
     let rows: Vec<(EmployeeSyncStagedRow, Option<String>)> = {
         let mut statement = tx
             .prepare(&format!(
@@ -1218,6 +1226,7 @@ mod tests {
             "{local_json}"
         );
         assert!(local_json.contains("\"updatedAt\""), "{local_json}");
+        assert!(local_json.contains("\"isFloating\":true"), "{local_json}");
 
         assert_eq!(
             refresh_employee_sync_row_conn(&mut conn, 9999),
@@ -1434,6 +1443,108 @@ mod tests {
         );
         assert_eq!(employee(&conn, "EE-OTHER"), None);
         assert_eq!(employee(&conn, "EE-GONE").expect("gone").3, "internal_movement");
+    }
+
+    #[test]
+    fn refresh_missing_row_moved_to_other_group_is_not_offboarded() {
+        let mut conn = open_test_connection();
+        let gone = seed(&conn, "EE-GONE", "Gone", "employee_list", false);
+        let batch = stage(&mut conn, &[hr("EE-OTHER", "Other")]);
+        let id = row(&batch, "EE-GONE").id;
+        conn.execute("UPDATE employees SET staff_group = 'onboarding' WHERE id = ?1", [gone])
+            .expect("move locally");
+
+        let refreshed = refresh_employee_sync_row_conn(&mut conn, id).expect("refresh");
+        assert_eq!(refreshed.action, "none");
+        let result = apply_employee_sync_batch_conn(&mut conn, batch.id, None).expect("apply");
+        assert_eq!((result.added, result.offboarded), (1, 0));
+        assert_eq!(employee(&conn, "EE-GONE").expect("kept").3, "onboarding");
+    }
+
+    #[test]
+    fn apply_offboarding_a_missing_row_outside_ee_list_is_stale() {
+        let mut conn = open_test_connection();
+        let gone = seed(&conn, "EE-GONE", "Gone", "employee_list", false);
+        let batch = stage(&mut conn, &[hr("EE-OTHER", "Other")]);
+        let id = row(&batch, "EE-GONE").id;
+        conn.execute("UPDATE employees SET staff_group = 'onboarding' WHERE id = ?1", [gone])
+            .expect("move locally");
+        refresh_employee_sync_row_conn(&mut conn, id).expect("refresh");
+        // Re-ticking after refresh must still not offboard someone outside the EE List.
+        update_employee_sync_row_conn(&mut conn, id, set_action("move_to_offboarding"))
+            .expect("tick");
+
+        assert_eq!(
+            apply_employee_sync_batch_conn(&mut conn, batch.id, None),
+            Err(stale_message(1))
+        );
+        assert_eq!(employee(&conn, "EE-OTHER"), None);
+        assert_eq!(employee(&conn, "EE-GONE").expect("kept").3, "onboarding");
+    }
+
+    #[test]
+    fn refresh_missing_row_that_became_floating_is_not_offboarded() {
+        let mut conn = open_test_connection();
+        let gone = seed(&conn, "EE-GONE", "Gone", "employee_list", false);
+        let batch = stage(&mut conn, &[hr("EE-OTHER", "Other")]);
+        let id = row(&batch, "EE-GONE").id;
+        conn.execute("UPDATE employees SET is_floating = 1 WHERE id = ?1", [gone])
+            .expect("float locally");
+
+        let refreshed = refresh_employee_sync_row_conn(&mut conn, id).expect("refresh");
+        assert_eq!(refreshed.action, "none");
+        let result = apply_employee_sync_batch_conn(&mut conn, batch.id, None).expect("apply");
+        assert_eq!((result.added, result.offboarded), (1, 0));
+        let (_, _, _, group, lifecycle) = employee(&conn, "EE-GONE").expect("kept");
+        assert_eq!((group.as_str(), lifecycle), ("employee_list", None));
+    }
+
+    #[test]
+    fn apply_missing_row_whose_assets_changed_is_stale() {
+        let mut conn = open_test_connection();
+        let gone = seed(&conn, "EE-GONE", "Gone", "employee_list", false);
+        let batch = stage(&mut conn, &[hr("EE-OTHER", "Other")]);
+        assert_eq!(row(&batch, "EE-GONE").assets_held, 0);
+        conn.execute(
+            "INSERT INTO borrow_requests(request_key, employee_id_fk, submitted_employee_id, submitted_full_name, status) VALUES ('REQ-1', ?1, 'EE-GONE', 'Gone', 'approved')",
+            params![gone],
+        )
+        .expect("seed request");
+        let request = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO assets(asset_code, asset_type, display_name) VALUES ('LT-1', 'Laptop', 'LT-1')",
+            [],
+        )
+        .expect("seed asset");
+        conn.execute(
+            "INSERT INTO asset_loans(asset_id, employee_id_fk, borrow_request_id) VALUES (?1, ?2, ?3)",
+            params![conn.last_insert_rowid(), gone, request],
+        )
+        .expect("seed loan");
+        let before = employees_dump(&conn);
+
+        assert_eq!(
+            apply_employee_sync_batch_conn(&mut conn, batch.id, None),
+            Err(stale_message(1))
+        );
+        assert_eq!(employees_dump(&conn), before);
+        assert_eq!(table_count(&conn, "audit_logs"), 0);
+    }
+
+    #[test]
+    fn apply_changed_row_floating_toggled_after_staging_is_stale() {
+        let mut conn = open_test_connection();
+        let id = seed(&conn, "EE-1", "Old", "employee_list", false);
+        let batch = stage(&mut conn, &[hr("EE-1", "New")]);
+        // Same second as staging: updated_at is unchanged.
+        conn.execute("UPDATE employees SET is_floating = 1 WHERE id = ?1", [id])
+            .expect("float locally");
+
+        assert_eq!(
+            apply_employee_sync_batch_conn(&mut conn, batch.id, None),
+            Err(stale_message(1))
+        );
+        assert_eq!(employee(&conn, "EE-1").expect("kept").1, "Old");
     }
 
     #[test]
