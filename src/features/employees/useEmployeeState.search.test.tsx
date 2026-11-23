@@ -6,8 +6,7 @@ const api = vi.hoisted(() => ({
     searchEmployees: vi.fn(),
     listTeams: vi.fn(),
     listEmployeeGroupCounts: vi.fn(),
-    previewEmployeeListMssqlSync: vi.fn(),
-    applyEmployeeListMssqlSync: vi.fn(),
+    getOpenEmployeeSyncBatch: vi.fn(),
 }))
 
 vi.mock("../../services/staff-api", () => ({ staffApi: api }))
@@ -17,6 +16,7 @@ import { useEmployeeState } from "./useEmployeeState"
 const baseOptions = {
     dbReady: true,
     isAuthenticated: true,
+    isAdmin: false,
     reloadToken: 0,
     setGlobalError: vi.fn(),
 }

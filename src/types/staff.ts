@@ -976,28 +976,47 @@ export type EmployeeSyncCounts = {
   conflicts: number
 }
 
-export type EmployeeSyncRow = {
-  code: string
-  status: "new" | "changed" | "unchanged" | "missing" | "conflict"
-  sourceName: string | null
-  localName: string | null
+export type EmployeeSyncFields = {
+  fullName: string
+  nickName: string | null
+  email: string | null
+  azureAdAccount: string | null
 }
 
-export type EmployeeSyncConflict = {
-  code: string
-  reason: string
+export type EmployeeSyncStagedRow = {
+  id: number
+  staffCode: string
+  kind: string
+  localEmployeeId: number | null
+  localGroup: string | null
+  source: EmployeeSyncFields[]
+  local: EmployeeSyncFields | null
+  edits: EmployeeSyncFields | null
+  action: string
+  notes: string[]
+  state: string
+  assetsHeld: number
+  isFloating: boolean
 }
 
-export type EmployeeListSyncPreview = {
-  previewId: string
+export type EmployeeSyncBatch = {
+  id: number
   createdAt: string
   counts: EmployeeSyncCounts
-  rows: EmployeeSyncRow[]
-  conflicts: EmployeeSyncConflict[]
+  rows: EmployeeSyncStagedRow[]
 }
 
-export type EmployeeListSyncResult = {
-  counts: EmployeeSyncCounts
+export type EmployeeSyncRowUpdate = {
+  action?: string | null
+  edits?: EmployeeSyncFields | null
+}
+
+export type EmployeeSyncApplyResult = {
+  added: number
+  updated: number
+  movedToEmployeeList: number
+  offboarded: number
+  skipped: number
   completedAt: string
 }
 

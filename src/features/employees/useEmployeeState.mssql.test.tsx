@@ -4,8 +4,12 @@ import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 
 const api = vi.hoisted(() => ({
-    previewEmployeeListMssqlSync: vi.fn(),
-    applyEmployeeListMssqlSync: vi.fn(),
+    stageEmployeeListSync: vi.fn(),
+    getOpenEmployeeSyncBatch: vi.fn(),
+    updateEmployeeSyncRow: vi.fn(),
+    refreshEmployeeSyncRow: vi.fn(),
+    discardEmployeeSyncBatch: vi.fn(),
+    applyEmployeeSyncBatch: vi.fn(),
     listTeams: vi.fn(),
     listEmployeeGroupCounts: vi.fn(),
     searchEmployees: vi.fn(),
@@ -18,8 +22,32 @@ import { getMssqlEmployeeUpdateErrorMessage, useEmployeeState } from "./useEmplo
 const baseOptions = {
     dbReady: false,
     isAuthenticated: false,
+    isAdmin: true,
     reloadToken: 0,
     setGlobalError: vi.fn(),
+}
+
+const row = (id: number, action = "apply") => ({
+    id,
+    staffCode: `ASWVN${id}`,
+    kind: "new",
+    localEmployeeId: null,
+    localGroup: null,
+    source: [],
+    local: null,
+    edits: null,
+    action,
+    notes: [],
+    state: "pending",
+    assetsHeld: 0,
+    isFloating: false,
+})
+
+const batch = {
+    id: 7,
+    createdAt: "2026-10-13T00:00:00Z",
+    counts: { new: 1, changed: 0, unchanged: 0, missing: 0, conflicts: 0 },
+    rows: [row(1), row(2)],
 }
 
 beforeEach(() => {
@@ -27,65 +55,97 @@ beforeEach(() => {
     api.listTeams.mockResolvedValue([])
     api.listEmployeeGroupCounts.mockResolvedValue({ employeeList: 0, onboarding: 0, offboarding: 0, internalMovement: 0 })
     api.searchEmployees.mockResolvedValue({ items: [], total: 0 })
-    api.previewEmployeeListMssqlSync.mockResolvedValue({
-        previewId: "preview-1",
-        createdAt: "2026-10-13T00:00:00Z",
-        counts: { new: 1, changed: 2, unchanged: 3, missing: 4, conflicts: 0 },
-        rows: [],
-        conflicts: [],
-    })
-    api.applyEmployeeListMssqlSync.mockResolvedValue({
-        counts: { new: 1, changed: 2, unchanged: 3, missing: 4, conflicts: 0 },
-        completedAt: "2026-10-13T00:01:00Z",
+    api.getOpenEmployeeSyncBatch.mockResolvedValue(null)
+    api.stageEmployeeListSync.mockResolvedValue(batch)
+    api.applyEmployeeSyncBatch.mockResolvedValue({
+        added: 1, updated: 0, movedToEmployeeList: 0, offboarded: 0, skipped: 0, completedAt: "2026-10-13T00:01:00Z",
     })
 })
 
-describe("employee MSSQL update flow", () => {
-    it("requests a fixed-query preview and does not write before approval", async () => {
+describe("staged EE List sync state", () => {
+    it("stages a new batch when none is open", async () => {
         const { result } = renderHook(() => useEmployeeState(baseOptions))
-
-        await act(async () => {
-            await result.current.updateEmployeeListFromMssql()
-        })
-
-        expect(api.previewEmployeeListMssqlSync).toHaveBeenCalledWith()
-        expect(api.applyEmployeeListMssqlSync).not.toHaveBeenCalled()
-        expect(result.current.mssqlSyncPreview?.counts.missing).toBe(4)
-        expect(result.current.mssqlUpdateMessage).toBeNull()
+        let outcome: unknown
+        await act(async () => { outcome = await result.current.startEmployeeSync() })
+        expect(outcome).toBe("staged")
+        expect(api.stageEmployeeListSync).toHaveBeenCalledWith(false)
+        expect(result.current.syncBatch?.id).toBe(7)
     })
 
-    it("does not create a preview when the source query fails", async () => {
+    it("startEmployeeSync returns open-exists when a batch is open", async () => {
+        api.getOpenEmployeeSyncBatch.mockResolvedValue(batch)
+        const { result } = renderHook(() => useEmployeeState({ ...baseOptions, dbReady: true, isAuthenticated: true }))
+        await waitFor(() => expect(result.current.syncBatch).not.toBeNull())
+        let outcome: unknown
+        await act(async () => { outcome = await result.current.startEmployeeSync() })
+        expect(outcome).toBe("open-exists")
+        expect(api.stageEmployeeListSync).not.toHaveBeenCalled()
+    })
+
+    it("does not load the open batch for non-admins", async () => {
+        renderHook(() => useEmployeeState({ ...baseOptions, isAdmin: false, dbReady: true, isAuthenticated: true }))
+        await waitFor(() => expect(api.listTeams).toHaveBeenCalled())
+        expect(api.getOpenEmployeeSyncBatch).not.toHaveBeenCalled()
+    })
+
+    it("replaceEmployeeSync stages with replace=true", async () => {
+        const { result } = renderHook(() => useEmployeeState(baseOptions))
+        await act(async () => { await result.current.replaceEmployeeSync() })
+        expect(api.stageEmployeeListSync).toHaveBeenCalledWith(true)
+        expect(result.current.syncBatch?.id).toBe(7)
+    })
+
+    it("updateSyncRow replaces the row from the response", async () => {
+        const { result } = renderHook(() => useEmployeeState(baseOptions))
+        await act(async () => { await result.current.startEmployeeSync() })
+        api.updateEmployeeSyncRow.mockResolvedValue(row(2, "skip"))
+        await act(async () => { await result.current.updateSyncRow(2, { action: "skip" }) })
+        expect(api.updateEmployeeSyncRow).toHaveBeenCalledWith(2, { action: "skip" })
+        expect(result.current.syncBatch?.rows.map((r) => r.action)).toEqual(["apply", "skip"])
+    })
+
+    it("refreshSyncRow replaces the row from the response", async () => {
+        const { result } = renderHook(() => useEmployeeState(baseOptions))
+        await act(async () => { await result.current.startEmployeeSync() })
+        api.refreshEmployeeSyncRow.mockResolvedValue({ ...row(1), notes: ["x"] })
+        await act(async () => { await result.current.refreshSyncRow(1) })
+        expect(result.current.syncBatch?.rows[0].notes).toEqual(["x"])
+    })
+
+    it("discardEmployeeSync clears the batch", async () => {
+        const { result } = renderHook(() => useEmployeeState(baseOptions))
+        await act(async () => { await result.current.startEmployeeSync() })
+        await act(async () => { await result.current.discardEmployeeSync() })
+        expect(api.discardEmployeeSyncBatch).toHaveBeenCalledWith(7)
+        expect(result.current.syncBatch).toBeNull()
+    })
+
+    it("applyEmployeeSync clears batch and refreshes employees", async () => {
+        const { result } = renderHook(() => useEmployeeState({ ...baseOptions, dbReady: true, isAuthenticated: true }))
+        await waitFor(() => expect(api.searchEmployees).toHaveBeenCalledTimes(1))
+        await act(async () => { await result.current.startEmployeeSync() })
+        let applied: unknown
+        await act(async () => { applied = await result.current.applyEmployeeSync() })
+        expect(api.applyEmployeeSyncBatch).toHaveBeenCalledWith(7)
+        expect(applied).toMatchObject({ added: 1 })
+        expect(result.current.syncBatch).toBeNull()
+        await waitFor(() => expect(api.searchEmployees).toHaveBeenCalledTimes(2))
+    })
+
+    it("shows a safe error and stages nothing when the source query fails", async () => {
         const rawError = "MSSQL network connection failed: password=secret; host=sql.internal"
-        api.previewEmployeeListMssqlSync.mockRejectedValue(new Error(rawError))
+        api.stageEmployeeListSync.mockRejectedValue(new Error(rawError))
         const setGlobalError = vi.fn()
-        const { result } = renderHook(() =>
-            useEmployeeState({ ...baseOptions, setGlobalError }),
-        )
-
-        await act(async () => {
-            await result.current.updateEmployeeListFromMssql()
-        })
-
-        expect(api.applyEmployeeListMssqlSync).not.toHaveBeenCalled()
-        expect(result.current.mssqlSyncPreview).toBeNull()
-        expect(result.current.mssqlUpdateStatus).toBe("error")
-        expect(result.current.mssqlUpdateMessage).toContain("Cannot connect")
-        expect(result.current.mssqlUpdateMessage).not.toContain(rawError)
-        expect(setGlobalError).toHaveBeenCalledWith(result.current.mssqlUpdateMessage)
+        const { result } = renderHook(() => useEmployeeState({ ...baseOptions, setGlobalError }))
+        await act(async () => { await result.current.startEmployeeSync() })
+        expect(result.current.syncBatch).toBeNull()
+        expect(result.current.syncError).toContain("Cannot connect")
+        expect(result.current.syncError).not.toContain(rawError)
+        expect(setGlobalError).toHaveBeenCalledWith(result.current.syncError)
     })
+})
 
-    it("shows the backend's bounded permission diagnostic when Update cannot create a preview", async () => {
-        const diagnostic = "Read-only permission diagnostic: SQL Server error 916: metadata access denied."
-        api.previewEmployeeListMssqlSync.mockRejectedValue(new Error(diagnostic))
-        const { result } = renderHook(() => useEmployeeState(baseOptions))
-
-        await act(async () => { await result.current.updateEmployeeListFromMssql() })
-
-        expect(result.current.mssqlUpdateMessage).toBe(diagnostic)
-        expect(result.current.mssqlSyncPreview).toBeNull()
-        expect(api.applyEmployeeListMssqlSync).not.toHaveBeenCalled()
-    })
-
+describe("employee MSSQL error mapping", () => {
     it("distinguishes verified write access from a failed permission check", () => {
         const detected = "Read-only verification found effective write-level permissions for this SQL login; syncing is blocked."
         expect(getMssqlEmployeeUpdateErrorMessage(new Error(detected))).toBe(detected)
@@ -97,142 +157,6 @@ describe("employee MSSQL update flow", () => {
         )
         expect(message).not.toContain("secret")
         expect(message).toContain("must be read-only")
-    })
-
-    it("applies only after the explicit approve action", async () => {
-        const { result } = renderHook(() => useEmployeeState(baseOptions))
-        await act(async () => { await result.current.updateEmployeeListFromMssql() })
-        expect(api.applyEmployeeListMssqlSync).not.toHaveBeenCalled()
-
-        await act(async () => { await result.current.applyEmployeeListMssqlSync() })
-
-        expect(api.applyEmployeeListMssqlSync).toHaveBeenCalledWith("preview-1")
-        expect(result.current.mssqlSyncPreview).toBeNull()
-        expect(result.current.mssqlUpdateStatus).toBe("success")
-        expect(result.current.mssqlUpdateMessage).toBe("✓ Imported 1, updated 2 employees")
-    })
-
-    it("auto-hides approval success message after 10 seconds", async () => {
-        vi.useFakeTimers()
-        const { result } = renderHook(() => useEmployeeState(baseOptions))
-        await act(async () => { await result.current.updateEmployeeListFromMssql() })
-        await act(async () => { await result.current.applyEmployeeListMssqlSync() })
-
-        expect(result.current.mssqlUpdateStatus).toBe("success")
-        expect(result.current.mssqlUpdateMessage).toBe("✓ Imported 1, updated 2 employees")
-
-        act(() => {
-            vi.advanceTimersByTime(10000)
-        })
-        expect(result.current.mssqlUpdateMessage).toBeNull()
-        expect(result.current.mssqlUpdateStatus).toBe("idle")
-        vi.useRealTimers()
-    })
-
-    it("refreshes the displayed EE List after approved local apply", async () => {
-        const { result } = renderHook(() => useEmployeeState({ ...baseOptions, dbReady: true, isAuthenticated: true }))
-        await waitFor(() => expect(api.searchEmployees).toHaveBeenCalledTimes(1))
-
-        await act(async () => { await result.current.updateEmployeeListFromMssql() })
-        expect(api.searchEmployees).toHaveBeenCalledTimes(1)
-        await act(async () => { await result.current.applyEmployeeListMssqlSync() })
-
-        await waitFor(() => expect(api.searchEmployees).toHaveBeenCalledTimes(2))
-        expect(api.searchEmployees).toHaveBeenLastCalledWith(expect.objectContaining({ staffGroup: "employee_list", offset: 0 }))
-    })
-
-    it("dismisses the preview with Skip without applying local changes", async () => {
-        const { result } = renderHook(() => useEmployeeState(baseOptions))
-        await act(async () => { await result.current.updateEmployeeListFromMssql() })
-        act(() => result.current.skipEmployeeListMssqlSync())
-        expect(result.current.mssqlSyncPreview).toBeNull()
-        expect(result.current.mssqlUpdateMessage).toContain("No local data was changed")
-        expect(api.applyEmployeeListMssqlSync).not.toHaveBeenCalled()
-    })
-
-    it("cancelEmployeeListMssqlSync alias works identically to skip", async () => {
-        const { result } = renderHook(() => useEmployeeState(baseOptions))
-        await act(async () => { await result.current.updateEmployeeListFromMssql() })
-        act(() => result.current.cancelEmployeeListMssqlSync())
-        expect(result.current.mssqlSyncPreview).toBeNull()
-        expect(result.current.mssqlUpdateMessage).toContain("No local data was changed")
-        expect(api.applyEmployeeListMssqlSync).not.toHaveBeenCalled()
-    })
-
-    it("suppresses preview and shows 10-second no-change message when all records are unchanged", async () => {
-        vi.useFakeTimers()
-        api.previewEmployeeListMssqlSync.mockResolvedValueOnce({
-            previewId: "preview-unchanged",
-            createdAt: "2026-10-15T00:00:00Z",
-            counts: { new: 0, changed: 0, unchanged: 10, missing: 0, conflicts: 0 },
-            rows: [],
-            conflicts: [],
-        })
-        const { result } = renderHook(() => useEmployeeState(baseOptions))
-        await act(async () => { await result.current.updateEmployeeListFromMssql() })
-
-        expect(result.current.mssqlSyncPreview).toBeNull()
-        expect(result.current.mssqlUpdateStatus).toBe("success")
-        expect(result.current.mssqlUpdateMessage).toBe("✓ No changes")
-        expect(api.applyEmployeeListMssqlSync).not.toHaveBeenCalled()
-
-        act(() => {
-            vi.advanceTimersByTime(10000)
-        })
-        expect(result.current.mssqlUpdateMessage).toBeNull()
-        expect(result.current.mssqlUpdateStatus).toBe("idle")
-        vi.useRealTimers()
-    })
-
-    it("does not invoke apply API when records are missing-only (report-only)", async () => {
-        api.previewEmployeeListMssqlSync.mockResolvedValueOnce({
-            previewId: "preview-missing-only",
-            createdAt: "2026-10-15T00:00:00Z",
-            counts: { new: 0, changed: 0, unchanged: 5, missing: 3, conflicts: 0 },
-            rows: [],
-            conflicts: [],
-        })
-        const { result } = renderHook(() => useEmployeeState(baseOptions))
-        await act(async () => { await result.current.updateEmployeeListFromMssql() })
-        expect(result.current.mssqlSyncPreview?.counts.missing).toBe(3)
-
-        await act(async () => { await result.current.applyEmployeeListMssqlSync() })
-        expect(api.applyEmployeeListMssqlSync).not.toHaveBeenCalled()
-    })
-
-    it("does not invoke apply API when preview contains blocking conflicts", async () => {
-        api.previewEmployeeListMssqlSync.mockResolvedValueOnce({
-            previewId: "preview-conflict",
-            createdAt: "2026-10-15T00:00:00Z",
-            counts: { new: 2, changed: 1, unchanged: 5, missing: 0, conflicts: 1 },
-            rows: [],
-            conflicts: [{ code: "ASWVN999", reason: "Belongs to onboarding" }],
-        })
-        const { result } = renderHook(() => useEmployeeState(baseOptions))
-        await act(async () => { await result.current.updateEmployeeListFromMssql() })
-        expect(result.current.mssqlSyncPreview?.counts.conflicts).toBe(1)
-
-        await act(async () => { await result.current.applyEmployeeListMssqlSync() })
-        expect(api.applyEmployeeListMssqlSync).not.toHaveBeenCalled()
-    })
-
-    it("drops the stale preview and shows a safe error when the post-move refresh fails", async () => {
-        const rawError = "MSSQL network connection failed: password=secret; host=sql.internal"
-        const setGlobalError = vi.fn()
-        const consoleError = vi.spyOn(console, "error").mockImplementation(() => {})
-        const { result } = renderHook(() => useEmployeeState({ ...baseOptions, setGlobalError }))
-        await act(async () => { await result.current.updateEmployeeListFromMssql() })
-        expect(result.current.mssqlSyncPreview).not.toBeNull()
-
-        api.previewEmployeeListMssqlSync.mockRejectedValueOnce(new Error(rawError))
-        await act(async () => { await result.current.refreshMssqlSyncPreview() })
-
-        expect(result.current.mssqlSyncPreview).toBeNull()
-        expect(result.current.mssqlUpdateStatus).toBe("error")
-        expect(result.current.mssqlUpdateMessage).toContain("Cannot connect")
-        expect(setGlobalError).toHaveBeenCalledWith(result.current.mssqlUpdateMessage)
-        expect(JSON.stringify(consoleError.mock.calls)).not.toContain("secret")
-        consoleError.mockRestore()
     })
 
     it.each([
@@ -257,42 +181,5 @@ describe("employee MSSQL feedback rendering contract", () => {
 
         expect(source).not.toContain("max-w-[360px] truncate")
         expect(source).toContain("max-w-[520px] break-words text-xs leading-snug")
-    })
-
-    it("renders exactly two preview buttons: Skip | Approve with proper gating", () => {
-        const source = readFileSync(resolve(process.cwd(), "src/features/employees/EmployeeView.tsx"), "utf8")
-
-        expect(source).toContain(">Skip</button>")
-        expect(source).toContain(">{emp.isApplyingMssqlSync ? \"Applying…\" : \"Approve\"}</button>")
-        expect(source).not.toContain("Approve and update EE List")
-        expect(source).not.toContain(">Cancel</button>")
-        expect(source).toContain("onClick={emp.skipEmployeeListMssqlSync}")
-        expect(source).toContain("const hasImportableChanges =")
-        expect(source).toContain("const canApprove = hasImportableChanges && !hasConflicts")
-    })
-
-    it("anchors the preview as a floating popover and eliminates unchanged rows UI", () => {
-        const source = readFileSync(resolve(process.cwd(), "src/features/employees/EmployeeView.tsx"), "utf8")
-
-        // Floating popover anchored to Update button
-        expect(source).toContain("absolute left-0 top-full z-40 mt-2")
-        expect(source).toContain('role="dialog"')
-        expect(source).toContain('aria-label="EE List sync preview"')
-
-        // Unchanged rows UI completely removed
-        expect(source).not.toContain("Unchanged rows (")
-        expect(source).not.toContain("unchangedRows")
-
-        // View details toggle
-        expect(source).toContain("View details")
-        expect(source).toContain("Hide details")
-
-        // Mobile card renders team pill
-        expect(source).toContain("getTeamPillClasses")
-        expect(source).toContain("employee.teamName")
-
-        // Missing count clickable button and MissingEmployeesModal
-        expect(source).toContain('onClick={() => setIsMissingModalOpen(true)}')
-        expect(source).toContain("<MissingEmployeesModal")
     })
 })
