@@ -304,26 +304,26 @@ export function useEmployeeState({
         })
     }
 
-    const runSync = async <T,>(task: () => Promise<T>): Promise<T | null> => {
+    const runSync = async <T,>(task: () => Promise<T>): Promise<{ ok: true; value: T } | { ok: false }> => {
         setSyncBusy(true)
         setSyncError(null)
         setGlobalError(null)
         try {
-            return await task()
+            return { ok: true, value: await task() }
         } catch (error) {
             const message = getMssqlEmployeeUpdateErrorMessage(error)
             setSyncError(message)
             setGlobalError(message)
-            return null
+            return { ok: false }
         } finally {
             setSyncBusy(false)
         }
     }
 
     const stage = async (replace: boolean) => {
-        const batch = await runSync(() => staffApi.stageEmployeeListSync(replace))
-        if (batch) setSyncBatch(batch)
-        return batch !== null
+        const res = await runSync(() => staffApi.stageEmployeeListSync(replace))
+        if (res.ok) setSyncBatch(res.value)
+        return res.ok
     }
 
     const startEmployeeSync = async (): Promise<"open-exists" | "staged" | "error"> => {
@@ -334,13 +334,15 @@ export function useEmployeeState({
     const replaceEmployeeSync = () => stage(true)
 
     const resumeEmployeeSync = async () => {
-        const batch = await runSync(() => staffApi.getOpenEmployeeSyncBatch())
-        setSyncBatch(batch)
-        return batch
+        const res = await runSync(() => staffApi.getOpenEmployeeSyncBatch())
+        if (!res.ok) return syncBatch // keep what we have on a failed call
+        setSyncBatch(res.value)
+        return res.value
     }
 
-    const replaceSyncRow = (row: EmployeeSyncBatch["rows"][number] | null) => {
-        if (!row) return
+    const replaceSyncRow = (res: Awaited<ReturnType<typeof runSync<EmployeeSyncBatch["rows"][number]>>>) => {
+        if (!res.ok) return
+        const row = res.value
         setSyncBatch((prev) => prev && { ...prev, rows: prev.rows.map((r) => (r.id === row.id ? row : r)) })
     }
 
@@ -353,15 +355,15 @@ export function useEmployeeState({
     const discardEmployeeSync = async () => {
         if (!syncBatch) return
         const batchId = syncBatch.id
-        const done = await runSync(async () => { await staffApi.discardEmployeeSyncBatch(batchId); return true })
-        if (done) setSyncBatch(null)
+        const res = await runSync(() => staffApi.discardEmployeeSyncBatch(batchId))
+        if (res.ok) setSyncBatch(null)
     }
 
     const applyEmployeeSync = async () => {
         if (!syncBatch) return null
         const batchId = syncBatch.id
-        const result = await runSync(() => staffApi.applyEmployeeSyncBatch(batchId))
-        if (!result) return null
+        const res = await runSync(() => staffApi.applyEmployeeSyncBatch(batchId))
+        if (!res.ok) return null
         setSyncBatch(null)
         setStaffGroupFilter("employee_list")
         setTeamFilter(ALL_TEAMS_OPTION)
@@ -370,7 +372,7 @@ export function useEmployeeState({
         setTeamFilterMenuOpen(false)
         setCurrentPage(1)
         setMssqlRefreshToken((value) => value + 1)
-        return result
+        return res.value
     }
 
     return {

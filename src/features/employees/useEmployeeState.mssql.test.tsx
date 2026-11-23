@@ -112,6 +112,22 @@ describe("staged EE List sync state", () => {
         expect(result.current.syncBatch?.rows[0].notes).toEqual(["x"])
     })
 
+    it("resumeEmployeeSync sets the open batch on success", async () => {
+        const { result } = renderHook(() => useEmployeeState(baseOptions))
+        api.getOpenEmployeeSyncBatch.mockResolvedValue(batch)
+        await act(async () => { await result.current.resumeEmployeeSync() })
+        expect(result.current.syncBatch?.id).toBe(7)
+    })
+
+    it("resumeEmployeeSync failure keeps the existing batch and sets syncError", async () => {
+        const { result } = renderHook(() => useEmployeeState(baseOptions))
+        await act(async () => { await result.current.startEmployeeSync() })
+        api.getOpenEmployeeSyncBatch.mockRejectedValue(new Error("MSSQL network connection failed"))
+        await act(async () => { await result.current.resumeEmployeeSync() })
+        expect(result.current.syncBatch?.id).toBe(7)
+        expect(result.current.syncError).toContain("Cannot connect")
+    })
+
     it("discardEmployeeSync clears the batch", async () => {
         const { result } = renderHook(() => useEmployeeState(baseOptions))
         await act(async () => { await result.current.startEmployeeSync() })
