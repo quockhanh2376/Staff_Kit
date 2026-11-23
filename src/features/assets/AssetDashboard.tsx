@@ -4,6 +4,7 @@ import {
   Boxes,
   Cpu,
   Database,
+  Download,
   FileSpreadsheet,
   Headphones,
   Keyboard,
@@ -55,6 +56,7 @@ import { AssetDashboardColumnsDrawer } from "./AssetDashboardColumnsDrawer"
 import { HistoricalAssignmentImportModal } from "./HistoricalAssignmentImportModal"
 import { AssetMetadataUpdateModal } from "./AssetMetadataUpdateModal"
 import { EditAssetDrawer } from "./EditAssetDrawer"
+import { AssetExportDialog } from "./AssetExportDialog"
 import { useAssetDashboardColumnPrefs } from "./useAssetDashboardColumnPrefs"
 import { useSerializedAssetGridState } from "./useSerializedAssetGridState"
 
@@ -284,6 +286,7 @@ export function AssetDashboard({
 }: AssetDashboardProps) {
   const [activeTab, setActiveTab] = useState<AssetDashboardTabKey>("serialized")
   const [isHistoricalImportOpen, setIsHistoricalImportOpen] = useState(false)
+  const [isExportOpen, setIsExportOpen] = useState(false)
   const [editingAssetId, setEditingAssetId] = useState<number | null>(null)
   const editingAssetRow =
     editingAssetId == null
@@ -790,6 +793,16 @@ export function AssetDashboard({
                 <PlusCircle size={16} />
                 Add
               </button>
+              {auth.isAdminAccount && (
+                <button
+                  className={dashboardShellSecondaryButtonClass}
+                  onClick={() => setIsExportOpen(true)}
+                  type="button"
+                >
+                  <Download size={16} />
+                  Export
+                </button>
+              )}
               {tabControls}
             </div>
           </div>
@@ -976,6 +989,13 @@ export function AssetDashboard({
           void assetDashboard.refreshDashboard()
           triggerReload?.()
         }}
+      />
+      <AssetExportDialog
+        open={isExportOpen}
+        onClose={() => setIsExportOpen(false)}
+        rows={assetDashboard.serializedRows}
+        filteredRows={filteredSerializedRows}
+        categoryDetails={assetDashboard.categoryDetails}
       />
       <AssetMetadataUpdateModal
         open={assetImport.isMetadataUpdateOpen}

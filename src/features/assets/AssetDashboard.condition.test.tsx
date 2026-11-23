@@ -1,7 +1,9 @@
-import { fireEvent, render, screen, within } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import "@testing-library/jest-dom/vitest"
 import { AssetDashboard } from "./AssetDashboard"
+import * as tableExport from "../../lib/tableExport"
+import { staffApi } from "../../services/staff-api"
 import type { AssetDashboardState } from "./useAssetDashboardState"
 import type { AssetImportState } from "./useAssetDirectImportState"
 
@@ -153,5 +155,22 @@ describe("AssetDashboard condition", () => {
     expect(value("new")).toBe("1")
     expect(value("spare")).toBe("2")
     expect(value("broken")).toBe("1")
+  })
+
+  it("export button hidden for plain user; dialog Export calls saveExport with csv for CSV format", async () => {
+    renderDashboard(false)
+    expect(screen.queryByRole("button", { name: "Export" })).toBeNull()
+    cleanup()
+
+    vi.spyOn(staffApi, "listTeams").mockResolvedValue([])
+    const save = vi.spyOn(tableExport, "saveExport").mockResolvedValue("C:/out.csv")
+    renderDashboard(true)
+    fireEvent.click(screen.getByRole("button", { name: "Export" }))
+    fireEvent.click(await screen.findByLabelText("CSV"))
+    fireEvent.click(screen.getByRole("button", { name: "Export file" }))
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+    expect(save.mock.calls[0][2]).toBe("csv")
+    expect(save.mock.calls[0][1]).toMatch(/^StaffKit_Assets_All_\d{4}-\d{2}-\d{2}\.csv$/)
+    expect(await screen.findByText("Saved to C:/out.csv")).toBeInTheDocument()
   })
 })
