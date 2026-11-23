@@ -21,15 +21,19 @@ export function AssetExportDialog({
   onClose,
   rows,
   filteredRows,
+  currentFilterAvailable,
   categoryDetails,
 }: {
   open: boolean
   onClose: () => void
   rows: AssetDashboardSerializedRecord[]
   filteredRows: AssetDashboardSerializedRecord[]
+  /** The table filter only exists on the Serialized tab. */
+  currentFilterAvailable: boolean
   categoryDetails: AssetCategoryDetailRecord[]
 }) {
-  const [scope, setScope] = useState<AssetExportScope>("all")
+  const [pickedScope, setScope] = useState<AssetExportScope>("all")
+  const scope = pickedScope === "currentFilter" && !currentFilterAvailable ? "all" : pickedScope
   const [categoryCode, setCategoryCode] = useState("")
   const [teamName, setTeamName] = useState("")
   const [format, setFormat] = useState<"xlsx" | "csv">("xlsx")
@@ -69,8 +73,8 @@ export function AssetExportDialog({
           ? new Blob([buildCsv(sheets[1])], { type: "text/csv;charset=utf-8" })
           : await buildXlsxBlob(sheets)
       const path = await saveExport(blob, assetExportFileName(scope, new Date(), format), format)
-      if (path === null) onClose()
-      else setSavedPath(path)
+      // null: the save dialog was cancelled; stay open so IT can try again.
+      if (path !== null) setSavedPath(path)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -92,6 +96,7 @@ export function AssetExportDialog({
                   type="radio"
                   name="asset-export-scope"
                   checked={scope === item.value}
+                  disabled={item.value === "currentFilter" && !currentFilterAvailable}
                   onChange={() => setScope(item.value)}
                 />
                 {item.label}

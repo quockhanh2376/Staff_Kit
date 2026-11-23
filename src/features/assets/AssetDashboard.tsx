@@ -23,7 +23,7 @@ import {
   X,
 } from "lucide-react"
 import type { AssetCategoryDetailRecord, AssetCondition } from "../../types/staff"
-import { ASSET_CONDITIONS, CONDITION_LABELS } from "./assetCondition"
+import { ASSET_CONDITIONS, CONDITION_LABELS, isInStock } from "./assetCondition"
 import type { AuthState } from "../auth/useAuthState"
 import type { AssetImportState } from "./useAssetDirectImportState"
 import type { AssetDashboardState } from "./useAssetDashboardState"
@@ -400,20 +400,21 @@ export function AssetDashboard({
     }))
   }, [assetDashboard.serializedRows])
 
-  // Over the full loaded list, not the current page. Condition counts are in-stock only.
+  // Over the full loaded list, not the current page. New/Spare are in stock only; Broken is every broken machine.
   const conditionCards = useMemo(() => {
     const counts = { total: 0, assigned: 0, new: 0, spare: 0, broken: 0 }
     for (const row of assetDashboard.serializedRows) {
       counts.total += 1
       if (row.status === "assigned") counts.assigned += 1
-      else if (row.status === "in_stock") counts[row.condition] += 1
+      if (row.condition === "broken") counts.broken += 1
+      else if (isInStock(row)) counts[row.condition] += 1
     }
     return [
       { key: "total", label: "Total", value: counts.total, accentTextClass: "text-[var(--primary)]" },
       { key: "assigned", label: "Assigned", value: counts.assigned, accentTextClass: "text-sky-500" },
-      { key: "new", label: CONDITION_LABELS.new, value: counts.new, accentTextClass: "text-emerald-500" },
-      { key: "spare", label: CONDITION_LABELS.spare, value: counts.spare, accentTextClass: "text-amber-500" },
-      { key: "broken", label: CONDITION_LABELS.broken, value: counts.broken, accentTextClass: "text-rose-500" },
+      { key: "new", label: "New (in stock)", value: counts.new, accentTextClass: "text-emerald-500" },
+      { key: "spare", label: "Spare (in stock)", value: counts.spare, accentTextClass: "text-amber-500" },
+      { key: "broken", label: "Broken (all)", value: counts.broken, accentTextClass: "text-rose-500" },
     ]
   }, [assetDashboard.serializedRows])
 
@@ -869,7 +870,7 @@ export function AssetDashboard({
                 {conditionCards.map((card, index) => (
                   <div
                     key={card.key}
-                    className={`group flex w-[104px] shrink-0 flex-col border-[var(--border)]/70 ${index === 0 ? "border-l-2" : "border-l"}`}
+                    className={`group flex min-w-[104px] shrink-0 flex-col border-[var(--border)]/70 ${index === 0 ? "border-l-2" : "border-l"}`}
                   >
                     <div className="border-b border-[var(--border)]/30 px-3 py-2.5">
                       <span className={`truncate text-[12.5px] font-bold uppercase tracking-tight ${card.accentTextClass}`}>
@@ -995,6 +996,7 @@ export function AssetDashboard({
         onClose={() => setIsExportOpen(false)}
         rows={assetDashboard.serializedRows}
         filteredRows={filteredSerializedRows}
+        currentFilterAvailable={activeTab === "serialized"}
         categoryDetails={assetDashboard.categoryDetails}
       />
       <AssetMetadataUpdateModal

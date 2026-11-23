@@ -1,7 +1,8 @@
 import { staffApi } from "../services/staff-api"
 
 export type ExportCell = string | number | null
-export type ExportSheet = { name: string; headers: string[]; rows: ExportCell[][] }
+/** boldRows: indexes into rows to set bold in Excel (sub-headers); ignored by CSV. */
+export type ExportSheet = { name: string; headers: string[]; rows: ExportCell[][]; boldRows?: number[] }
 
 // Phone numbers and plain numbers (+84 912..., -5) are not formulas.
 const PLAIN_NUMBER = /^[+-]?[0-9][0-9 ().-]*$/
@@ -18,17 +19,19 @@ export function buildCsv(sheet: ExportSheet): string {
     return `\uFEFF${lines.join("\r\n")}\r\n`
 }
 
+export function xlsxSheetData(sheet: ExportSheet) {
+    const bold = { fontWeight: "bold" as const }
+    return [
+        sheet.headers.map((value) => ({ value, ...bold })),
+        ...sheet.rows.map((row, index) =>
+            row.map((value) => (value === null ? null : { value, ...(sheet.boldRows?.includes(index) ? bold : {}) })),
+        ),
+    ]
+}
+
 export async function buildXlsxBlob(sheets: ExportSheet[]): Promise<Blob> {
     const { default: writeExcelFile } = await import("write-excel-file/universal")
-    return writeExcelFile(
-        sheets.map((sheet) => ({
-            sheet: sheet.name,
-            data: [
-                sheet.headers.map((value) => ({ value, fontWeight: "bold" as const })),
-                ...sheet.rows.map((row) => row.map((value) => (value === null ? null : { value }))),
-            ],
-        })),
-    ).toBlob()
+    return writeExcelFile(sheets.map((sheet) => ({ sheet: sheet.name, data: xlsxSheetData(sheet) }))).toBlob()
 }
 
 export async function saveExport(blob: Blob, filename: string, ext: "csv" | "xlsx"): Promise<string | null> {

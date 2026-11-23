@@ -14,7 +14,7 @@ const { save, writeExportFile } = vi.hoisted(() => ({ save: vi.fn(), writeExport
 vi.mock("@tauri-apps/plugin-dialog", () => ({ save }))
 vi.mock("../services/staff-api", () => ({ staffApi: { writeExportFile } }))
 
-import { buildCsv, buildXlsxBlob, escapeCsvCell, saveExport } from "./tableExport"
+import { buildCsv, buildXlsxBlob, escapeCsvCell, saveExport, xlsxSheetData } from "./tableExport"
 
 beforeEach(() => {
     save.mockReset()
@@ -36,9 +36,18 @@ describe("tableExport", () => {
     })
 
     it("buildXlsxBlob creates a ZIP with typed cells", async () => {
-        const blob = await buildXlsxBlob([{ name: "S", headers: ["A"], rows: [[3]] }])
+        const blob = await buildXlsxBlob([{ name: "S", headers: ["A"], rows: [[3], [], ["x"]], boldRows: [2] }])
         const bytes = await toBytes(blob)
         expect(Array.from(bytes.slice(0, 4))).toEqual([0x50, 0x4b, 0x03, 0x04])
+    })
+
+    it("xlsxSheetData bolds the header and boldRows", () => {
+        const data = xlsxSheetData({ name: "S", headers: ["A"], rows: [["x"], ["y"]], boldRows: [1] })
+        expect(data).toEqual([
+            [{ value: "A", fontWeight: "bold" }],
+            [{ value: "x" }],
+            [{ value: "y", fontWeight: "bold" }],
+        ])
     })
 
     it("saveExport returns null when dialog cancelled", async () => {

@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import "@testing-library/jest-dom/vitest"
 import { AssetDashboard } from "./AssetDashboard"
+import { getAssetDashboardTabLabel } from "./assetDashboardCopy"
 import * as tableExport from "../../lib/tableExport"
 import { staffApi } from "../../services/staff-api"
 import type { AssetDashboardState } from "./useAssetDashboardState"
@@ -43,6 +44,8 @@ const ROWS = [
   createRow(3, "spare"),
   createRow(4, "broken"),
   createRow(5, "spare", "assigned"),
+  createRow(6, "broken", "assigned"),
+  createRow(7, "spare", "retired"),
 ]
 
 describe("AssetDashboard condition", () => {
@@ -147,14 +150,43 @@ describe("AssetDashboard condition", () => {
     expect(screen.queryByText("Phone 5")).toBeNull()
   })
 
-  it("cards count in-stock New/Spare/Broken and assigned", () => {
+  it("cards count in-stock New/Spare, all Broken, and assigned", () => {
     renderDashboard(true)
     const value = (key: string) => screen.getByTestId(`condition-card-${key}`).textContent
-    expect(value("total")).toBe("5")
-    expect(value("assigned")).toBe("1")
+    expect(value("total")).toBe("7")
+    expect(value("assigned")).toBe("2")
     expect(value("new")).toBe("1")
     expect(value("spare")).toBe("2")
-    expect(value("broken")).toBe("1")
+    expect(value("broken")).toBe("2")
+    expect(screen.getByText("New (in stock)")).toBeInTheDocument()
+    expect(screen.getByText("Spare (in stock)")).toBeInTheDocument()
+    expect(screen.getByText("Broken (all)")).toBeInTheDocument()
+  })
+
+  it("Current table filter scope is only enabled on the Serialized tab", async () => {
+    vi.spyOn(staffApi, "listTeams").mockResolvedValue([])
+    renderDashboard(true)
+    fireEvent.click(screen.getByRole("button", { name: "Export" }))
+    expect(await screen.findByLabelText("Current table filter")).toBeEnabled()
+    expect(screen.getByLabelText("Broken (all)")).toBeInTheDocument()
+    cleanup()
+
+    renderDashboard(true)
+    fireEvent.click(screen.getByRole("button", { name: getAssetDashboardTabLabel("quantity") }))
+    fireEvent.click(screen.getByRole("button", { name: "Export" }))
+    expect(await screen.findByLabelText("Current table filter")).toBeDisabled()
+  })
+
+  it("cancelling the save dialog keeps the export dialog open with no message", async () => {
+    vi.spyOn(staffApi, "listTeams").mockResolvedValue([])
+    const save = vi.spyOn(tableExport, "saveExport").mockResolvedValue(null)
+    renderDashboard(true)
+    fireEvent.click(screen.getByRole("button", { name: "Export" }))
+    fireEvent.click(await screen.findByRole("button", { name: "Export file" }))
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(screen.getByRole("button", { name: "Export file" })).toBeEnabled())
+    expect(screen.queryByText(/Saved to/)).toBeNull()
+    expect(screen.queryByRole("alert")).toBeNull()
   })
 
   it("export button hidden for plain user; dialog Export calls saveExport with csv for CSV format", async () => {

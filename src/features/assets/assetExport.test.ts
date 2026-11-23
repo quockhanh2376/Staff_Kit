@@ -45,6 +45,7 @@ const ROWS = [
   row(4, { condition: "broken", status: "assigned", holderEmployeeId: "E1", holderFullName: "A", holderTeamName: "Sales" }),
   row(5, { status: "assigned", holderEmployeeId: "E2", holderFullName: "B", holderTeamName: "Sales North" }),
   row(6, { categoryCode: "LAPTOP", categoryName: "Laptop", status: "assigned", holderEmployeeId: "E3", holderFullName: "C", holderTeamName: "Ops" }),
+  row(7, { condition: "spare", status: "retired" }),
 ]
 const opts = (over = {}) => ({ scope: "all" as const, categoryCode: null, teamName: null, teams: TEAMS, ...over })
 const ids = (rows: AssetDashboardSerializedRecord[]) => rows.map((r) => r.assetId)
@@ -54,8 +55,14 @@ describe("assetExport", () => {
     expect(ids(selectAssetExportRows(ROWS, [], opts({ scope: "assignable" })))).toEqual([1, 2])
   })
 
-  it("broken scope excludes assigned broken", () => {
-    expect(ids(selectAssetExportRows(ROWS, [], opts({ scope: "broken" })))).toEqual([3])
+  it("broken scope includes assigned broken", () => {
+    expect(ids(selectAssetExportRows(ROWS, [], opts({ scope: "broken" })))).toEqual([3, 4])
+  })
+
+  it("only in_stock rows count as in stock; retired is never assignable", () => {
+    expect(ids(selectAssetExportRows(ROWS, [], opts({ scope: "spare" })))).toEqual([2])
+    const [, assets] = buildAssetExportSheets([ROWS[6]], "all")
+    expect(assets.rows[0][assets.headers.indexOf("Loan status")]).toBe("retired")
   })
 
   it("assigned scope puts holder columns first", () => {
@@ -80,21 +87,31 @@ describe("assetExport", () => {
     expect(rows).toEqual([])
     const [summary, assets] = buildAssetExportSheets(rows, "spare")
     expect(assets.rows).toEqual([])
-    expect(summary.rows.slice(0, 5).map((r) => r[1])).toEqual([0, 0, 0, 0, 0])
+    expect(summary.rows.slice(0, 6).map((r) => r[1])).toEqual([0, 0, 0, 0, 0, 0])
   })
 
   it("summary counts are numbers and per-category totals add up", () => {
     const [summary] = buildAssetExportSheets(ROWS, "all")
-    const top = summary.rows.slice(0, 5)
-    expect(top.map((r) => r[0])).toEqual(["Total", "Assigned", "In stock — New", "In stock — Spare", "In stock — Broken"])
-    expect(top.map((r) => r[1])).toEqual([6, 3, 1, 1, 1])
+    const top = summary.rows.slice(0, 6)
+    expect(top.map((r) => r[0])).toEqual([
+      "Total", "Assigned", "In stock — New", "In stock — Spare", "In stock — Broken", "Broken — with staff",
+    ])
+    expect(top.map((r) => r[1])).toEqual([7, 3, 1, 1, 1, 1])
     const header = summary.rows.find((r) => r[0] === "Category")
     expect(header).toEqual(["Category", "Total", "Assigned", "New", "Spare", "Broken"])
     const cats = summary.rows.slice(summary.rows.indexOf(header!) + 1)
     expect(cats).toEqual([
-      ["H Phone", 5, 2, 1, 1, 1],
+      ["H Phone", 6, 2, 1, 1, 1],
       ["Laptop", 1, 1, 0, 0, 0],
     ])
+  })
+
+  it("summary sheet: bold measure header, blank row, bold category header", () => {
+    const [summary] = buildAssetExportSheets(ROWS, "all")
+    expect(summary.headers).toEqual(["Measure", "Count"])
+    expect(summary.rows[6]).toEqual([])
+    expect(summary.rows[7][0]).toBe("Category")
+    expect(summary.boldRows).toEqual([7])
   })
 
   it("file name uses scope label and date", () => {
