@@ -674,6 +674,14 @@ fn validate_submission_tx(
                 asset_record.asset_code
             ));
         }
+        if request_type == REQUEST_TYPE_BORROW
+            && asset_record.condition == asset::ASSET_CONDITION_BROKEN
+        {
+            return Err(format!(
+                "Cannot assign broken asset {}",
+                asset_record.asset_code
+            ));
+        }
         if matches!(
             asset_record.status.as_str(),
             ASSET_STATUS_RETIRED | ASSET_STATUS_DISPOSED | ASSET_STATUS_LOST
@@ -1297,6 +1305,14 @@ pub(crate) fn approve_borrow_request_conn(
         } else if asset_record.status != ASSET_STATUS_IN_STOCK {
             return Err(format!(
                 "asset '{}' is not in_stock",
+                asset_record.asset_code
+            ));
+        }
+        if request_type == REQUEST_TYPE_BORROW
+            && asset_record.condition == asset::ASSET_CONDITION_BROKEN
+        {
+            return Err(format!(
+                "Cannot assign broken asset {}",
                 asset_record.asset_code
             ));
         }
@@ -3747,5 +3763,49 @@ mod tests {
         seed_asset(&conn, "ASSET-001", "Laptop", "in_stock");
         approve_flow(&mut conn, "ASSET-001", None);
         conn
+    }
+
+    fn submit_input(code: &str, request_type: Option<&str>) -> BorrowRequestSubmitInput {
+        BorrowRequestSubmitInput {
+            submitted_employee_id: "EE1001".to_string(),
+            submitted_full_name: "Nguyen Van A".to_string(),
+            asset_codes: vec![code.to_string()],
+            request_type: request_type.map(str::to_string),
+            manual_employee_email: None,
+            manual_employee_team: None,
+        }
+    }
+
+    #[test]
+    fn lan_borrow_submit_rejects_broken_asset() {
+        let mut conn = open_test_connection();
+        seed_employee(&conn, "EE1001", "Nguyen Van A");
+        let id = seed_asset(&conn, "ASSET-001", "Laptop", "in_stock");
+        conn.execute("UPDATE assets SET condition = 'broken' WHERE id = ?", params![id]).unwrap();
+        let err = submit_borrow_request_conn(&mut conn, submit_input("ASSET-001", None))
+            .expect_err("broken asset must be rejected");
+        assert_eq!(err, "Cannot assign broken asset ASSET-001");
+    }
+
+    #[test]
+    fn approve_borrow_rejects_broken_asset() {
+        let mut conn = open_test_connection();
+        seed_employee(&conn, "EE1001", "Nguyen Van A");
+        let id = seed_asset(&conn, "ASSET-001", "Laptop", "in_stock");
+        let request = submit_borrow_request_conn(&mut conn, submit_input("ASSET-001", None)).unwrap();
+        conn.execute("UPDATE assets SET condition = 'broken' WHERE id = ?", params![id]).unwrap();
+        let err = approve_borrow_request_conn(&mut conn, request.id, 1)
+            .expect_err("broken asset must be rejected");
+        assert_eq!(err, "Cannot assign broken asset ASSET-001");
+        assert_eq!(asset_status(&conn, id), "in_stock");
+    }
+
+    #[test]
+    fn return_of_broken_assigned_asset_is_allowed() {
+        let mut conn = open_test_conn_with_assigned_asset();
+        conn.execute("UPDATE assets SET condition = 'broken' WHERE id = 1", []).unwrap();
+        let request = submit_borrow_request_conn(&mut conn, submit_input("ASSET-001", Some("return"))).unwrap();
+        approve_borrow_request_conn(&mut conn, request.id, 1).expect("return allowed");
+        assert_eq!(asset_status(&conn, 1), "in_stock");
     }
 }

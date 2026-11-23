@@ -45,7 +45,6 @@ pub struct AssetDetailsUpdateInput {
 pub(crate) const ASSET_CONDITION_NEW: &str = "new";
 #[allow(dead_code)]
 pub(crate) const ASSET_CONDITION_SPARE: &str = "spare";
-#[allow(dead_code)]
 pub(crate) const ASSET_CONDITION_BROKEN: &str = "broken";
 
 #[derive(Debug, Clone, Serialize)]
@@ -229,6 +228,7 @@ pub(crate) struct AssetLookupRecord {
     pub id: i64,
     pub asset_code: String,
     pub status: String,
+    pub condition: String,
 }
 
 pub(crate) fn load_asset_by_code_tx(
@@ -236,13 +236,14 @@ pub(crate) fn load_asset_by_code_tx(
     asset_code: &str,
 ) -> Result<Option<AssetLookupRecord>, String> {
     tx.query_row(
-        "SELECT id, asset_code, status FROM assets WHERE asset_code = ? COLLATE NOCASE",
+        "SELECT id, asset_code, status, condition FROM assets WHERE asset_code = ? COLLATE NOCASE",
         params![asset_code],
         |row| {
             Ok(AssetLookupRecord {
                 id: row.get(0)?,
                 asset_code: row.get(1)?,
                 status: row.get(2)?,
+                condition: row.get(3)?,
             })
         },
     )
@@ -255,13 +256,14 @@ pub(crate) fn load_asset_by_id_tx(
     asset_id: i64,
 ) -> Result<Option<AssetLookupRecord>, String> {
     tx.query_row(
-        "SELECT id, asset_code, status FROM assets WHERE id = ?",
+        "SELECT id, asset_code, status, condition FROM assets WHERE id = ?",
         params![asset_id],
         |row| {
             Ok(AssetLookupRecord {
                 id: row.get(0)?,
                 asset_code: row.get(1)?,
                 status: row.get(2)?,
+                condition: row.get(3)?,
             })
         },
     )
@@ -977,6 +979,7 @@ pub(crate) fn search_in_stock_assets_conn(
             FROM assets a
             LEFT JOIN asset_categories c ON c.id = a.category_id
             WHERE a.status = 'in_stock'
+              AND a.condition <> 'broken'
               AND (
                 ? IS NULL
                 OR UPPER(a.asset_code) LIKE ?
@@ -3770,6 +3773,19 @@ mod tests {
         assert_eq!(row.condition, "spare");
         assert_eq!(row.holder_team_name.as_deref(), Some("IT"));
         assert_eq!(assets[0].condition, "spare");
+    }
+
+    #[test]
+    fn lan_search_hides_broken_assets() {
+        let conn = open_test_connection();
+        conn.execute_batch(
+            "INSERT INTO assets (asset_code, asset_type, display_name, status, condition) VALUES ('VNLAP701', 'Laptop', 'Good', 'in_stock', 'spare');
+             INSERT INTO assets (asset_code, asset_type, display_name, status, condition) VALUES ('VNLAP702', 'Laptop', 'Bad', 'in_stock', 'broken');",
+        )
+        .unwrap();
+        let found = search_in_stock_assets_conn(&conn, Some("VNLAP70"), 12).unwrap();
+        let codes: Vec<_> = found.iter().map(|r| r.asset_code.as_str()).collect();
+        assert_eq!(codes, vec!["VNLAP701"]);
     }
 }
 
