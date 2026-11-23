@@ -148,6 +148,10 @@ pub(crate) fn stage_employee_sync_batch_conn(
     replace: bool,
     actor_ref: Option<&str>,
 ) -> Result<EmployeeSyncBatch, String> {
+    // An empty HR result would stage every EE List employee for offboarding.
+    if source.is_empty() {
+        return Err("Cannot load: the HR source returned no employees".to_string());
+    }
     let snapshot = read_local_snapshot_conn(conn)?;
     let (ee_list, others): (Vec<&LocalSnapshot>, Vec<&LocalSnapshot>) = snapshot
         .iter()
@@ -545,12 +549,32 @@ mod tests {
             .expect("seed loan");
         }
 
-        let batch = stage_employee_sync_batch_conn(&mut conn, &[], false, None).expect("stage");
+        let batch =
+            stage_employee_sync_batch_conn(&mut conn, &[hr("EE-OTHER", "Other")], false, None)
+                .expect("stage");
 
         let missing = row(&batch, "EE-HOLDER");
         assert_eq!(missing.kind, "missing");
         assert_eq!(missing.assets_held, 2);
         assert_eq!(missing.local_employee_id, Some(employee));
+    }
+
+    #[test]
+    fn stage_refuses_empty_hr_source_when_local_list_exists() {
+        let mut conn = open_test_connection();
+        // An empty local EE List is refused too: an empty HR result is never a usable list.
+        assert_eq!(
+            stage_employee_sync_batch_conn(&mut conn, &[], false, None),
+            Err("Cannot load: the HR source returned no employees".to_string())
+        );
+
+        seed(&conn, "EE-1", "One", "employee_list", false);
+        assert_eq!(
+            stage_employee_sync_batch_conn(&mut conn, &[], true, None),
+            Err("Cannot load: the HR source returned no employees".to_string())
+        );
+        assert_eq!(table_count(&conn, "employee_sync_batches"), 0);
+        assert_eq!(table_count(&conn, "employee_sync_rows"), 0);
     }
 
     #[test]
