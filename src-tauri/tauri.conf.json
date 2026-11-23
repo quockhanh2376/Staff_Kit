@@ -41,6 +41,9 @@
       "wix": {
         "version": "2.2.1.0"
       },
+      "nsis": {
+        "installerHooks": "./installer-hooks.nsh"
+      },
       "webviewInstallMode": {
         "type": "skip"
       }
