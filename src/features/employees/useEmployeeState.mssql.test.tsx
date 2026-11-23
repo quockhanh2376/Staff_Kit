@@ -148,6 +148,19 @@ describe("staged EE List sync state", () => {
         await waitFor(() => expect(api.searchEmployees).toHaveBeenCalledTimes(2))
     })
 
+    it("a stale apply error keeps its message and reloads the batch with stale rows", async () => {
+        const staleMessage = "Cannot apply: 1 rows changed in the app — review them"
+        const { result } = renderHook(() => useEmployeeState(baseOptions))
+        await act(async () => { await result.current.startEmployeeSync() })
+        api.applyEmployeeSyncBatch.mockRejectedValue(new Error(staleMessage))
+        api.getOpenEmployeeSyncBatch.mockResolvedValue({ ...batch, rows: [{ ...row(1), state: "stale" }, row(2)] })
+        let applied: unknown = "unset"
+        await act(async () => { applied = await result.current.applyEmployeeSync() })
+        expect(applied).toBeNull()
+        expect(result.current.syncError).toBe(staleMessage)
+        expect(result.current.syncBatch?.rows[0].state).toBe("stale")
+    })
+
     it("shows a safe error and stages nothing when the source query fails", async () => {
         const rawError = "MSSQL network connection failed: password=secret; host=sql.internal"
         api.stageEmployeeListSync.mockRejectedValue(new Error(rawError))

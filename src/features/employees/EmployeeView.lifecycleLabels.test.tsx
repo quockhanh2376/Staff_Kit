@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 import "@testing-library/jest-dom/vitest"
 import { EmployeeView } from "./EmployeeView"
@@ -11,10 +11,6 @@ vi.mock("../../services/staff-api", () => ({
         moveEmployeesGroup: vi.fn(),
         getEmployeesByGroup: vi.fn().mockResolvedValue([]),
     },
-}))
-
-vi.mock("./MissingEmployeesModal", () => ({
-    MissingEmployeesModal: () => null,
 }))
 
 describe("EmployeeView — HR Lifecycle UI Label Cleanup", () => {
@@ -167,5 +163,30 @@ describe("EmployeeView — HR Lifecycle UI Label Cleanup", () => {
         expect(option.value).toBe("employee_list")
         // "Rehire to Employee List" should not exist
         expect(screen.queryByRole("option", { name: "Rehire to Employee List" })).not.toBeInTheDocument()
+    })
+
+    it("update with an open batch asks continue or load fresh", async () => {
+        const props = defaultProps("employee_list")
+        const emp = props.employeeState as unknown as Record<string, ReturnType<typeof vi.fn>>
+        emp.startEmployeeSync = vi.fn().mockResolvedValue("open-exists")
+        emp.resumeEmployeeSync = vi.fn().mockResolvedValue(null)
+        emp.replaceEmployeeSync = vi.fn().mockResolvedValue(true)
+        render(<EmployeeView {...props} />)
+        const prompt = "An EE List sync is already open. Continue it, or discard it and load a fresh list?"
+
+        fireEvent.click(screen.getByRole("button", { name: "update" }))
+        expect(await screen.findByText(prompt)).toBeInTheDocument()
+        fireEvent.click(screen.getByRole("button", { name: "Load fresh" }))
+        await waitFor(() => expect(emp.replaceEmployeeSync).toHaveBeenCalledTimes(1))
+        expect(screen.queryByText(prompt)).not.toBeInTheDocument()
+
+        fireEvent.click(screen.getByRole("button", { name: "update" }))
+        fireEvent.click(await screen.findByRole("button", { name: "Continue" }))
+        await waitFor(() => expect(emp.resumeEmployeeSync).toHaveBeenCalledTimes(1))
+
+        fireEvent.click(screen.getByRole("button", { name: "update" }))
+        fireEvent.click(await screen.findByRole("button", { name: "Cancel" }))
+        expect(screen.queryByText(prompt)).not.toBeInTheDocument()
+        expect(screen.queryByLabelText("EE List sync preview")).not.toBeInTheDocument()
     })
 })

@@ -363,7 +363,15 @@ export function useEmployeeState({
         if (!syncBatch) return null
         const batchId = syncBatch.id
         const res = await runSync(() => staffApi.applyEmployeeSyncBatch(batchId))
-        if (!res.ok) return null
+        if (!res.ok) {
+            // Reload outside runSync so the apply error stays shown while rows come back marked stale.
+            try {
+                setSyncBatch(await staffApi.getOpenEmployeeSyncBatch())
+            } catch {
+                // keep the batch we have
+            }
+            return null
+        }
         setSyncBatch(null)
         setStaffGroupFilter("employee_list")
         setTeamFilter(ALL_TEAMS_OPTION)
@@ -429,7 +437,9 @@ export function getMssqlEmployeeUpdateErrorMessage(error: unknown): string {
     const normalized = raw.toLowerCase()
 
     if (
-        normalized.startsWith("read-only permission diagnostic:") &&
+        // Local staging errors (stale rows, nothing to write, bad action or name) carry no MSSQL secrets.
+        (normalized.startsWith("read-only permission diagnostic:") ||
+            /^(cannot apply:|invalid action|invalid full name)/.test(normalized)) &&
         raw.length <= 350 &&
         !/[\r\n]/.test(raw) &&
         !/(?:password|token|secret)\s*=/.test(normalized)

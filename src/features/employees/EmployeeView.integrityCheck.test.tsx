@@ -14,10 +14,6 @@ vi.mock("../../services/staff-api", () => ({
     },
 }))
 
-vi.mock("./MissingEmployeesModal", () => ({
-    MissingEmployeesModal: () => null,
-}))
-
 describe("EmployeeView — Asset & Integrity Check Integration", () => {
     const mockColumns: UiColumnDefinition[] = [
         { key: "fullName", label: "Full Name", source: "core" },

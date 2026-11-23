@@ -27,6 +27,7 @@ import { getUserErrorMessage } from "../../lib/errorHandling"
 import { getTeamPillClasses } from "../teams/teamColors"
 import { AssignedAssetsModal } from "./AssignedAssetsModal"
 import { AssetIntegrityModal } from "./AssetIntegrityModal"
+import { EmployeeSyncDrawer } from "./EmployeeSyncDrawer"
 import type { AssetIntegrityCheckResult, EmployeeRecord } from "../../types/staff"
 
 // ── Diacritic-insensitive highlight helper ─────────────────────────────────────
@@ -109,6 +110,8 @@ export function EmployeeView({
     const [isExporting, setIsExporting] = useState(false)
     const [isUnselectMenuOpen, setIsUnselectMenuOpen] = useState(false)
     const [isExportMenuOpen, setIsExportMenuOpen] = useState(false)
+    const [isSyncDrawerOpen, setIsSyncDrawerOpen] = useState(false)
+    const [isSyncOpenPrompt, setIsSyncOpenPrompt] = useState(false)
     const unselectMenuRef = useRef<HTMLDetailsElement | null>(null)
     const exportMenuRef = useRef<HTMLDetailsElement | null>(null)
     const unselectTimerRef = useRef<number | null>(null)
@@ -383,7 +386,12 @@ export function EmployeeView({
                     <div className="relative inline-flex items-center">
                         <button
                             className="inline-flex h-8 items-center rounded-[8px] border border-emerald-500/70 bg-emerald-500/10 px-3 text-sm font-bold text-emerald-300 shadow-[0_0_0_1px_rgba(16,185,129,0.2)] transition hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-60"
-                            onClick={() => void emp.startEmployeeSync()}
+                            onClick={() =>
+                                void emp.startEmployeeSync().then((outcome) => {
+                                    if (outcome === "staged") setIsSyncDrawerOpen(true)
+                                    if (outcome === "open-exists") setIsSyncOpenPrompt(true)
+                                })
+                            }
                             type="button"
                             disabled={emp.isSyncBusy}
                             title="Update Employee list from MSSQL"
@@ -1017,6 +1025,57 @@ export function EmployeeView({
                 onClose={() => setIsIntegrityModalOpen(false)}
                 onClearHighlights={duplicateEmpIds.size > 0 ? clearDuplicates : undefined}
             />
+
+            <EmployeeSyncDrawer
+                open={isSyncDrawerOpen}
+                onClose={() => setIsSyncDrawerOpen(false)}
+                employeeState={emp}
+                setGlobalNotice={setGlobalNotice}
+            />
+
+            {isSyncOpenPrompt && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+                    <div
+                        className="w-full max-w-md space-y-4 rounded-[16px] border border-[var(--border)] bg-[var(--surface)] p-6 shadow-2xl"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="ee-sync-open-title"
+                    >
+                        <p id="ee-sync-open-title" className="text-sm text-[var(--text-primary)]">
+                            An EE List sync is already open. Continue it, or discard it and load a fresh list?
+                        </p>
+                        <div className="flex justify-end gap-2">
+                            <button
+                                type="button"
+                                className="rounded-[8px] px-3 py-2 text-sm font-semibold text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"
+                                onClick={() => setIsSyncOpenPrompt(false)}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                className="rounded-[8px] border border-[var(--border)] px-3 py-2 text-sm font-semibold text-[var(--text-primary)] hover:bg-[var(--surface-hover)]"
+                                onClick={() => {
+                                    setIsSyncOpenPrompt(false)
+                                    void emp.replaceEmployeeSync().then((ok) => ok && setIsSyncDrawerOpen(true))
+                                }}
+                            >
+                                Load fresh
+                            </button>
+                            <button
+                                type="button"
+                                className="rounded-[8px] border border-[var(--primary)] bg-[var(--primary)]/15 px-3 py-2 text-sm font-semibold text-[var(--primary)] hover:bg-[var(--primary)]/25"
+                                onClick={() => {
+                                    setIsSyncOpenPrompt(false)
+                                    void emp.resumeEmployeeSync().then((batch) => batch && setIsSyncDrawerOpen(true))
+                                }}
+                            >
+                                Continue
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </section>
     )
 }
