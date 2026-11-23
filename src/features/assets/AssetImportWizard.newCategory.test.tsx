@@ -35,6 +35,8 @@ describe("AssetImportWizard — Auto-Create Category Preview", () => {
                 status: "valid",
                 holderLabel: null,
                 validationErrors: [],
+                condition: "new",
+                reviewNotes: [],
             },
         ],
         errors: [],

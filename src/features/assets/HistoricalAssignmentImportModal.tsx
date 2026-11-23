@@ -522,7 +522,10 @@ export function HistoricalAssignmentImportModal({
                                         const isEditing = editingKey === k
 
                                         return (
-                                            <tr key={idx} className="hover:bg-[var(--surface-hover)]">
+                                            <tr
+                                                key={idx}
+                                                className={`hover:bg-[var(--surface-hover)] ${item.reviewNote ? "search-highlight-cell" : ""}`}
+                                            >
                                                 <td className="px-3 py-2 text-[var(--text-secondary)]">
                                                     {item.rowNumber > 0 ? item.rowNumber : "DB"}
                                                 </td>
@@ -669,6 +672,11 @@ export function HistoricalAssignmentImportModal({
                                                     title={item.statusReason ?? ""}
                                                 >
                                                     {item.statusReason ?? "—"}
+                                                    {item.reviewNote && (
+                                                        <div className="mt-1 whitespace-normal font-semibold text-[var(--text-primary)]">
+                                                            {item.reviewNote}
+                                                        </div>
+                                                    )}
                                                 </td>
                                             </tr>
                                         )

@@ -184,4 +184,22 @@ describe("HistoricalAssignmentImportModal", () => {
         expect(screen.getByText("Select Historical Monitor Reconciliation Workbook")).toBeInTheDocument()
         expect(staffApi.applyHistoricalAssignmentImport).not.toHaveBeenCalled()
     })
+
+    it("highlights rows with a condition review note and shows the note", async () => {
+        const [first, ...rest] = mockPreview.items
+        vi.mocked(staffApi.previewHistoricalAssignmentImport).mockResolvedValue({
+            ...mockPreview,
+            items: [{ ...first, currentCondition: "broken", reviewNote: "Assigned while Broken — check with IT" }, ...rest],
+        })
+
+        render(<HistoricalAssignmentImportModal open={true} onClose={vi.fn()} />)
+        fireEvent.change(screen.getByPlaceholderText(/Choose \.xlsx file/), {
+            target: { value: "00_ExSource/Asigned_Asset.xlsx" },
+        })
+        fireEvent.click(screen.getByText("Preview Assignments"))
+
+        const note = await screen.findByText("Assigned while Broken — check with IT")
+        expect(note.closest("tr")).toHaveClass("search-highlight-cell")
+        expect(screen.getByText("ASWVN214").closest("tr")).not.toHaveClass("search-highlight-cell")
+    })
 })

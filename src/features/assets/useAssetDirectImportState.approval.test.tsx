@@ -45,6 +45,8 @@ function previewForStatuses(
         status,
         holderLabel: null,
         validationErrors: status === "error" ? ["Conflict"] : [],
+        condition: "spare",
+        reviewNotes: [],
     }))
 
     return {

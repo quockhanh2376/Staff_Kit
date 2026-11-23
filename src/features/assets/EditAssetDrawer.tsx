@@ -2,6 +2,7 @@ import { useState } from "react"
 import { Drawer } from "../../components/Drawer"
 import type { AssetDetailsUpdateInput } from "../../types/staff"
 import type { AssetDashboardState } from "./useAssetDashboardState"
+import { CONDITION_LABELS } from "./assetCondition"
 
 type SerializedRow = AssetDashboardState["serializedRows"][number]
 type DraftKey = keyof AssetDetailsUpdateInput
@@ -55,11 +56,12 @@ export function EditAssetDrawer({
   return (
     <Drawer open onClose={onClose} title="Edit asset" widthClass="w-[560px]">
       <div className="space-y-5">
-        <dl className="grid grid-cols-3 gap-3 rounded-[12px] border border-[var(--border)] bg-[var(--surface-hover)]/25 p-4 text-sm">
+        <dl className="grid grid-cols-4 gap-3 rounded-[12px] border border-[var(--border)] bg-[var(--surface-hover)]/25 p-4 text-sm">
           {[
             ["Asset code", row.assetCode],
             ["Category", row.categoryName ?? "—"],
             ["Status", row.status],
+            ["Condition", CONDITION_LABELS[row.condition] ?? row.condition],
           ].map(([term, value]) => (
             <div key={term}>
               <dt className={labelClass}>{term}</dt>

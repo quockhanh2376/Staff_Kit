@@ -1,4 +1,4 @@
-import type { AssetDashboardSerializedRecord } from "../../types/staff"
+import type { AssetCondition, AssetDashboardSerializedRecord } from "../../types/staff"
 import {
   resolveSerializedAssetComputerName,
   resolveSerializedAssetName,
@@ -9,6 +9,7 @@ export const ALL_SERIALIZED_ASSET_CATEGORY_FILTER = "__all__"
 export type SerializedAssetFilterState = {
   searchTerm: string
   categoryFilter: string
+  conditionFilter?: AssetCondition | ""
 }
 
 export function filterSerializedAssetRows(
@@ -19,6 +20,9 @@ export function filterSerializedAssetRows(
   const normalizedCategory = normalizeSerializedAssetFilterText(filters.categoryFilter)
 
   return rows.filter((row) => {
+    if (filters.conditionFilter && row.condition !== filters.conditionFilter) {
+      return false
+    }
     if (
       normalizedCategory &&
       normalizedCategory !== ALL_SERIALIZED_ASSET_CATEGORY_FILTER
