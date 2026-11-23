@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::net::IpAddr;
-use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Transaction};
@@ -12,6 +11,12 @@ use tokio::time::{sleep, timeout};
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
 use super::column::{upsert_dynamic_field_definitions_for_map, upsert_dynamic_fields_tx};
+use super::employee_sync_staging::{
+    apply_employee_sync_batch_conn, discard_employee_sync_batch_conn,
+    load_open_employee_sync_batch_conn, refresh_employee_sync_row_conn,
+    stage_employee_sync_batch_conn, update_employee_sync_row_conn, EmployeeSyncApplyResult,
+    EmployeeSyncBatch, EmployeeSyncFields, EmployeeSyncRowUpdate, EmployeeSyncStagedRow,
+};
 use super::schema::{AZURE_AD_ACCOUNT_FIELD_KEY, STAFF_GROUP_EMPLOYEE_LIST};
 use super::{humanize_sqlite_error, open_runtime_connection};
 
@@ -99,33 +104,6 @@ pub struct EmployeeSyncConflict {
     pub code: String,
     pub reason: String,
 }
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EmployeeListSyncPreview {
-    pub preview_id: String,
-    pub created_at: String,
-    pub counts: EmployeeSyncCounts,
-    pub rows: Vec<EmployeeSyncRow>,
-    pub conflicts: Vec<EmployeeSyncConflict>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EmployeeListSyncResult {
-    pub counts: EmployeeSyncCounts,
-    pub completed_at: String,
-}
-
-#[derive(Debug, Clone)]
-struct PendingEmployeeListSync {
-    source: Vec<MssqlStaffRecord>,
-    local: Vec<LocalEmployeeListRecord>,
-    non_employee_list_codes: Vec<String>,
-}
-
-static PENDING_EMPLOYEE_LIST_SYNCS: OnceLock<Mutex<HashMap<String, PendingEmployeeListSync>>> =
-    OnceLock::new();
 
 const MSSQL_READ_ONLY_CHECK: &str = r#"
 SELECT CAST(CASE WHEN
@@ -835,13 +813,9 @@ fn cleanup_legacy_remote_ee_account_settings(conn: &rusqlite::Connection) -> Res
     Ok(true)
 }
 
-fn invalidate_pending_employee_list_syncs() {
-    if let Some(pending) = PENDING_EMPLOYEE_LIST_SYNCS.get() {
-        pending
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clear();
-    }
+fn invalidate_pending_employee_list_syncs(conn: &rusqlite::Connection) {
+    // Best effort: a batch loaded through the old SQL login is stale anyway.
+    let _ = conn.execute("DELETE FROM employee_sync_batches", []);
 }
 
 fn validate_mssql_server(server: &str) -> Result<(), String> {
@@ -934,7 +908,7 @@ pub fn get_remote_ee_sync_settings(app: &AppHandle) -> Result<RemoteEeSyncSettin
         // legacy profile, and never read its secret blob during cleanup.
         delete_mssql_password()?;
         cleanup_legacy_remote_ee_account_settings(&conn)?;
-        invalidate_pending_employee_list_syncs();
+        invalidate_pending_employee_list_syncs(&conn);
     }
     let approved_username = read_approved_mssql_username(&conn)?;
     let read = |key: &str| {
@@ -1061,7 +1035,7 @@ pub(crate) fn save_remote_ee_sync_settings_conn(
         if let Some(password) = password.filter(|val| !val.is_empty()) {
             write_pw(&password)?;
         }
-        invalidate_pending_employee_list_syncs();
+        invalidate_pending_employee_list_syncs(conn);
     } else if let Some(password) = password.filter(|val| !val.is_empty()) {
         write_pw(&password)?;
     }
@@ -1120,7 +1094,7 @@ pub fn change_remote_ee_sync_approved_account(
     )?;
     tx.commit()
         .map_err(|_| "Could not authorize the Staff Kit SQL login.".to_string())?;
-    invalidate_pending_employee_list_syncs();
+    invalidate_pending_employee_list_syncs(&conn);
     Ok(())
 }
 
@@ -1201,7 +1175,7 @@ fn load_connection_config(app: &AppHandle) -> Result<MssqlConnectionConfig, Stri
     if legacy_remote_ee_account_cleanup_needed(&conn)? {
         delete_mssql_password()?;
         cleanup_legacy_remote_ee_account_settings(&conn)?;
-        invalidate_pending_employee_list_syncs();
+        invalidate_pending_employee_list_syncs(&conn);
     }
     let approved_username = read_approved_mssql_username(&conn)?;
     let env = process_mssql_environment();
@@ -1749,224 +1723,63 @@ async fn fetch_employee_list_sync_source(
     Ok(records)
 }
 
-fn read_employee_list_snapshot(
+pub async fn stage_employee_list_sync(
     app: &AppHandle,
-) -> Result<(Vec<LocalEmployeeListRecord>, Vec<String>), String> {
-    let path = super::resolve_database_path_read_only(app)?;
-    let conn = super::open_encrypted_read_only_connection(&path)?;
-    read_employee_list_snapshot_conn(&conn)
-}
-
-fn read_employee_list_snapshot_conn(
-    conn: &rusqlite::Connection,
-) -> Result<(Vec<LocalEmployeeListRecord>, Vec<String>), String> {
-    let mut local = Vec::new();
-    let mut statement = conn
-        .prepare(
-            r#"
-            SELECT e.employee_id, e.full_name, e.nick_name, e.email, azure.value
-            FROM employees e
-            LEFT JOIN employee_dynamic_values azure
-              ON azure.employee_id = e.id AND azure.field_key = ?1
-            WHERE COALESCE(NULLIF(TRIM(e.staff_group), ''), 'employee_list') = ?2
-            ORDER BY UPPER(TRIM(e.employee_id)), e.id
-            "#,
-        )
-        .map_err(|err| format!("failed to read EE List preview: {err}"))?;
-    let rows = statement
-        .query_map(
-            params![AZURE_AD_ACCOUNT_FIELD_KEY, STAFF_GROUP_EMPLOYEE_LIST],
-            |row| {
-                Ok(LocalEmployeeListRecord {
-                    employee_id: row.get(0)?,
-                    full_name: row.get(1)?,
-                    nick_name: row.get(2)?,
-                    email: row.get(3)?,
-                    azure_ad_account: row.get(4)?,
-                })
-            },
-        )
-        .map_err(|err| format!("failed to read EE List preview: {err}"))?;
-    for row in rows {
-        local.push(row.map_err(|err| format!("failed to read EE List preview row: {err}"))?);
-    }
-
-    let mut statement = conn
-        .prepare(
-            r#"SELECT employee_id FROM employees
-               WHERE COALESCE(NULLIF(TRIM(staff_group), ''), 'employee_list') <> ?1
-               ORDER BY UPPER(TRIM(employee_id)), id"#,
-        )
-        .map_err(|err| format!("failed to check employee group conflicts: {err}"))?;
-    let codes = statement
-        .query_map([STAFF_GROUP_EMPLOYEE_LIST], |row| row.get::<_, String>(0))
-        .map_err(|err| format!("failed to check employee group conflicts: {err}"))?;
-    let mut non_employee_list_codes = Vec::new();
-    for code in codes {
-        non_employee_list_codes
-            .push(code.map_err(|err| format!("failed to read employee group conflict: {err}"))?);
-    }
-    Ok((local, non_employee_list_codes))
-}
-
-fn next_employee_sync_preview_id() -> String {
-    static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-    let epoch = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default();
-    format!(
-        "{epoch}-{}",
-        NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    )
-}
-
-pub async fn preview_employee_list_sync(
-    app: &AppHandle,
-) -> Result<EmployeeListSyncPreview, String> {
+    replace: bool,
+    actor_ref: Option<&str>,
+) -> Result<EmployeeSyncBatch, String> {
     let connection = load_connection_config(app)?;
     let source = fetch_employee_list_sync_source(&connection).await?;
-    let (local, non_employee_list_codes) = read_employee_list_snapshot(app)?;
-    let diff = compare_employee_list(&source, &local, &non_employee_list_codes);
-    let preview_id = next_employee_sync_preview_id();
-    let created_at = chrono::Utc::now().to_rfc3339();
-    let pending = PendingEmployeeListSync {
-        source,
-        local,
-        non_employee_list_codes,
-    };
-    let previews = PENDING_EMPLOYEE_LIST_SYNCS.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut previews = previews
-        .lock()
-        .map_err(|_| "Employee sync preview state is unavailable. Please retry.".to_string())?;
-    previews.insert(preview_id.clone(), pending);
-    while previews.len() > 4 {
-        if let Some(oldest) = previews.keys().min().cloned() {
-            previews.remove(&oldest);
-        }
-    }
-    Ok(EmployeeListSyncPreview {
-        preview_id,
-        created_at,
-        counts: diff.counts,
-        rows: diff.rows,
-        conflicts: diff.conflicts,
-    })
+    let mut conn = open_runtime_connection(app)?;
+    stage_employee_sync_batch_conn(&mut conn, &source, replace, actor_ref)
 }
 
-pub async fn apply_employee_list_sync(
+pub fn get_open_employee_sync_batch(app: &AppHandle) -> Result<Option<EmployeeSyncBatch>, String> {
+    load_open_employee_sync_batch_conn(&*open_runtime_connection(app)?)
+}
+
+pub fn update_employee_sync_row(
     app: &AppHandle,
-    preview_id: &str,
-) -> Result<EmployeeListSyncResult, String> {
-    let connection = load_connection_config(app)?;
-    let source = fetch_employee_list_sync_source(&connection).await?;
-    let previews = PENDING_EMPLOYEE_LIST_SYNCS.get_or_init(|| Mutex::new(HashMap::new()));
-    let pending = previews
-        .lock()
-        .map_err(|_| {
-            "Employee sync preview state is unavailable. Please create a new preview.".to_string()
-        })?
-        .get(preview_id)
-        .cloned()
-        .ok_or_else(|| {
-            "This preview has expired. Create a new preview before applying.".to_string()
-        })?;
-    if source != pending.source {
-        return Err(
-            "Source or local EE List changed after preview. Create a new preview before applying."
-                .to_string(),
-        );
-    }
+    row_id: i64,
+    update: EmployeeSyncRowUpdate,
+) -> Result<EmployeeSyncStagedRow, String> {
+    update_employee_sync_row_conn(&mut *open_runtime_connection(app)?, row_id, update)
+}
+
+pub fn refresh_employee_sync_row(
+    app: &AppHandle,
+    row_id: i64,
+) -> Result<EmployeeSyncStagedRow, String> {
+    refresh_employee_sync_row_conn(&mut *open_runtime_connection(app)?, row_id)
+}
+
+pub fn discard_employee_sync_batch(app: &AppHandle, batch_id: i64) -> Result<(), String> {
+    discard_employee_sync_batch_conn(&mut *open_runtime_connection(app)?, batch_id)
+}
+
+pub fn apply_employee_sync_batch(
+    app: &AppHandle,
+    batch_id: i64,
+    actor_ref: Option<&str>,
+) -> Result<EmployeeSyncApplyResult, String> {
+    // Fails closed: no snapshot, no write.
     super::backup::create_mandatory_safety_snapshot(app, "before_mssql_sync_apply")?;
-    let db_path = super::resolve_database_path_read_only(app)?;
-    let mut conn = super::open_encrypted_connection(&db_path)?;
-    let tx = conn
-        .transaction()
-        .map_err(|err| format!("failed to start EE List update transaction: {err}"))?;
-    let (local, non_employee_list_codes) = read_employee_list_snapshot_conn(&tx)?;
-    if local != pending.local || non_employee_list_codes != pending.non_employee_list_codes {
-        return Err(
-            "Source or local EE List changed after preview. Create a new preview before applying."
-                .to_string(),
-        );
-    }
-    let counts = apply_employee_list_diff_tx(&tx, &source, &local, &non_employee_list_codes)?;
-
-    let audit_payload = serde_json::json!({
-        "new": counts.new,
-        "changed": counts.changed,
-        "unchanged": counts.unchanged,
-        "missing": counts.missing,
-        "conflicts": counts.conflicts,
-        "status": "SUCCESS",
-    })
-    .to_string();
-    let _ = super::audit::insert_audit_log_tx(
-        &tx,
-        "business.import.mssql",
-        "account",
-        None,
-        "sync",
-        "mssql_employee_list",
-        Some(&audit_payload),
-    );
-
-    tx.commit()
-        .map_err(|err| format!("failed to commit EE List update: {err}"))?;
-
-    if let Ok(mut previews) = previews.lock() {
-        previews.remove(preview_id);
-    }
-    Ok(EmployeeListSyncResult {
-        counts,
-        completed_at: chrono::Utc::now().to_rfc3339(),
-    })
+    apply_employee_sync_batch_conn(&mut *open_runtime_connection(app)?, batch_id, actor_ref)
 }
 
-fn apply_employee_list_diff_tx(
+pub(crate) fn insert_employee_list_record(
     tx: &Transaction<'_>,
-    source: &[MssqlStaffRecord],
-    local: &[LocalEmployeeListRecord],
-    non_employee_list_codes: &[String],
-) -> Result<EmployeeSyncCounts, String> {
-    let diff = compare_employee_list(source, local, non_employee_list_codes);
-    if diff.counts.conflicts > 0 {
-        return Err(
-            "Resolve the Staff Code group conflicts before applying this preview.".to_string(),
-        );
-    }
-    if diff.counts.new == 0 && diff.counts.changed == 0 {
-        return Err("No new or changed records to apply.".to_string());
-    }
-    let local_by_code: HashMap<String, &LocalEmployeeListRecord> = local
-        .iter()
-        .map(|record| (normalized_staff_code(&record.employee_id), record))
-        .collect();
-    for record in source {
-        match local_by_code.get(&normalized_staff_code(&record.code)) {
-            None => insert_employee_list_record(tx, record)?,
-            Some(existing) if !sync_record_matches(record, existing) => {
-                update_employee_list_record(tx, record, &existing.employee_id)?;
-            }
-            Some(_) => {}
-        }
-    }
-    Ok(diff.counts)
-}
-
-fn insert_employee_list_record(
-    tx: &Transaction<'_>,
-    record: &MssqlStaffRecord,
+    code: &str,
+    fields: &EmployeeSyncFields,
 ) -> Result<(), String> {
-    let code = normalized_staff_code(&record.code);
     tx.execute(
         r#"INSERT INTO employees (employee_id, full_name, nick_name, email, staff_group, updated_at)
            VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))"#,
         params![
-            code,
-            record.name.trim(),
-            normalize_sync_text(record.nick_name.as_deref()),
-            normalize_sync_text(record.work_email.as_deref()).map(|value| value.to_lowercase()),
+            normalized_staff_code(code),
+            fields.full_name.trim(),
+            normalize_sync_text(fields.nick_name.as_deref()),
+            normalize_sync_text(fields.email.as_deref()).map(|value| value.to_lowercase()),
             STAFF_GROUP_EMPLOYEE_LIST
         ],
     )
@@ -1974,28 +1787,21 @@ fn insert_employee_list_record(
     upsert_sync_azure_ad(
         tx,
         tx.last_insert_rowid(),
-        record.azure_ad_account.as_deref(),
+        fields.azure_ad_account.as_deref(),
     )
 }
 
-fn update_employee_list_record(
+pub(crate) fn update_employee_list_record(
     tx: &Transaction<'_>,
-    record: &MssqlStaffRecord,
-    local_code: &str,
+    employee_id: i64,
+    fields: &EmployeeSyncFields,
 ) -> Result<(), String> {
-    let employee_id: i64 = tx
-        .query_row(
-            "SELECT id FROM employees WHERE UPPER(TRIM(employee_id)) = ?1 AND COALESCE(NULLIF(TRIM(staff_group), ''), 'employee_list') = ?2",
-            params![normalized_staff_code(local_code), STAFF_GROUP_EMPLOYEE_LIST],
-            |row| row.get(0),
-        )
-        .map_err(|err| format!("EE List row changed before update: {err}"))?;
     tx.execute(
         "UPDATE employees SET full_name = ?1, nick_name = ?2, email = ?3, updated_at = datetime('now') WHERE id = ?4",
-        params![record.name.trim(), normalize_sync_text(record.nick_name.as_deref()), normalize_sync_text(record.work_email.as_deref()).map(|value| value.to_lowercase()), employee_id],
+        params![fields.full_name.trim(), normalize_sync_text(fields.nick_name.as_deref()), normalize_sync_text(fields.email.as_deref()).map(|value| value.to_lowercase()), employee_id],
     )
     .map_err(|err| format!("failed to update EE List employee: {err}"))?;
-    upsert_sync_azure_ad(tx, employee_id, record.azure_ad_account.as_deref())
+    upsert_sync_azure_ad(tx, employee_id, fields.azure_ad_account.as_deref())
 }
 
 fn upsert_sync_azure_ad(
@@ -2533,25 +2339,27 @@ mod tests {
 
         let mut conn = conn;
         let tx = conn.transaction().expect("start approved transaction");
+        let local_id: i64 = tx
+            .query_row("SELECT id FROM employees WHERE employee_id = 'ASWVN1325'", [], |row| row.get(0))
+            .expect("read local id");
         update_employee_list_record(
             &tx,
-            &MssqlStaffRecord {
-                code: "ASWVN1325".into(),
-                name: "Canonical Name".into(),
+            local_id,
+            &EmployeeSyncFields {
+                full_name: "Canonical Name".into(),
                 nick_name: Some("Nick".into()),
-                work_email: Some("person@example.com".into()),
+                email: Some("person@example.com".into()),
                 azure_ad_account: Some("person@corp.example".into()),
             },
-            "ASWVN1325",
         )
         .expect("update approved EE List employee");
         insert_employee_list_record(
             &tx,
-            &MssqlStaffRecord {
-                code: "ASWVN1326".into(),
-                name: "New Employee".into(),
+            "aswvn1326 ",
+            &EmployeeSyncFields {
+                full_name: "New Employee".into(),
                 nick_name: None,
-                work_email: None,
+                email: None,
                 azure_ad_account: None,
             },
         )
@@ -2600,141 +2408,6 @@ mod tests {
     }
 
     #[test]
-    fn approved_sync_noop_rejects_and_performs_zero_writes_when_all_unchanged() {
-        let conn = Connection::open_in_memory().expect("open sqlite");
-        super::super::configure_connection(&conn).expect("configure");
-        super::super::apply_migrations(&conn).expect("migrations");
-        conn.execute(
-            "INSERT INTO employees (employee_id, full_name, nick_name, email, staff_group) VALUES ('ASWVN1325', 'Name A', 'Nick', 'a@example.com', 'employee_list')",
-            [],
-        ).expect("seed employee");
-
-        let source = vec![MssqlStaffRecord {
-            code: "ASWVN1325".into(),
-            name: "Name A".into(),
-            nick_name: Some("Nick".into()),
-            work_email: Some("a@example.com".into()),
-            azure_ad_account: None,
-        }];
-        let local = vec![LocalEmployeeListRecord {
-            employee_id: "ASWVN1325".into(),
-            full_name: "Name A".into(),
-            nick_name: Some("Nick".into()),
-            email: Some("a@example.com".into()),
-            azure_ad_account: None,
-        }];
-
-        let mut conn = conn;
-        let tx = conn.transaction().expect("tx");
-        let result = apply_employee_list_diff_tx(&tx, &source, &local, &[]);
-        assert!(result.is_err(), "Must reject all-unchanged apply");
-        assert_eq!(result.unwrap_err(), "No new or changed records to apply.");
-        tx.rollback().expect("rollback");
-
-        let count: i64 = conn.query_row("SELECT COUNT(*) FROM employees", [], |row| row.get(0)).expect("count");
-        assert_eq!(count, 1);
-    }
-
-    #[test]
-    fn approved_sync_noop_rejects_and_performs_zero_writes_when_missing_only() {
-        let conn = Connection::open_in_memory().expect("open sqlite");
-        super::super::configure_connection(&conn).expect("configure");
-        super::super::apply_migrations(&conn).expect("migrations");
-        conn.execute(
-            "INSERT INTO employees (employee_id, full_name, staff_group) VALUES ('ASWVN1145', 'Missing Employee', 'employee_list')",
-            [],
-        ).expect("seed missing employee");
-
-        let source: Vec<MssqlStaffRecord> = vec![];
-        let local = vec![LocalEmployeeListRecord {
-            employee_id: "ASWVN1145".into(),
-            full_name: "Missing Employee".into(),
-            nick_name: None,
-            email: None,
-            azure_ad_account: None,
-        }];
-
-        let mut conn = conn;
-        let tx = conn.transaction().expect("tx");
-        let result = apply_employee_list_diff_tx(&tx, &source, &local, &[]);
-        assert!(result.is_err(), "Must reject missing-only apply as no-op");
-        assert_eq!(result.unwrap_err(), "No new or changed records to apply.");
-        tx.rollback().expect("rollback");
-
-        let name: String = conn.query_row("SELECT full_name FROM employees WHERE employee_id = 'ASWVN1145'", [], |row| row.get(0)).expect("name");
-        assert_eq!(name, "Missing Employee");
-    }
-
-    #[test]
-    fn approved_sync_noop_rejects_and_performs_zero_writes_when_conflicts_exist() {
-        let conn = Connection::open_in_memory().expect("open sqlite");
-        super::super::configure_connection(&conn).expect("configure");
-        super::super::apply_migrations(&conn).expect("migrations");
-
-        let source = vec![MssqlStaffRecord {
-            code: "ASWVN1400".into(),
-            name: "Conflict Person".into(),
-            nick_name: None,
-            work_email: None,
-            azure_ad_account: None,
-        }];
-        let local = vec![];
-
-        let mut conn = conn;
-        let tx = conn.transaction().expect("tx");
-        let result = apply_employee_list_diff_tx(&tx, &source, &local, &["ASWVN1400".into()]);
-        assert!(result.is_err(), "Must reject conflict apply");
-        assert!(result.unwrap_err().contains("Resolve the Staff Code group conflicts"));
-        tx.rollback().expect("rollback");
-    }
-
-    #[test]
-    fn approved_sync_repeat_sync_is_noop_and_never_writes() {
-        let conn = Connection::open_in_memory().expect("open sqlite");
-        super::super::configure_connection(&conn).expect("configure");
-        super::super::apply_migrations(&conn).expect("migrations");
-        conn.execute(
-            "INSERT INTO employees (employee_id, full_name, staff_group) VALUES ('ASWVN1325', 'Old Name', 'employee_list')",
-            [],
-        ).expect("seed employee");
-
-        let source = vec![MssqlStaffRecord {
-            code: "ASWVN1325".into(),
-            name: "Updated Name".into(),
-            nick_name: None,
-            work_email: None,
-            azure_ad_account: None,
-        }];
-        let local_first = vec![LocalEmployeeListRecord {
-            employee_id: "ASWVN1325".into(),
-            full_name: "Old Name".into(),
-            nick_name: None,
-            email: None,
-            azure_ad_account: None,
-        }];
-
-        let mut conn = conn;
-        let tx = conn.transaction().expect("tx");
-        let counts = apply_employee_list_diff_tx(&tx, &source, &local_first, &[]).expect("first apply succeeds");
-        assert_eq!(counts.changed, 1);
-        tx.commit().expect("commit first apply");
-
-        let local_second = vec![LocalEmployeeListRecord {
-            employee_id: "ASWVN1325".into(),
-            full_name: "Updated Name".into(),
-            nick_name: None,
-            email: None,
-            azure_ad_account: None,
-        }];
-
-        let tx2 = conn.transaction().expect("tx2");
-        let result = apply_employee_list_diff_tx(&tx2, &source, &local_second, &[]);
-        assert!(result.is_err(), "Repeat sync must reject with no-op");
-        assert_eq!(result.unwrap_err(), "No new or changed records to apply.");
-        tx2.rollback().expect("rollback tx2");
-    }
-
-    #[test]
     fn approved_sync_preserves_floating_status_on_changed_employee() {
         let conn = Connection::open_in_memory().expect("open sqlite");
         super::super::configure_connection(&conn).expect("configure");
@@ -2744,25 +2417,17 @@ mod tests {
             [],
         ).expect("seed floating employee");
 
-        let source = vec![MssqlStaffRecord {
-            code: "ASWVN1325".into(),
-            name: "New Name".into(),
+        let id = conn.last_insert_rowid();
+        let fields = EmployeeSyncFields {
+            full_name: "New Name".into(),
             nick_name: Some("Nick".into()),
-            work_email: Some("new@example.com".into()),
+            email: Some("new@example.com".into()),
             azure_ad_account: None,
-        }];
-        let local = vec![LocalEmployeeListRecord {
-            employee_id: "ASWVN1325".into(),
-            full_name: "Old Name".into(),
-            nick_name: None,
-            email: None,
-            azure_ad_account: None,
-        }];
+        };
 
         let mut conn = conn;
         let tx = conn.transaction().expect("tx");
-        let counts = apply_employee_list_diff_tx(&tx, &source, &local, &[]).expect("apply succeeds");
-        assert_eq!(counts.changed, 1);
+        update_employee_list_record(&tx, id, &fields).expect("update succeeds");
         tx.commit().expect("commit");
 
         let (name, is_floating, lifecycle_status): (String, i64, Option<String>) = conn

@@ -277,21 +277,6 @@ pub(crate) fn open_runtime_connection(app: &AppHandle) -> Result<DbConnection, S
     })
 }
 
-pub(crate) fn resolve_database_path_read_only(app: &AppHandle) -> Result<PathBuf, String> {
-    let path = if let Ok(Some(custom_folder)) = backup::get_db_custom_path(app) {
-        PathBuf::from(custom_folder).join(DB_FILE_NAME)
-    } else {
-        app.path()
-            .app_local_data_dir()
-            .map_err(|err| format!("failed to resolve app data directory: {err}"))?
-            .join(DB_FILE_NAME)
-    };
-    if !path.is_file() {
-        return Err("local employee database is not available for read-only preview".to_string());
-    }
-    Ok(path)
-}
-
 /// Open a connection and apply the AES-256 SQLCipher key.
 /// All reads/writes go through this — the DB file stays encrypted at rest.
 pub(crate) fn open_encrypted_connection(path: &std::path::Path) -> Result<Connection, String> {
@@ -306,6 +291,7 @@ pub(crate) fn open_encrypted_connection(path: &std::path::Path) -> Result<Connec
 
 /// Open an existing encrypted database without permitting any SQLite writes.
 /// Deliberately avoids migrations, WAL setup, and all runtime configuration.
+#[cfg_attr(not(test), allow(dead_code))] // Only tests read through it since the EE List preview went away.
 pub(crate) fn open_encrypted_read_only_connection(
     path: &std::path::Path,
 ) -> Result<Connection, String> {

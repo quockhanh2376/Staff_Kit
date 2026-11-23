@@ -1,19 +1,22 @@
 //! EE List sync staging: HR records are loaded into a persisted, editable batch
 //! (`employee_sync_batches` / `employee_sync_rows`) instead of being written straight
-//! to `employees`. Task 4 wires these `_conn` functions to Tauri commands.
-#![allow(dead_code)] // Task 4 wires the staging functions to commands.
+//! to `employees`; Approve writes the reviewed rows in one transaction.
 
 use std::collections::HashMap;
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
+use super::employee::{move_employees_group_tx, MoveEmployeesGroupInput};
 use super::humanize_sqlite_error;
 use super::mssql_import::{
-    compare_employee_list, normalize_sync_text, normalized_staff_code, EmployeeSyncCounts,
+    compare_employee_list, insert_employee_list_record, normalize_sync_text,
+    normalized_staff_code, update_employee_list_record, EmployeeSyncCounts,
     LocalEmployeeListRecord, MssqlStaffRecord,
 };
-use super::schema::{AZURE_AD_ACCOUNT_FIELD_KEY, STAFF_GROUP_EMPLOYEE_LIST};
+use super::schema::{
+    AZURE_AD_ACCOUNT_FIELD_KEY, STAFF_GROUP_EMPLOYEE_LIST, STAFF_GROUP_OFFBOARDING,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -553,6 +556,206 @@ pub(crate) fn refresh_employee_sync_row_conn(
     load_row(conn, row_id)
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmployeeSyncApplyResult {
+    pub added: usize,
+    pub updated: usize,
+    pub moved_to_employee_list: usize,
+    pub offboarded: usize,
+    pub skipped: usize,
+    pub completed_at: String,
+}
+
+fn writes(row: &EmployeeSyncStagedRow) -> bool {
+    matches!(
+        row.action.as_str(),
+        "apply" | "move_to_employee_list" | "move_to_offboarding"
+    )
+}
+
+/// The values a writing row puts on the employee: the edits when present, else the HR record.
+fn written_fields(row: &EmployeeSyncStagedRow) -> Result<&EmployeeSyncFields, String> {
+    row.edits
+        .as_ref()
+        .or(row.source.first())
+        .filter(|fields| !fields.full_name.trim().is_empty())
+        .ok_or_else(|| "Invalid full name: required".to_string())
+}
+
+/// True when the app changed what this writing row was staged against.
+fn is_stale(
+    row: &EmployeeSyncStagedRow,
+    staged_local: Option<&str>,
+    snapshot: &[LocalSnapshot],
+) -> Result<bool, String> {
+    if row.kind == "new" {
+        return Ok(snapshot
+            .iter()
+            .any(|local| normalized_staff_code(&local.code) == row.staff_code));
+    }
+    let current = row
+        .local_employee_id
+        .and_then(|id| snapshot.iter().find(|local| local.id == id));
+    let (Some(current), Some(staged)) = (current, staged_local) else {
+        return Ok(true);
+    };
+    // Every fingerprint field counts: Azure AD edits do not bump updated_at.
+    let staged: serde_json::Value = serde_json::from_str(staged)
+        .map_err(|err| format!("failed to read EE List sync row: {err}"))?;
+    let current = serde_json::to_value(current)
+        .map_err(|err| format!("failed to encode EE List sync row: {err}"))?;
+    Ok(staged != current)
+}
+
+fn write_row(
+    tx: &rusqlite::Transaction<'_>,
+    row: &EmployeeSyncStagedRow,
+    result: &mut EmployeeSyncApplyResult,
+) -> Result<(), String> {
+    let move_to = |target: &str, id: i64| {
+        move_employees_group_tx(
+            tx,
+            &MoveEmployeesGroupInput {
+                employee_ids: vec![id],
+                target_staff_group: target.to_string(),
+                action: None,
+                reason: None,
+            },
+        )
+    };
+    // The drift check guarantees a local employee for every non-new writing row.
+    let local_id = row
+        .local_employee_id
+        .ok_or_else(|| format!("Cannot apply: {} has no local employee", row.staff_code));
+    match (row.kind.as_str(), row.action.as_str()) {
+        ("new", "apply") => {
+            insert_employee_list_record(tx, &row.staff_code, written_fields(row)?)?;
+            result.added += 1;
+        }
+        ("changed", "apply") => {
+            update_employee_list_record(tx, local_id?, written_fields(row)?)?;
+            result.updated += 1;
+        }
+        ("conflict", "move_to_employee_list") => {
+            let id = local_id?;
+            move_to(STAFF_GROUP_EMPLOYEE_LIST, id)?;
+            update_employee_list_record(tx, id, written_fields(row)?)?;
+            result.moved_to_employee_list += 1;
+        }
+        ("missing", "move_to_offboarding") => {
+            move_to(STAFF_GROUP_OFFBOARDING, local_id?)?;
+            result.offboarded += 1;
+        }
+        _ => result.skipped += 1,
+    }
+    Ok(())
+}
+
+pub(crate) fn apply_employee_sync_batch_conn(
+    conn: &mut Connection,
+    batch_id: i64,
+    actor_ref: Option<&str>,
+) -> Result<EmployeeSyncApplyResult, String> {
+    let tx = conn.transaction().map_err(humanize_sqlite_error)?;
+    let exists = tx
+        .query_row(
+            "SELECT 1 FROM employee_sync_batches WHERE id = ?1",
+            [batch_id],
+            |_| Ok(()),
+        )
+        .optional()
+        .map_err(humanize_sqlite_error)?;
+    if exists.is_none() {
+        return Err("Not found: EE List sync".to_string());
+    }
+    // local_json is read raw: it holds the full drift fingerprint (group, updatedAt).
+    let rows: Vec<(EmployeeSyncStagedRow, Option<String>)> = {
+        let mut statement = tx
+            .prepare(&format!(
+                "SELECT {ROW_COLUMNS}, local_json FROM employee_sync_rows WHERE batch_id = ?1 ORDER BY id"
+            ))
+            .map_err(humanize_sqlite_error)?;
+        let rows = statement
+            .query_map([batch_id], |row| Ok((map_row(row)?, row.get(13)?)))
+            .map_err(humanize_sqlite_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|err| format!("failed to read EE List sync row: {err}"))?;
+        rows
+    };
+    if !rows.iter().any(|(row, _)| writes(row)) {
+        return Err("Cannot apply: nothing to write".to_string());
+    }
+    // Refresh can leave a writing row with a blank edited name: check before any write.
+    for (row, _) in &rows {
+        if matches!(row.action.as_str(), "apply" | "move_to_employee_list") {
+            written_fields(row)?;
+        }
+    }
+
+    let snapshot = read_local_snapshot_conn(&tx)?;
+    let mut stale = 0usize;
+    for (row, staged_local) in rows.iter().filter(|(row, _)| writes(row)) {
+        if !is_stale(row, staged_local.as_deref(), &snapshot)? {
+            continue;
+        }
+        stale += 1;
+        let mut notes = row.notes.clone();
+        if !notes.iter().any(|note| note == STALE_NOTE) {
+            notes.push(STALE_NOTE.to_string());
+        }
+        tx.execute(
+            "UPDATE employee_sync_rows SET state = 'stale', notes_json = ?1 WHERE id = ?2",
+            params![to_json(&notes)?, row.id],
+        )
+        .map_err(humanize_sqlite_error)?;
+    }
+    if stale > 0 {
+        // All-or-nothing: commit only the stale marks so the owner can review them.
+        tx.commit().map_err(humanize_sqlite_error)?;
+        return Err(format!(
+            "Cannot apply: {stale} rows changed in the app — review them"
+        ));
+    }
+
+    let mut result = EmployeeSyncApplyResult::default();
+    for (row, _) in &rows {
+        // Dropping tx on error rolls every write back; the batch stays.
+        write_row(&tx, row, &mut result).map_err(|err| {
+            if err.starts_with("Cannot") || err.starts_with("Invalid") {
+                err
+            } else {
+                format!("Cannot apply: {err}")
+            }
+        })?;
+    }
+    let audit_payload = serde_json::json!({
+        "added": result.added,
+        "updated": result.updated,
+        "movedToEmployeeList": result.moved_to_employee_list,
+        "offboarded": result.offboarded,
+        "skipped": result.skipped,
+        "status": "SUCCESS",
+    })
+    .to_string();
+    super::audit::insert_audit_log_tx(
+        &tx,
+        "business.import.mssql",
+        "account",
+        actor_ref,
+        "sync",
+        "mssql_employee_list",
+        Some(&audit_payload),
+    )?;
+    // Rows go with their batch through ON DELETE CASCADE.
+    tx.execute("DELETE FROM employee_sync_batches WHERE id = ?1", [batch_id])
+        .map_err(humanize_sqlite_error)?;
+    tx.commit().map_err(humanize_sqlite_error)?;
+    result.completed_at = chrono::Utc::now().to_rfc3339();
+    Ok(result)
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1076,5 +1279,289 @@ mod tests {
         );
         assert_eq!(missing.local, None);
         assert_eq!(missing.local_group, None);
+    }
+
+    fn employee(conn: &Connection, code: &str) -> Option<(i64, String, Option<String>, String, Option<String>)> {
+        conn.query_row(
+            "SELECT id, full_name, email, staff_group, lifecycle_status FROM employees WHERE employee_id = ?1",
+            [code],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        )
+        .optional()
+        .expect("read employee")
+    }
+
+    fn employees_dump(conn: &Connection) -> String {
+        conn.query_row(
+            "SELECT COALESCE(group_concat(employee_id || '|' || full_name || '|' || IFNULL(email, '') || '|' || staff_group || '|' || updated_at, ';'), '') FROM (SELECT * FROM employees ORDER BY id)",
+            [],
+            |row| row.get(0),
+        )
+        .expect("dump employees")
+    }
+
+    fn stale_message(n: usize) -> String {
+        format!("Cannot apply: {n} rows changed in the app — review them")
+    }
+
+    #[test]
+    fn apply_writes_new_changed_with_edits_and_deletes_batch() {
+        let mut conn = open_test_connection();
+        let changed = seed(&conn, "EE-1", "Old", "employee_list", false);
+        let mut new_hr = hr("EE-NEW", "New");
+        new_hr.azure_ad_account = Some("new@corp".to_string());
+        let batch = stage(&mut conn, &[new_hr, hr("EE-1", "New Name")]);
+        update_employee_sync_row_conn(
+            &mut conn,
+            row(&batch, "EE-NEW").id,
+            EmployeeSyncRowUpdate {
+                action: None,
+                edits: Some(EmployeeSyncFields {
+                    full_name: " Edited New ".to_string(),
+                    nick_name: None,
+                    email: Some(" New@Example.COM ".to_string()),
+                    azure_ad_account: Some("edited@corp".to_string()),
+                }),
+            },
+        )
+        .expect("edit new row");
+
+        let result =
+            apply_employee_sync_batch_conn(&mut conn, batch.id, Some("admin")).expect("apply");
+
+        assert_eq!(
+            (result.added, result.updated, result.moved_to_employee_list, result.offboarded, result.skipped),
+            (1, 1, 0, 0, 0)
+        );
+        assert!(!result.completed_at.is_empty());
+        let (new_id, name, email, group, _) = employee(&conn, "EE-NEW").expect("inserted");
+        assert_eq!(name, "Edited New");
+        assert_eq!(email.as_deref(), Some("new@example.com"));
+        assert_eq!(group, "employee_list");
+        let azure: String = conn
+            .query_row(
+                "SELECT value FROM employee_dynamic_values WHERE employee_id = ?1 AND field_key = ?2",
+                params![new_id, AZURE_AD_ACCOUNT_FIELD_KEY],
+                |row| row.get(0),
+            )
+            .expect("azure");
+        assert_eq!(azure, "edited@corp");
+        let (id, name, ..) = employee(&conn, "EE-1").expect("changed");
+        assert_eq!((id, name.as_str()), (changed, "New Name"));
+        assert_eq!(table_count(&conn, "employee_sync_batches"), 0);
+        assert_eq!(table_count(&conn, "employee_sync_rows"), 0);
+        let audits: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM audit_logs WHERE event_type = 'business.import.mssql' AND actor_ref = 'admin'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("audit count");
+        assert_eq!(audits, 1);
+    }
+
+    #[test]
+    fn apply_conflict_move_keeps_employee_id_and_loans() {
+        let mut conn = open_test_connection();
+        let onboarding = seed(&conn, "EE-ONB", "Onb Local", "onboarding", false);
+        let offboarded = seed(&conn, "EE-OFF", "Off Local", "offboarding", false);
+        conn.execute(
+            "INSERT INTO borrow_requests(request_key, employee_id_fk, submitted_employee_id, submitted_full_name, status) VALUES ('REQ-1', ?1, 'EE-OFF', 'Off', 'approved')",
+            params![offboarded],
+        )
+        .expect("seed request");
+        let request = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO assets(asset_code, asset_type, display_name) VALUES ('LT-1', 'Laptop', 'LT-1')",
+            [],
+        )
+        .expect("seed asset");
+        conn.execute(
+            "INSERT INTO asset_loans(asset_id, employee_id_fk, borrow_request_id) VALUES (?1, ?2, ?3)",
+            params![conn.last_insert_rowid(), offboarded, request],
+        )
+        .expect("seed loan");
+        let batch = stage(&mut conn, &[hr("EE-ONB", "Onb HR"), hr("EE-OFF", "Off HR")]);
+
+        let result = apply_employee_sync_batch_conn(&mut conn, batch.id, None).expect("apply");
+
+        assert_eq!(result.moved_to_employee_list, 2);
+        let (id, name, _, group, lifecycle) = employee(&conn, "EE-ONB").expect("onb");
+        assert_eq!((id, name.as_str(), group.as_str()), (onboarding, "Onb HR", "employee_list"));
+        assert_eq!(lifecycle.as_deref(), Some("active"));
+        let (id, name, _, group, lifecycle) = employee(&conn, "EE-OFF").expect("off");
+        assert_eq!((id, name.as_str(), group.as_str()), (offboarded, "Off HR", "employee_list"));
+        assert_eq!(lifecycle.as_deref(), Some("rehired"));
+        let loans: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM asset_loans WHERE employee_id_fk = ?1",
+                [offboarded],
+                |row| row.get(0),
+            )
+            .expect("loans");
+        assert_eq!(loans, 1);
+    }
+
+    #[test]
+    fn apply_missing_offboard_sets_resigned() {
+        let mut conn = open_test_connection();
+        seed(&conn, "EE-GONE", "Gone", "employee_list", false);
+        seed(&conn, "EE-FLOAT", "Float", "employee_list", true);
+        let batch = stage(&mut conn, &[hr("EE-OTHER", "Other")]);
+
+        let result = apply_employee_sync_batch_conn(&mut conn, batch.id, None).expect("apply");
+
+        assert_eq!((result.added, result.offboarded, result.skipped), (1, 1, 1));
+        let (_, _, _, group, lifecycle) = employee(&conn, "EE-GONE").expect("gone");
+        assert_eq!(group, "offboarding");
+        assert_eq!(lifecycle.as_deref(), Some("resigned"));
+        let (_, _, _, group, lifecycle) = employee(&conn, "EE-FLOAT").expect("float");
+        assert_eq!(group, "employee_list");
+        assert_eq!(lifecycle, None);
+    }
+
+    #[test]
+    fn apply_missing_row_whose_employee_left_ee_list_is_stale() {
+        let mut conn = open_test_connection();
+        let gone = seed(&conn, "EE-GONE", "Gone", "employee_list", false);
+        let batch = stage(&mut conn, &[hr("EE-OTHER", "Other")]);
+        conn.execute("UPDATE employees SET staff_group = 'internal_movement' WHERE id = ?1", [gone])
+            .expect("move locally");
+
+        assert_eq!(
+            apply_employee_sync_batch_conn(&mut conn, batch.id, None),
+            Err(stale_message(1))
+        );
+        assert_eq!(employee(&conn, "EE-OTHER"), None);
+        assert_eq!(employee(&conn, "EE-GONE").expect("gone").3, "internal_movement");
+    }
+
+    #[test]
+    fn apply_skipped_rows_write_nothing() {
+        let mut conn = open_test_connection();
+        seed(&conn, "EE-1", "Old", "employee_list", false);
+        let batch = stage(&mut conn, &[hr("EE-1", "New"), hr("EE-NEW", "N")]);
+        update_employee_sync_row_conn(&mut conn, row(&batch, "EE-1").id, set_action("skip"))
+            .expect("skip");
+
+        let result = apply_employee_sync_batch_conn(&mut conn, batch.id, None).expect("apply");
+
+        assert_eq!((result.added, result.updated, result.skipped), (1, 0, 1));
+        assert_eq!(employee(&conn, "EE-1").expect("kept").1, "Old");
+    }
+
+    #[test]
+    fn apply_changed_row_edited_locally_after_staging_is_stale() {
+        let mut conn = open_test_connection();
+        let id = seed(&conn, "EE-1", "Old", "employee_list", false);
+        let batch = stage(&mut conn, &[hr("EE-1", "New"), hr("EE-NEW", "N")]);
+        // updated_at is not bumped: every fingerprint field counts.
+        conn.execute("UPDATE employees SET nick_name = 'Local' WHERE id = ?1", [id])
+            .expect("local edit");
+
+        for _ in 0..2 {
+            assert_eq!(
+                apply_employee_sync_batch_conn(&mut conn, batch.id, None),
+                Err(stale_message(1))
+            );
+        }
+
+        assert_eq!(employee(&conn, "EE-1").expect("kept").1, "Old");
+        assert_eq!(employee(&conn, "EE-NEW"), None);
+        let open = load_open_employee_sync_batch_conn(&conn)
+            .expect("load")
+            .expect("batch kept");
+        let stale = row(&open, "EE-1");
+        assert_eq!(stale.state, "stale");
+        assert_eq!(stale.notes, vec![STALE_NOTE.to_string()]);
+        assert_eq!(row(&open, "EE-NEW").state, "pending");
+    }
+
+    #[test]
+    fn apply_new_row_code_added_locally_is_stale() {
+        let mut conn = open_test_connection();
+        let batch = stage(&mut conn, &[hr("EE-NEW", "New")]);
+        seed(&conn, " ee-new", "Local", "onboarding", false);
+
+        assert_eq!(
+            apply_employee_sync_batch_conn(&mut conn, batch.id, None),
+            Err(stale_message(1))
+        );
+        assert_eq!(table_count(&conn, "employees"), 1);
+        let open = load_open_employee_sync_batch_conn(&conn)
+            .expect("load")
+            .expect("batch kept");
+        assert_eq!(row(&open, "EE-NEW").state, "stale");
+    }
+
+    #[test]
+    fn apply_error_rolls_back_and_keeps_batch() {
+        let mut conn = open_test_connection();
+        seed(&conn, "EE-X", "Holder", "employee_list", false);
+        conn.execute("UPDATE employees SET email = 'taken@example.com'", [])
+            .expect("seed email");
+        let mut holder = hr("EE-X", "Holder");
+        holder.work_email = Some("taken@example.com".to_string());
+        // EE-X is unchanged, so only EE-A and EE-B are staged.
+        let batch = stage(&mut conn, &[holder, hr("EE-A", "A"), hr("EE-B", "B")]);
+        // The unique email clash is not a drift: it only surfaces on insert.
+        update_employee_sync_row_conn(
+            &mut conn,
+            row(&batch, "EE-B").id,
+            EmployeeSyncRowUpdate {
+                action: None,
+                edits: Some(EmployeeSyncFields {
+                    email: Some("taken@example.com".to_string()),
+                    ..fields("B")
+                }),
+            },
+        )
+        .expect("edit");
+        let before = employees_dump(&conn);
+
+        let err = apply_employee_sync_batch_conn(&mut conn, batch.id, None).expect_err("fails");
+
+        assert!(err.starts_with("Cannot apply: "), "{err}");
+        assert_eq!(employees_dump(&conn), before);
+        assert_eq!(table_count(&conn, "employee_sync_batches"), 1);
+        assert_eq!(table_count(&conn, "employee_sync_rows"), 2);
+        assert_eq!(table_count(&conn, "audit_logs"), 0);
+    }
+
+    #[test]
+    fn apply_rejects_blank_full_name_on_writing_row() {
+        let mut conn = open_test_connection();
+        let batch = stage(&mut conn, &[hr("EE-NEW", "New")]);
+        conn.execute(
+            "UPDATE employee_sync_rows SET edited_json = ?1",
+            [to_json(&fields(" ")).unwrap()],
+        )
+        .expect("blank edit");
+
+        assert_eq!(
+            apply_employee_sync_batch_conn(&mut conn, batch.id, None),
+            Err("Invalid full name: required".to_string())
+        );
+        assert_eq!(table_count(&conn, "employees"), 0);
+        assert_eq!(table_count(&conn, "employee_sync_batches"), 1);
+    }
+
+    #[test]
+    fn apply_nothing_to_write_is_refused() {
+        let mut conn = open_test_connection();
+        seed(&conn, "EE-FLOAT", "Float", "employee_list", true);
+        let batch = stage(&mut conn, &[hr("EE-1", "One")]);
+        update_employee_sync_row_conn(&mut conn, row(&batch, "EE-1").id, set_action("skip"))
+            .expect("skip");
+
+        assert_eq!(
+            apply_employee_sync_batch_conn(&mut conn, batch.id, None),
+            Err("Cannot apply: nothing to write".to_string())
+        );
+        assert_eq!(table_count(&conn, "employee_sync_batches"), 1);
+        assert_eq!(
+            apply_employee_sync_batch_conn(&mut conn, 9999, None),
+            Err("Not found: EE List sync".to_string())
+        );
     }
 }
