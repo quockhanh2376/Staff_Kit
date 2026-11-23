@@ -550,6 +550,21 @@ pub(crate) fn move_employees_group_conn(
     if payload.employee_ids.is_empty() {
         return Ok(0);
     }
+
+    let tx = conn
+        .transaction()
+        .map_err(|err| format!("failed to start move transaction: {err}"))?;
+    let changed = move_employees_group_tx(&tx, &payload)?;
+    tx.commit()
+        .map_err(|err| format!("failed to commit move transaction: {err}"))?;
+
+    Ok(changed)
+}
+
+pub(crate) fn move_employees_group_tx(
+    tx: &Transaction<'_>,
+    payload: &MoveEmployeesGroupInput,
+) -> Result<i64, String> {
     let _ = &payload.reason;
 
     let raw_target = payload.target_staff_group.trim().to_lowercase();
@@ -559,10 +574,6 @@ pub(crate) fn move_employees_group_conn(
         .unwrap_or("")
         .trim()
         .to_lowercase();
-
-    let tx = conn
-        .transaction()
-        .map_err(|err| format!("failed to start move transaction: {err}"))?;
 
     let mut changed = 0;
     for id in &payload.employee_ids {
@@ -630,9 +641,6 @@ pub(crate) fn move_employees_group_conn(
             ));
         }
     }
-
-    tx.commit()
-        .map_err(|err| format!("failed to commit move transaction: {err}"))?;
 
     Ok(changed as i64)
 }
@@ -1529,7 +1537,7 @@ mod tests {
 
     use super::{
         build_employee_from_clause, delete_employee_conn, get_employee_assigned_assets_conn,
-        list_employee_group_counts_conn, move_employees_group_conn, query_employees,
+        list_employee_group_counts_conn, move_employees_group_conn, move_employees_group_tx, query_employees,
         update_employee_tx, upsert_employee_from_payload, EmployeePayload, EmployeeQuery,
         MoveEmployeesGroupInput, EMPLOYEE_ACTIVE_LAPTOP_JOIN_SQL,
     };
@@ -2826,5 +2834,27 @@ mod tests {
             start_date_from: None, start_date_to: None, limit: Some(10), offset: Some(0),
         }).unwrap();
         assert_eq!(sort_res.items.len(), 2);
+    }
+
+    #[test]
+    fn move_employees_group_tx_rolls_back_with_outer_tx() {
+        let mut conn = open_test_connection();
+        let id = seed_employee(&conn, "EE-TX1", "Tx Person");
+        {
+            let tx = conn.transaction().expect("begin tx");
+            let changed = move_employees_group_tx(&tx, &MoveEmployeesGroupInput {
+                employee_ids: vec![id],
+                target_staff_group: "offboarding".to_string(),
+                action: None,
+                reason: None,
+            }).expect("move in tx");
+            assert_eq!(changed, 1);
+        }
+        let group: String = conn.query_row(
+            "SELECT staff_group FROM employees WHERE id = ?",
+            params![id],
+            |row| row.get(0),
+        ).expect("read group");
+        assert_eq!(group, "employee_list");
     }
 }

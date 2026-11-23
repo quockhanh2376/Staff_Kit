@@ -537,7 +537,7 @@ fn sqlite_version(conn: &Connection) -> Result<String, String> {
         .map_err(|err| format!("failed to query sqlite version: {err}"))
 }
 
-pub(crate) const SCHEMA_USER_VERSION: u32 = 3;
+pub(crate) const SCHEMA_USER_VERSION: u32 = 4;
 
 pub(crate) fn apply_migrations(conn: &Connection) -> Result<(), String> {
     let current_version: u32 = conn
@@ -553,6 +553,7 @@ pub(crate) fn apply_migrations(conn: &Connection) -> Result<(), String> {
         ensure_local_account_columns(conn)?;
         ensure_recovery_codes_table(conn)?;
         ensure_asset_model_tables(conn)?;
+        ensure_employee_sync_tables(conn)?;
         ensure_borrow_request_columns(conn)?;
         ensure_phase_c_borrow_schema(conn)?;
         ensure_handle_with_care_schema(conn)?;
@@ -695,6 +696,40 @@ pub(crate) fn ensure_recovery_codes_table(conn: &Connection) -> Result<(), Strin
     )
     .map_err(|err| format!("failed to ensure app_recovery_codes table: {err}"))?;
     Ok(())
+}
+
+fn ensure_employee_sync_tables(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        r#"
+CREATE TABLE IF NOT EXISTS employee_sync_batches (
+  id INTEGER PRIMARY KEY,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_by TEXT,
+  source_row_count INTEGER NOT NULL,
+  unchanged_count INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS employee_sync_rows (
+  id INTEGER PRIMARY KEY,
+  batch_id INTEGER NOT NULL REFERENCES employee_sync_batches(id) ON DELETE CASCADE,
+  staff_code TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('new','changed','missing','conflict')),
+  local_employee_id INTEGER,
+  local_group TEXT,
+  source_json TEXT NOT NULL DEFAULT '[]',
+  local_json TEXT,
+  edited_json TEXT,
+  action TEXT NOT NULL,
+  notes_json TEXT NOT NULL DEFAULT '[]',
+  state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','stale')),
+  assets_held INTEGER NOT NULL DEFAULT 0,
+  is_floating INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_employee_sync_rows_batch_id ON employee_sync_rows(batch_id);
+        "#,
+    )
+    .map_err(|err| format!("failed to ensure employee sync tables: {err}"))
 }
 
 fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
@@ -3042,6 +3077,37 @@ mod tests {
                 other => Err(other),
             })
             .expect("assets.condition column exists");
+    }
+
+    #[test]
+    fn apply_migrations_v3_db_gains_employee_sync_tables() {
+        let conn = Connection::open_in_memory().expect("open in-memory db");
+        apply_migrations(&conn).expect("apply migrations on fresh db");
+        conn.execute_batch(
+            r#"
+            DROP TABLE employee_sync_rows;
+            DROP TABLE employee_sync_batches;
+            PRAGMA user_version = 3;
+            "#,
+        )
+        .expect("rewind to a v3 database");
+
+        apply_migrations(&conn).expect("apply migrations to v3 database");
+
+        for table in ["employee_sync_batches", "employee_sync_rows"] {
+            let exists: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?",
+                    [table],
+                    |r| r.get(0),
+                )
+                .expect("query sqlite_master");
+            assert_eq!(exists, 1, "{table} should exist");
+        }
+        let version: u32 = conn
+            .query_row("PRAGMA user_version;", [], |r| r.get(0))
+            .expect("read user_version");
+        assert_eq!(version, SCHEMA_USER_VERSION);
     }
 }
 
