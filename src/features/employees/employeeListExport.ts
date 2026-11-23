@@ -2,7 +2,7 @@ import type { EmployeeRecord } from "../../types/staff"
 import type { TableEditDrafts } from "../../types/app"
 import { formatDate } from "../../lib/utils"
 import { readEmployeeCellText } from "./employeeTableRules"
-import { staffApi } from "../../services/staff-api"
+import { buildCsv as buildSheetCsv, buildXlsxBlob, saveExport, type ExportSheet } from "../../lib/tableExport"
 
 export type ExportColumn = { key: string; label: string }
 
@@ -27,16 +27,16 @@ export function buildExportRows({ employees, columns, drafts }: ExportEmployeeOp
     )
 }
 
-export function escapeCsvCell(value: string): string {
-    return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value
+function toSheet({ employees, columns, drafts }: ExportEmployeeOptions): ExportSheet {
+    return {
+        name: "Employees",
+        headers: columns.map((column) => column.label),
+        rows: buildExportRows({ employees, columns, drafts }),
+    }
 }
 
-export function buildCsv({ employees, columns, drafts }: ExportEmployeeOptions): string {
-    const rows = [
-        columns.map((column) => column.label),
-        ...buildExportRows({ employees, columns, drafts }),
-    ]
-    return `\uFEFF${rows.map((row) => row.map(escapeCsvCell).join(",")).join("\r\n")}\r\n`
+export function buildCsv(options: ExportEmployeeOptions): string {
+    return buildSheetCsv(toSheet(options))
 }
 
 export function buildXlsxSheetData({ employees, columns, drafts }: ExportEmployeeOptions) {
@@ -46,27 +46,14 @@ export function buildXlsxSheetData({ employees, columns, drafts }: ExportEmploye
     ]
 }
 
-async function saveBlob(blob: Blob, filename: string, extension: string): Promise<void> {
-    const { save } = await import("@tauri-apps/plugin-dialog")
-    const path = await save({
-        defaultPath: filename,
-        filters: [{ name: extension === "xlsx" ? "Excel Workbook" : "CSV", extensions: [extension] }],
-    })
-    if (!path) return
-    const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()))
-    await staffApi.writeExportFile(path, bytes)
+export async function downloadCsv(options: ExportEmployeeOptions, filename: string): Promise<string | null> {
+    return saveExport(new Blob([buildCsv(options)], { type: "text/csv;charset=utf-8" }), filename, "csv")
 }
 
-export async function downloadCsv(options: ExportEmployeeOptions, filename: string): Promise<void> {
-    await saveBlob(new Blob([buildCsv(options)], { type: "text/csv;charset=utf-8" }), filename, "csv")
-}
-
-export async function downloadXlsx(options: ExportEmployeeOptions, filename: string): Promise<void> {
-    const blob = await createXlsxBlob(options)
-    await saveBlob(blob, filename, "xlsx")
+export async function downloadXlsx(options: ExportEmployeeOptions, filename: string): Promise<string | null> {
+    return saveExport(await createXlsxBlob(options), filename, "xlsx")
 }
 
 export async function createXlsxBlob(options: ExportEmployeeOptions): Promise<Blob> {
-    const { default: writeExcelFile } = await import("write-excel-file/universal")
-    return writeExcelFile(buildXlsxSheetData(options)).toBlob()
+    return buildXlsxBlob([toSheet(options)])
 }
