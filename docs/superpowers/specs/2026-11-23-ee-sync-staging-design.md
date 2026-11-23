@@ -38,8 +38,7 @@
 - Who can use it: admin and super admin (`require_admin`), the same gate as today's preview and apply.
 - **One open batch at a time.**
   - Pressing **update** while a batch is open asks whether to discard it and load a fresh one, or to continue the open one.
-  - **Skip** in the panel discards the batch, deleting its staged rows.
-  - After Approve, the staged rows are deleted. A one-line audit summary is kept.
+  - **Owner decision: nothing is left behind.** After Approve, and after Skip (discard), the batch and all of its staged rows are deleted from the database. Only the one-line audit summary remains.
 - **Drift check at Approve.**
   - Each staged row stores a fingerprint of the local employee row it was built from (full name, nick, email, Azure AD, staff_group, `updated_at`).
   - At Approve, a row whose local employee no longer matches is **not written**. It is marked `stale` with the note `Changed in the app after this list was loaded — review again`, and Approve stops so the owner can re-check it.
@@ -65,7 +64,7 @@
 - A duplicate HR code is stored as one row holding both HR records in `source_json`. It allows Skip only and takes priority over the normal kind. The owner fixes it in HR and loads a new batch.
 - Scope and old commands:
   - One PR. The old preview and apply commands and `PENDING_EMPLOYEE_LIST_SYNCS` are removed.
-  - The settings-change cleanup at `mssql_import.rs:839` marks any open batch `discarded` instead, because a different HR source invalidates it.
+  - The settings-change cleanup at `mssql_import.rs:839` deletes any open batch instead, because a different HR source invalidates it.
 
 ## Design
 
@@ -74,7 +73,7 @@
   - `id`
   - `created_at`
   - `created_by` (actor ref)
-  - `status`: `open` | `applied` | `discarded`
+  - (no status column: a batch exists only while it is open)
   - `source_row_count`
 - New table `employee_sync_rows`:
   - `id`
@@ -88,7 +87,7 @@
   - `edited_json` (the owner's field edits, nullable)
   - `action`: `apply` | `skip` | `move_to_employee_list` | `move_to_offboarding` | `none`
   - `notes_json`
-  - `state`: `pending` | `stale` | `applied`
+  - `state`: `pending` | `stale`
 - Both tables are created through the normal migration path. `SCHEMA_USER_VERSION` goes from 3 to 4, and the tables are added to the base schema.
 - `unchanged` rows are stored only as a count. They are not shown as editable rows.
 
@@ -108,7 +107,7 @@
   3. Insert or update in the EE List, using the edited values or else the source values.
   4. Move conflict rows to EE List and update their details.
   5. Move ticked Missing rows to Offboarding.
-  6. Write one audit row `business.import.mssql` with the counts per action, and delete the staged rows.
+  6. Write one audit row `business.import.mssql` with the counts per action, and delete the batch and its rows in the same transaction.
 - All commands use `require_admin`, and the lib.rs command-classification test lists them.
 - Errors start with `Invalid`, `Not found` or `Cannot`.
 - The old `preview_employee_list_mssql_sync` / `apply_employee_list_mssql_sync` commands and the in-memory store are removed once the UI uses the new ones.
@@ -134,7 +133,7 @@
   - a missing move sets lifecycle `resigned`;
   - a stale row blocks Approve and writes nothing;
   - a skipped row writes nothing;
-  - discard deletes the rows;
+  - discard, and a successful Approve, leave both staging tables empty;
   - migration v3 → v4;
   - a duplicate HR code becomes one row, defaulting to skip.
 - **Vitest:**
