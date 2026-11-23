@@ -47,9 +47,9 @@ function setup(rows: EmployeeSyncStagedRow[], over: Partial<EmployeeState> = {})
         syncBatch: { id: 7, createdAt: "2026-11-23T00:00:00Z", counts: { new: 0, changed: 0, unchanged: 12, missing: 0, conflicts: 0 }, rows },
         isSyncBusy: false,
         syncError: null,
-        updateSyncRow: vi.fn().mockResolvedValue(undefined),
+        updateSyncRow: vi.fn().mockResolvedValue(true),
         refreshSyncRow: vi.fn().mockResolvedValue(undefined),
-        discardEmployeeSync: vi.fn().mockResolvedValue(undefined),
+        discardEmployeeSync: vi.fn().mockResolvedValue(true),
         applyEmployeeSync: vi.fn().mockResolvedValue({
             added: 1, updated: 2, movedToEmployeeList: 3, offboarded: 4, skipped: 0, completedAt: "2026-11-23T00:00:00Z",
         }),
@@ -99,6 +99,30 @@ describe("EmployeeSyncDrawer", () => {
         expect(emp.updateSyncRow).toHaveBeenCalledWith(1, { edits: fields("Edited One") })
     })
 
+    it("fields stay editable while a row saves and keep earlier edits", () => {
+        // isSyncBusy is true while the Full name save is in flight.
+        const { emp } = setup(mixedRows, { isSyncBusy: true } as Partial<EmployeeState>)
+        const fullName = screen.getByLabelText("Full name for A1")
+        const nick = screen.getByLabelText("Nick for A1")
+        fireEvent.change(fullName, { target: { value: "Edited One" } })
+        fireEvent.blur(fullName)
+        expect(nick).toBeEnabled()
+        expect(screen.getByLabelText("Action for A1")).toBeEnabled()
+        fireEvent.change(nick, { target: { value: "Nicky" } })
+        expect(nick).toHaveValue("Nicky")
+        fireEvent.blur(nick)
+        expect(emp.updateSyncRow).toHaveBeenLastCalledWith(1, { edits: { ...fields("Edited One"), nickName: "Nicky" } })
+    })
+
+    it("a refused save shows the stored value again", async () => {
+        const { emp } = setup(mixedRows, { updateSyncRow: vi.fn().mockResolvedValue(false) } as Partial<EmployeeState>)
+        const fullName = screen.getByLabelText("Full name for A1")
+        fireEvent.change(fullName, { target: { value: "" } })
+        fireEvent.blur(fullName)
+        expect(emp.updateSyncRow).toHaveBeenCalledWith(1, { edits: fields("") })
+        await waitFor(() => expect(fullName).toHaveValue("Source One"))
+    })
+
     it("approve label shows totals and is disabled when nothing writes", () => {
         setup(mixedRows)
         expect(screen.getByRole("button", { name: "Approve — Add 1 · Update 1 · Move 1 to EE List · Offboard 1" })).toBeEnabled()
@@ -146,14 +170,15 @@ describe("EmployeeSyncDrawer", () => {
         expect(emp.refreshSyncRow).toHaveBeenCalledWith(1)
     })
 
-    it("skip asks to confirm then discards", () => {
+    it("skip asks to confirm then discards", async () => {
         const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true)
-        const { emp } = setup(mixedRows)
+        const { emp, onClose } = setup(mixedRows)
         fireEvent.click(screen.getByRole("button", { name: "Skip" }))
         expect(confirm).toHaveBeenCalledWith("Discard this EE List sync? Nothing will be written.")
         expect(emp.discardEmployeeSync).not.toHaveBeenCalled()
         fireEvent.click(screen.getByRole("button", { name: "Skip" }))
         expect(emp.discardEmployeeSync).toHaveBeenCalledTimes(1)
+        await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
     })
 
     it("kind filter narrows the rows", () => {

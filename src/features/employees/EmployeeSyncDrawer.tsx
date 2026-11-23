@@ -69,16 +69,22 @@ export function EmployeeSyncDrawer({ open, onClose, employeeState: emp, setGloba
     const approveLabel = totalParts.length ? `Approve — ${totalParts.join(" · ")}` : "Approve"
     const visibleRows = kindFilter === "all" ? rows : rows.filter((row) => row.kind === kindFilter)
 
-    const saveField = (row: EmployeeSyncStagedRow, key: keyof EmployeeSyncFields, value: string) => {
-        const current = shownFields(row) ?? { fullName: "", nickName: null, email: null, azureAdAccount: null }
-        const next = key === "fullName" ? value.trim() : value.trim() || null
-        if (next === current[key]) return
-        void emp.updateSyncRow(row.id, { edits: { ...current, [key]: next } })
+    // Edits are read from the row's inputs, not row state, so a blur while an earlier save is in flight keeps both values.
+    const saveRowFields = async (input: HTMLInputElement, row: EmployeeSyncStagedRow) => {
+        const inputs = input.closest("tr")?.querySelectorAll("input")
+        if (!inputs) return
+        const value = (i: number) => inputs[i].value.trim()
+        const edits: EmployeeSyncFields = { fullName: value(0), nickName: value(1) || null, email: value(2) || null, azureAdAccount: value(3) || null }
+        const stored = shownFields(row)
+        if (FIELD_COLUMNS.every(({ key }) => edits[key] === (stored?.[key] ?? (key === "fullName" ? "" : null)))) return
+        if (await emp.updateSyncRow(row.id, { edits })) return
+        // Save refused (e.g. blank full name): show the stored values again.
+        FIELD_COLUMNS.forEach(({ key }, i) => (inputs[i].value = stored?.[key] ?? ""))
     }
 
-    const handleSkip = () => {
+    const handleSkip = async () => {
         if (!window.confirm("Discard this EE List sync? Nothing will be written.")) return
-        void emp.discardEmployeeSync()
+        if (await emp.discardEmployeeSync()) onClose()
     }
 
     const handleApprove = async () => {
@@ -157,8 +163,8 @@ export function EmployeeSyncDrawer({ open, onClose, employeeState: emp, setGloba
                                                     aria-label={`${label} for ${row.staffCode}`}
                                                     className={inputClass}
                                                     defaultValue={fields?.[field] ?? ""}
-                                                    disabled={readOnly || emp.isSyncBusy}
-                                                    onBlur={(e) => saveField(row, field, e.target.value)}
+                                                    disabled={readOnly}
+                                                    onBlur={(e) => void saveRowFields(e.target, row)}
                                                 />
                                             </td>
                                         ))}
@@ -167,7 +173,7 @@ export function EmployeeSyncDrawer({ open, onClose, employeeState: emp, setGloba
                                                 aria-label={`Action for ${row.staffCode}`}
                                                 className={inputClass}
                                                 value={row.action}
-                                                disabled={actions.length < 2 || emp.isSyncBusy}
+                                                disabled={actions.length < 2}
                                                 onChange={(e) => void emp.updateSyncRow(row.id, { action: e.target.value })}
                                             >
                                                 {actions.map((action) => (
@@ -202,7 +208,7 @@ export function EmployeeSyncDrawer({ open, onClose, employeeState: emp, setGloba
                         type="button"
                         className="rounded-[8px] border border-[var(--border)] px-4 py-2 text-sm font-semibold text-[var(--text-primary)] hover:bg-[var(--surface-hover)] disabled:opacity-60"
                         disabled={emp.isSyncBusy}
-                        onClick={handleSkip}
+                        onClick={() => void handleSkip()}
                     >
                         Skip
                     </button>

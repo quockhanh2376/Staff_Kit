@@ -112,6 +112,8 @@ export function EmployeeView({
     const [isExportMenuOpen, setIsExportMenuOpen] = useState(false)
     const [isSyncDrawerOpen, setIsSyncDrawerOpen] = useState(false)
     const [isSyncOpenPrompt, setIsSyncOpenPrompt] = useState(false)
+    // Batch gone (discarded, applied, logged out): drop the open flag so a later update starts closed.
+    if (isSyncDrawerOpen && !emp.syncBatch) setIsSyncDrawerOpen(false)
     const unselectMenuRef = useRef<HTMLDetailsElement | null>(null)
     const exportMenuRef = useRef<HTMLDetailsElement | null>(null)
     const unselectTimerRef = useRef<number | null>(null)

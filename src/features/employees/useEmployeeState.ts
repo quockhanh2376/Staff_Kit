@@ -341,9 +341,10 @@ export function useEmployeeState({
     }
 
     const replaceSyncRow = (res: Awaited<ReturnType<typeof runSync<EmployeeSyncBatch["rows"][number]>>>) => {
-        if (!res.ok) return
+        if (!res.ok) return false
         const row = res.value
         setSyncBatch((prev) => prev && { ...prev, rows: prev.rows.map((r) => (r.id === row.id ? row : r)) })
+        return true
     }
 
     const updateSyncRow = async (rowId: number, update: EmployeeSyncRowUpdate) =>
@@ -353,10 +354,11 @@ export function useEmployeeState({
         replaceSyncRow(await runSync(() => staffApi.refreshEmployeeSyncRow(rowId)))
 
     const discardEmployeeSync = async () => {
-        if (!syncBatch) return
+        if (!syncBatch) return false
         const batchId = syncBatch.id
         const res = await runSync(() => staffApi.discardEmployeeSyncBatch(batchId))
         if (res.ok) setSyncBatch(null)
+        return res.ok
     }
 
     const applyEmployeeSync = async () => {
