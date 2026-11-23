@@ -926,7 +926,7 @@ pub fn apply_historical_assignment_import_conn(
 
                     // 2. Update asset status & location
                     tx.execute(
-                        "UPDATE assets SET status = 'assigned', usage_location = ?, updated_at = datetime('now') WHERE id = ?",
+                        "UPDATE assets SET status = 'assigned', condition = CASE WHEN condition = 'new' THEN 'spare' ELSE condition END, usage_location = ?, updated_at = datetime('now') WHERE id = ?",
                         params![item.location, asset_id],
                     )
                     .map_err(|err| format!("Failed to update asset location on '{canonical_code}': {err}"))?;
@@ -1210,6 +1210,7 @@ fn apply_single_historical_assignment_tx(
         r#"
         UPDATE assets
         SET status = 'assigned',
+            condition = CASE WHEN condition = 'new' THEN 'spare' ELSE condition END,
             usage_location = ?
         WHERE id = ?
         "#,
@@ -2752,6 +2753,28 @@ mod tests {
             )
             .expect("signature status");
         assert_eq!(sig_status, SIGNATURE_STATUS_PENDING);
+    }
+
+    #[test]
+    fn historical_assignment_marks_new_asset_spare() {
+        let mut conn = open_test_conn();
+        let emp_id: i64 = conn.query_row(
+            "INSERT INTO employees(employee_id, full_name, email, is_floating) VALUES('ASWVN1', 'A', 'a@example.com', 0) RETURNING id",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        let asset_id: i64 = conn.query_row(
+            "INSERT INTO assets(asset_code, asset_type, display_name, status, condition) VALUES('VNMON1', 'Monitor', 'Dell', 'in_stock', 'new') RETURNING id",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        let tx = conn.transaction().unwrap();
+        apply_single_historical_assignment_tx(&tx, asset_id, "VNMON1", emp_id, "ASWVN1", "A", "Tại công ty", Some(1)).unwrap();
+        tx.commit().unwrap();
+        let condition: String = conn
+            .query_row("SELECT condition FROM assets WHERE id = ?", params![asset_id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(condition, "spare");
     }
 }
 

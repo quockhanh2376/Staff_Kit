@@ -276,7 +276,17 @@ pub(crate) fn set_asset_status_tx(
 ) -> Result<(), String> {
     let changed = tx
         .execute(
-            "UPDATE assets SET status = ?, updated_at = datetime('now') WHERE id = ?",
+            r#"
+            UPDATE assets
+            SET status = ?1,
+                condition = CASE
+                  WHEN ?1 = 'assigned' AND condition = 'new' THEN 'spare'
+                  WHEN ?1 = 'in_stock' AND condition <> 'broken' THEN 'spare'
+                  ELSE condition
+                END,
+                updated_at = datetime('now')
+            WHERE id = ?2
+            "#,
             params![status, asset_id],
         )
         .map_err(humanize_sqlite_error)?;

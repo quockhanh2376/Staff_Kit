@@ -3674,4 +3674,78 @@ mod tests {
         ).unwrap();
         assert_eq!(mn1_after_return.as_deref(), Some("Tại nhà"), "Return must not clear or alter location without confirmed destination");
     }
+
+    fn asset_condition(conn: &Connection, asset_id: i64) -> String {
+        conn.query_row(
+            "SELECT condition FROM assets WHERE id = ?",
+            params![asset_id],
+            |row| row.get(0),
+        )
+        .expect("load asset condition")
+    }
+
+    fn approve_flow(conn: &mut Connection, asset_code: &str, request_type: Option<&str>) {
+        let request = submit_borrow_request_conn(
+            conn,
+            BorrowRequestSubmitInput {
+                submitted_employee_id: "EE1001".to_string(),
+                submitted_full_name: "Nguyen Van A".to_string(),
+                asset_codes: vec![asset_code.to_string()],
+                request_type: request_type.map(str::to_string),
+                manual_employee_email: None,
+                manual_employee_team: None,
+            },
+        )
+        .expect("submit request");
+        approve_borrow_request_conn(conn, request.id, 1).expect("approve request");
+    }
+
+    #[test]
+    fn approving_borrow_of_new_asset_makes_it_spare() {
+        let mut conn = open_test_connection();
+        seed_employee(&conn, "EE1001", "Nguyen Van A");
+        let asset_id = seed_asset(&conn, "ASSET-001", "Laptop", "in_stock");
+        conn.execute("UPDATE assets SET condition = 'new' WHERE id = ?", params![asset_id]).unwrap();
+
+        approve_flow(&mut conn, "ASSET-001", None);
+
+        assert_eq!(asset_condition(&conn, asset_id), "spare");
+    }
+
+    #[test]
+    fn returning_spare_asset_keeps_spare() {
+        let mut conn = open_test_conn_with_assigned_asset();
+        approve_flow(&mut conn, "ASSET-001", Some("return"));
+        assert_eq!(asset_condition(&conn, 1), "spare");
+    }
+
+    #[test]
+    fn returning_broken_asset_keeps_broken() {
+        let mut conn = open_test_conn_with_assigned_asset();
+        conn.execute("UPDATE assets SET condition = 'broken' WHERE id = 1", []).unwrap();
+        approve_flow(&mut conn, "ASSET-001", Some("return"));
+        assert_eq!(asset_status(&conn, 1), "in_stock");
+        assert_eq!(asset_condition(&conn, 1), "broken");
+    }
+
+    #[test]
+    fn retiring_asset_leaves_condition() {
+        let conn = open_test_connection();
+        let asset_id = seed_asset(&conn, "ASSET-001", "Laptop", "in_stock");
+        conn.execute("UPDATE assets SET condition = 'new' WHERE id = ?", params![asset_id]).unwrap();
+        let tx = conn.unchecked_transaction().unwrap();
+        asset::set_asset_status_tx(&tx, asset_id, "retired").unwrap();
+        tx.commit().unwrap();
+        assert_eq!(asset_status(&conn, asset_id), "retired");
+        assert_eq!(asset_condition(&conn, asset_id), "new");
+    }
+
+    // Employee EE1001 holds ASSET-001 (id 1) through a real approved borrow.
+    fn open_test_conn_with_assigned_asset() -> Connection {
+        let mut conn = open_test_connection();
+        seed_employee(&conn, "EE1001", "Nguyen Van A");
+        seed_asset(&conn, "ASSET-001", "Laptop", "in_stock");
+        approve_flow(&mut conn, "ASSET-001", None);
+        conn
+    }
 }
