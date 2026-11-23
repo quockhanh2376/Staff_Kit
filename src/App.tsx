@@ -501,7 +501,7 @@ function App() {
         <main className="h-[calc(100vh-4rem)] flex-1 overflow-y-auto pb-24">
           {globalError && (
             <div
-              className="mx-4 mt-4 cursor-pointer rounded-[10px] border border-red-500/50 bg-red-500/10 px-4 py-3 text-sm text-red-300 md:mx-8"
+              className="mx-4 mt-4 cursor-pointer rounded-[10px] border border-red-500/50 bg-red-500/10 px-4 py-3 text-sm text-[var(--text-primary)] md:mx-8"
               onClick={() => setGlobalError(null)}
               title="Click to dismiss"
             >
@@ -512,7 +512,7 @@ function App() {
 
           {globalNotice && (
             <div
-              className="mx-4 mt-4 cursor-pointer rounded-[10px] border border-emerald-500/50 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300 md:mx-8"
+              className="mx-4 mt-4 cursor-pointer rounded-[10px] border border-emerald-500/50 bg-emerald-500/10 px-4 py-3 text-sm text-[var(--text-primary)] md:mx-8"
               onClick={() => setGlobalNotice(null)}
               title="Click to dismiss"
             >
