@@ -51,7 +51,16 @@ pub struct EmployeeSyncBatch {
     pub rows: Vec<EmployeeSyncStagedRow>,
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmployeeSyncRowUpdate {
+    pub action: Option<String>,
+    /// `Some` replaces the stored edits; `None` keeps them.
+    pub edits: Option<EmployeeSyncFields>,
+}
+
 const DUPLICATE_CODE_NOTE: &str = "Duplicate Staff Code in HR source";
+const STALE_NOTE: &str = "Changed in the app after this list was loaded — review again";
 
 /// Local `employees` row as seen at staging time. Serialised into `local_json`;
 /// `staffGroup` and `updatedAt` complete the drift fingerprint checked at Approve.
@@ -81,12 +90,30 @@ struct NewRow<'a> {
     notes: Vec<String>,
 }
 
-fn source_fields(record: &MssqlStaffRecord) -> EmployeeSyncFields {
+fn normalise_fields(fields: &EmployeeSyncFields) -> EmployeeSyncFields {
     EmployeeSyncFields {
-        full_name: record.name.trim().to_string(),
-        nick_name: normalize_sync_text(record.nick_name.as_deref()),
-        email: normalize_sync_text(record.work_email.as_deref()).map(|value| value.to_lowercase()),
-        azure_ad_account: normalize_sync_text(record.azure_ad_account.as_deref()),
+        full_name: fields.full_name.trim().to_string(),
+        nick_name: normalize_sync_text(fields.nick_name.as_deref()),
+        email: normalize_sync_text(fields.email.as_deref()).map(|value| value.to_lowercase()),
+        azure_ad_account: normalize_sync_text(fields.azure_ad_account.as_deref()),
+    }
+}
+
+fn source_fields(record: &MssqlStaffRecord) -> EmployeeSyncFields {
+    normalise_fields(&EmployeeSyncFields {
+        full_name: record.name.clone(),
+        nick_name: record.nick_name.clone(),
+        email: record.work_email.clone(),
+        azure_ad_account: record.azure_ad_account.clone(),
+    })
+}
+
+fn default_action(kind: &str, is_floating: bool) -> &'static str {
+    match kind {
+        "conflict" => "move_to_employee_list",
+        "missing" if is_floating => "none",
+        "missing" => "move_to_offboarding",
+        _ => "apply",
     }
 }
 
@@ -221,18 +248,14 @@ pub(crate) fn stage_employee_sync_batch_conn(
             });
             continue;
         }
-        let (kind, action, local) = match compared.status.as_str() {
+        let (kind, local) = match compared.status.as_str() {
             "unchanged" => {
                 unchanged += 1;
                 continue;
             }
-            "new" => ("new", "apply", None),
-            "changed" => ("changed", "apply", ee_by_code.get(&code).copied()),
-            "conflict" => (
-                "conflict",
-                "move_to_employee_list",
-                other_by_code.get(&code).copied(),
-            ),
+            "new" => ("new", None),
+            "changed" => ("changed", ee_by_code.get(&code).copied()),
+            "conflict" => ("conflict", other_by_code.get(&code).copied()),
             other => return Err(format!("Invalid EE List sync row kind: {other}")),
         };
         new_rows.push(NewRow {
@@ -240,7 +263,7 @@ pub(crate) fn stage_employee_sync_batch_conn(
             kind,
             local,
             source,
-            action,
+            action: default_action(kind, false),
             notes: Vec::new(),
         });
     }
@@ -251,11 +274,7 @@ pub(crate) fn stage_employee_sync_batch_conn(
             kind: "missing",
             local: Some(local),
             source: Vec::new(),
-            action: if local.is_floating {
-                "none"
-            } else {
-                "move_to_offboarding"
-            },
+            action: default_action("missing", local.is_floating),
             notes: Vec::new(),
         });
     }
@@ -316,6 +335,46 @@ fn parse_json<T: serde::de::DeserializeOwned>(text: &str) -> rusqlite::Result<T>
     })
 }
 
+const ROW_COLUMNS: &str = "id, staff_code, kind, local_employee_id, local_group, source_json, \
+     local_json, edited_json, action, notes_json, state, assets_held, is_floating";
+
+fn map_row(row: &rusqlite::Row) -> rusqlite::Result<EmployeeSyncStagedRow> {
+    Ok(EmployeeSyncStagedRow {
+        id: row.get(0)?,
+        staff_code: row.get(1)?,
+        kind: row.get(2)?,
+        local_employee_id: row.get(3)?,
+        local_group: row.get(4)?,
+        source: parse_json(&row.get::<_, String>(5)?)?,
+        local: row
+            .get::<_, Option<String>>(6)?
+            .as_deref()
+            .map(parse_json)
+            .transpose()?,
+        edits: row
+            .get::<_, Option<String>>(7)?
+            .as_deref()
+            .map(parse_json)
+            .transpose()?,
+        action: row.get(8)?,
+        notes: parse_json(&row.get::<_, String>(9)?)?,
+        state: row.get(10)?,
+        assets_held: row.get(11)?,
+        is_floating: row.get::<_, i64>(12)? != 0,
+    })
+}
+
+fn load_row(conn: &Connection, row_id: i64) -> Result<EmployeeSyncStagedRow, String> {
+    conn.query_row(
+        &format!("SELECT {ROW_COLUMNS} FROM employee_sync_rows WHERE id = ?1"),
+        [row_id],
+        map_row,
+    )
+    .optional()
+    .map_err(humanize_sqlite_error)?
+    .ok_or_else(|| format!("Not found: EE List sync row {row_id}"))
+}
+
 fn load_batch(conn: &Connection, batch_id: i64) -> Result<EmployeeSyncBatch, String> {
     let (created_at, unchanged): (String, i64) = conn
         .query_row(
@@ -325,38 +384,12 @@ fn load_batch(conn: &Connection, batch_id: i64) -> Result<EmployeeSyncBatch, Str
         )
         .map_err(humanize_sqlite_error)?;
     let mut statement = conn
-        .prepare(
-            r#"SELECT id, staff_code, kind, local_employee_id, local_group, source_json, local_json,
-                      edited_json, action, notes_json, state, assets_held, is_floating
-               FROM employee_sync_rows WHERE batch_id = ?1 ORDER BY id"#,
-        )
+        .prepare(&format!(
+            "SELECT {ROW_COLUMNS} FROM employee_sync_rows WHERE batch_id = ?1 ORDER BY id"
+        ))
         .map_err(humanize_sqlite_error)?;
     let rows = statement
-        .query_map([batch_id], |row| {
-            Ok(EmployeeSyncStagedRow {
-                id: row.get(0)?,
-                staff_code: row.get(1)?,
-                kind: row.get(2)?,
-                local_employee_id: row.get(3)?,
-                local_group: row.get(4)?,
-                source: parse_json(&row.get::<_, String>(5)?)?,
-                local: row
-                    .get::<_, Option<String>>(6)?
-                    .as_deref()
-                    .map(parse_json)
-                    .transpose()?,
-                edits: row
-                    .get::<_, Option<String>>(7)?
-                    .as_deref()
-                    .map(parse_json)
-                    .transpose()?,
-                action: row.get(8)?,
-                notes: parse_json(&row.get::<_, String>(9)?)?,
-                state: row.get(10)?,
-                assets_held: row.get(11)?,
-                is_floating: row.get::<_, i64>(12)? != 0,
-            })
-        })
+        .query_map([batch_id], map_row)
         .map_err(humanize_sqlite_error)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|err| format!("failed to read EE List sync row: {err}"))?;
@@ -403,6 +436,121 @@ pub(crate) fn discard_employee_sync_batch_conn(
         return Err("Not found: EE List sync".to_string());
     }
     Ok(())
+}
+
+fn is_duplicate(row: &EmployeeSyncStagedRow) -> bool {
+    row.notes.iter().any(|note| note == DUPLICATE_CODE_NOTE)
+}
+
+fn allowed_actions(row: &EmployeeSyncStagedRow) -> &'static [&'static str] {
+    if is_duplicate(row) {
+        return &["skip"];
+    }
+    match row.kind.as_str() {
+        "new" | "changed" => &["apply", "skip"],
+        "conflict" => &["move_to_employee_list", "skip"],
+        "missing" => &["move_to_offboarding", "none"],
+        _ => &[],
+    }
+}
+
+pub(crate) fn update_employee_sync_row_conn(
+    conn: &mut Connection,
+    row_id: i64,
+    update: EmployeeSyncRowUpdate,
+) -> Result<EmployeeSyncStagedRow, String> {
+    let row = load_row(conn, row_id)?;
+    let action = update.action.unwrap_or_else(|| row.action.clone());
+    if !allowed_actions(&row).contains(&action.as_str()) {
+        return Err(format!("Invalid action for {} row: {action}", row.kind));
+    }
+    let edits = update
+        .edits
+        .as_ref()
+        .map(normalise_fields)
+        .or_else(|| row.edits.clone());
+    let writes = matches!(action.as_str(), "apply" | "move_to_employee_list");
+    // The written values are the edits when present, else the HR record.
+    if writes
+        && edits
+            .as_ref()
+            .or(row.source.first())
+            .is_some_and(|fields| fields.full_name.is_empty())
+    {
+        return Err("Invalid full name: required".to_string());
+    }
+    conn.execute(
+        "UPDATE employee_sync_rows SET action = ?1, edited_json = ?2 WHERE id = ?3",
+        params![action, edits.as_ref().map(to_json).transpose()?, row_id],
+    )
+    .map_err(humanize_sqlite_error)?;
+    load_row(conn, row_id)
+}
+
+pub(crate) fn refresh_employee_sync_row_conn(
+    conn: &mut Connection,
+    row_id: i64,
+) -> Result<EmployeeSyncStagedRow, String> {
+    let row = load_row(conn, row_id)?;
+    let snapshot = read_local_snapshot_conn(conn)?;
+    let by_id = row
+        .local_employee_id
+        .and_then(|id| snapshot.iter().find(|local| local.id == id));
+    // HR rows without a (surviving) local match look the code up again, preferring the
+    // EE List employee like staging does. A missing row has nothing to look up.
+    let local = by_id.or_else(|| {
+        if row.source.is_empty() {
+            return None;
+        }
+        let same_code = || {
+            snapshot
+                .iter()
+                .filter(|local| normalized_staff_code(&local.code) == row.staff_code)
+        };
+        same_code()
+            .filter(|local| local.staff_group == STAFF_GROUP_EMPLOYEE_LIST)
+            .last()
+            .or_else(|| same_code().next())
+    });
+    let kind = match local {
+        // Duplicates stay skip-only conflicts; a missing row stays missing.
+        _ if is_duplicate(&row) || row.kind == "missing" => row.kind.as_str(),
+        None => "new",
+        Some(local) if local.staff_group == STAFF_GROUP_EMPLOYEE_LIST => "changed",
+        Some(_) => "conflict",
+    };
+    let action = if row.kind == "missing" && local.is_none() {
+        // The employee is gone: there is no one left to offboard.
+        "none"
+    } else if kind != row.kind {
+        default_action(kind, local.is_some_and(|local| local.is_floating))
+    } else {
+        row.action.as_str()
+    };
+    let notes: Vec<&String> = row
+        .notes
+        .iter()
+        .filter(|note| *note != STALE_NOTE)
+        .collect();
+    conn.execute(
+        r#"UPDATE employee_sync_rows
+           SET kind = ?1, local_employee_id = ?2, local_group = ?3, local_json = ?4,
+               assets_held = ?5, is_floating = ?6, action = ?7, notes_json = ?8, state = 'pending'
+           WHERE id = ?9"#,
+        params![
+            kind,
+            local.map(|local| local.id),
+            local.map(|local| local.staff_group.as_str()),
+            local.map(to_json).transpose()?,
+            local.map_or(0, |local| local.assets_held),
+            local.is_some_and(|local| local.is_floating),
+            action,
+            to_json(&notes)?,
+            row_id,
+        ],
+    )
+    .map_err(humanize_sqlite_error)?;
+    load_row(conn, row_id)
 }
 
 #[cfg(test)]
@@ -669,5 +817,264 @@ mod tests {
             .expect("open batch");
 
         assert_eq!(loaded, staged);
+    }
+
+    fn stage(conn: &mut Connection, source: &[MssqlStaffRecord]) -> EmployeeSyncBatch {
+        stage_employee_sync_batch_conn(conn, source, false, None).expect("stage")
+    }
+
+    fn fields(full_name: &str) -> EmployeeSyncFields {
+        EmployeeSyncFields {
+            full_name: full_name.to_string(),
+            nick_name: None,
+            email: None,
+            azure_ad_account: None,
+        }
+    }
+
+    fn set_action(action: &str) -> EmployeeSyncRowUpdate {
+        EmployeeSyncRowUpdate {
+            action: Some(action.to_string()),
+            edits: None,
+        }
+    }
+
+    #[test]
+    fn update_row_sets_action_and_edits() {
+        let mut conn = open_test_connection();
+        seed(&conn, "EE-1", "Old", "employee_list", false);
+        let batch = stage(&mut conn, &[hr("EE-1", "New")]);
+        let id = row(&batch, "EE-1").id;
+
+        let updated = update_employee_sync_row_conn(
+            &mut conn,
+            id,
+            EmployeeSyncRowUpdate {
+                action: Some("skip".to_string()),
+                edits: Some(EmployeeSyncFields {
+                    full_name: "  Edited  ".to_string(),
+                    nick_name: Some("  ".to_string()),
+                    email: Some(" Ed@Example.COM ".to_string()),
+                    azure_ad_account: Some(" ed@corp ".to_string()),
+                }),
+            },
+        )
+        .expect("update");
+
+        assert_eq!(updated.action, "skip");
+        assert_eq!(
+            updated.edits,
+            Some(EmployeeSyncFields {
+                full_name: "Edited".to_string(),
+                nick_name: None,
+                email: Some("ed@example.com".to_string()),
+                azure_ad_account: Some("ed@corp".to_string()),
+            })
+        );
+        let loaded = load_open_employee_sync_batch_conn(&conn)
+            .expect("load")
+            .expect("open");
+        assert_eq!(row(&loaded, "EE-1"), &updated);
+
+        // Edits are kept when only the action changes.
+        let updated =
+            update_employee_sync_row_conn(&mut conn, id, set_action("apply")).expect("update");
+        assert_eq!(updated.action, "apply");
+        assert_eq!(
+            updated.edits.map(|edits| edits.full_name),
+            Some("Edited".to_string())
+        );
+
+        assert_eq!(
+            update_employee_sync_row_conn(&mut conn, 9999, set_action("skip")),
+            Err("Not found: EE List sync row 9999".to_string())
+        );
+    }
+
+    #[test]
+    fn update_row_rejects_action_not_allowed_for_kind() {
+        let mut conn = open_test_connection();
+        seed(&conn, "EE-GONE", "Gone", "employee_list", false);
+        let batch = stage(&mut conn, &[hr("EE-1", "One")]);
+        let id = row(&batch, "EE-GONE").id;
+
+        assert_eq!(
+            update_employee_sync_row_conn(&mut conn, id, set_action("apply")),
+            Err("Invalid action for missing row: apply".to_string())
+        );
+        assert_eq!(
+            update_employee_sync_row_conn(&mut conn, id, set_action("none"))
+                .expect("none allowed")
+                .action,
+            "none"
+        );
+    }
+
+    #[test]
+    fn update_row_rejects_blank_full_name_for_writing_row() {
+        let mut conn = open_test_connection();
+        let batch = stage(&mut conn, &[hr("EE-NEW", "New")]);
+        let id = row(&batch, "EE-NEW").id;
+        let blank = EmployeeSyncRowUpdate {
+            action: None,
+            edits: Some(fields("   ")),
+        };
+
+        assert_eq!(
+            update_employee_sync_row_conn(&mut conn, id, blank.clone()),
+            Err("Invalid full name: required".to_string())
+        );
+        // A skipped row writes nothing, so a blank name is allowed there.
+        let skipped = update_employee_sync_row_conn(
+            &mut conn,
+            id,
+            EmployeeSyncRowUpdate {
+                action: Some("skip".to_string()),
+                ..blank
+            },
+        )
+        .expect("skip with blank name");
+        assert_eq!(
+            skipped.edits.map(|edits| edits.full_name),
+            Some(String::new())
+        );
+        // Switching back to a writing action re-checks the stored edits.
+        assert_eq!(
+            update_employee_sync_row_conn(&mut conn, id, set_action("apply")),
+            Err("Invalid full name: required".to_string())
+        );
+    }
+
+    #[test]
+    fn update_duplicate_row_only_allows_skip() {
+        let mut conn = open_test_connection();
+        let batch = stage(&mut conn, &[hr("EE-DUP", "A"), hr("EE-DUP", "B")]);
+        let id = row(&batch, "EE-DUP").id;
+
+        for action in ["move_to_employee_list", "apply"] {
+            assert_eq!(
+                update_employee_sync_row_conn(&mut conn, id, set_action(action)),
+                Err(format!("Invalid action for conflict row: {action}"))
+            );
+        }
+        assert_eq!(
+            update_employee_sync_row_conn(&mut conn, id, set_action("skip"))
+                .expect("skip")
+                .action,
+            "skip"
+        );
+    }
+
+    #[test]
+    fn refresh_stale_row_resets_state_keeps_edits() {
+        let mut conn = open_test_connection();
+        let employee = seed(&conn, "EE-1", "Old", "employee_list", false);
+        let batch = stage(&mut conn, &[hr("EE-1", "New")]);
+        let id = row(&batch, "EE-1").id;
+        update_employee_sync_row_conn(
+            &mut conn,
+            id,
+            EmployeeSyncRowUpdate {
+                action: Some("skip".to_string()),
+                edits: Some(fields("Edited")),
+            },
+        )
+        .expect("update");
+        conn.execute(
+            "UPDATE employee_sync_rows SET state = 'stale', notes_json = ?1 WHERE id = ?2",
+            params![to_json(&[STALE_NOTE]).unwrap(), id],
+        )
+        .expect("mark stale");
+        conn.execute(
+            "UPDATE employees SET full_name = 'Renamed In App', is_floating = 1 WHERE id = ?1",
+            [employee],
+        )
+        .expect("edit employee");
+
+        let refreshed = refresh_employee_sync_row_conn(&mut conn, id).expect("refresh");
+
+        assert_eq!(refreshed.state, "pending");
+        assert!(refreshed.notes.is_empty());
+        assert_eq!(refreshed.kind, "changed");
+        assert_eq!(refreshed.action, "skip", "kind unchanged keeps the action");
+        assert_eq!(refreshed.edits, Some(fields("Edited")));
+        assert_eq!(
+            refreshed.local.map(|local| local.full_name),
+            Some("Renamed In App".to_string())
+        );
+        assert!(refreshed.is_floating);
+        let local_json: String = conn
+            .query_row(
+                "SELECT local_json FROM employee_sync_rows WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .expect("local_json");
+        assert!(
+            local_json.contains("\"staffGroup\":\"employee_list\""),
+            "{local_json}"
+        );
+        assert!(local_json.contains("\"updatedAt\""), "{local_json}");
+
+        assert_eq!(
+            refresh_employee_sync_row_conn(&mut conn, 9999),
+            Err("Not found: EE List sync row 9999".to_string())
+        );
+    }
+
+    #[test]
+    fn refresh_new_row_whose_code_now_exists_becomes_changed_or_conflict() {
+        let mut conn = open_test_connection();
+        let batch = stage(&mut conn, &[hr("EE-A", "A"), hr("EE-B", "B")]);
+        let a = row(&batch, "EE-A").id;
+        let b = row(&batch, "EE-B").id;
+        let onboarding = seed(&conn, " ee-a", "A Local", "onboarding", false);
+        let listed = seed(&conn, "EE-B", "B Local", "employee_list", false);
+
+        let conflict = refresh_employee_sync_row_conn(&mut conn, a).expect("refresh a");
+        assert_eq!(conflict.kind, "conflict");
+        assert_eq!(conflict.action, "move_to_employee_list");
+        assert_eq!(conflict.local_employee_id, Some(onboarding));
+        assert_eq!(conflict.local_group.as_deref(), Some("onboarding"));
+
+        let changed = refresh_employee_sync_row_conn(&mut conn, b).expect("refresh b");
+        assert_eq!(changed.kind, "changed");
+        assert_eq!(changed.action, "apply");
+        assert_eq!(changed.local_employee_id, Some(listed));
+        assert_eq!(
+            changed.local.map(|local| local.full_name),
+            Some("B Local".to_string())
+        );
+    }
+
+    #[test]
+    fn refresh_row_whose_employee_was_deleted() {
+        let mut conn = open_test_connection();
+        let changed = seed(&conn, "EE-1", "Old", "employee_list", false);
+        let gone = seed(&conn, "EE-GONE", "Gone", "employee_list", false);
+        let batch = stage(&mut conn, &[hr("EE-1", "New")]);
+        conn.execute(
+            "DELETE FROM employees WHERE id IN (?1, ?2)",
+            [changed, gone],
+        )
+        .expect("delete employees");
+
+        let became_new =
+            refresh_employee_sync_row_conn(&mut conn, row(&batch, "EE-1").id).expect("refresh");
+        assert_eq!(
+            (became_new.kind.as_str(), became_new.action.as_str()),
+            ("new", "apply")
+        );
+        assert_eq!(became_new.local_employee_id, None);
+        assert_eq!(became_new.local, None);
+
+        let missing =
+            refresh_employee_sync_row_conn(&mut conn, row(&batch, "EE-GONE").id).expect("refresh");
+        assert_eq!(
+            (missing.kind.as_str(), missing.action.as_str()),
+            ("missing", "none")
+        );
+        assert_eq!(missing.local, None);
+        assert_eq!(missing.local_group, None);
     }
 }
