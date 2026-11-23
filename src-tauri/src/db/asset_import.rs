@@ -94,7 +94,8 @@ const USAGE_LOCATION_ALIASES: &[&str] = &[
     "workinglocation",
 ];
 const NOTES_ALIASES: &[&str] = &["notes", "note", "remark", "remarks", "ghichu"];
-const CONDITION_ALIASES: &[&str] = &["status", "condition", "tinhtrang", "trangthai"];
+const CONDITION_ALIASES: &[&str] =
+    &["status", "condition", "tinhtrang", "tìnhtrạng", "trangthai", "trạngthái"];
 const OWNER_STAFF_ID_ALIASES: &[&str] =
     &["staffid", "eeid", "employeeid", "mãnhânviên", "manhanvien"];
 const OWNER_FULL_NAME_ALIASES: &[&str] = &[
@@ -6071,7 +6072,7 @@ mod tests {
 
     #[test]
     fn detect_field_mapping_reads_status_aliases() {
-        for header in ["Status", "Condition", "Tinh Trang", "trang_thai"] {
+        for header in ["Status", "Condition", "Tinh Trang", "trang_thai", "Tình trạng", "Trạng thái"] {
             let mapping = super::detect_field_mapping(&[header.to_string()]);
             assert_eq!(mapping.condition.as_deref(), Some(header));
         }
