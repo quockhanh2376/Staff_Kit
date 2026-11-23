@@ -136,9 +136,7 @@ Line numbers are current as of `d1d91ac`.
 | REL-002 | Medium | `SCHEMA_USER_VERSION = 1` gate (`mod.rs:521-528`) with a lifecycle test. | One all-or-nothing gate, no sequential per-version steps; `ensure_recovery_codes_table` still runs on every open (`:554`). |
 | SEC-011 | Low | Minimum length 8 (Standard) / 12 (Strict) (`auth_session.rs:47-52`). | Standard is below the ≥10 target; no check found that blocks reusing the default password. |
 | MAINT-003 | Low | Data migration for `internal_movent` (`mod.rs:1487`). | The legacy CASE remains in `employee.rs:360,380,961,967,1453` and `schema.rs:155`. |
-| PERF-15 | Low | `index.html` defaults to dark; theme set before render; Google Fonts import removed. | Inter is not self-hosted (falls back to system-ui); the per-user theme is applied after mount (`App.tsx:116-119`), so a light-theme user can flash on login. |
-| PERF-16 | Low | 8 lazy views; dynamic `write-excel-file`; `manualChunks`. Largest chunks: vendor-react 192 KB, SettingsView 158 KB, index 106 KB. | `SettingsView.tsx:34` statically imports `AssetDashboard`; `qrcode.react` is a static import. |
-| PERF-17 | Low | Settings, borrow and asset dashboard hooks are gated by `enabled`. | `useTeamState.ts:28-37` is ungated and duplicates `listTeams`; login still fires about 5 calls. |
+| PERF-16 | Low | 8 lazy views; dynamic `write-excel-file`; `manualChunks`; `AssetDashboard` lazy inside Settings (`perf/startup-polish`: SettingsView chunk 158 KB → 67 KB, AssetDashboard 95 KB own chunk). | `qrcode.react` is a static import. |
 | BUG-004 | Low | Highlight uses NFD stripping. | Offsets are correct for NFC text only (`EmployeeView.tsx:34-66`, `AssetDashboard.tsx:924-946`). |
 | TEST-002 | Medium | 34 test files use RTL / `renderHook`. | 16 tests still assert on source text (`readFileSync` / `?raw`). Count is from grep, not from reading each test. |
 | TEST-005 | Medium | Search debounce and stale-race tests exist. | No `useTableEdit`, `HighlightText`/Unicode or dashboard reload-race tests. |
@@ -167,6 +165,8 @@ Closed on `main` after reading the implementing code (not from commit messages):
 | PERF-12 / PERF-13 | `user_version` gate; single connection in `init_database`. |
 | PERF-14 | Window shown once after first paint (`src/lib/windowReady.ts`, `main.tsx:27`). |
 | PERF-21 | `[profile.release]` in `Cargo.toml:51-54`. |
+| PERF-15 | Font is the Windows system font (`Segoe UI Variable Text`, `Segoe UI`) instead of an unbundled Inter; per-user theme applied in `useLayoutEffect` before paint (`perf/startup-polish`). |
+| PERF-17 | `useTeamState` gated by `enabled: activeView === "teams"`, with a test (`perf/startup-polish`). Login call count not re-measured. |
 | DEVOPS-001 | `.github/workflows/staffkit-ci.yml`. |
 | SEC-016 | Fixed in PR #51 — `change_local_account_password` only for the caller's own account, wrong current password counts toward lockout. |
 | SEC-019 | Fixed in PR #51 — `inspect_asset_import_file` requires admin; guard/classification test added in `lib.rs`. |

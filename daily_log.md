@@ -4361,3 +4361,13 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Change: new `update_asset_details` command (`require_super_admin`) edits name, short name, brand, model, serial, adapter, location, notes in one transaction and writes audit `asset.update_details` with before/after of changed fields only; no change = no write. Asset Dashboard Serialized tab shows an Edit button per row for super admin, opening `EditAssetDrawer`. Asset code, category, status stay read-only. Dashboard rows now include `brand`.
 - Tests: 4 Rust + 1 staffApi + 4 UI tests, each seen failing first. Vitest 408/408. Rust 512/513: `backup::test_move_database_internal_disk_full_fails_closed` flaky under parallel run, passes alone.
 - Status: PASS (not yet checked in the running app).
+
+## 2026-11-23 Startup polish (PERF-15/16/17) — End
+
+- Branch: `perf/startup-polish` (worktree `.worktrees/startup-polish`, from `main` @ `8a2b268`). Coded by Claude in this session.
+- Font: `Segoe UI Variable Text` / `Segoe UI` instead of Inter, which was never bundled (user chose the system font).
+- Theme: per-user theme applied in `useLayoutEffect` before paint, so a light-theme user no longer flashes dark on login.
+- Settings: `AssetDashboard` lazy-loaded inside `SettingsView`; SettingsView chunk 158 KB → 67 KB, AssetDashboard 95 KB in its own chunk.
+- Teams: `useTeamState` loads only when the Team view is open (`enabled`); new test seen failing first.
+- Tests: vitest 410/410, `tsc -b` and eslint clean. Pre-existing on main: `scripts/action-icon-ui.test.ts` fails (looks for "7 versions and delete after 400 days", no longer in `src`), not touched here.
+- Status: PASS (not yet checked in the running app).

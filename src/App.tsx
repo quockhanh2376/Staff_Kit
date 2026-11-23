@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react"
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react"
 import { ClipboardList, LoaderCircle, LogOut, Moon, Settings, Sun, Users } from "lucide-react"
 import { staffApi } from "./services/staff-api"
 import { onUnauthorized } from "./services/session"
@@ -71,8 +71,9 @@ function App() {
     document.documentElement.classList.toggle("dark", nextTheme === "dark")
   }, [])
 
-  // Initial theme load (before login, use a generic key; swapped after login via effect below)
-  useEffect(() => {
+  // Initial theme load (before login, use a generic key; swapped after login via effect below).
+  // Layout effects so the theme class is set before the browser paints (no light/dark flash).
+  useLayoutEffect(() => {
     const saved = (localStorage.getItem("staffkit-theme") as Theme | null) ?? "dark"
     setTheme(saved)
   }, [setTheme])
@@ -113,7 +114,7 @@ function App() {
 
   // Restore per-user theme preference on login / account switch
   const scopedThemeKey = buildScopedStorageKey(THEME_KEY, activeUserScope)
-  useEffect(() => {
+  useLayoutEffect(() => {
     const saved = (localStorage.getItem(scopedThemeKey) as Theme | null) ?? "dark"
     setTheme(saved, scopedThemeKey)
   }, [scopedThemeKey]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -182,6 +183,7 @@ function App() {
     dbReady,
     isAuthenticated,
     reloadToken,
+    enabled: activeView === "teams",
     setGlobalError,
     triggerReload,
   })
