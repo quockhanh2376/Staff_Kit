@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { lazy, Suspense, useEffect, useState } from "react"
 import {
     AlertTriangle,
     Copy,
@@ -31,11 +31,15 @@ import type { AssetDashboardState } from "../assets/useAssetDashboardState"
 import type { StaffGroupKey } from "../../types/app"
 import { STAFF_GROUP_BUTTONS, DEFAULT_NEW_ACCOUNT_PASSWORD } from "../../lib/constants"
 import { getGroupCount } from "../../lib/utils"
-import { AssetDashboard } from "../assets/AssetDashboard"
 import { useIdleCollapse } from "./useIdleCollapse"
 import { RemoteEeSyncSettings } from "./RemoteEeSyncSettings"
 import { AuditLogViewer } from "./AuditLogViewer"
 import { RecoveryPasswordModal } from "./RecoveryPasswordModal"
+
+// Own chunk: the asset dashboard is large and only needed once Settings is open.
+const AssetDashboard = lazy(() =>
+    import("../assets/AssetDashboard").then((m) => ({ default: m.AssetDashboard })),
+)
 
 import type { DataImportState } from '../import/useDataImportState'
 
@@ -1334,13 +1338,19 @@ export function SettingsView({
                 </div>
             )}
 
-            <AssetDashboard
-                activeUserScope={activeUserScope}
-                auth={auth}
-                assetDashboard={assetDashboard}
-                assetImport={assetImport}
-                triggerReload={triggerReload}
-            />
+            <Suspense
+                fallback={
+                    <div className="mt-4 text-sm text-[var(--text-secondary)]">Loading asset dashboard...</div>
+                }
+            >
+                <AssetDashboard
+                    activeUserScope={activeUserScope}
+                    auth={auth}
+                    assetDashboard={assetDashboard}
+                    assetImport={assetImport}
+                    triggerReload={triggerReload}
+                />
+            </Suspense>
 
             {/* Audit Logs — Super Admin (all) & Admin (business only) */}
             {auth.canAccessSettings && (

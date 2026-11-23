@@ -7,6 +7,7 @@ type UseTeamStateOptions = {
     dbReady: boolean
     isAuthenticated: boolean
     reloadToken: number
+    enabled?: boolean
     setGlobalError: (msg: string | null) => void
     triggerReload: () => void
 }
@@ -17,6 +18,7 @@ export function useTeamState({
     dbReady,
     isAuthenticated,
     reloadToken,
+    enabled = true,
     setGlobalError,
     triggerReload,
 }: UseTeamStateOptions) {
@@ -27,7 +29,7 @@ export function useTeamState({
     const [isLoadingTeams, setLoadingTeams] = useState(false)
 
     useEffect(() => {
-        if (!dbReady || !isAuthenticated) return
+        if (!enabled || !dbReady || !isAuthenticated) return
 
         let disposed = false
 
@@ -44,7 +46,7 @@ export function useTeamState({
         })()
 
         return () => { disposed = true }
-    }, [dbReady, isAuthenticated, reloadToken, setGlobalError])
+    }, [enabled, dbReady, isAuthenticated, reloadToken, setGlobalError])
 
     const handleCreateTeam = async () => {
         const name = newTeamName.trim()
