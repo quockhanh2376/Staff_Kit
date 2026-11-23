@@ -11,6 +11,7 @@ import {
   setSession,
 } from "./session"
 import type {
+  AssetCondition,
   AssetDetailsUpdateInput,
   DatabaseStatus,
   BackupRunResult,
@@ -294,6 +295,7 @@ export const staffApi = {
         importType: payload.importType,
         filePath: payload.filePath,
         sheetName: payload.sheetName ?? null,
+        conditionOverrides: payload.conditionOverrides ?? [],
       },
     }),
 
@@ -303,6 +305,7 @@ export const staffApi = {
         importType: payload.importType,
         filePath: payload.filePath,
         sheetName: payload.sheetName ?? null,
+        conditionOverrides: payload.conditionOverrides ?? [],
       },
     }),
 
@@ -421,11 +424,15 @@ export const staffApi = {
         usageLocation: payload.usageLocation ?? null,
         warehouse: payload.warehouse ?? null,
         notes: payload.notes ?? null,
+        condition: payload.condition ?? null,
       },
     }),
 
   updateAssetDetails: (assetId: number, payload: AssetDetailsUpdateInput) =>
     call<AssetRecord>("update_asset_details", { assetId, payload }),
+
+  updateAssetCondition: (assetId: number, condition: AssetCondition) =>
+    call<AssetRecord>("update_asset_condition", { assetId, condition }),
 
   upsertAssets: (payload: AssetSeedItemInput[]) =>
     call<AssetRecord[]>("upsert_assets", {

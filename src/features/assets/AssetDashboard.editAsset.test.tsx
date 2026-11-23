@@ -26,6 +26,8 @@ function createRow(assetId: number, displayName: string): SerializedRow {
     holderEmployeeId: null,
     holderFullName: null,
     signatureStatus: null,
+    condition: "spare",
+    holderTeamName: null,
   }
 }
 

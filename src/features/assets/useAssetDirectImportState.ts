@@ -3,6 +3,7 @@ import { open as openFileDialog } from "@tauri-apps/plugin-dialog"
 import { staffApi } from "../../services/staff-api"
 import type {
     AssetCategoryRecord,
+    AssetCondition,
     AssetDirectImportPreview,
     AssetDirectImportReport,
     AssetImportFileInspection,
@@ -32,6 +33,7 @@ type ManualAssetForm = {
     model: string
     serialNumber: string
     notes: string
+    condition: AssetCondition
 }
 
 const DEFAULT_ASSET_IMPORT_MODE: AssetImportMode = "serialized"
@@ -42,6 +44,8 @@ const EMPTY_MANUAL_ASSET_FORM: ManualAssetForm = {
     model: "",
     serialNumber: "",
     notes: "",
+    // A hand-entered machine is usually a new purchase.
+    condition: "new",
 }
 
 export type AssetImportState = ReturnType<typeof useAssetDirectImportState>
@@ -67,6 +71,8 @@ export function useAssetDirectImportState({
     const [inspection, setInspection] = useState<AssetImportFileInspection | null>(null)
     const [preview, setPreview] = useState<AssetDirectImportPreview | null>(null)
     const [report, setReport] = useState<AssetDirectImportReport | null>(null)
+    // IT's condition picks in the preview, keyed by file row number; sent with preview and import.
+    const [conditionOverrides, setConditionOverrides] = useState<Record<number, AssetCondition>>({})
     const [manualAssetForm, setManualAssetForm] =
         useState<ManualAssetForm>(EMPTY_MANUAL_ASSET_FORM)
     const [manualAssetResult, setManualAssetResult] = useState<AssetRecord | null>(null)
@@ -93,6 +99,7 @@ export function useAssetDirectImportState({
         setInspection(null)
         setPreview(null)
         setReport(null)
+        setConditionOverrides({})
         setStatusMessage("")
     }, [])
 
@@ -138,6 +145,7 @@ export function useAssetDirectImportState({
                 setInspection(nextInspection)
                 setPreview(null)
                 setReport(null)
+                setConditionOverrides({})
             } catch (error) {
                 setGlobalError(getUserErrorMessage(error))
             } finally {
@@ -193,7 +201,7 @@ export function useAssetDirectImportState({
         [inspectFile, selectedFilePath],
     )
 
-    const handlePreviewImport = useCallback(async () => {
+    const handlePreviewImport = useCallback(async (overrides: Record<number, AssetCondition> = conditionOverrides) => {
         if (!selectedFilePath) {
             setStatusMessage("Choose a CSV or Excel file before previewing the import.")
             return
@@ -206,6 +214,7 @@ export function useAssetDirectImportState({
                 importType: selectedImportMode,
                 filePath: selectedFilePath,
                 sheetName: inspection?.selectedSheetName ?? undefined,
+                conditionOverrides: toConditionOverrides(overrides),
             })
             setPreview(nextPreview)
             setReport(null)
@@ -214,7 +223,16 @@ export function useAssetDirectImportState({
         } finally {
             setPreviewingImport(false)
         }
-    }, [inspection?.selectedSheetName, selectedFilePath, selectedImportMode, setGlobalError])
+    }, [conditionOverrides, inspection?.selectedSheetName, selectedFilePath, selectedImportMode, setGlobalError])
+
+    const handlePreviewConditionChange = useCallback(
+        async (rowNumber: number, condition: AssetCondition) => {
+            const next = { ...conditionOverrides, [rowNumber]: condition }
+            setConditionOverrides(next)
+            await handlePreviewImport(next)
+        },
+        [conditionOverrides, handlePreviewImport],
+    )
 
     const handleApproveImport = useCallback(async () => {
         if (!selectedFilePath || !preview) return
@@ -225,6 +243,7 @@ export function useAssetDirectImportState({
                 importType: selectedImportMode,
                 filePath: selectedFilePath,
                 sheetName: inspection?.selectedSheetName ?? undefined,
+                conditionOverrides: toConditionOverrides(conditionOverrides),
             })
             setPreview(null)
             setReport(nextReport)
@@ -238,6 +257,7 @@ export function useAssetDirectImportState({
             setApprovingImport(false)
         }
     }, [
+        conditionOverrides,
         inspection?.selectedSheetName,
         preview,
         selectedFilePath,
@@ -268,6 +288,7 @@ export function useAssetDirectImportState({
             model: normalizeOptionalField(manualAssetForm.model),
             serialNumber: normalizeOptionalField(manualAssetForm.serialNumber),
             notes: normalizeOptionalField(manualAssetForm.notes),
+            condition: manualAssetForm.condition,
         }
 
         if (!payload.assetCode || !payload.assetType || !payload.displayName) {
@@ -290,8 +311,9 @@ export function useAssetDirectImportState({
     }, [manualAssetForm, triggerReload])
 
     const canPreviewCurrentFile = Boolean(selectedFilePath) && !isInspectingFile
+    // A file of existing assets only is still worth approving when it changes their condition.
     const previewApproveDisabled =
-        (preview?.validRows ?? 0) === 0 ||
+        ((preview?.validRows ?? 0) === 0 && (preview?.conditionUpdateRows ?? 0) === 0) ||
         (preview?.importType === "serialized" && (preview?.errorRows ?? 0) > 0)
     const selectedFiles = useMemo(
         () => (selectedFilePath ? [selectedFilePath] : []),
@@ -330,11 +352,19 @@ export function useAssetDirectImportState({
         prepareSelectedFile,
         handleChangeSelectedSheet,
         handlePreviewImport,
+        handlePreviewConditionChange,
         handleApproveImport,
         handleCancelPreview,
         handleManualAssetFieldChange,
         handleCreateManualAsset,
     }
+}
+
+function toConditionOverrides(overrides: Record<number, AssetCondition>) {
+    return Object.entries(overrides).map(([rowNumber, condition]) => ({
+        rowNumber: Number(rowNumber),
+        condition,
+    }))
 }
 
 function normalizeOptionalField(value: string): string | null {

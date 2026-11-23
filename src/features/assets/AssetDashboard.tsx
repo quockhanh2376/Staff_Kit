@@ -4,6 +4,7 @@ import {
   Boxes,
   Cpu,
   Database,
+  Download,
   FileSpreadsheet,
   Headphones,
   Keyboard,
@@ -21,7 +22,8 @@ import {
   Usb,
   X,
 } from "lucide-react"
-import type { AssetCategoryDetailRecord } from "../../types/staff"
+import type { AssetCategoryDetailRecord, AssetCondition } from "../../types/staff"
+import { ASSET_CONDITIONS, CONDITION_LABELS, isInStock } from "./assetCondition"
 import type { AuthState } from "../auth/useAuthState"
 import type { AssetImportState } from "./useAssetDirectImportState"
 import type { AssetDashboardState } from "./useAssetDashboardState"
@@ -54,6 +56,7 @@ import { AssetDashboardColumnsDrawer } from "./AssetDashboardColumnsDrawer"
 import { HistoricalAssignmentImportModal } from "./HistoricalAssignmentImportModal"
 import { AssetMetadataUpdateModal } from "./AssetMetadataUpdateModal"
 import { EditAssetDrawer } from "./EditAssetDrawer"
+import { AssetExportDialog } from "./AssetExportDialog"
 import { useAssetDashboardColumnPrefs } from "./useAssetDashboardColumnPrefs"
 import { useSerializedAssetGridState } from "./useSerializedAssetGridState"
 
@@ -283,6 +286,7 @@ export function AssetDashboard({
 }: AssetDashboardProps) {
   const [activeTab, setActiveTab] = useState<AssetDashboardTabKey>("serialized")
   const [isHistoricalImportOpen, setIsHistoricalImportOpen] = useState(false)
+  const [isExportOpen, setIsExportOpen] = useState(false)
   const [editingAssetId, setEditingAssetId] = useState<number | null>(null)
   const editingAssetRow =
     editingAssetId == null
@@ -292,6 +296,7 @@ export function AssetDashboard({
   const [serializedCategoryFilter, setSerializedCategoryFilter] = useState(
     ALL_SERIALIZED_ASSET_CATEGORY_FILTER,
   )
+  const [serializedConditionFilter, setSerializedConditionFilter] = useState<AssetCondition | "">("")
   const [quantityDraftOverrides, setQuantityDraftOverrides] = useState<QuantityDraftMap>({})
   const [categoryDraft, setCategoryDraft] = useState<AssetCategoryDraft>(() =>
     buildEmptyAssetCategoryDraft(),
@@ -395,6 +400,24 @@ export function AssetDashboard({
     }))
   }, [assetDashboard.serializedRows])
 
+  // Over the full loaded list, not the current page. New/Spare are in stock only; Broken is every broken machine.
+  const conditionCards = useMemo(() => {
+    const counts = { total: 0, assigned: 0, new: 0, spare: 0, broken: 0 }
+    for (const row of assetDashboard.serializedRows) {
+      counts.total += 1
+      if (row.status === "assigned") counts.assigned += 1
+      if (row.condition === "broken") counts.broken += 1
+      else if (isInStock(row)) counts[row.condition] += 1
+    }
+    return [
+      { key: "total", label: "Total", value: counts.total, accentTextClass: "text-[var(--primary)]" },
+      { key: "assigned", label: "Assigned", value: counts.assigned, accentTextClass: "text-sky-500" },
+      { key: "new", label: "New (in stock)", value: counts.new, accentTextClass: "text-emerald-500" },
+      { key: "spare", label: "Spare (in stock)", value: counts.spare, accentTextClass: "text-amber-500" },
+      { key: "broken", label: "Broken (all)", value: counts.broken, accentTextClass: "text-rose-500" },
+    ]
+  }, [assetDashboard.serializedRows])
+
   const quantityRowsById = useMemo(
     () =>
       new Map(
@@ -470,8 +493,15 @@ export function AssetDashboard({
     return filterSerializedAssetRows(assetDashboard.serializedRows, {
         searchTerm: serializedSearchTerm,
         categoryFilter: serializedCategoryFilter,
+        conditionFilter: serializedConditionFilter,
       })
-  }, [activeTab, assetDashboard.serializedRows, serializedCategoryFilter, serializedSearchTerm])
+  }, [
+    activeTab,
+    assetDashboard.serializedRows,
+    serializedCategoryFilter,
+    serializedConditionFilter,
+    serializedSearchTerm,
+  ])
 
   const updateQuantityDraft = (
     stockItemId: number,
@@ -504,11 +534,13 @@ export function AssetDashboard({
   const clearSerializedFilters = () => {
     setSerializedSearchTerm("")
     setSerializedCategoryFilter(ALL_SERIALIZED_ASSET_CATEGORY_FILTER)
+    setSerializedConditionFilter("")
   }
 
   const hasActiveSerializedFilters =
     serializedSearchTerm.trim().length > 0 ||
-    serializedCategoryFilter !== ALL_SERIALIZED_ASSET_CATEGORY_FILTER
+    serializedCategoryFilter !== ALL_SERIALIZED_ASSET_CATEGORY_FILTER ||
+    serializedConditionFilter !== ""
 
   const searchControl = activeTab === "serialized" ? (
     <label className="relative min-w-0 flex-1 max-sm:w-full sm:w-[320px] xl:w-[280px] 2xl:w-[360px]">
@@ -550,6 +582,19 @@ export function AssetDashboard({
         {serializedCategoryOptions.map((option) => (
           <option key={option.value} value={option.value}>
             {option.label}
+          </option>
+        ))}
+      </select>
+      <select
+        aria-label="Filter serialized assets by condition"
+        className={`${dashboardInputClass} w-full sm:w-[130px]`}
+        onChange={(event) => setSerializedConditionFilter(event.target.value as AssetCondition | "")}
+        value={serializedConditionFilter}
+      >
+        <option value="">All conditions</option>
+        {ASSET_CONDITIONS.map((condition) => (
+          <option key={condition} value={condition}>
+            {CONDITION_LABELS[condition]}
           </option>
         ))}
       </select>
@@ -749,12 +794,22 @@ export function AssetDashboard({
                 <PlusCircle size={16} />
                 Add
               </button>
+              {auth.isAdminAccount && (
+                <button
+                  className={dashboardShellSecondaryButtonClass}
+                  onClick={() => setIsExportOpen(true)}
+                  type="button"
+                >
+                  <Download size={16} />
+                  Export
+                </button>
+              )}
               {tabControls}
             </div>
           </div>
 
           {assetDashboard.statusMessage && (
-            <div className="rounded-[10px] border border-emerald-500/25 bg-emerald-500/8 px-3 py-2 text-xs text-emerald-100">
+            <div className="rounded-[10px] border border-emerald-500/25 bg-emerald-500/8 px-3 py-2 text-xs text-[var(--text-primary)]">
               {assetDashboard.statusMessage}
             </div>
           )}
@@ -812,6 +867,27 @@ export function AssetDashboard({
                         )
                       })()
                     ))}
+                {conditionCards.map((card, index) => (
+                  <div
+                    key={card.key}
+                    className={`group flex min-w-[104px] shrink-0 flex-col border-[var(--border)]/70 ${index === 0 ? "border-l-2" : "border-l"}`}
+                  >
+                    <div className="border-b border-[var(--border)]/30 px-3 py-2.5">
+                      <span className={`truncate text-[12.5px] font-bold uppercase tracking-tight ${card.accentTextClass}`}>
+                        {card.label}
+                      </span>
+                    </div>
+                    <div className={`h-[3px] w-full bg-current opacity-50 transition-all group-hover:opacity-100 ${card.accentTextClass}`} />
+                    <div className="flex flex-1 items-center justify-center px-4 py-3.5 transition-colors duration-300 group-hover:bg-[var(--surface-hover)]">
+                      <span
+                        className="text-[19px] font-black leading-none tracking-tight text-[var(--text-primary)]"
+                        data-testid={`condition-card-${card.key}`}
+                      >
+                        {card.value}
+                      </span>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           ) : (
@@ -849,6 +925,7 @@ export function AssetDashboard({
             assetDashboard={assetDashboard}
             filteredRows={filteredSerializedRows}
             searchTerm={serializedSearchTerm}
+            onConditionChange={auth.isAdminAccount ? assetDashboard.updateAssetCondition : undefined}
             onEditRow={
               auth.isSuperAdminAccount
                 ? (row) => {
@@ -913,6 +990,14 @@ export function AssetDashboard({
           void assetDashboard.refreshDashboard()
           triggerReload?.()
         }}
+      />
+      <AssetExportDialog
+        open={isExportOpen}
+        onClose={() => setIsExportOpen(false)}
+        rows={assetDashboard.serializedRows}
+        filteredRows={filteredSerializedRows}
+        currentFilterAvailable={activeTab === "serialized"}
+        categoryDetails={assetDashboard.categoryDetails}
       />
       <AssetMetadataUpdateModal
         open={assetImport.isMetadataUpdateOpen}
@@ -993,6 +1078,7 @@ function getCellSearchText(
     case "usageLocation": return row.usageLocation ?? ""
     case "note": return row.notes ?? ""
     case "status": return ""
+    case "condition": return ""
     case "holder": return [row.holderFullName, row.holderEmployeeId].filter(Boolean).join(" ")
   }
 }
@@ -1009,12 +1095,14 @@ function SerializedDashboardTable({
   filteredRows,
   searchTerm,
   onEditRow,
+  onConditionChange,
 }: {
   activeUserScope: string
   assetDashboard: AssetDashboardState
   filteredRows: AssetDashboardState["serializedRows"]
   searchTerm: string
   onEditRow?: (row: AssetDashboardState["serializedRows"][number]) => void
+  onConditionChange?: (assetId: number, condition: AssetCondition) => unknown
 }) {
   const [rowsPerPage, setRowsPerPage] = useState<number>(25)
   const [page, setPage] = useState<number>(1)
@@ -1076,6 +1164,14 @@ function SerializedDashboardTable({
 
   return (
     <div className="space-y-3">
+      {assetDashboard.conditionError && (
+        <div
+          className="rounded-[10px] border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-[var(--text-primary)]"
+          role="alert"
+        >
+          {assetDashboard.conditionError}
+        </div>
+      )}
       {filteredRows.length === 0 ? (
         <div className="space-y-3">
           <div className="rounded-[12px] border border-dashed border-[var(--border)] bg-[var(--surface)] px-4 py-8 text-center text-sm text-[var(--text-secondary)]">
@@ -1175,7 +1271,29 @@ function SerializedDashboardTable({
                             width: effectiveWidths[column.key],
                           }}
                         >
-                          {renderSerializedCellValue(column.key, row, searchTerm)}
+                          {column.key === "condition" && onConditionChange ? (
+                            <select
+                              aria-label={`Condition ${row.assetCode}`}
+                              className="rounded-[8px] border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-xs font-semibold text-[var(--text-primary)] outline-none transition focus:border-emerald-500/45 disabled:opacity-50"
+                              disabled={assetDashboard.isSavingConditionAssetId === row.assetId}
+                              onChange={(event) =>
+                                void onConditionChange(row.assetId, event.target.value as AssetCondition)
+                              }
+                              value={row.condition}
+                            >
+                              {ASSET_CONDITIONS.map((condition) => (
+                                <option
+                                  key={condition}
+                                  value={condition}
+                                  disabled={condition === "new" && row.status === "assigned"}
+                                >
+                                  {CONDITION_LABELS[condition]}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            renderSerializedCellValue(column.key, row, searchTerm)
+                          )}
                         </td>
                       )
                     })}
@@ -1305,6 +1423,8 @@ function renderSerializedCellValue(
           {formatAssetDashboardStatusLabel(row.status)}
         </span>
       )
+    case "condition":
+      return CONDITION_LABELS[row.condition] ?? row.condition
     case "holder": {
       const holderName = row.holderFullName?.trim()
       const holderId = formatAssetDashboardHolderEmployeeId(row.holderEmployeeId)

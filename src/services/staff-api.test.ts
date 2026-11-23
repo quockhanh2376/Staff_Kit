@@ -73,6 +73,30 @@ describe("staffApi session injection", () => {
         })
     })
 
+    it("updateAssetCondition invokes update_asset_condition", async () => {
+        setSession({ sessionToken: "real-token", expiresAt: "2099-01-01T00:00:00Z" })
+        invokeMock.mockResolvedValue({ id: 3 })
+        await staffApi.updateAssetCondition(3, "broken")
+        expect(invokeMock).toHaveBeenCalledWith("update_asset_condition", {
+            sessionToken: "real-token",
+            assetId: 3,
+            condition: "broken",
+        })
+    })
+
+    it("createAssetManually passes condition and import calls pass condition overrides", async () => {
+        setSession({ sessionToken: "real-token", expiresAt: "2099-01-01T00:00:00Z" })
+        invokeMock.mockResolvedValue({})
+        await staffApi.createAssetManually({ assetCode: "VNLAP1", assetType: "Laptop", displayName: "L", condition: "spare" })
+        expect((invokeMock.mock.calls[0][1] as { payload: Record<string, unknown> }).payload.condition).toBe("spare")
+        const overrides = [{ rowNumber: 2, condition: "broken" as const }]
+        await staffApi.previewAssetImportFile({ importType: "serialized", filePath: "a.xlsx", conditionOverrides: overrides })
+        await staffApi.importAssetImportFile({ importType: "serialized", filePath: "a.xlsx", conditionOverrides: overrides })
+        for (const call of invokeMock.mock.calls.slice(1)) {
+            expect((call[1] as { payload: Record<string, unknown> }).payload.conditionOverrides).toEqual(overrides)
+        }
+    })
+
     it("moveEmployeesGroup forwards the transition action to the backend", async () => {
         setSession({ sessionToken: "real-token", expiresAt: "2099-01-01T00:00:00Z" })
         invokeMock.mockResolvedValue(1)

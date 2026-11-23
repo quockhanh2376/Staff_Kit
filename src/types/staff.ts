@@ -147,7 +147,11 @@ export type AssetSeedItemInput = {
   usageLocation?: string | null
   warehouse?: string | null
   notes?: string | null
+  condition?: AssetCondition
 }
+
+/** Physical state of a serialized asset, separate from its loan status. */
+export type AssetCondition = "new" | "spare" | "broken"
 
 /** Persisted asset record (core fields). */
 export type AssetRecord = {
@@ -159,6 +163,7 @@ export type AssetRecord = {
   serialNumber: string | null
   notes: string | null
   status: string
+  condition: AssetCondition
 }
 
 /** How an asset category tracks its items. */
@@ -265,6 +270,8 @@ export type AssetDashboardSerializedRecord = {
   holderEmployeeId: string | null
   holderFullName: string | null
   signatureStatus?: string | null
+  condition: AssetCondition
+  holderTeamName: string | null
 }
 
 /** Descriptive fields a super admin may edit on one serialized asset. */
@@ -323,6 +330,13 @@ export type AssetDirectImportInput = {
   importType: AssetImportMode
   filePath: string
   sheetName?: string | null
+  conditionOverrides?: AssetConditionOverride[]
+}
+
+/** IT's condition pick for one preview row, keyed on the file row number. */
+export type AssetConditionOverride = {
+  rowNumber: number
+  condition: AssetCondition
 }
 
 export type AssetImportFileInspection = {
@@ -467,6 +481,8 @@ export type AssetDirectImportPreviewRow = {
   status: string
   holderLabel: string | null
   validationErrors: string[]
+  condition: AssetCondition | null
+  reviewNotes: string[]
 }
 
 export type AssetDirectImportNewCategorySummary = {
@@ -482,6 +498,8 @@ export type AssetDirectImportPreview = {
   validRows: number
   errorRows: number
   skippedRows: number
+  /** Existing assets whose stored condition this import would change. */
+  conditionUpdateRows: number
   newCategories: AssetDirectImportNewCategorySummary[]
   rows: AssetDirectImportPreviewRow[]
   errors: AssetDirectImportErrorItem[]
@@ -497,6 +515,7 @@ export type AssetDirectImportReport = {
   failed: number
   importedAssetCodes: string[]
   errors: AssetDirectImportErrorItem[]
+  conditionUpdatedRows: number
 }
 
 /** Borrow/Return request submission from the LAN QR page. */
@@ -1014,6 +1033,8 @@ export type HistoricalAssignmentItem = {
   currentLoanId?: number | null
   suggestedAction?: string | null
   selectedAction?: string | null
+  currentCondition?: AssetCondition | null
+  reviewNote?: string | null
 }
 
 export type HistoricalAssignmentPreviewSummary = {

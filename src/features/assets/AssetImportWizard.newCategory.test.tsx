@@ -13,6 +13,7 @@ describe("AssetImportWizard — Auto-Create Category Preview", () => {
         validRows: 4,
         errorRows: 0,
         skippedRows: 0,
+        conditionUpdateRows: 0,
         newCategories: [
             {
                 categoryName: "H Phone",
@@ -35,6 +36,8 @@ describe("AssetImportWizard — Auto-Create Category Preview", () => {
                 status: "valid",
                 holderLabel: null,
                 validationErrors: [],
+                condition: "new",
+                reviewNotes: [],
             },
         ],
         errors: [],

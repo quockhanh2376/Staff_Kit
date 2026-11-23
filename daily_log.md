@@ -4371,3 +4371,12 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Teams: `useTeamState` loads only when the Team view is open (`enabled`); new test seen failing first.
 - Tests: vitest 410/410, `tsc -b` and eslint clean. Pre-existing on main: `scripts/action-icon-ui.test.ts` fails (looks for "7 versions and delete after 400 days", no longer in `src`), not touched here.
 - Status: PASS (not yet checked in the running app).
+
+## 2026-11-23 Asset export dialog (Condition PR 2, task 8) — End
+
+- Branch: `feat/asset-condition-ui`. Admin and super admin get an Export button on the Asset Dashboard that opens a dialog: Scope (All, Assignable, Spare, New, Broken, Assigned, Current table filter), Category, Team, Format (Excel or CSV). It always exports the full list; the current filter is used only by the "Current table filter" scope.
+- Team filter matches the holder team or its direct child team (same rule as the employee list). In-stock machines have no holder team, so a team plus an in-stock scope gives an empty Assets sheet and a Summary of zeros.
+- Excel has `Summary` + `Assets`; CSV has Assets only. File name `StaffKit_Assets_<Scope>_<date>.<ext>`. Built on `tableExport`; the dialog shows `Saved to <path>`.
+- Tests: 8 new row-builder tests + 1 dashboard test, each seen failing first. Vitest 437/437, `tsc -b`, eslint, `vite build` clean.
+- `optimization-backlog.md`: no CSV formula guard item exists, left unchanged.
+- Status: PASS (not yet checked in the running app, light and dark).

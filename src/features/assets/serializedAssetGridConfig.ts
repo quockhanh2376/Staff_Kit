@@ -11,6 +11,7 @@ export type SerializedAssetColumnKey =
   | "usageLocation"
   | "note"
   | "status"
+  | "condition"
   | "holder"
 
 export type SerializedAssetGridSort = {
@@ -36,6 +37,7 @@ export const DEFAULT_SERIALIZED_ASSET_COLUMN_ORDER: SerializedAssetColumnKey[] =
   "usageLocation",
   "note",
   "status",
+  "condition",
   "holder",
 ]
 
@@ -49,6 +51,7 @@ export const DEFAULT_VISIBLE_SERIALIZED_ASSET_COLUMN_KEYS: SerializedAssetColumn
   "usageLocation",
   "note",
   "status",
+  "condition",
   "holder",
 ]
 
@@ -91,6 +94,7 @@ export const SERIALIZED_ASSET_COLUMN_MAP: Record<
   },
   note: { key: "note", label: "Note", defaultWidth: 180, minWidth: 140 },
   status: { key: "status", label: "Status", defaultWidth: 120, minWidth: 100 },
+  condition: { key: "condition", label: "Condition", defaultWidth: 130, minWidth: 110 },
   holder: { key: "holder", label: "Holder", defaultWidth: 220, minWidth: 190 },
 }
 
@@ -185,6 +189,8 @@ function getComparableValue(
       return normalizeComparableText(row.notes)
     case "status":
       return normalizeComparableText(row.status)
+    case "condition":
+      return normalizeComparableText(row.condition)
     case "holder":
       return normalizeComparableText(
         [row.holderFullName, row.holderEmployeeId].filter(Boolean).join(" "),

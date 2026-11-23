@@ -372,6 +372,8 @@ pub struct AssetDirectImportPreview {
     pub valid_rows: i64,
     pub error_rows: i64,
     pub skipped_rows: i64,
+    /// Existing assets whose stored condition the import would change.
+    pub condition_update_rows: i64,
     pub new_categories: Vec<AssetDirectImportNewCategorySummary>,
     pub rows: Vec<AssetDirectImportPreviewRow>,
     pub errors: Vec<AssetDirectImportErrorItem>,
@@ -1441,7 +1443,14 @@ where
 {
     let batch = create_asset_import_batch_seed_conn(conn, input)?;
     let batch_id = batch.summary.id;
-    let preview = asset_direct_preview_from_batch_detail(conn, &batch);
+    let mut preview = asset_direct_preview_from_batch_detail(conn, &batch);
+    // Same revalidation the commit runs; the transaction is dropped (rolled back), nothing is written.
+    preview.condition_update_rows = {
+        let tx = conn
+            .transaction()
+            .map_err(|err| format!("failed to start asset import preview transaction: {err}"))?;
+        revalidate_batch_tx(&tx, batch_id)?.len() as i64
+    };
 
     if let Err(err) = cleanup_batch(conn, batch_id, false) {
         eprintln!(
@@ -1642,6 +1651,7 @@ fn asset_direct_preview_from_batch_detail(
         valid_rows: batch.summary.valid_rows,
         error_rows: batch.summary.error_rows,
         skipped_rows: batch.summary.skipped_rows,
+        condition_update_rows: 0,
         new_categories,
         rows: batch
             .rows
@@ -3037,6 +3047,8 @@ fn revalidate_batch_tx(
 
         let owner_state = resolve_owner_state(row, &employee_lookup);
         let mut review_notes = Vec::new();
+        // Existing assets: show the condition that will actually be stored, not the file value.
+        let mut effective_condition: Option<String> = None;
         let (validation_errors, next_status) = if row.import_type == AssetImportMode::Serialized {
             match classify_serialized_asset_row(
                 row,
@@ -3056,6 +3068,7 @@ fn revalidate_batch_tx(
                         false,
                     );
                     review_notes = notes;
+                    effective_condition = Some(update.unwrap_or(condition.as_str()).to_string());
                     if let Some(next) = update {
                         condition_updates.push((asset_id, next));
                     }
@@ -3125,6 +3138,7 @@ fn revalidate_batch_tx(
               validation_errors_json = ?,
               status = ?,
               review_notes_json = ?,
+              condition = COALESCE(?, condition),
               updated_at = datetime('now')
             WHERE id = ?
             "#,
@@ -3138,6 +3152,7 @@ fn revalidate_batch_tx(
                 to_json(&validation_errors)?,
                 next_status,
                 to_json(&review_notes)?,
+                effective_condition,
                 row.id
             ],
         )
@@ -6247,6 +6262,27 @@ mod tests {
     }
 
     #[test]
+    fn direct_import_preview_counts_condition_updates_for_existing_assets() {
+        let mut conn = open_test_connection();
+        seed_asset_with_identity(&conn, "VNLAP001", None, "in_stock");
+        seed_asset_with_identity(&conn, "VNLAP002", None, "in_stock");
+
+        let preview = preview_asset_import_seed_conn(
+            &mut conn,
+            status_batch(vec![
+                with_status(row(2, "VNLAP001", "Laptop", "One"), Some("Spare")),
+                with_status(row(3, "VNLAP002", "Laptop", "Two"), Some("Broken")),
+            ]),
+        )
+        .expect("preview existing assets");
+
+        assert_eq!(preview.valid_rows, 0);
+        assert_eq!(preview.skipped_rows, 2);
+        assert_eq!(preview.condition_update_rows, 1);
+        assert_eq!(asset_condition(&conn, "VNLAP002"), "spare", "preview must not write");
+    }
+
+    #[test]
     fn direct_import_existing_blank_status_keeps_condition() {
         let mut conn = open_test_connection();
         let asset_id = seed_asset_with_identity(&conn, "VNLAP001", None, "in_stock");
@@ -6426,6 +6462,7 @@ mod tests {
 
         let preview = preview_asset_import_seed_conn(&mut conn, status_batch(rows.clone()))
             .expect("preview existing unknown status");
+        assert_eq!(preview.rows[0].condition.as_deref(), Some("broken"));
         assert_eq!(
             preview.rows[0].review_notes,
             vec!["Unknown status \"Brokn\" — kept Broken".to_string()]

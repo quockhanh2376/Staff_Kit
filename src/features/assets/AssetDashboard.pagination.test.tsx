@@ -26,6 +26,8 @@ function createMockSerializedRow(index: number): SerializedRow {
     holderEmployeeId: "ASWVN001",
     holderFullName: "Nguyen Van A",
     signatureStatus: null,
+    condition: "spare",
+    holderTeamName: null,
   }
 }
 

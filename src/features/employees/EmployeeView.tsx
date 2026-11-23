@@ -78,6 +78,7 @@ type EmployeeViewProps = {
     canEditEmployeeComputerName: boolean
     isAdminAccount: boolean
     setGlobalError: (message: string | null) => void
+    setGlobalNotice: (message: string | null) => void
     selectedGroupLabel: string
     selectedGroupTotal: number
 }
@@ -90,6 +91,7 @@ export function EmployeeView({
     canEditEmployeeComputerName,
     isAdminAccount,
     setGlobalError,
+    setGlobalNotice,
     selectedGroupLabel,
     selectedGroupTotal,
 }: EmployeeViewProps) {
@@ -217,17 +219,19 @@ export function EmployeeView({
             const date = new Date().toISOString().slice(0, 10)
             const filename = `Employee_List_Selected_${count}_${date}`
             const options = { employees: selectedEmployees, columns, drafts: edit.tableEditDrafts }
+            let savedPath: string | null
             if (format === "csv") {
-                await downloadCsv(options, `${filename}.csv`)
+                savedPath = await downloadCsv(options, `${filename}.csv`)
             } else {
-                await downloadXlsx(options, `${filename}.xlsx`)
+                savedPath = await downloadXlsx(options, `${filename}.xlsx`)
             }
+            if (savedPath) setGlobalNotice(`Saved to ${savedPath}`)
         } catch (error) {
             setGlobalError(getUserErrorMessage(error))
         } finally {
             setIsExporting(false)
         }
-    }, [col.visibleColumns, edit, emp, isExporting, setGlobalError])
+    }, [col.visibleColumns, edit, emp, isExporting, setGlobalError, setGlobalNotice])
 
     const handleCheckDuplicates = useCallback(async () => {
         setIsCheckingDuplicates(true)

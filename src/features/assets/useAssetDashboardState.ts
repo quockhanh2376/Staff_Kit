@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react"
 import { staffApi } from "../../services/staff-api"
 import type {
   AssetCategoryDetailRecord,
+  AssetCondition,
   AssetCategoryUpsertInput,
   AssetDashboardQuantityRecord,
   AssetDashboardSerializedRecord,
@@ -42,6 +43,8 @@ export function useAssetDashboardState({
   // Shown inside the Edit drawer: the global banner is hidden behind the drawer overlay.
   const [assetEditError, setAssetEditError] = useState<string | null>(null)
   const clearAssetEditError = useCallback(() => setAssetEditError(null), [])
+  const [isSavingConditionAssetId, setSavingConditionAssetId] = useState<number | null>(null)
+  const [conditionError, setConditionError] = useState<string | null>(null)
   const [statusMessage, setStatusMessage] = useState("")
 
   const loadDashboard = useCallback(
@@ -177,6 +180,25 @@ export function useAssetDashboardState({
     [loadDashboard],
   )
 
+  const updateAssetCondition = useCallback(
+    async (assetId: number, condition: AssetCondition) => {
+      try {
+        setSavingConditionAssetId(assetId)
+        setConditionError(null)
+        const updatedAsset = await staffApi.updateAssetCondition(assetId, condition)
+        setStatusMessage(`Updated condition of ${updatedAsset.assetCode}.`)
+        await loadDashboard({ refresh: true })
+        return updatedAsset
+      } catch (error) {
+        setConditionError(getUserErrorMessage(error))
+        return null
+      } finally {
+        setSavingConditionAssetId(null)
+      }
+    },
+    [loadDashboard],
+  )
+
   const deactivateAssetCategory = useCallback(
     async (categoryId: number) => {
       try {
@@ -212,11 +234,14 @@ export function useAssetDashboardState({
     isSavingAssetId,
     assetEditError,
     clearAssetEditError,
+    isSavingConditionAssetId,
+    conditionError,
     statusMessage,
     refreshDashboard,
     updateStockItemQuantity,
     saveAssetCategory,
     deactivateAssetCategory,
     updateAssetDetails,
+    updateAssetCondition,
   }
 }

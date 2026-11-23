@@ -2,9 +2,11 @@ import { FileSpreadsheet, RefreshCw } from "lucide-react"
 import { Drawer } from "../../components/Drawer"
 import { SharedImportShell } from "../import/sharedImportShell"
 import type {
+    AssetCondition,
     AssetDirectImportPreviewRow,
     AssetImportMode,
 } from "../../types/staff"
+import { ASSET_CONDITIONS, CONDITION_LABELS } from "./assetCondition"
 import { AssetImportCategoryInput } from "./AssetImportCategoryInput"
 import {
     getAssetImportManualPanelDescription,
@@ -67,6 +69,7 @@ function ImportPanel({ assetImport }: AssetImportWizardProps) {
                               { label: "Total Rows", value: preview.totalRows },
                               { label: "New Rows", value: preview.validRows },
                               { label: "Existing / Skipped", value: preview.skippedRows },
+                              { label: "Condition Changes", value: preview.conditionUpdateRows },
                               { label: "Error Rows", value: preview.errorRows },
                               ...(preview.newCategories?.map((cat) => ({
                                   label: `New Category: ${cat.categoryName}`,
@@ -80,6 +83,10 @@ function ImportPanel({ assetImport }: AssetImportWizardProps) {
                                   key={`${row.rowNumber}-${row.assetCode ?? row.displayName ?? "row"}`}
                                   importType={preview.importType}
                                   row={row}
+                                  onConditionChange={(condition) =>
+                                      void assetImport.handlePreviewConditionChange(row.rowNumber, condition)
+                                  }
+                                  conditionDisabled={assetImport.isPreviewingImport}
                               />
                           ),
                           onCancel: assetImport.handleCancelPreview,
@@ -103,6 +110,9 @@ function ImportPanel({ assetImport }: AssetImportWizardProps) {
                                   value: report.skipped,
                               },
                               { label: "Failed", value: report.failed },
+                              ...(report.importType === "serialized"
+                                  ? [{ label: "Condition Updated", value: report.conditionUpdatedRows }]
+                                  : []),
                           ],
                           errors: report.errors,
                       }
@@ -242,9 +252,13 @@ function ModeCard({
 function PreviewRowCard({
     importType,
     row,
+    onConditionChange,
+    conditionDisabled,
 }: {
     importType: AssetImportMode
     row: AssetDirectImportPreviewRow
+    onConditionChange: (condition: AssetCondition) => void
+    conditionDisabled: boolean
 }) {
     const cells =
         importType === "quantity"
@@ -268,9 +282,15 @@ function PreviewRowCard({
               ]
 
     const statusMeta = getAssetImportStatusMeta(row.status)
+    const reviewNotes = row.reviewNotes
 
     return (
-        <div className="rounded-[10px] border border-[var(--border)] bg-[var(--surface)] p-4">
+        <div
+            className={`rounded-[10px] border border-[var(--border)] bg-[var(--surface)] p-4 ${
+                reviewNotes.length > 0 ? "search-highlight-cell" : ""
+            }`}
+            data-testid={`asset-preview-row-${row.rowNumber}`}
+        >
             <div className="flex items-start justify-between gap-3">
                 <div>
                     <div className="text-sm font-semibold text-[var(--text-primary)]">
@@ -281,17 +301,34 @@ function PreviewRowCard({
                         {row.displayName || row.computerName || "No title"}
                     </div>
                 </div>
-                <span
-                    className={`rounded-[999px] border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] ${
-                        row.status === "error"
-                            ? "border-red-500/40 bg-red-500/10 text-red-200"
-                            : row.status === "skipped"
-                                ? "border-slate-500/40 bg-slate-500/10 text-slate-200"
-                                : "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
-                    }`}
-                >
-                    {statusMeta.label}
-                </span>
+                <div className="flex items-center gap-2">
+                    {importType === "serialized" && (
+                        <select
+                            aria-label={`Condition row ${row.rowNumber}`}
+                            className="rounded-[8px] border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-xs font-semibold text-[var(--text-primary)] disabled:opacity-50"
+                            disabled={conditionDisabled}
+                            onChange={(event) => onConditionChange(event.target.value as AssetCondition)}
+                            value={row.condition ?? "spare"}
+                        >
+                            {ASSET_CONDITIONS.map((condition) => (
+                                <option key={condition} value={condition}>
+                                    {CONDITION_LABELS[condition]}
+                                </option>
+                            ))}
+                        </select>
+                    )}
+                    <span
+                        className={`rounded-[999px] border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] ${
+                            row.status === "error"
+                                ? "border-red-500/40 bg-red-500/10 text-red-200"
+                                : row.status === "skipped"
+                                    ? "border-slate-500/40 bg-slate-500/10 text-slate-200"
+                                    : "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+                        }`}
+                    >
+                        {statusMeta.label}
+                    </span>
+                </div>
             </div>
 
             <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -306,6 +343,14 @@ function PreviewRowCard({
                     </div>
                 ))}
             </div>
+
+            {reviewNotes.length > 0 && (
+                <ul className="mt-3 list-disc space-y-0.5 pl-5 text-xs font-medium text-[var(--text-primary)]">
+                    {reviewNotes.map((note) => (
+                        <li key={note}>{note}</li>
+                    ))}
+                </ul>
+            )}
 
             {row.validationErrors.length > 0 && (
                 <div className="mt-3 rounded-[8px] border border-red-500/35 bg-red-500/10 px-3 py-2 text-xs text-red-100">
@@ -406,6 +451,26 @@ function ManualAssetPanel({ assetImport }: AssetImportWizardProps) {
                             }
                             placeholder="SN-001"
                         />
+                    </div>
+
+                    <div>
+                        <label
+                            className="mb-1 block text-xs font-semibold uppercase tracking-[0.06em] text-[var(--text-secondary)]"
+                            htmlFor="manual-asset-condition"
+                        >
+                            Condition
+                        </label>
+                        <select
+                            className="form-input"
+                            id="manual-asset-condition"
+                            value={assetImport.manualAssetForm.condition}
+                            onChange={(event) =>
+                                assetImport.handleManualAssetFieldChange("condition", event.target.value)
+                            }
+                        >
+                            <option value="new">{CONDITION_LABELS.new}</option>
+                            <option value="spare">{CONDITION_LABELS.spare}</option>
+                        </select>
                     </div>
 
                     <div className="md:col-span-2">
