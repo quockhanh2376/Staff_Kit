@@ -500,12 +500,24 @@ pub(crate) fn update_asset_details_conn(
 }
 
 pub(crate) fn parse_asset_condition(raw: &str) -> Option<&'static str> {
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "new" => Some(ASSET_CONDITION_NEW),
-        "spare" => Some(ASSET_CONDITION_SPARE),
-        "broken" => Some(ASSET_CONDITION_BROKEN),
+    use unicode_normalization::UnicodeNormalization;
+    match raw.trim().nfc().collect::<String>().to_lowercase().as_str() {
+        "new" | "mới" | "moi" => Some(ASSET_CONDITION_NEW),
+        "spare" | "dự phòng" | "du phong" | "dựphòng" => Some(ASSET_CONDITION_SPARE),
+        "broken" | "hỏng" | "hong" | "hư" | "hu" => Some(ASSET_CONDITION_BROKEN),
         _ => None,
     }
+}
+
+/// `new` means never handed out: still in stock and no loan ever recorded.
+pub(crate) fn asset_can_be_new_conn(conn: &Connection, asset_id: i64) -> Result<bool, String> {
+    conn.query_row(
+        "SELECT status = 'in_stock' AND NOT EXISTS (SELECT 1 FROM asset_loans WHERE asset_id = ?1)
+         FROM assets WHERE id = ?1",
+        params![asset_id],
+        |row| row.get(0),
+    )
+    .map_err(|err| format!("failed to check asset {asset_id} hand-out history: {err}"))
 }
 
 /// `source` is "manual" or "import"; it is recorded in the audit payload.
@@ -535,8 +547,7 @@ pub(crate) fn set_asset_condition_conn(
     };
 
     if before != after {
-        // `new` means never handed out; it cannot be restored once left.
-        if after == ASSET_CONDITION_NEW {
+        if after == ASSET_CONDITION_NEW && !asset_can_be_new_conn(&tx, asset_id)? {
             return Err("Cannot set condition to new after first hand-out".to_string());
         }
         tx.execute(
@@ -3927,14 +3938,41 @@ mod tests {
     }
 
     #[test]
-    fn set_asset_condition_cannot_set_new_after_first_handout() {
+    fn set_asset_condition_new_allowed_for_never_loaned_stock() {
         let mut conn = open_test_connection();
         let id = seed_editable_asset(&mut conn);
-        let err = set_asset_condition_conn(&mut conn, id, "new", "manual", None).unwrap_err();
-        assert!(err.starts_with("Cannot"), "{err}");
-        conn.execute("UPDATE assets SET condition = 'new' WHERE id = ?", params![id]).unwrap();
+        let record = set_asset_condition_conn(&mut conn, id, "new", "manual", None).expect("spare -> new");
+        assert_eq!(record.condition, "new");
+        assert_eq!(condition_audits(&conn).len(), 1);
         let record = set_asset_condition_conn(&mut conn, id, "new", "manual", None).expect("noop");
         assert_eq!(record.condition, "new");
+        assert_eq!(condition_audits(&conn).len(), 1);
+    }
+
+    #[test]
+    fn set_asset_condition_cannot_set_new_after_returned_loan() {
+        let mut conn = open_test_connection();
+        let id = seed_editable_asset(&mut conn);
+        let team_id = seed_team(&conn, "IT");
+        let employee_row_id = seed_employee(&conn, "ASWVN1500", "Tran Van C", team_id);
+        let request_id = seed_borrow_request(&conn, employee_row_id, "ASWVN1500", "Tran Van C");
+        conn.execute(
+            "INSERT INTO asset_loans(asset_id, employee_id_fk, borrow_request_id, borrowed_at, returned_at) VALUES(?, ?, ?, datetime('now'), datetime('now'))",
+            params![id, employee_row_id, request_id],
+        )
+        .expect("insert returned loan");
+        let err = set_asset_condition_conn(&mut conn, id, "new", "manual", None).unwrap_err();
+        assert_eq!(err, "Cannot set condition to new after first hand-out");
+        assert!(condition_audits(&conn).is_empty());
+    }
+
+    #[test]
+    fn set_asset_condition_cannot_set_new_when_assigned() {
+        let mut conn = open_test_connection();
+        let id = seed_editable_asset(&mut conn);
+        conn.execute("UPDATE assets SET status = 'assigned' WHERE id = ?", params![id]).unwrap();
+        let err = set_asset_condition_conn(&mut conn, id, "new", "manual", None).unwrap_err();
+        assert_eq!(err, "Cannot set condition to new after first hand-out");
         assert!(condition_audits(&conn).is_empty());
     }
 
@@ -3942,6 +3980,15 @@ mod tests {
     fn parse_asset_condition_accepts_case_and_spaces() {
         assert_eq!(parse_asset_condition(" BROKEN "), Some("broken"));
         assert_eq!(parse_asset_condition("New"), Some("new"));
+        for raw in ["mới", "Mới", " MOI ", "mo\u{031B}\u{0301}i"] {
+            assert_eq!(parse_asset_condition(raw), Some("new"), "{raw}");
+        }
+        for raw in ["dự phòng", "Dự Phòng", "du phong", "dựphòng"] {
+            assert_eq!(parse_asset_condition(raw), Some("spare"), "{raw}");
+        }
+        for raw in ["hỏng", "HỎNG", "hong", "hư", "Hu"] {
+            assert_eq!(parse_asset_condition(raw), Some("broken"), "{raw}");
+        }
         assert_eq!(parse_asset_condition(""), None);
         assert_eq!(parse_asset_condition("repair"), None);
     }
