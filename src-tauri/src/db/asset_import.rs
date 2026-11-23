@@ -3037,6 +3037,8 @@ fn revalidate_batch_tx(
 
         let owner_state = resolve_owner_state(row, &employee_lookup);
         let mut review_notes = Vec::new();
+        // Existing assets: show the condition that will actually be stored, not the file value.
+        let mut effective_condition: Option<String> = None;
         let (validation_errors, next_status) = if row.import_type == AssetImportMode::Serialized {
             match classify_serialized_asset_row(
                 row,
@@ -3056,6 +3058,7 @@ fn revalidate_batch_tx(
                         false,
                     );
                     review_notes = notes;
+                    effective_condition = Some(update.unwrap_or(condition.as_str()).to_string());
                     if let Some(next) = update {
                         condition_updates.push((asset_id, next));
                     }
@@ -3125,6 +3128,7 @@ fn revalidate_batch_tx(
               validation_errors_json = ?,
               status = ?,
               review_notes_json = ?,
+              condition = COALESCE(?, condition),
               updated_at = datetime('now')
             WHERE id = ?
             "#,
@@ -3138,6 +3142,7 @@ fn revalidate_batch_tx(
                 to_json(&validation_errors)?,
                 next_status,
                 to_json(&review_notes)?,
+                effective_condition,
                 row.id
             ],
         )
@@ -6426,6 +6431,7 @@ mod tests {
 
         let preview = preview_asset_import_seed_conn(&mut conn, status_batch(rows.clone()))
             .expect("preview existing unknown status");
+        assert_eq!(preview.rows[0].condition.as_deref(), Some("broken"));
         assert_eq!(
             preview.rows[0].review_notes,
             vec!["Unknown status \"Brokn\" — kept Broken".to_string()]
