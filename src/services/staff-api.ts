@@ -92,8 +92,10 @@ import type {
   TeamUpsertInput,
   RemoteEeSyncSettings,
   MssqlConnectionTestResult,
-  EmployeeListSyncPreview,
-  EmployeeListSyncResult,
+  EmployeeSyncApplyResult,
+  EmployeeSyncBatch,
+  EmployeeSyncRowUpdate,
+  EmployeeSyncStagedRow,
 } from "../types/staff"
 
 declare global {
@@ -746,8 +748,20 @@ export const staffApi = {
 
   testRemoteEeSyncConnection: () => call<MssqlConnectionTestResult>("test_remote_ee_sync_connection"),
 
-  previewEmployeeListMssqlSync: () => call<EmployeeListSyncPreview>("preview_employee_list_mssql_sync"),
+  stageEmployeeListSync: (replace: boolean) =>
+    call<EmployeeSyncBatch>("stage_employee_list_sync", { replace }),
 
-  applyEmployeeListMssqlSync: (previewId: string) =>
-    call<EmployeeListSyncResult>("apply_employee_list_mssql_sync", { previewId }),
+  getOpenEmployeeSyncBatch: () => call<EmployeeSyncBatch | null>("get_open_employee_sync_batch"),
+
+  updateEmployeeSyncRow: (rowId: number, payload: EmployeeSyncRowUpdate) =>
+    call<EmployeeSyncStagedRow>("update_employee_sync_row", { rowId, payload }),
+
+  refreshEmployeeSyncRow: (rowId: number) =>
+    call<EmployeeSyncStagedRow>("refresh_employee_sync_row", { rowId }),
+
+  discardEmployeeSyncBatch: (batchId: number) =>
+    call<void>("discard_employee_sync_batch", { batchId }),
+
+  applyEmployeeSyncBatch: (batchId: number) =>
+    call<EmployeeSyncApplyResult>("apply_employee_sync_batch", { batchId }),
 }

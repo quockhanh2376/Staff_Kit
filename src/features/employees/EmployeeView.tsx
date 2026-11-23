@@ -25,9 +25,9 @@ import { EmployeeCellContent } from "./EmployeeCellContent"
 import { downloadCsv, downloadXlsx } from "./employeeListExport"
 import { getUserErrorMessage } from "../../lib/errorHandling"
 import { getTeamPillClasses } from "../teams/teamColors"
-import { MissingEmployeesModal } from "./MissingEmployeesModal"
 import { AssignedAssetsModal } from "./AssignedAssetsModal"
 import { AssetIntegrityModal } from "./AssetIntegrityModal"
+import { EmployeeSyncDrawer } from "./EmployeeSyncDrawer"
 import type { AssetIntegrityCheckResult, EmployeeRecord } from "../../types/staff"
 
 // ── Diacritic-insensitive highlight helper ─────────────────────────────────────
@@ -110,34 +110,15 @@ export function EmployeeView({
     const [isExporting, setIsExporting] = useState(false)
     const [isUnselectMenuOpen, setIsUnselectMenuOpen] = useState(false)
     const [isExportMenuOpen, setIsExportMenuOpen] = useState(false)
+    const [isSyncDrawerOpen, setIsSyncDrawerOpen] = useState(false)
+    const [isSyncOpenPrompt, setIsSyncOpenPrompt] = useState(false)
+    // Batch gone (discarded, applied, logged out): drop the open flag so a later update starts closed.
+    if (isSyncDrawerOpen && !emp.syncBatch) setIsSyncDrawerOpen(false)
     const unselectMenuRef = useRef<HTMLDetailsElement | null>(null)
     const exportMenuRef = useRef<HTMLDetailsElement | null>(null)
     const unselectTimerRef = useRef<number | null>(null)
     const exportTimerRef = useRef<number | null>(null)
-    const [showSyncDetails, setShowSyncDetails] = useState(false)
-    const [isMissingModalOpen, setIsMissingModalOpen] = useState(false)
     const [assignedAssetsEmployee, setAssignedAssetsEmployee] = useState<EmployeeRecord | null>(null)
-    const syncPopoverRef = useRef<HTMLDivElement | null>(null)
-
-    const handleOpenEditFromMissing = useCallback((employee: EmployeeRecord) => {
-        setIsMissingModalOpen(false)
-        edit.enterTableEditModeForEmployee(employee, "fullName")
-    }, [edit])
-
-    const handleBulkMoveMissing = useCallback(async (employeeIds: number[], targetGroup: string) => {
-        await staffApi.moveEmployeesGroup({
-            employeeIds,
-            targetStaffGroup: targetGroup,
-            action: targetGroup.startsWith("set_floating") || targetGroup === "floating"
-                ? "set_floating"
-                : targetGroup === "clear_floating"
-                ? "clear_floating"
-                : targetGroup === "reject_offer"
-                ? "reject_offer"
-                : undefined,
-        })
-        await emp.refreshMssqlSyncPreview()
-    }, [emp])
 
     const clearMenuTimer = useCallback((timerRef: React.MutableRefObject<number | null>) => {
         if (timerRef.current !== null) {
@@ -407,12 +388,17 @@ export function EmployeeView({
                     <div className="relative inline-flex items-center">
                         <button
                             className="inline-flex h-8 items-center rounded-[8px] border border-emerald-500/70 bg-emerald-500/10 px-3 text-sm font-bold text-emerald-300 shadow-[0_0_0_1px_rgba(16,185,129,0.2)] transition hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-60"
-                            onClick={() => void emp.updateEmployeeListFromMssql()}
+                            onClick={() =>
+                                void emp.startEmployeeSync().then((outcome) => {
+                                    if (outcome === "staged") setIsSyncDrawerOpen(true)
+                                    if (outcome === "open-exists") setIsSyncOpenPrompt(true)
+                                })
+                            }
                             type="button"
-                            disabled={emp.isUpdatingEmployeeListFromMssql}
+                            disabled={emp.isSyncBusy}
                             title="Update Employee list from MSSQL"
                         >
-                            {emp.isUpdatingEmployeeListFromMssql ? (
+                            {emp.isSyncBusy ? (
                                 <span className="inline-flex items-center gap-2">
                                     <LoaderCircle className="animate-spin" size={14} />
                                     updating
@@ -421,177 +407,15 @@ export function EmployeeView({
                                 "update"
                             )}
                         </button>
-
-                        {/* Anchored floating sync popover */}
-                        {emp.mssqlSyncPreview && (
-                            <div
-                                ref={syncPopoverRef}
-                                className="absolute left-0 top-full z-40 mt-2 w-[440px] rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-2xl"
-                                role="dialog"
-                                aria-label="EE List sync preview"
-                            >
-                                <div className="flex items-start justify-between gap-3">
-                                    <div>
-                                        <h2 className="text-sm font-bold text-[var(--text-primary)]">EE List sync preview</h2>
-                                        <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
-                                            Previewed {new Date(emp.mssqlSyncPreview.createdAt).toLocaleTimeString()}
-                                        </p>
-                                    </div>
-                                    <div className="flex gap-2">
-                                        <button
-                                            className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-hover)] disabled:opacity-50"
-                                            onClick={emp.skipEmployeeListMssqlSync}
-                                            type="button"
-                                            disabled={emp.isApplyingMssqlSync}
-                                        >Skip</button>
-                                        {(() => {
-                                            const hasImportableChanges =
-                                                emp.mssqlSyncPreview.counts.new > 0 || emp.mssqlSyncPreview.counts.changed > 0
-                                            const hasConflicts = emp.mssqlSyncPreview.counts.conflicts > 0
-                                            const canApprove = hasImportableChanges && !hasConflicts
-
-                                            return (
-                                                <button
-                                                    className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
-                                                    onClick={() => void emp.applyEmployeeListMssqlSync()}
-                                                    type="button"
-                                                    disabled={emp.isApplyingMssqlSync || !canApprove}
-                                                    title={
-                                                        hasConflicts
-                                                            ? "Resolve Staff Code group conflicts before approving"
-                                                            : !hasImportableChanges
-                                                              ? "No new or changed records to approve"
-                                                              : undefined
-                                                    }
-                                                >{emp.isApplyingMssqlSync ? "Applying…" : "Approve"}</button>
-                                            )
-                                        })()}
-                                    </div>
-                                </div>
-
-                                <div className="mt-3 flex flex-wrap gap-2 text-xs">
-                                    <span className="rounded bg-emerald-500/15 px-2 py-0.5 font-medium text-emerald-400">
-                                        New <b>{emp.mssqlSyncPreview.counts.new}</b>
-                                    </span>
-                                    <span className="rounded bg-sky-500/15 px-2 py-0.5 font-medium text-sky-400">
-                                        Changed <b>{emp.mssqlSyncPreview.counts.changed}</b>
-                                    </span>
-                                    {emp.mssqlSyncPreview.counts.missing > 0 ? (
-                                        <button
-                                            type="button"
-                                            onClick={() => setIsMissingModalOpen(true)}
-                                            className="rounded bg-amber-500/15 px-2 py-0.5 font-medium text-amber-400 hover:bg-amber-500/25 transition-colors cursor-pointer text-left"
-                                            title="Click to view details and manage missing employees"
-                                            aria-label={`Missing ${emp.mssqlSyncPreview.counts.missing} employees - Click to view`}
-                                        >
-                                            Missing <b>{emp.mssqlSyncPreview.counts.missing}</b>
-                                        </button>
-                                    ) : (
-                                        <span className="rounded bg-amber-500/15 px-2 py-0.5 font-medium text-amber-400">
-                                            Missing <b>{emp.mssqlSyncPreview.counts.missing}</b>
-                                        </span>
-                                    )}
-                                    <span className="rounded bg-rose-500/15 px-2 py-0.5 font-medium text-rose-400">
-                                        Conflicts <b>{emp.mssqlSyncPreview.counts.conflicts}</b>
-                                    </span>
-                                </div>
-
-                                {emp.mssqlSyncPreview.conflicts.length > 0 && (
-                                    <div className="mt-2 rounded-md border border-rose-500/30 bg-rose-500/10 p-2 text-xs text-rose-300">
-                                        <div className="font-semibold">Sync Blocked: Conflicts detected</div>
-                                        <div className="mt-0.5 space-y-0.5">
-                                            {emp.mssqlSyncPreview.conflicts.map((item) => (
-                                                <div key={item.code}>{item.code}: {item.reason}</div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {emp.mssqlSyncPreview.counts.missing > 0 &&
-                                    emp.mssqlSyncPreview.counts.new === 0 &&
-                                    emp.mssqlSyncPreview.counts.changed === 0 &&
-                                    emp.mssqlSyncPreview.counts.conflicts === 0 && (
-                                    <div className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-xs text-amber-300">
-                                        Missing rows are report-only. No records to approve.
-                                    </div>
-                                )}
-
-                                {(() => {
-                                    const hasDetailsRows =
-                                        emp.mssqlSyncPreview.counts.new > 0 ||
-                                        emp.mssqlSyncPreview.counts.changed > 0 ||
-                                        emp.mssqlSyncPreview.counts.conflicts > 0
-
-                                    if (!hasDetailsRows) return null
-
-                                    const relevantRows = emp.mssqlSyncPreview.rows.filter(
-                                        (row) => row.status === "new" || row.status === "changed" || row.status === "conflict"
-                                    )
-
-                                    const getStatusBadge = (status: string) => {
-                                        switch (status) {
-                                            case "new":
-                                                return <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase text-emerald-400">New</span>
-                                            case "changed":
-                                                return <span className="rounded bg-sky-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase text-sky-400">Changed</span>
-                                            case "conflict":
-                                                return <span className="rounded bg-rose-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase text-rose-400">Conflict</span>
-                                            default:
-                                                return <span className="rounded bg-gray-500/20 px-1.5 py-0.5 text-[10px] font-medium text-gray-400">{status}</span>
-                                        }
-                                    }
-
-                                    return (
-                                        <div className="mt-3 border-t border-[var(--border)] pt-2">
-                                            <button
-                                                className="text-xs font-semibold text-[var(--primary)] hover:underline"
-                                                onClick={() => setShowSyncDetails((v) => !v)}
-                                                type="button"
-                                            >
-                                                {showSyncDetails ? "Hide details" : "View details"}
-                                            </button>
-                                            {showSyncDetails && (
-                                                <div className="mt-2 max-h-56 overflow-auto rounded-md border border-[var(--border)]">
-                                                    <table className="w-full text-left text-xs">
-                                                        <thead className="sticky top-0 bg-[var(--surface)] text-[var(--text-secondary)] shadow-sm">
-                                                            <tr>
-                                                                <th className="px-2.5 py-1.5">Staff Code</th>
-                                                                <th className="px-2.5 py-1.5">Result</th>
-                                                                <th className="px-2.5 py-1.5">Local Name</th>
-                                                                <th className="px-2.5 py-1.5">Source Name</th>
-                                                            </tr>
-                                                        </thead>
-                                                        <tbody>
-                                                            {relevantRows.map((row, index) => (
-                                                                <tr key={`diff-${row.code}-${row.status}-${index}`} className="border-t border-[var(--border)]">
-                                                                    <td className="px-2.5 py-1 font-mono font-medium text-[var(--text-primary)]">{row.code}</td>
-                                                                    <td className="px-2.5 py-1">{getStatusBadge(row.status)}</td>
-                                                                    <td className="px-2.5 py-1 text-[var(--text-secondary)]">{row.localName ?? "—"}</td>
-                                                                    <td className="px-2.5 py-1 text-[var(--text-secondary)]">{row.sourceName ?? "—"}</td>
-                                                                </tr>
-                                                            ))}
-                                                        </tbody>
-                                                    </table>
-                                                </div>
-                                            )}
-                                        </div>
-                                    )
-                                })()}
-                            </div>
-                        )}
                     </div>
 
-                    {emp.mssqlUpdateMessage && (
+                    {emp.syncError && (
                         <span
-                            className={`max-w-[520px] break-words text-xs leading-snug ${
-                                emp.mssqlUpdateStatus === "success"
-                                    ? "text-emerald-300"
-                                    : "text-red-300"
-                            }`}
-                            title={emp.mssqlUpdateMessage}
+                            className="max-w-[520px] break-words text-xs leading-snug text-red-300"
+                            title={emp.syncError}
                             aria-live="polite"
                         >
-                            {emp.mssqlUpdateMessage}
+                            {emp.syncError}
                         </span>
                     )}
                 </div>
@@ -1188,19 +1012,6 @@ export function EmployeeView({
                 </div>
             </div>
 
-            {/* Missing Employees Drill-down Modal */}
-            {emp.mssqlSyncPreview && (
-                <MissingEmployeesModal
-                    open={isMissingModalOpen}
-                    onClose={() => setIsMissingModalOpen(false)}
-                    missingRows={emp.mssqlSyncPreview.rows.filter((r) => r.status === "missing")}
-                    onOpenEditEmployee={handleOpenEditFromMissing}
-                    onBulkMoveGroup={handleBulkMoveMissing}
-                    fetchAllFilteredEmployees={emp.fetchAllFilteredEmployees}
-                    canEdit={canEditEmployeeTable}
-                />
-            )}
-
             {/* Assigned Assets Detail Modal */}
             <AssignedAssetsModal
                 open={assignedAssetsEmployee !== null}
@@ -1216,6 +1027,57 @@ export function EmployeeView({
                 onClose={() => setIsIntegrityModalOpen(false)}
                 onClearHighlights={duplicateEmpIds.size > 0 ? clearDuplicates : undefined}
             />
+
+            <EmployeeSyncDrawer
+                open={isSyncDrawerOpen}
+                onClose={() => setIsSyncDrawerOpen(false)}
+                employeeState={emp}
+                setGlobalNotice={setGlobalNotice}
+            />
+
+            {isSyncOpenPrompt && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+                    <div
+                        className="w-full max-w-md space-y-4 rounded-[16px] border border-[var(--border)] bg-[var(--surface)] p-6 shadow-2xl"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="ee-sync-open-title"
+                    >
+                        <p id="ee-sync-open-title" className="text-sm text-[var(--text-primary)]">
+                            An EE List sync is already open. Continue it, or discard it and load a fresh list?
+                        </p>
+                        <div className="flex justify-end gap-2">
+                            <button
+                                type="button"
+                                className="rounded-[8px] px-3 py-2 text-sm font-semibold text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"
+                                onClick={() => setIsSyncOpenPrompt(false)}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                className="rounded-[8px] border border-[var(--border)] px-3 py-2 text-sm font-semibold text-[var(--text-primary)] hover:bg-[var(--surface-hover)]"
+                                onClick={() => {
+                                    setIsSyncOpenPrompt(false)
+                                    void emp.replaceEmployeeSync().then((ok) => ok && setIsSyncDrawerOpen(true))
+                                }}
+                            >
+                                Load fresh
+                            </button>
+                            <button
+                                type="button"
+                                className="rounded-[8px] border border-[var(--primary)] bg-[var(--primary)]/15 px-3 py-2 text-sm font-semibold text-[var(--primary)] hover:bg-[var(--primary)]/25"
+                                onClick={() => {
+                                    setIsSyncOpenPrompt(false)
+                                    void emp.resumeEmployeeSync().then((batch) => batch && setIsSyncDrawerOpen(true))
+                                }}
+                            >
+                                Continue
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </section>
     )
 }

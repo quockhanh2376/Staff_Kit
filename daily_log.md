@@ -4380,3 +4380,13 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Tests: 8 new row-builder tests + 1 dashboard test, each seen failing first. Vitest 437/437, `tsc -b`, eslint, `vite build` clean.
 - `optimization-backlog.md`: no CSV formula guard item exists, left unchanged.
 - Status: PASS (not yet checked in the running app, light and dark).
+
+## 2026-11-23 EE List sync staging — End
+
+- Branch: `feat/ee-sync-staging` (worktree `.worktrees/ee-sync-staging`). Coded by Claude in this session.
+- Problem: the EE List update blocked on conflicts and showed an in-memory preview the admin could not edit.
+- Change: the HR source now loads into persisted staging tables (one open batch). The admin edits each row (Full name, Nick, Email, Azure AD, action), reloads stale rows from the app, then Approve writes everything in one transaction or Skip discards. Rows changed in the app after loading block Approve with `Cannot apply: {n} rows changed in the app — review them` and come back marked stale.
+- UI: new `EmployeeSyncDrawer` (count chips, kind filter, editable rows, Reload from app, Skip/Approve with totals, asset-holder confirm). The update button asks Continue / Load fresh when a batch is already open. Old preview popover and `MissingEmployeesModal` removed. Staging errors (`Cannot apply…`, `Invalid action…`, `Invalid full name…`) are now shown as-is instead of the generic MSSQL message.
+- Tests: vitest 449/449 (new: 10 drawer, 1 EmployeeView prompt, 1 hook stale-apply), `tsc -b`, eslint, `vite build` clean.
+- Final review safety fixes: Reload from app sets a Missing row to Keep when the employee left the EE List or became floating; Approve marks an offboard row stale when the employee is outside the EE List or their asset count changed since staging; `isFloating` joins the drift fingerprint; `Cannot …`, `Invalid …` and `Not found:` errors show as-is; `isSyncBusy` waits for every in-flight call; the drawer shows the local group (`From Offboarding`) and `Floating`; the settings-change batch delete logs its error. Tests: cargo 581/581 (+5), vitest 456/456 (+5), `tsc -b`, eslint, `vite build` clean.
+- Status: PASS (not yet checked in the running app, light and dark).

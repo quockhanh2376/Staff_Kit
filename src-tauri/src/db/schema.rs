@@ -725,4 +725,31 @@ CREATE TRIGGER IF NOT EXISTS trg_teams_au AFTER UPDATE OF name ON teams BEGIN
   FROM employees e
   WHERE e.team_id = NEW.id;
 END;
+
+CREATE TABLE IF NOT EXISTS employee_sync_batches (
+  id INTEGER PRIMARY KEY,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_by TEXT,
+  source_row_count INTEGER NOT NULL,
+  unchanged_count INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS employee_sync_rows (
+  id INTEGER PRIMARY KEY,
+  batch_id INTEGER NOT NULL REFERENCES employee_sync_batches(id) ON DELETE CASCADE,
+  staff_code TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('new','changed','missing','conflict')),
+  local_employee_id INTEGER,
+  local_group TEXT,
+  source_json TEXT NOT NULL DEFAULT '[]',
+  local_json TEXT,
+  edited_json TEXT,
+  action TEXT NOT NULL,
+  notes_json TEXT NOT NULL DEFAULT '[]',
+  state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','stale')),
+  assets_held INTEGER NOT NULL DEFAULT 0,
+  is_floating INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_employee_sync_rows_batch_id ON employee_sync_rows(batch_id);
 "#;

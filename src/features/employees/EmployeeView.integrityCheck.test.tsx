@@ -14,10 +14,6 @@ vi.mock("../../services/staff-api", () => ({
     },
 }))
 
-vi.mock("./MissingEmployeesModal", () => ({
-    MissingEmployeesModal: () => null,
-}))
-
 describe("EmployeeView — Asset & Integrity Check Integration", () => {
     const mockColumns: UiColumnDefinition[] = [
         { key: "fullName", label: "Full Name", source: "core" },
@@ -96,7 +92,10 @@ describe("EmployeeView — Asset & Integrity Check Integration", () => {
             sortDirection: "asc" as const,
             isLoading: false,
             error: null,
-            mssqlSyncPreview: null,
+            syncBatch: null,
+            isSyncBusy: false,
+            syncError: null,
+            startEmployeeSync: vi.fn(),
             setCurrentPage: vi.fn(),
             setRowsPerPage: vi.fn(),
             setStaffGroupFilter: vi.fn(),

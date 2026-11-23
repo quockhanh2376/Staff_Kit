@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { staffApi } from "../../services/staff-api"
-import type { EmployeeListSyncPreview, EmployeeRecord, TeamRecord } from "../../types/staff"
+import type { EmployeeRecord, EmployeeSyncBatch, EmployeeSyncRowUpdate, TeamRecord } from "../../types/staff"
 import type { StaffGroupKey, EmployeeSortState } from "../../types/app"
 import { getUserErrorMessage } from "../../lib/errorHandling"
 import { ALL_TEAMS_OPTION } from "../../lib/constants"
@@ -8,6 +8,7 @@ import { ALL_TEAMS_OPTION } from "../../lib/constants"
 type UseEmployeeStateOptions = {
     dbReady: boolean
     isAuthenticated: boolean
+    isAdmin: boolean
     reloadToken: number
     setGlobalError: (msg: string | null) => void
 }
@@ -17,6 +18,7 @@ export type EmployeeState = ReturnType<typeof useEmployeeState>
 export function useEmployeeState({
     dbReady,
     isAuthenticated,
+    isAdmin,
     reloadToken,
     setGlobalError,
 }: UseEmployeeStateOptions) {
@@ -44,15 +46,13 @@ export function useEmployeeState({
     const [currentPage, setCurrentPage] = useState(1)
     const [isLoadingEmployees, setLoadingEmployees] = useState(false)
     const [isLoadingTeams, setLoadingTeams] = useState(false)
-    const [isUpdatingEmployeeListFromMssql, setUpdatingEmployeeListFromMssql] = useState(false)
-    const [mssqlUpdateMessage, setMssqlUpdateMessage] = useState<string | null>(null)
-    const [mssqlUpdateStatus, setMssqlUpdateStatus] = useState<"idle" | "success" | "error">("idle")
-    const [mssqlSyncPreview, setMssqlSyncPreview] = useState<EmployeeListSyncPreview | null>(null)
-    const [isApplyingMssqlSync, setApplyingMssqlSync] = useState(false)
+    const [syncBatch, setSyncBatch] = useState<EmployeeSyncBatch | null>(null)
+    const [isSyncBusy, setSyncBusy] = useState(false)
+    const syncInFlightRef = useRef(0)
+    const [syncError, setSyncError] = useState<string | null>(null)
     const [mssqlRefreshToken, setMssqlRefreshToken] = useState(0)
 
     const teamFilterMenuRef = useRef<HTMLDivElement | null>(null)
-    const mssqlAutoDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const searchRequestIdRef = useRef(0)
 
     // Debounce search term by 250ms (instant on empty)
@@ -67,14 +67,16 @@ export function useEmployeeState({
         return () => clearTimeout(timer)
     }, [searchTerm])
 
-    // Cleanup auto-dismiss timer on unmount
+    // Load a batch left open by an earlier session (admins only; once per login).
     useEffect(() => {
-        return () => {
-            if (mssqlAutoDismissTimerRef.current) {
-                clearTimeout(mssqlAutoDismissTimerRef.current)
-            }
-        }
-    }, [])
+        if (!dbReady || !isAuthenticated || !isAdmin) return
+        let disposed = false
+        staffApi.getOpenEmployeeSyncBatch().then(
+            (batch) => { if (!disposed) setSyncBatch(batch) },
+            (error) => { if (!disposed) setSyncError(getMssqlEmployeeUpdateErrorMessage(error)) },
+        )
+        return () => { disposed = true }
+    }, [dbReady, isAuthenticated, isAdmin])
 
     // Load teams
     useEffect(() => {
@@ -181,8 +183,8 @@ export function useEmployeeState({
         setTotalEmployees(0)
         setCurrentPage(1)
         setTeamFilterMenuOpen(false)
-        setMssqlSyncPreview(null)
-        setMssqlUpdateMessage(null)
+        setSyncBatch(null)
+        setSyncError(null)
     }
 
     // Close team filter menu on outside click
@@ -303,139 +305,88 @@ export function useEmployeeState({
         })
     }
 
-    const updateEmployeeListFromMssql = async () => {
-        if (isUpdatingEmployeeListFromMssql) return
-
-        if (mssqlAutoDismissTimerRef.current) {
-            clearTimeout(mssqlAutoDismissTimerRef.current)
-            mssqlAutoDismissTimerRef.current = null
-        }
-
+    const runSync = async <T,>(task: () => Promise<T>): Promise<{ ok: true; value: T } | { ok: false }> => {
+        syncInFlightRef.current += 1
+        setSyncBusy(true)
+        setSyncError(null)
+        setGlobalError(null)
         try {
-            setUpdatingEmployeeListFromMssql(true)
-            setMssqlUpdateMessage(null)
-            setMssqlUpdateStatus("idle")
-            setMssqlSyncPreview(null)
-            setGlobalError(null)
-            const preview = await staffApi.previewEmployeeListMssqlSync()
-
-            const hasAnyChanges =
-                preview.counts.new > 0 ||
-                preview.counts.changed > 0 ||
-                preview.counts.missing > 0 ||
-                preview.counts.conflicts > 0
-
-            if (!hasAnyChanges) {
-                setMssqlSyncPreview(null)
-                setMssqlUpdateStatus("success")
-                setMssqlUpdateMessage("✓ No changes")
-                mssqlAutoDismissTimerRef.current = setTimeout(() => {
-                    setMssqlUpdateMessage(null)
-                    setMssqlUpdateStatus("idle")
-                }, 10000)
-                return
-            }
-
-            setMssqlSyncPreview(preview)
-            setMssqlUpdateMessage(null)
-            setMssqlUpdateStatus("idle")
+            return { ok: true, value: await task() }
         } catch (error) {
-            console.error("[Staff Kit] MSSQL employee update failed")
             const message = getMssqlEmployeeUpdateErrorMessage(error)
-            setMssqlUpdateStatus("error")
-            setMssqlUpdateMessage(message)
+            setSyncError(message)
             setGlobalError(message)
+            return { ok: false }
         } finally {
-            setUpdatingEmployeeListFromMssql(false)
+            syncInFlightRef.current -= 1
+            setSyncBusy(syncInFlightRef.current > 0)
         }
     }
 
-    const applyEmployeeListMssqlSync = async () => {
-        if (!mssqlSyncPreview || isApplyingMssqlSync) return
-        const hasImportableChanges = mssqlSyncPreview.counts.new > 0 || mssqlSyncPreview.counts.changed > 0
-        const hasConflicts = mssqlSyncPreview.counts.conflicts > 0
-        if (!hasImportableChanges || hasConflicts) return
-        if (mssqlAutoDismissTimerRef.current) {
-            clearTimeout(mssqlAutoDismissTimerRef.current)
-            mssqlAutoDismissTimerRef.current = null
-        }
-        try {
-            setApplyingMssqlSync(true)
-            setMssqlUpdateStatus("idle")
-            setGlobalError(null)
-            const result = await staffApi.applyEmployeeListMssqlSync(mssqlSyncPreview.previewId)
-            setMssqlSyncPreview(null)
-            setMssqlUpdateStatus("success")
-
-            const parts: string[] = []
-            if (result.counts.new > 0) parts.push(`Imported ${result.counts.new}`)
-            if (result.counts.changed > 0) parts.push(`updated ${result.counts.changed}`)
-            const summary = parts.length > 0 ? parts.join(", ") : "Sync completed"
-            setMssqlUpdateMessage(`✓ ${summary} ${summary.toLowerCase().includes("employee") ? "" : "employees"}`.trim())
-
-            mssqlAutoDismissTimerRef.current = setTimeout(() => {
-                setMssqlUpdateMessage(null)
-                setMssqlUpdateStatus("idle")
-            }, 10000)
-
-            setStaffGroupFilter("employee_list")
-            setTeamFilter(ALL_TEAMS_OPTION)
-            setTeamFilterSearchTerm("")
-            setStartDateFilter("")
-            setTeamFilterMenuOpen(false)
-            setCurrentPage(1)
-            setMssqlRefreshToken((value) => value + 1)
-        } catch (error) {
-            const message = getMssqlEmployeeUpdateErrorMessage(error)
-            setMssqlUpdateStatus("error")
-            setMssqlUpdateMessage(message)
-            setGlobalError(message)
-        } finally {
-            setApplyingMssqlSync(false)
-        }
+    const stage = async (replace: boolean) => {
+        const res = await runSync(() => staffApi.stageEmployeeListSync(replace))
+        if (res.ok) setSyncBatch(res.value)
+        return res.ok
     }
 
-    const refreshMssqlSyncPreview = async () => {
-        try {
-            const preview = await staffApi.previewEmployeeListMssqlSync()
-            const hasAnyChanges =
-                preview.counts.new > 0 ||
-                preview.counts.changed > 0 ||
-                preview.counts.missing > 0 ||
-                preview.counts.conflicts > 0
+    const startEmployeeSync = async (): Promise<"open-exists" | "staged" | "error"> => {
+        if (syncBatch) return "open-exists"
+        return (await stage(false)) ? "staged" : "error"
+    }
 
-            if (!hasAnyChanges) {
-                setMssqlSyncPreview(null)
-                setMssqlUpdateStatus("success")
-                setMssqlUpdateMessage("✓ No changes")
-                mssqlAutoDismissTimerRef.current = setTimeout(() => {
-                    setMssqlUpdateMessage(null)
-                    setMssqlUpdateStatus("idle")
-                }, 10000)
-            } else {
-                setMssqlSyncPreview(preview)
+    const replaceEmployeeSync = () => stage(true)
+
+    const resumeEmployeeSync = async () => {
+        const res = await runSync(() => staffApi.getOpenEmployeeSyncBatch())
+        if (!res.ok) return syncBatch // keep what we have on a failed call
+        setSyncBatch(res.value)
+        return res.value
+    }
+
+    const replaceSyncRow = (res: Awaited<ReturnType<typeof runSync<EmployeeSyncBatch["rows"][number]>>>) => {
+        if (!res.ok) return false
+        const row = res.value
+        setSyncBatch((prev) => prev && { ...prev, rows: prev.rows.map((r) => (r.id === row.id ? row : r)) })
+        return true
+    }
+
+    const updateSyncRow = async (rowId: number, update: EmployeeSyncRowUpdate) =>
+        replaceSyncRow(await runSync(() => staffApi.updateEmployeeSyncRow(rowId, update)))
+
+    const refreshSyncRow = async (rowId: number) =>
+        replaceSyncRow(await runSync(() => staffApi.refreshEmployeeSyncRow(rowId)))
+
+    const discardEmployeeSync = async () => {
+        if (!syncBatch) return false
+        const batchId = syncBatch.id
+        const res = await runSync(() => staffApi.discardEmployeeSyncBatch(batchId))
+        if (res.ok) setSyncBatch(null)
+        return res.ok
+    }
+
+    const applyEmployeeSync = async () => {
+        if (!syncBatch) return null
+        const batchId = syncBatch.id
+        const res = await runSync(() => staffApi.applyEmployeeSyncBatch(batchId))
+        if (!res.ok) {
+            // Reload outside runSync so the apply error stays shown while rows come back marked stale.
+            try {
+                setSyncBatch(await staffApi.getOpenEmployeeSyncBatch())
+            } catch {
+                // keep the batch we have
             }
-        } catch (error) {
-            // The old preview no longer matches the list after a move, so drop it.
-            const message = getMssqlEmployeeUpdateErrorMessage(error)
-            setMssqlSyncPreview(null)
-            setMssqlUpdateStatus("error")
-            setMssqlUpdateMessage(message)
-            setGlobalError(message)
+            return null
         }
+        setSyncBatch(null)
+        setStaffGroupFilter("employee_list")
+        setTeamFilter(ALL_TEAMS_OPTION)
+        setTeamFilterSearchTerm("")
+        setStartDateFilter("")
+        setTeamFilterMenuOpen(false)
+        setCurrentPage(1)
+        setMssqlRefreshToken((value) => value + 1)
+        return res.value
     }
-
-    const skipEmployeeListMssqlSync = () => {
-        if (mssqlAutoDismissTimerRef.current) {
-            clearTimeout(mssqlAutoDismissTimerRef.current)
-            mssqlAutoDismissTimerRef.current = null
-        }
-        setMssqlSyncPreview(null)
-        setMssqlUpdateMessage("Preview dismissed. No local data was changed.")
-        setMssqlUpdateStatus("idle")
-    }
-
-    const cancelEmployeeListMssqlSync = skipEmployeeListMssqlSync
 
     return {
         employees,
@@ -464,11 +415,9 @@ export function useEmployeeState({
         fetchAllFilteredEmployees,
         isLoadingEmployees,
         isLoadingTeams,
-        isUpdatingEmployeeListFromMssql,
-        mssqlUpdateMessage,
-        mssqlUpdateStatus,
-        mssqlSyncPreview,
-        isApplyingMssqlSync,
+        syncBatch,
+        isSyncBusy,
+        syncError,
         teamOptions,
         teamFilterOptions,
         filteredTeamFilterOptions,
@@ -477,11 +426,13 @@ export function useEmployeeState({
         selectTeamFilter,
         commitTypedTeamSelection,
         toggleColumnSort,
-        updateEmployeeListFromMssql,
-        refreshMssqlSyncPreview,
-        applyEmployeeListMssqlSync,
-        skipEmployeeListMssqlSync,
-        cancelEmployeeListMssqlSync,
+        startEmployeeSync,
+        replaceEmployeeSync,
+        resumeEmployeeSync,
+        updateSyncRow,
+        refreshSyncRow,
+        discardEmployeeSync,
+        applyEmployeeSync,
         resetEmployeeStateOnLogout,
     }
 }
@@ -491,7 +442,9 @@ export function getMssqlEmployeeUpdateErrorMessage(error: unknown): string {
     const normalized = raw.toLowerCase()
 
     if (
-        normalized.startsWith("read-only permission diagnostic:") &&
+        // Local staging errors (Cannot / Invalid / Not found) carry no MSSQL secrets.
+        (normalized.startsWith("read-only permission diagnostic:") ||
+            /^(cannot |invalid |not found:)/.test(normalized)) &&
         raw.length <= 350 &&
         !/[\r\n]/.test(raw) &&
         !/(?:password|token|secret)\s*=/.test(normalized)

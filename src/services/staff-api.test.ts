@@ -433,4 +433,24 @@ describe("staffApi Phase C command classification", () => {
         expect(cmd).toBe("revoke_recovery_codes")
         expect((args as Record<string, unknown>).currentPassword).toBe("SecretPassword123!")
     })
+
+    it("staged EE sync methods invoke their commands with camelCase args", async () => {
+        setSession({ sessionToken: "tok", expiresAt: "2099-01-01T00:00:00Z" })
+        invokeMock.mockResolvedValue(null)
+        const payload = { action: "apply", edits: null }
+        await staffApi.stageEmployeeListSync(true)
+        await staffApi.getOpenEmployeeSyncBatch()
+        await staffApi.updateEmployeeSyncRow(5, payload)
+        await staffApi.refreshEmployeeSyncRow(5)
+        await staffApi.discardEmployeeSyncBatch(9)
+        await staffApi.applyEmployeeSyncBatch(9)
+        expect(invokeMock.mock.calls).toEqual([
+            ["stage_employee_list_sync", { replace: true, sessionToken: "tok" }],
+            ["get_open_employee_sync_batch", { sessionToken: "tok" }],
+            ["update_employee_sync_row", { rowId: 5, payload, sessionToken: "tok" }],
+            ["refresh_employee_sync_row", { rowId: 5, sessionToken: "tok" }],
+            ["discard_employee_sync_batch", { batchId: 9, sessionToken: "tok" }],
+            ["apply_employee_sync_batch", { batchId: 9, sessionToken: "tok" }],
+        ])
+    })
 })

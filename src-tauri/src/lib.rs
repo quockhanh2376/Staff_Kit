@@ -926,24 +926,69 @@ async fn test_remote_ee_sync_connection(
 }
 
 #[tauri::command]
-async fn preview_employee_list_mssql_sync(
+async fn stage_employee_list_sync(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
     session_token: String,
-) -> Result<db::mssql_import::EmployeeListSyncPreview, String> {
-    let _ctx = auth_session::require_admin(&session_store, &session_token)?;
-    db::mssql_import::preview_employee_list_sync(&app).await
+    replace: bool,
+) -> Result<db::employee_sync_staging::EmployeeSyncBatch, String> {
+    let ctx = auth_session::require_admin(&session_store, &session_token)?;
+    db::mssql_import::stage_employee_list_sync(&app, replace, Some(&ctx.account_key)).await
 }
 
-#[tauri::command]
-async fn apply_employee_list_mssql_sync(
+#[tauri::command(async)]
+fn get_open_employee_sync_batch(
     app: tauri::AppHandle,
     session_store: tauri::State<'_, auth_session::SessionStore>,
     session_token: String,
-    preview_id: String,
-) -> Result<db::mssql_import::EmployeeListSyncResult, String> {
+) -> Result<Option<db::employee_sync_staging::EmployeeSyncBatch>, String> {
     let _ctx = auth_session::require_admin(&session_store, &session_token)?;
-    db::mssql_import::apply_employee_list_sync(&app, &preview_id).await
+    db::mssql_import::get_open_employee_sync_batch(&app)
+}
+
+#[tauri::command(async)]
+fn update_employee_sync_row(
+    app: tauri::AppHandle,
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    session_token: String,
+    row_id: i64,
+    payload: db::employee_sync_staging::EmployeeSyncRowUpdate,
+) -> Result<db::employee_sync_staging::EmployeeSyncStagedRow, String> {
+    let _ctx = auth_session::require_admin(&session_store, &session_token)?;
+    db::mssql_import::update_employee_sync_row(&app, row_id, payload)
+}
+
+#[tauri::command(async)]
+fn refresh_employee_sync_row(
+    app: tauri::AppHandle,
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    session_token: String,
+    row_id: i64,
+) -> Result<db::employee_sync_staging::EmployeeSyncStagedRow, String> {
+    let _ctx = auth_session::require_admin(&session_store, &session_token)?;
+    db::mssql_import::refresh_employee_sync_row(&app, row_id)
+}
+
+#[tauri::command(async)]
+fn discard_employee_sync_batch(
+    app: tauri::AppHandle,
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    session_token: String,
+    batch_id: i64,
+) -> Result<(), String> {
+    let _ctx = auth_session::require_admin(&session_store, &session_token)?;
+    db::mssql_import::discard_employee_sync_batch(&app, batch_id)
+}
+
+#[tauri::command(async)]
+fn apply_employee_sync_batch(
+    app: tauri::AppHandle,
+    session_store: tauri::State<'_, auth_session::SessionStore>,
+    session_token: String,
+    batch_id: i64,
+) -> Result<db::employee_sync_staging::EmployeeSyncApplyResult, String> {
+    let ctx = auth_session::require_admin(&session_store, &session_token)?;
+    db::mssql_import::apply_employee_sync_batch(&app, batch_id, Some(&ctx.account_key))
 }
 
 #[tauri::command(async)]
@@ -1751,8 +1796,12 @@ pub fn run() {
             change_remote_ee_sync_approved_account,
             remove_remote_ee_sync_password,
             test_remote_ee_sync_connection,
-            preview_employee_list_mssql_sync,
-            apply_employee_list_mssql_sync,
+            stage_employee_list_sync,
+            get_open_employee_sync_batch,
+            update_employee_sync_row,
+            refresh_employee_sync_row,
+            discard_employee_sync_batch,
+            apply_employee_sync_batch,
             get_security_policy,
             update_security_policy,
             get_recovery_code_status,
@@ -1885,8 +1934,12 @@ mod tests {
         "save_remote_ee_sync_settings",
         "remove_remote_ee_sync_password",
         "test_remote_ee_sync_connection",
-        "preview_employee_list_mssql_sync",
-        "apply_employee_list_mssql_sync",
+        "stage_employee_list_sync",
+        "get_open_employee_sync_batch",
+        "update_employee_sync_row",
+        "refresh_employee_sync_row",
+        "discard_employee_sync_batch",
+        "apply_employee_sync_batch",
         "update_asset_import_row",
         "set_asset_import_row_skipped",
     ];
@@ -2006,8 +2059,12 @@ mod tests {
             "save_remote_ee_sync_settings",
             "remove_remote_ee_sync_password",
             "test_remote_ee_sync_connection",
-            "preview_employee_list_mssql_sync",
-            "apply_employee_list_mssql_sync",
+            "stage_employee_list_sync",
+            "get_open_employee_sync_batch",
+            "update_employee_sync_row",
+            "refresh_employee_sync_row",
+            "discard_employee_sync_batch",
+            "apply_employee_sync_batch",
         ] {
             assert!(
                 ADMIN_COMMANDS.contains(&command),

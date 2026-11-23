@@ -132,6 +132,7 @@ function App() {
   const employeeState = useEmployeeState({
     dbReady,
     isAuthenticated,
+    isAdmin: auth.isAdminAccount,
     reloadToken,
     setGlobalError,
   })
