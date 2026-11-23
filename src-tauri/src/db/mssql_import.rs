@@ -58,12 +58,12 @@ ORDER BY [Code]
 "#;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct LocalEmployeeListRecord {
-    employee_id: String,
-    full_name: String,
-    nick_name: Option<String>,
-    email: Option<String>,
-    azure_ad_account: Option<String>,
+pub(crate) struct LocalEmployeeListRecord {
+    pub(crate) employee_id: String,
+    pub(crate) full_name: String,
+    pub(crate) nick_name: Option<String>,
+    pub(crate) email: Option<String>,
+    pub(crate) azure_ad_account: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
@@ -1461,11 +1461,11 @@ fn find_mssql_column_index(row: &tiberius::Row, aliases: &[&str]) -> Option<usiz
     })
 }
 
-fn normalized_staff_code(value: &str) -> String {
+pub(crate) fn normalized_staff_code(value: &str) -> String {
     value.trim().to_uppercase()
 }
 
-fn normalize_sync_text(value: Option<&str>) -> Option<String> {
+pub(crate) fn normalize_sync_text(value: Option<&str>) -> Option<String> {
     use unicode_normalization::UnicodeNormalization;
 
     value
@@ -1474,7 +1474,7 @@ fn normalize_sync_text(value: Option<&str>) -> Option<String> {
         .map(|v| v.nfc().collect::<String>())
 }
 
-fn compare_employee_list(
+pub(crate) fn compare_employee_list(
     source: &[MssqlStaffRecord],
     local: &[LocalEmployeeListRecord],
     non_employee_list_codes: &[String],

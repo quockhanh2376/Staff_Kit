@@ -31,6 +31,7 @@ pub mod backup;
 pub mod borrow;
 pub mod column;
 pub mod employee;
+pub(crate) mod employee_sync_staging;
 pub(crate) mod employee_asset_seed;
 pub mod import;
 pub mod import_detector;
