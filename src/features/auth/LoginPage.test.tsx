@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { render, screen, waitFor } from "@testing-library/react"
 import "@testing-library/jest-dom/vitest"
 import type { AuthState } from "./useAuthState"
 import { LoginPage } from "./LoginPage"
@@ -246,26 +246,23 @@ describe("LoginPage app version indicator", () => {
         vi.mocked(staffApi.getAppVersion).mockResolvedValueOnce("2.2.1")
         renderLogin()
 
-        const versionEl = await screen.findByTestId("app-version")
-        expect(versionEl).toBeInTheDocument()
-        expect(versionEl).toHaveTextContent("Version 2.2.1")
+        // The label renders empty until the version resolves; wait for the final text.
+        await waitFor(() => expect(screen.getByTestId("app-version")).toHaveTextContent("Version 2.2.1"))
     })
 
     it("renders prerelease version suffix on login screen", async () => {
         vi.mocked(staffApi.getAppVersion).mockResolvedValueOnce("2.2.1-internal-rc1")
         renderLogin()
 
-        const versionEl = await screen.findByTestId("app-version")
-        expect(versionEl).toBeInTheDocument()
-        expect(versionEl).toHaveTextContent("Version 2.2.1-internal-rc1")
+        // The label renders empty until the version resolves; wait for the final text.
+        await waitFor(() => expect(screen.getByTestId("app-version")).toHaveTextContent("Version 2.2.1-internal-rc1"))
     })
 
     it("renders fallback 'Version unavailable' when version reading fails", async () => {
         vi.mocked(staffApi.getAppVersion).mockRejectedValueOnce(new Error("IPC failure"))
         renderLogin()
 
-        const versionEl = await screen.findByTestId("app-version")
-        expect(versionEl).toBeInTheDocument()
-        expect(versionEl).toHaveTextContent("Version unavailable")
+        // The label renders empty until the version resolves; wait for the final text.
+        await waitFor(() => expect(screen.getByTestId("app-version")).toHaveTextContent("Version unavailable"))
     })
 })
