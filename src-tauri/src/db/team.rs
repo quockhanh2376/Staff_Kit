@@ -209,6 +209,29 @@ pub(crate) fn load_team_by_id(conn: &Connection, id: i64) -> Result<TeamRecord, 
     .ok_or_else(|| format!("team with id {id} was not found"))
 }
 
+/// EE List sync team: the team whose trimmed name equals the trimmed HR client name exactly,
+/// else a new team with that name (via `resolve_team_id_tx`). No case folding.
+pub(crate) fn resolve_sync_team_id_tx(
+    tx: &rusqlite::Transaction<'_>,
+    team_name: Option<&str>,
+) -> Result<Option<i64>, String> {
+    let Some(name) = team_name.map(str::trim).filter(|name| !name.is_empty()) else {
+        return Ok(None);
+    };
+    let existing: Option<i64> = tx
+        .query_row(
+            "SELECT id FROM teams WHERE TRIM(name) = ?1 ORDER BY id LIMIT 1",
+            params![name],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|err| format!("failed to query team: {err}"))?;
+    match existing {
+        Some(id) => Ok(Some(id)),
+        None => resolve_team_id_tx(tx, Some(name)),
+    }
+}
+
 /// Resolve or create a team by name inside a transaction. Used by import.rs.
 pub(crate) fn resolve_team_id_tx(
     tx: &rusqlite::Transaction<'_>,

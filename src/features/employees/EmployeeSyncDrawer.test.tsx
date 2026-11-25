@@ -3,12 +3,31 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import "@testing-library/jest-dom/vitest"
 import { EmployeeSyncDrawer } from "./EmployeeSyncDrawer"
 import type { EmployeeState } from "./useEmployeeState"
-import type { EmployeeSyncStagedRow } from "../../types/staff"
+import type { EmployeeSyncFields, EmployeeSyncStagedRow } from "../../types/staff"
 
 const DUPLICATE_NOTE = "Duplicate Staff Code in HR source"
 const STALE_NOTE = "Changed in the app after this list was loaded — review again"
 
-const fields = (fullName: string) => ({ fullName, nickName: null, email: null, azureAdAccount: null })
+const fields = (fullName: string): EmployeeSyncFields => ({
+    fullName,
+    nickName: null,
+    email: null,
+    azureAdAccount: null,
+    clientName: null,
+    project: null,
+    jobTitle: null,
+    gender: null,
+    aswStartDate: null,
+})
+
+const hrFields = (fullName: string): EmployeeSyncFields => ({
+    ...fields(fullName),
+    clientName: "FlexiFund",
+    project: "Alpha",
+    jobTitle: "Developer",
+    gender: "Female",
+    aswStartDate: "2019-02-25",
+})
 
 const row = (over: Partial<EmployeeSyncStagedRow>): EmployeeSyncStagedRow => ({
     id: 1,
@@ -192,6 +211,34 @@ describe("EmployeeSyncDrawer", () => {
         fireEvent.click(screen.getByRole("button", { name: "Skip" }))
         expect(emp.discardEmployeeSync).toHaveBeenCalledTimes(1)
         await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
+    })
+
+    it("renders the HR field columns prefilled, keeping app values HR leaves blank", () => {
+        setup([
+            row({ id: 1, staffCode: "A1", source: [hrFields("Ann")] }),
+            row({
+                id: 2,
+                staffCode: "A2",
+                kind: "changed",
+                source: [{ ...hrFields("Bob"), project: null }],
+                local: { ...fields("Bob"), project: "Kept" },
+            }),
+        ])
+        for (const header of ["Client (PMD)", "Project", "Job title", "Gender", "ASW start"]) {
+            expect(screen.getByRole("columnheader", { name: header })).toBeInTheDocument()
+        }
+        expect(screen.getByLabelText("Client (PMD) for A1")).toHaveValue("FlexiFund")
+        expect(screen.getByLabelText("Project for A1")).toHaveValue("Alpha")
+        expect(screen.getByLabelText("Job title for A1")).toHaveValue("Developer")
+        expect(screen.getByLabelText("Gender for A1")).toHaveDisplayValue("Female")
+        expect(screen.getByLabelText("ASW start for A1")).toHaveValue("2019-02-25")
+        expect(screen.getByLabelText("Project for A2")).toHaveValue("Kept")
+    })
+
+    it("changing gender saves the row with all fields", () => {
+        const { emp } = setup([row({ id: 1, staffCode: "A1", source: [hrFields("Ann")] })])
+        fireEvent.change(screen.getByLabelText("Gender for A1"), { target: { value: "Male" } })
+        expect(emp.updateSyncRow).toHaveBeenCalledWith(1, { edits: { ...hrFields("Ann"), gender: "Male" } })
     })
 
     it("kind filter narrows the rows", () => {

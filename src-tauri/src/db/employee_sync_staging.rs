@@ -10,21 +10,28 @@ use serde::{Deserialize, Serialize};
 use super::employee::{move_employees_group_tx, MoveEmployeesGroupInput};
 use super::humanize_sqlite_error;
 use super::mssql_import::{
-    compare_employee_list, insert_employee_list_record, normalize_sync_text,
-    normalized_staff_code, update_employee_list_record, EmployeeSyncCounts,
-    LocalEmployeeListRecord, MssqlStaffRecord,
+    compare_employee_list, insert_employee_list_record, normalize_sync_text, normalized_staff_code,
+    sync_date_iso, update_employee_list_record, EmployeeSyncCounts, LocalEmployeeListRecord,
+    MssqlStaffRecord,
 };
 use super::schema::{
     AZURE_AD_ACCOUNT_FIELD_KEY, STAFF_GROUP_EMPLOYEE_LIST, STAFF_GROUP_OFFBOARDING,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EmployeeSyncFields {
     pub full_name: String,
     pub nick_name: Option<String>,
     pub email: Option<String>,
     pub azure_ad_account: Option<String>,
+    /// Client (PMD) = the employee's team name.
+    pub client_name: Option<String>,
+    pub project: Option<String>,
+    pub job_title: Option<String>,
+    pub gender: Option<String>,
+    /// YYYY-MM-DD; stored on the employee as an Excel serial day number.
+    pub asw_start_date: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -98,7 +105,27 @@ fn normalise_fields(fields: &EmployeeSyncFields) -> EmployeeSyncFields {
         nick_name: normalize_sync_text(fields.nick_name.as_deref()),
         email: normalize_sync_text(fields.email.as_deref()).map(|value| value.to_lowercase()),
         azure_ad_account: normalize_sync_text(fields.azure_ad_account.as_deref()),
+        client_name: normalize_sync_text(fields.client_name.as_deref()),
+        project: normalize_sync_text(fields.project.as_deref()),
+        job_title: normalize_sync_text(fields.job_title.as_deref()),
+        gender: normalize_sync_text(fields.gender.as_deref()),
+        asw_start_date: normalize_sync_text(fields.asw_start_date.as_deref())
+            .map(|date| sync_date_iso(&date)),
     }
+}
+
+fn validate_edits(fields: &EmployeeSyncFields) -> Result<(), String> {
+    if let Some(gender) = normalize_sync_text(fields.gender.as_deref()) {
+        if gender != "Male" && gender != "Female" {
+            return Err(format!("Invalid gender: {gender}"));
+        }
+    }
+    if let Some(date) = normalize_sync_text(fields.asw_start_date.as_deref()) {
+        if chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d").is_err() {
+            return Err(format!("Invalid ASW start date: {date}"));
+        }
+    }
+    Ok(())
 }
 
 fn source_fields(record: &MssqlStaffRecord) -> EmployeeSyncFields {
@@ -107,6 +134,11 @@ fn source_fields(record: &MssqlStaffRecord) -> EmployeeSyncFields {
         nick_name: record.nick_name.clone(),
         email: record.work_email.clone(),
         azure_ad_account: record.azure_ad_account.clone(),
+        client_name: record.client_name.clone(),
+        project: record.project.clone(),
+        job_title: record.job_title.clone(),
+        gender: record.gender.clone(),
+        asw_start_date: record.asw_start_date.clone(),
     })
 }
 
@@ -127,10 +159,12 @@ fn read_local_snapshot_conn(conn: &Connection) -> Result<Vec<LocalSnapshot>, Str
                    COALESCE(NULLIF(TRIM(e.staff_group), ''), 'employee_list'), e.updated_at,
                    e.is_floating,
                    (SELECT COUNT(*) FROM asset_loans l
-                     WHERE l.employee_id_fk = e.id AND l.returned_at IS NULL)
+                     WHERE l.employee_id_fk = e.id AND l.returned_at IS NULL),
+                   t.name, e.project, e.job_title, e.gender, e.asw_start_date
             FROM employees e
             LEFT JOIN employee_dynamic_values azure
               ON azure.employee_id = e.id AND azure.field_key = ?1
+            LEFT JOIN teams t ON t.id = e.team_id
             ORDER BY UPPER(TRIM(e.employee_id)), e.id
             "#,
         )
@@ -145,6 +179,14 @@ fn read_local_snapshot_conn(conn: &Connection) -> Result<Vec<LocalSnapshot>, Str
                     nick_name: row.get(3)?,
                     email: row.get(4)?,
                     azure_ad_account: row.get(5)?,
+                    client_name: row.get(10)?,
+                    project: row.get(11)?,
+                    job_title: row.get(12)?,
+                    gender: row.get(13)?,
+                    // Excel serial or date text, shown and compared as YYYY-MM-DD.
+                    asw_start_date: row
+                        .get::<_, Option<String>>(14)?
+                        .map(|date| sync_date_iso(&date)),
                 },
                 staff_group: row.get(6)?,
                 updated_at: row.get(7)?,
@@ -218,6 +260,11 @@ pub(crate) fn stage_employee_sync_batch_conn(
             nick_name: local.fields.nick_name.clone(),
             email: local.fields.email.clone(),
             azure_ad_account: local.fields.azure_ad_account.clone(),
+            client_name: local.fields.client_name.clone(),
+            project: local.fields.project.clone(),
+            job_title: local.fields.job_title.clone(),
+            gender: local.fields.gender.clone(),
+            asw_start_date: local.fields.asw_start_date.clone(),
         })
         .collect();
     let other_codes: Vec<String> = others.iter().map(|local| local.code.clone()).collect();
@@ -466,6 +513,9 @@ pub(crate) fn update_employee_sync_row_conn(
     if !allowed_actions(&row).contains(&action.as_str()) {
         return Err(format!("Invalid action for {} row: {action}", row.kind));
     }
+    if let Some(edits) = &update.edits {
+        validate_edits(edits)?;
+    }
     let edits = update
         .edits
         .as_ref()
@@ -585,6 +635,14 @@ fn written_fields(row: &EmployeeSyncStagedRow) -> Result<&EmployeeSyncFields, St
         .ok_or_else(|| "Invalid full name: required".to_string())
 }
 
+/// Null and absent mean the same: a batch staged before a field existed has no key for it.
+fn without_nulls(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => map.into_iter().filter(|(_, v)| !v.is_null()).collect(),
+        other => other,
+    }
+}
+
 /// True when the app changed what this writing row was staged against.
 fn is_stale(
     row: &EmployeeSyncStagedRow,
@@ -607,7 +665,7 @@ fn is_stale(
         .map_err(|err| format!("failed to read EE List sync row: {err}"))?;
     let current_json = serde_json::to_value(current)
         .map_err(|err| format!("failed to encode EE List sync row: {err}"))?;
-    if staged != current_json {
+    if without_nulls(staged) != without_nulls(current_json) {
         return Ok(true);
     }
     // Offboarding only ever applies to an EE List employee with the asset count the owner saw.
@@ -782,6 +840,7 @@ mod tests {
             nick_name: None,
             work_email: None,
             azure_ad_account: None,
+            ..Default::default()
         }
     }
 
@@ -870,6 +929,7 @@ mod tests {
             nick_name: Some("   ".to_string()),
             work_email: Some(" Ann@Example.COM ".to_string()),
             azure_ad_account: Some(" ann@corp ".to_string()),
+            ..Default::default()
         }];
         let batch = stage_employee_sync_batch_conn(&mut conn, &source, false, None).expect("stage");
         let staged = row(&batch, "EE-1");
@@ -880,6 +940,7 @@ mod tests {
                 nick_name: None,
                 email: Some("ann@example.com".to_string()),
                 azure_ad_account: Some("ann@corp".to_string()),
+                ..Default::default()
             }]
         );
     }
@@ -1040,6 +1101,7 @@ mod tests {
             nick_name: None,
             email: None,
             azure_ad_account: None,
+            ..Default::default()
         }
     }
 
@@ -1067,6 +1129,7 @@ mod tests {
                     nick_name: Some("  ".to_string()),
                     email: Some(" Ed@Example.COM ".to_string()),
                     azure_ad_account: Some(" ed@corp ".to_string()),
+                    ..Default::default()
                 }),
             },
         )
@@ -1080,6 +1143,7 @@ mod tests {
                 nick_name: None,
                 email: Some("ed@example.com".to_string()),
                 azure_ad_account: Some("ed@corp".to_string()),
+                ..Default::default()
             })
         );
         let loaded = load_open_employee_sync_batch_conn(&conn)
@@ -1330,6 +1394,7 @@ mod tests {
                     nick_name: None,
                     email: Some(" New@Example.COM ".to_string()),
                     azure_ad_account: Some("edited@corp".to_string()),
+                    ..Default::default()
                 }),
             },
         )
@@ -1674,5 +1739,285 @@ mod tests {
             apply_employee_sync_batch_conn(&mut conn, 9999, None),
             Err("Not found: EE List sync".to_string())
         );
+    }
+
+    fn extra_hr(code: &str) -> MssqlStaffRecord {
+        MssqlStaffRecord {
+            client_name: Some("FlexiFund".to_string()),
+            project: Some("Alpha".to_string()),
+            job_title: Some("Developer".to_string()),
+            gender: Some("Female".to_string()),
+            asw_start_date: Some("2019-02-25".to_string()),
+            ..hr(code, "Ann")
+        }
+    }
+
+    type Extra = (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    );
+
+    fn extra(conn: &Connection, code: &str) -> Extra {
+        conn.query_row(
+            "SELECT t.name, e.project, e.job_title, e.gender, e.asw_start_date FROM employees e LEFT JOIN teams t ON t.id = e.team_id WHERE e.employee_id = ?1",
+            [code],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        )
+        .expect("read extra fields")
+    }
+
+    fn some(values: [&str; 5]) -> Extra {
+        let [a, b, c, d, e] = values.map(|value| Some(value.to_string()));
+        (a, b, c, d, e)
+    }
+
+    fn team_id(conn: &Connection, name: &str) -> i64 {
+        conn.query_row("SELECT id FROM teams WHERE name = ?1", [name], |row| {
+            row.get(0)
+        })
+        .expect("team id")
+    }
+
+    fn employee_team_id(conn: &Connection, code: &str) -> Option<i64> {
+        conn.query_row(
+            "SELECT team_id FROM employees WHERE employee_id = ?1",
+            [code],
+            |row| row.get(0),
+        )
+        .expect("employee team id")
+    }
+
+    #[test]
+    fn apply_new_row_writes_extra_hr_fields_reusing_exact_team() {
+        let mut conn = open_test_connection();
+        conn.execute("INSERT INTO teams(name) VALUES ('FlexiFund')", [])
+            .expect("seed team");
+        let batch = stage(&mut conn, &[extra_hr("EE-NEW")]);
+        assert_eq!(
+            row(&batch, "EE-NEW").source[0].asw_start_date.as_deref(),
+            Some("2019-02-25")
+        );
+
+        apply_employee_sync_batch_conn(&mut conn, batch.id, None).expect("apply");
+
+        assert_eq!(
+            extra(&conn, "EE-NEW"),
+            some(["FlexiFund", "Alpha", "Developer", "Female", "43521"])
+        );
+        assert_eq!(
+            employee_team_id(&conn, "EE-NEW"),
+            Some(team_id(&conn, "FlexiFund"))
+        );
+        assert_eq!(table_count(&conn, "teams"), 1);
+    }
+
+    #[test]
+    fn team_differing_only_in_case_is_changed_and_moves_to_exact_team() {
+        let mut conn = open_test_connection();
+        conn.execute(
+            "INSERT INTO teams(name) VALUES ('Flexifund'), ('FlexiFund')",
+            [],
+        )
+        .expect("seed teams");
+        seed(&conn, "EE-1", "Ann", "employee_list", false);
+        conn.execute(
+            "UPDATE employees SET team_id = (SELECT id FROM teams WHERE name = 'Flexifund')",
+            [],
+        )
+        .expect("app team");
+        let source = MssqlStaffRecord {
+            client_name: Some("FlexiFund".to_string()),
+            ..hr("EE-1", "Ann")
+        };
+
+        let batch = stage(&mut conn, &[source]);
+        assert_eq!(row(&batch, "EE-1").kind, "changed");
+        apply_employee_sync_batch_conn(&mut conn, batch.id, None).expect("apply");
+
+        assert_eq!(
+            employee_team_id(&conn, "EE-1"),
+            Some(team_id(&conn, "FlexiFund"))
+        );
+        assert_eq!(table_count(&conn, "teams"), 2);
+    }
+
+    #[test]
+    fn apply_creates_team_with_hr_exact_name_when_none_exists() {
+        let mut conn = open_test_connection();
+        conn.execute("INSERT INTO teams(name) VALUES ('Brand new client')", [])
+            .expect("seed other-case team");
+        let source = MssqlStaffRecord {
+            client_name: Some("  Brand New Client ".to_string()),
+            ..hr("EE-1", "Ann")
+        };
+        let batch = stage(&mut conn, &[source]);
+
+        apply_employee_sync_batch_conn(&mut conn, batch.id, None).expect("apply");
+
+        assert_eq!(
+            employee_team_id(&conn, "EE-1"),
+            Some(team_id(&conn, "Brand New Client"))
+        );
+        assert_eq!(table_count(&conn, "teams"), 2);
+    }
+
+    #[test]
+    fn apply_batch_staged_before_extra_fields_is_not_stale() {
+        let mut conn = open_test_connection();
+        seed(&conn, "EE-1", "Old", "employee_list", false);
+        let batch = stage(&mut conn, &[hr("EE-1", "New")]);
+        // local_json as written before the extra HR fields existed.
+        let local_json: String = conn
+            .query_row("SELECT local_json FROM employee_sync_rows", [], |row| {
+                row.get(0)
+            })
+            .expect("local json");
+        let mut old: serde_json::Value = serde_json::from_str(&local_json).expect("json");
+        for key in [
+            "clientName",
+            "project",
+            "jobTitle",
+            "gender",
+            "aswStartDate",
+        ] {
+            old.as_object_mut().expect("object").remove(key);
+        }
+        conn.execute(
+            "UPDATE employee_sync_rows SET local_json = ?1",
+            [old.to_string()],
+        )
+        .expect("old shape");
+
+        apply_employee_sync_batch_conn(&mut conn, batch.id, None).expect("not stale");
+        assert_eq!(employee(&conn, "EE-1").expect("updated").1, "New");
+    }
+
+    #[test]
+    fn stage_existing_values_match_hr_without_reporting_changed() {
+        let mut conn = open_test_connection();
+        conn.execute("INSERT INTO teams(name) VALUES ('FlexiFund')", [])
+            .expect("team");
+        seed(&conn, "EE-1", "Ann", "employee_list", false);
+        conn.execute(
+            "UPDATE employees SET team_id = 1, project = 'Alpha', job_title = 'Developer', gender = 'Female', asw_start_date = '43521'",
+            [],
+        )
+        .expect("local values");
+
+        let batch = stage(&mut conn, &[extra_hr("EE-1")]);
+
+        assert!(batch.rows.is_empty(), "{:?}", batch.rows);
+        assert_eq!(batch.counts.unchanged, 1);
+    }
+
+    #[test]
+    fn apply_changed_row_keeps_app_values_where_hr_is_blank() {
+        let mut conn = open_test_connection();
+        seed(&conn, "EE-1", "Ann", "employee_list", false);
+        conn.execute(
+            "UPDATE employees SET project = 'Kept', job_title = 'Old Title', gender = 'Female', asw_start_date = '43521'",
+            [],
+        )
+        .expect("local values");
+        let mut source = hr("EE-1", "Ann");
+        source.job_title = Some("New Title".to_string());
+
+        let batch = stage(&mut conn, &[source]);
+        let changed = row(&batch, "EE-1");
+        assert_eq!(changed.kind, "changed");
+        assert_eq!(
+            changed
+                .local
+                .as_ref()
+                .and_then(|local| local.asw_start_date.as_deref()),
+            Some("2019-02-25")
+        );
+        apply_employee_sync_batch_conn(&mut conn, batch.id, None).expect("apply");
+
+        assert_eq!(
+            extra(&conn, "EE-1"),
+            (
+                None,
+                Some("Kept".to_string()),
+                Some("New Title".to_string()),
+                Some("Female".to_string()),
+                Some("43521".to_string())
+            )
+        );
+    }
+
+    #[test]
+    fn apply_conflict_move_writes_extra_hr_fields() {
+        let mut conn = open_test_connection();
+        seed(&conn, "EE-ONB", "Onb", "onboarding", false);
+        let batch = stage(&mut conn, &[extra_hr("EE-ONB")]);
+        assert_eq!(row(&batch, "EE-ONB").kind, "conflict");
+
+        apply_employee_sync_batch_conn(&mut conn, batch.id, None).expect("apply");
+
+        assert_eq!(
+            extra(&conn, "EE-ONB"),
+            some(["FlexiFund", "Alpha", "Developer", "Female", "43521"])
+        );
+    }
+
+    #[test]
+    fn apply_changed_row_job_title_edited_in_app_after_staging_is_stale() {
+        let mut conn = open_test_connection();
+        let id = seed(&conn, "EE-1", "Old", "employee_list", false);
+        let batch = stage(&mut conn, &[extra_hr("EE-1")]);
+        conn.execute(
+            "UPDATE employees SET job_title = 'Local' WHERE id = ?1",
+            [id],
+        )
+        .expect("local edit");
+
+        assert_eq!(
+            apply_employee_sync_batch_conn(&mut conn, batch.id, None),
+            Err(stale_message(1))
+        );
+    }
+
+    #[test]
+    fn update_row_validates_gender_and_asw_start_date() {
+        let mut conn = open_test_connection();
+        let batch = stage(&mut conn, &[extra_hr("EE-1")]);
+        let id = row(&batch, "EE-1").id;
+        let edit = |fields: EmployeeSyncFields| EmployeeSyncRowUpdate {
+            action: None,
+            edits: Some(fields),
+        };
+
+        let bad_gender = EmployeeSyncFields {
+            gender: Some("Other".to_string()),
+            ..fields("Ann")
+        };
+        assert_eq!(
+            update_employee_sync_row_conn(&mut conn, id, edit(bad_gender)),
+            Err("Invalid gender: Other".to_string())
+        );
+        let bad_date = EmployeeSyncFields {
+            asw_start_date: Some("25/02/2019".to_string()),
+            ..fields("Ann")
+        };
+        assert_eq!(
+            update_employee_sync_row_conn(&mut conn, id, edit(bad_date)),
+            Err("Invalid ASW start date: 25/02/2019".to_string())
+        );
+
+        let good = EmployeeSyncFields {
+            gender: Some(" Male ".to_string()),
+            asw_start_date: Some(" 2020-01-02 ".to_string()),
+            client_name: Some(" Acme ".to_string()),
+            ..fields("Ann")
+        };
+        let updated = update_employee_sync_row_conn(&mut conn, id, edit(good)).expect("valid edit");
+        let edits = updated.edits.expect("edits");
+        assert_eq!(edits.gender.as_deref(), Some("Male"));
+        assert_eq!(edits.asw_start_date.as_deref(), Some("2020-01-02"));
+        assert_eq!(edits.client_name.as_deref(), Some("Acme"));
     }
 }
