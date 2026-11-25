@@ -63,6 +63,8 @@ WITH StaffList AS
     LEFT JOIN [dbo].[CompanyClients] AS CC ON CC.[Id] = S.[ClientId]
     LEFT JOIN [dbo].[Projects] AS P ON P.[Id] = S.[ProjectId]
     WHERE S.[Resigned] = 0
+      -- HR leaves Resigned = 0 for some leavers; a past last working day means they have left.
+      AND (S.[LastWorkingDate] IS NULL OR S.[LastWorkingDate] >= CAST(GETDATE() AS date))
 )
 SELECT [Code], [Name], [NickName], [WorkEmail], [AzureAD], [ClientName], [ProjectName],
        [JobTitle], [Gender], [AswStartDate], [ProbationEndDate]
@@ -2381,6 +2383,9 @@ mod tests {
         assert!(query.contains("inner join [dbo].[aspnetusers]"));
         assert!(query.contains("from [dbo].[staffs]"));
         assert!(query.contains("where s.[resigned] = 0"));
+        assert!(query.contains(
+            "and (s.[lastworkingdate] is null or s.[lastworkingdate] >= cast(getdate() as date))"
+        ));
         assert!(query.contains("coalesce(s.[workemail], s.[workemail2]) as [workemail]"));
         assert!(query.contains("as [azuread]"));
         assert!(query.contains("partition by upper(ltrim(rtrim(s.[code])))"));
@@ -3323,7 +3328,8 @@ mod tests {
         assert!(read_only_res.is_ok(), "Read-only gate must PASS for user_reader: {:?}", read_only_res.err());
 
         let source_rows = fetch_employee_list_sync_source(&config).await.expect("fetch_employee_list_sync_source");
-        assert!(source_rows.len() >= 397, "Expected at least 397 rows from canonical Query B, found {}", source_rows.len());
+        // 391 active on 2026-11-25 once leavers with a past LastWorkingDate are excluded.
+        assert!(source_rows.len() >= 380, "Expected at least 380 rows from canonical Query B, found {}", source_rows.len());
         let first = &source_rows[0];
         assert_eq!(first.code, "ASWCVN01");
         assert_eq!(first.name, "Brendan Cunningham");

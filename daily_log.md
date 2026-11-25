@@ -4400,3 +4400,10 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Tests: cargo 593/593 (+12: compare, probation, date conversion, query, apply new/changed/conflict, stale after app edit, edit validation), vitest 458/458 (+2 drawer), `tsc -b`, eslint, `vite build` clean.
 - Review fixes: team match is exact-name only in both compare and apply (owner's rule); a batch staged before this change is no longer stale (null and absent snapshot keys compare equal); a bare number below 20000 (e.g. a year) is no longer read as an Excel serial; `resolve_team_id_tx` doc comment restored. Tests: cargo 597/597, vitest employees 96/96, `tsc -b` clean.
 - Status: PASS (not yet checked in the running app, light and dark).
+
+## 2026-11-25 EE List sync: exclude leavers with a past last working day — End
+
+- Branch: `fix/ee-sync-last-working-day`. HR keeps `Staffs.Resigned = 0` for some people who have left, so update brought 399 people instead of 391.
+- Change: `EE_LIST_SYNC_QUERY` also requires `LastWorkingDate IS NULL OR LastWorkingDate >= today`. Owner confirmed the count in SSMS (391); the live HR test now reads 391 rows.
+- Tests: Rust 597/597 (query-text test seen failing first; live HR test floor lowered from 397 to 380).
+- Status: PASS (not yet checked in the running app).
