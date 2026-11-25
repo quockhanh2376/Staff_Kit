@@ -18,12 +18,20 @@ const groupLabel = (group: string) => STAFF_GROUP_BUTTONS.find((g) => g.key === 
 
 const KIND_LABELS: Record<string, string> = { new: "New", changed: "Changed", missing: "Missing", conflict: "Conflicts" }
 
-const FIELD_COLUMNS: { key: keyof EmployeeSyncFields; label: string }[] = [
+const FIELD_COLUMNS: { key: keyof EmployeeSyncFields; label: string; type?: "gender" | "date" }[] = [
     { key: "fullName", label: "Full name" },
     { key: "nickName", label: "Nick" },
     { key: "email", label: "Email" },
     { key: "azureAdAccount", label: "Azure AD" },
+    { key: "clientName", label: "Client (PMD)" },
+    { key: "project", label: "Project" },
+    { key: "jobTitle", label: "Job title" },
+    { key: "gender", label: "Gender", type: "gender" },
+    { key: "aswStartDate", label: "ASW start", type: "date" },
 ]
+
+// A blank HR value for these never clears the app's value, so the drawer shows the app's value instead.
+const HR_EXTRA_KEYS = ["clientName", "project", "jobTitle", "gender", "aswStartDate"] as const
 
 const isDuplicate = (row: EmployeeSyncStagedRow) => row.notes.includes(DUPLICATE_NOTE)
 
@@ -43,7 +51,13 @@ function actionsFor(row: EmployeeSyncStagedRow): string[] {
     }
 }
 
-const shownFields = (row: EmployeeSyncStagedRow): EmployeeSyncFields | null => row.edits ?? row.source[0] ?? row.local
+function shownFields(row: EmployeeSyncStagedRow): EmployeeSyncFields | null {
+    const source = row.source[0]
+    if (row.edits || !source) return row.edits ?? row.local
+    const shown = { ...source }
+    for (const key of HR_EXTRA_KEYS) shown[key] = source[key] ?? row.local?.[key] ?? null
+    return shown
+}
 
 type EmployeeSyncDrawerProps = {
     open: boolean
@@ -73,11 +87,13 @@ export function EmployeeSyncDrawer({ open, onClose, employeeState: emp, setGloba
     const visibleRows = kindFilter === "all" ? rows : rows.filter((row) => row.kind === kindFilter)
 
     // Edits are read from the row's inputs, not row state, so a blur while an earlier save is in flight keeps both values.
-    const saveRowFields = async (input: HTMLInputElement, row: EmployeeSyncStagedRow) => {
-        const inputs = input.closest("tr")?.querySelectorAll("input")
+    const saveRowFields = async (input: HTMLInputElement | HTMLSelectElement, row: EmployeeSyncStagedRow) => {
+        const inputs = input.closest("tr")?.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-field]")
         if (!inputs) return
         const value = (i: number) => inputs[i].value.trim()
-        const edits: EmployeeSyncFields = { fullName: value(0), nickName: value(1) || null, email: value(2) || null, azureAdAccount: value(3) || null }
+        const edits = Object.fromEntries(
+            FIELD_COLUMNS.map(({ key }, i) => [key, key === "fullName" ? value(i) : value(i) || null]),
+        ) as EmployeeSyncFields
         const stored = shownFields(row)
         if (FIELD_COLUMNS.every(({ key }) => edits[key] === (stored?.[key] ?? (key === "fullName" ? "" : null)))) return
         if (await emp.updateSyncRow(row.id, { edits })) return
@@ -136,7 +152,7 @@ export function EmployeeSyncDrawer({ open, onClose, employeeState: emp, setGloba
                 )}
 
                 <div className="min-h-0 flex-1 overflow-auto rounded-[8px] border border-[var(--border)]">
-                    <table className="w-full text-left text-xs">
+                    <table className="w-full min-w-max text-left text-xs">
                         <thead className="table-head sticky top-0 uppercase tracking-[0.04em] text-[var(--text-secondary)]">
                             <tr>
                                 {["Staff code", "Kind", "Local name", "Source name", ...FIELD_COLUMNS.map((c) => c.label), "Action", "Notes"].map((h) => (
@@ -165,18 +181,35 @@ export function EmployeeSyncDrawer({ open, onClose, employeeState: emp, setGloba
                                             {row.isFloating && <div className="text-[var(--text-secondary)]">Floating</div>}
                                         </td>
                                         <td className="px-2 py-2">{row.source.map((s) => s.fullName).join(" / ") || "-"}</td>
-                                        {FIELD_COLUMNS.map(({ key: field, label }) => (
-                                            <td key={field} className="px-2 py-2">
-                                                <input
-                                                    key={fields?.[field] ?? ""}
-                                                    aria-label={`${label} for ${row.staffCode}`}
-                                                    className={inputClass}
-                                                    defaultValue={fields?.[field] ?? ""}
-                                                    disabled={readOnly}
-                                                    onBlur={(e) => void saveRowFields(e.target, row)}
-                                                />
-                                            </td>
-                                        ))}
+                                        {FIELD_COLUMNS.map(({ key: field, label, type }) => {
+                                            const value = fields?.[field] ?? ""
+                                            // key remounts the uncontrolled control when the stored value changes.
+                                            const control = {
+                                                "aria-label": `${label} for ${row.staffCode}`,
+                                                "data-field": field,
+                                                className: `${inputClass} min-w-[7rem]`,
+                                                defaultValue: value,
+                                                disabled: readOnly,
+                                            }
+                                            return (
+                                                <td key={field} className="px-2 py-2">
+                                                    {type === "gender" ? (
+                                                        <select key={value} {...control} onChange={(e) => void saveRowFields(e.target, row)}>
+                                                            <option value="" />
+                                                            <option value="Male">Male</option>
+                                                            <option value="Female">Female</option>
+                                                        </select>
+                                                    ) : (
+                                                        <input
+                                                            key={value}
+                                                            {...control}
+                                                            type={type === "date" ? "date" : "text"}
+                                                            onBlur={(e) => void saveRowFields(e.target, row)}
+                                                        />
+                                                    )}
+                                                </td>
+                                            )
+                                        })}
                                         <td className="px-2 py-2">
                                             <select
                                                 aria-label={`Action for ${row.staffCode}`}

@@ -4390,3 +4390,12 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Tests: vitest 449/449 (new: 10 drawer, 1 EmployeeView prompt, 1 hook stale-apply), `tsc -b`, eslint, `vite build` clean.
 - Final review safety fixes: Reload from app sets a Missing row to Keep when the employee left the EE List or became floating; Approve marks an offboard row stale when the employee is outside the EE List or their asset count changed since staging; `isFloating` joins the drift fingerprint; `Cannot …`, `Invalid …` and `Not found:` errors show as-is; `isSyncBusy` waits for every in-flight call; the drawer shows the local group (`From Offboarding`) and `Floating`; the settings-change batch delete logs its error. Tests: cargo 581/581 (+5), vitest 456/456 (+5), `tsc -b`, eslint, `vite build` clean.
 - Status: PASS (not yet checked in the running app, light and dark).
+
+## 2026-11-25 EE List sync: extra HR fields — End
+
+- Branch: `feat/ee-sync-hr-fields` (worktree `.worktrees/ee-sync-hr-fields`). Coded by Claude in this session.
+- Change: the EE List sync now also reads Client (PMD), Project, Job title, Gender and ASW start date from HR. They count for Changed, show and edit in the sync drawer (Gender as a Male/Female select, ASW start as a date), and are written by Apply (new/changed) and Move to EE List (conflict).
+- HR columns (read-only query): `CompanyClients.Name` via `Staffs.ClientId`, `Projects.Name` via `Staffs.ProjectId`, `Staffs.Title`, `Staffs.Gender` (1 Male, 0 Female), `Staffs.OriginalJoinedDate` and `Staffs.ProbationEndDate` (both as `CONVERT(char(10), ..., 23)` text).
+- Rules: Client (PMD) sets the employee's team (exact name first, else case-insensitive, else a new team). No HR project + probation end today or later = `Probation`. A blank HR value never clears the app's value and does not mark the row Changed. ASW start is compared by date and stored as the Excel serial number like existing data. Client start date, Client year of services and `start_date` are not touched. The new local values join the drift fingerprint.
+- Tests: cargo 593/593 (+12: compare, probation, date conversion, query, apply new/changed/conflict, stale after app edit, edit validation), vitest 458/458 (+2 drawer), `tsc -b`, eslint, `vite build` clean.
+- Status: PASS (not yet checked in the running app, light and dark).

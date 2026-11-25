@@ -981,6 +981,13 @@ export type EmployeeSyncFields = {
   nickName: string | null
   email: string | null
   azureAdAccount: string | null
+  /** Client (PMD) = the employee's team name. */
+  clientName: string | null
+  project: string | null
+  jobTitle: string | null
+  gender: string | null
+  /** YYYY-MM-DD. */
+  aswStartDate: string | null
 }
 
 export type EmployeeSyncStagedRow = {

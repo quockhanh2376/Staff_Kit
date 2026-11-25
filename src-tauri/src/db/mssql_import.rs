@@ -47,6 +47,12 @@ WITH StaffList AS
         S.[NickName],
         COALESCE(S.[WorkEmail], S.[WorkEmail2]) AS [WorkEmail],
         ASPU.[UserName] AS [AzureAD],
+        CC.[Name] AS [ClientName],
+        P.[Name] AS [ProjectName],
+        S.[Title] AS [JobTitle],
+        CASE S.[Gender] WHEN 1 THEN 'Male' WHEN 0 THEN 'Female' END AS [Gender],
+        CONVERT(char(10), S.[OriginalJoinedDate], 23) AS [AswStartDate],
+        CONVERT(char(10), S.[ProbationEndDate], 23) AS [ProbationEndDate],
         ROW_NUMBER() OVER (
             PARTITION BY UPPER(LTRIM(RTRIM(S.[Code])))
             ORDER BY S.[Id], ASPU.[UserName]
@@ -54,21 +60,30 @@ WITH StaffList AS
     FROM [dbo].[Staffs] AS S
     INNER JOIN [dbo].[AspNetUsers] AS ASPU
         ON S.[Id] = ASPU.[StaffId]
+    LEFT JOIN [dbo].[CompanyClients] AS CC ON CC.[Id] = S.[ClientId]
+    LEFT JOIN [dbo].[Projects] AS P ON P.[Id] = S.[ProjectId]
     WHERE S.[Resigned] = 0
 )
-SELECT [Code], [Name], [NickName], [WorkEmail], [AzureAD]
+SELECT [Code], [Name], [NickName], [WorkEmail], [AzureAD], [ClientName], [ProjectName],
+       [JobTitle], [Gender], [AswStartDate], [ProbationEndDate]
 FROM StaffList
 WHERE RowNum = 1
 ORDER BY [Code]
 "#;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct LocalEmployeeListRecord {
     pub(crate) employee_id: String,
     pub(crate) full_name: String,
     pub(crate) nick_name: Option<String>,
     pub(crate) email: Option<String>,
     pub(crate) azure_ad_account: Option<String>,
+    /// The employee's team name.
+    pub(crate) client_name: Option<String>,
+    pub(crate) project: Option<String>,
+    pub(crate) job_title: Option<String>,
+    pub(crate) gender: Option<String>,
+    pub(crate) asw_start_date: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
@@ -1319,7 +1334,7 @@ fn delete_mssql_password() -> Result<(), String> {
     Err("Secure SQL password storage is available only on Windows.".into())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MssqlStaffRecord {
     pub code: String,
@@ -1327,6 +1342,15 @@ pub struct MssqlStaffRecord {
     pub nick_name: Option<String>,
     pub work_email: Option<String>,
     pub azure_ad_account: Option<String>,
+    /// Client (PMD); synced to the employee's team.
+    pub client_name: Option<String>,
+    /// HR project, or 'Probation' while on probation without one (see `hr_project`).
+    pub project: Option<String>,
+    pub job_title: Option<String>,
+    /// 'Male' / 'Female' only.
+    pub gender: Option<String>,
+    /// YYYY-MM-DD.
+    pub asw_start_date: Option<String>,
 }
 
 type MssqlClient = Client<Compat<TcpStream>>;
@@ -1450,6 +1474,52 @@ pub(crate) fn normalize_sync_text(value: Option<&str>) -> Option<String> {
         .map(|v| v.nfc().collect::<String>())
 }
 
+/// HR project; a staff member without one whose probation has not ended is on 'Probation'.
+pub(crate) fn hr_project(
+    project: Option<String>,
+    probation_end: Option<&str>,
+    today: chrono::NaiveDate,
+) -> Option<String> {
+    project.or_else(|| {
+        probation_end
+            .and_then(|end| chrono::NaiveDate::parse_from_str(end.trim(), "%Y-%m-%d").ok())
+            .filter(|end| *end >= today)
+            .map(|_| "Probation".to_string())
+    })
+}
+
+fn excel_epoch() -> chrono::NaiveDate {
+    chrono::NaiveDate::from_ymd_opt(1899, 12, 30).expect("valid Excel epoch")
+}
+
+/// A stored date (Excel serial day number or a date text) as YYYY-MM-DD; anything else unchanged.
+pub(crate) fn sync_date_iso(value: &str) -> String {
+    let value = value.trim();
+    value
+        .parse::<f64>()
+        .ok()
+        // Excel serials run from 1 (1900-01-01) to 2958465 (9999-12-31).
+        .filter(|days| (1.0..2_958_466.0).contains(days))
+        .map(|days| excel_epoch() + chrono::Duration::days(days.trunc() as i64))
+        .map(|date| date.format("%Y-%m-%d").to_string())
+        .or_else(|| super::normalize_date_text(value))
+        .unwrap_or_else(|| value.to_string())
+}
+
+/// YYYY-MM-DD as the Excel serial day number text the employee table stores.
+pub(crate) fn iso_to_excel_serial(value: &str) -> Option<String> {
+    chrono::NaiveDate::parse_from_str(value.trim(), "%Y-%m-%d")
+        .ok()
+        .map(|date| (date - excel_epoch()).num_days().to_string())
+}
+
+/// A blank HR value has no opinion; otherwise it must equal the local value under `key`.
+fn hr_value_matches(source: Option<&str>, local: Option<&str>, key: fn(&str) -> String) -> bool {
+    normalize_sync_text(source).is_none_or(|source| {
+        normalize_sync_text(local).is_some_and(|local| key(&local) == key(&source))
+    })
+}
+
 pub(crate) fn compare_employee_list(
     source: &[MssqlStaffRecord],
     local: &[LocalEmployeeListRecord],
@@ -1536,6 +1606,31 @@ fn sync_record_matches(source: &MssqlStaffRecord, local: &LocalEmployeeListRecor
             == normalize_sync_text(local.email.as_deref()).map(|value| value.to_lowercase())
         && normalize_sync_text(source.azure_ad_account.as_deref())
             == normalize_sync_text(local.azure_ad_account.as_deref())
+        && hr_value_matches(
+            source.client_name.as_deref(),
+            local.client_name.as_deref(),
+            |value| value.to_lowercase(),
+        )
+        && hr_value_matches(
+            source.project.as_deref(),
+            local.project.as_deref(),
+            str::to_string,
+        )
+        && hr_value_matches(
+            source.job_title.as_deref(),
+            local.job_title.as_deref(),
+            str::to_string,
+        )
+        && hr_value_matches(
+            source.gender.as_deref(),
+            local.gender.as_deref(),
+            str::to_string,
+        )
+        && hr_value_matches(
+            source.asw_start_date.as_deref(),
+            local.asw_start_date.as_deref(),
+            sync_date_iso,
+        )
 }
 
 async fn connect(connection: &MssqlConnectionConfig) -> Result<MssqlClient, String> {
@@ -1698,7 +1793,10 @@ async fn fetch_employee_list_sync_source(
         .await
         .map_err(|_| "Could not read the configured employee source results.".to_string())?;
     let mut records = Vec::with_capacity(rows.len());
+    let today = chrono::Local::now().date_naive();
     for row in &rows {
+        let text =
+            |aliases: &[&str]| get_optional_mssql_text(row, find_mssql_column_index(row, aliases));
         let code = get_required_mssql_text(
             row,
             find_mssql_column_index(row, &["Code"])
@@ -1720,6 +1818,15 @@ async fn fetch_employee_list_sync_source(
                 row,
                 find_mssql_column_index(row, &["AzureAD"]),
             ),
+            client_name: text(&["ClientName"]),
+            project: hr_project(
+                text(&["ProjectName"]),
+                text(&["ProbationEndDate"]).as_deref(),
+                today,
+            ),
+            job_title: text(&["JobTitle"]),
+            gender: text(&["Gender"]).filter(|value| value == "Male" || value == "Female"),
+            asw_start_date: text(&["AswStartDate"]),
         });
     }
     Ok(records)
@@ -1774,15 +1881,22 @@ pub(crate) fn insert_employee_list_record(
     code: &str,
     fields: &EmployeeSyncFields,
 ) -> Result<(), String> {
+    let extra = SyncExtraValues::resolve(tx, fields)?;
     tx.execute(
-        r#"INSERT INTO employees (employee_id, full_name, nick_name, email, staff_group, updated_at)
-           VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))"#,
+        r#"INSERT INTO employees (employee_id, full_name, nick_name, email, staff_group,
+                                  team_id, project, job_title, gender, asw_start_date, updated_at)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, datetime('now'))"#,
         params![
             normalized_staff_code(code),
             fields.full_name.trim(),
             normalize_sync_text(fields.nick_name.as_deref()),
             normalize_sync_text(fields.email.as_deref()).map(|value| value.to_lowercase()),
-            STAFF_GROUP_EMPLOYEE_LIST
+            STAFF_GROUP_EMPLOYEE_LIST,
+            extra.team_id,
+            extra.project,
+            extra.job_title,
+            extra.gender,
+            extra.asw_start_date,
         ],
     )
     .map_err(|err| format!("failed to insert EE List employee: {err}"))?;
@@ -1798,12 +1912,53 @@ pub(crate) fn update_employee_list_record(
     employee_id: i64,
     fields: &EmployeeSyncFields,
 ) -> Result<(), String> {
+    let extra = SyncExtraValues::resolve(tx, fields)?;
+    // A blank extra HR value keeps the app's value (COALESCE).
     tx.execute(
-        "UPDATE employees SET full_name = ?1, nick_name = ?2, email = ?3, updated_at = datetime('now') WHERE id = ?4",
-        params![fields.full_name.trim(), normalize_sync_text(fields.nick_name.as_deref()), normalize_sync_text(fields.email.as_deref()).map(|value| value.to_lowercase()), employee_id],
+        r#"UPDATE employees SET full_name = ?1, nick_name = ?2, email = ?3,
+               team_id = COALESCE(?5, team_id), project = COALESCE(?6, project),
+               job_title = COALESCE(?7, job_title), gender = COALESCE(?8, gender),
+               asw_start_date = COALESCE(?9, asw_start_date), updated_at = datetime('now')
+           WHERE id = ?4"#,
+        params![
+            fields.full_name.trim(),
+            normalize_sync_text(fields.nick_name.as_deref()),
+            normalize_sync_text(fields.email.as_deref()).map(|value| value.to_lowercase()),
+            employee_id,
+            extra.team_id,
+            extra.project,
+            extra.job_title,
+            extra.gender,
+            extra.asw_start_date,
+        ],
     )
     .map_err(|err| format!("failed to update EE List employee: {err}"))?;
     upsert_sync_azure_ad(tx, employee_id, fields.azure_ad_account.as_deref())
+}
+
+/// The extra HR fields as stored on `employees`: client -> team id, ASW start -> Excel serial.
+struct SyncExtraValues {
+    team_id: Option<i64>,
+    project: Option<String>,
+    job_title: Option<String>,
+    gender: Option<String>,
+    asw_start_date: Option<String>,
+}
+
+impl SyncExtraValues {
+    fn resolve(tx: &Transaction<'_>, fields: &EmployeeSyncFields) -> Result<Self, String> {
+        Ok(Self {
+            team_id: super::team::resolve_team_id_case_insensitive_tx(
+                tx,
+                fields.client_name.as_deref(),
+            )?,
+            project: normalize_sync_text(fields.project.as_deref()),
+            job_title: normalize_sync_text(fields.job_title.as_deref()),
+            gender: normalize_sync_text(fields.gender.as_deref()),
+            asw_start_date: normalize_sync_text(fields.asw_start_date.as_deref())
+                .map(|date| iso_to_excel_serial(&date).unwrap_or(date)),
+        })
+    }
 }
 
 fn upsert_sync_azure_ad(
@@ -2245,6 +2400,7 @@ mod tests {
             nick_name: None,
             work_email: None,
             azure_ad_account: None,
+            ..Default::default()
         }];
         let local = vec![LocalEmployeeListRecord {
             employee_id: "ASWVN1325".to_string(),
@@ -2252,6 +2408,7 @@ mod tests {
             nick_name: None,
             email: None,
             azure_ad_account: None,
+            ..Default::default()
         }];
 
         let diff = compare_employee_list(&source, &local, &[]);
@@ -2271,6 +2428,7 @@ mod tests {
                 nick_name: None,
                 work_email: None,
                 azure_ad_account: None,
+                ..Default::default()
             },
             MssqlStaffRecord {
                 code: "ASWVN1326".into(),
@@ -2278,6 +2436,7 @@ mod tests {
                 nick_name: None,
                 work_email: None,
                 azure_ad_account: None,
+                ..Default::default()
             },
             MssqlStaffRecord {
                 code: "ASWVN1327".into(),
@@ -2285,6 +2444,7 @@ mod tests {
                 nick_name: None,
                 work_email: None,
                 azure_ad_account: None,
+                ..Default::default()
             },
         ];
         let local = vec![
@@ -2294,6 +2454,7 @@ mod tests {
                 nick_name: None,
                 email: None,
                 azure_ad_account: None,
+                ..Default::default()
             },
             LocalEmployeeListRecord {
                 employee_id: "ASWVN1326".into(),
@@ -2301,6 +2462,7 @@ mod tests {
                 nick_name: None,
                 email: None,
                 azure_ad_account: None,
+                ..Default::default()
             },
             LocalEmployeeListRecord {
                 employee_id: "ASWVN1328".into(),
@@ -2308,6 +2470,7 @@ mod tests {
                 nick_name: None,
                 email: None,
                 azure_ad_account: None,
+                ..Default::default()
             },
         ];
 
@@ -2319,6 +2482,98 @@ mod tests {
         assert_eq!(diff.counts.missing, 1);
         assert_eq!(diff.conflicts.len(), 1);
         assert_eq!(diff.conflicts[0].code, "ASWVN1327");
+    }
+
+    #[test]
+    fn ee_list_sync_query_reads_extra_hr_fields_as_text() {
+        let query = EE_LIST_SYNC_QUERY.to_ascii_lowercase();
+
+        assert!(query.contains("left join [dbo].[companyclients] as cc on cc.[id] = s.[clientid]"));
+        assert!(query.contains("left join [dbo].[projects] as p on p.[id] = s.[projectid]"));
+        assert!(query.contains("convert(char(10), s.[originaljoineddate], 23) as [aswstartdate]"));
+        assert!(query.contains("convert(char(10), s.[probationenddate], 23) as [probationenddate]"));
+        for column in ["[clientname]", "[projectname]", "[jobtitle]", "[gender]"] {
+            assert!(query.contains(column), "{column}");
+        }
+    }
+
+    fn extra_pair() -> (MssqlStaffRecord, LocalEmployeeListRecord) {
+        (
+            MssqlStaffRecord {
+                code: "EE-1".into(),
+                name: "Ann".into(),
+                client_name: Some("FlexiFund".into()),
+                project: Some("Alpha".into()),
+                job_title: Some("Developer".into()),
+                gender: Some("Female".into()),
+                asw_start_date: Some("2019-02-25".into()),
+                ..Default::default()
+            },
+            LocalEmployeeListRecord {
+                employee_id: "EE-1".into(),
+                full_name: "Ann".into(),
+                client_name: Some("flexifund".into()),
+                project: Some("Alpha".into()),
+                job_title: Some("Developer".into()),
+                gender: Some("Female".into()),
+                asw_start_date: Some("43521".into()),
+                ..Default::default()
+            },
+        )
+    }
+
+    #[test]
+    fn employee_sync_diff_compares_client_case_insensitively_and_asw_start_by_date() {
+        let (source, local) = extra_pair();
+        let diff = compare_employee_list(&[source], &[local], &[]);
+        assert_eq!(diff.counts.unchanged, 1);
+    }
+
+    #[test]
+    fn employee_sync_diff_marks_changed_when_only_job_title_differs() {
+        let (source, mut local) = extra_pair();
+        local.job_title = Some("Tester".into());
+        let diff = compare_employee_list(&[source], &[local], &[]);
+        assert_eq!(diff.counts.changed, 1);
+    }
+
+    #[test]
+    fn employee_sync_diff_ignores_blank_hr_values_for_extra_fields() {
+        let (mut source, local) = extra_pair();
+        source.client_name = None;
+        source.project = Some("  ".into());
+        source.job_title = None;
+        source.gender = None;
+        source.asw_start_date = None;
+        let diff = compare_employee_list(&[source], &[local], &[]);
+        assert_eq!(diff.counts.unchanged, 1);
+    }
+
+    #[test]
+    fn hr_project_is_probation_only_while_probation_has_not_ended() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 11, 25).unwrap();
+        assert_eq!(
+            hr_project(None, Some("2026-11-25"), today).as_deref(),
+            Some("Probation")
+        );
+        assert_eq!(
+            hr_project(None, Some("2027-01-10"), today).as_deref(),
+            Some("Probation")
+        );
+        assert_eq!(hr_project(None, Some("2026-11-24"), today), None);
+        assert_eq!(hr_project(None, None, today), None);
+        assert_eq!(
+            hr_project(Some("Alpha".into()), Some("2027-01-10"), today).as_deref(),
+            Some("Alpha")
+        );
+    }
+
+    #[test]
+    fn asw_start_date_converts_between_iso_and_excel_serial() {
+        assert_eq!(sync_date_iso("43521"), "2019-02-25");
+        assert_eq!(sync_date_iso(" 2019-02-25 "), "2019-02-25");
+        assert_eq!(sync_date_iso("not a date"), "not a date");
+        assert_eq!(iso_to_excel_serial("2019-02-25").as_deref(), Some("43521"));
     }
 
     #[test]
@@ -2352,6 +2607,7 @@ mod tests {
                 nick_name: Some("Nick".into()),
                 email: Some("person@example.com".into()),
                 azure_ad_account: Some("person@corp.example".into()),
+                ..Default::default()
             },
         )
         .expect("update approved EE List employee");
@@ -2363,6 +2619,7 @@ mod tests {
                 nick_name: None,
                 email: None,
                 azure_ad_account: None,
+                ..Default::default()
             },
         )
         .expect("insert approved EE List employee");
@@ -2425,6 +2682,7 @@ mod tests {
             nick_name: Some("Nick".into()),
             email: Some("new@example.com".into()),
             azure_ad_account: None,
+            ..Default::default()
         };
 
         let mut conn = conn;

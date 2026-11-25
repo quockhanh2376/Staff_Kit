@@ -210,6 +210,29 @@ pub(crate) fn load_team_by_id(conn: &Connection, id: i64) -> Result<TeamRecord, 
 }
 
 /// Resolve or create a team by name inside a transaction. Used by import.rs.
+/// Like `resolve_team_id_tx`, but an existing team whose trimmed name differs only in
+/// (ASCII) case is reused; an exact match wins.
+pub(crate) fn resolve_team_id_case_insensitive_tx(
+    tx: &rusqlite::Transaction<'_>,
+    team_name: Option<&str>,
+) -> Result<Option<i64>, String> {
+    let Some(name) = team_name.map(str::trim).filter(|name| !name.is_empty()) else {
+        return Ok(None);
+    };
+    let existing: Option<i64> = tx
+        .query_row(
+            "SELECT id FROM teams WHERE TRIM(name) = ?1 COLLATE NOCASE ORDER BY TRIM(name) = ?1 DESC, id LIMIT 1",
+            params![name],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|err| format!("failed to query team: {err}"))?;
+    match existing {
+        Some(id) => Ok(Some(id)),
+        None => resolve_team_id_tx(tx, Some(name)),
+    }
+}
+
 pub(crate) fn resolve_team_id_tx(
     tx: &rusqlite::Transaction<'_>,
     team_name: Option<&str>,
