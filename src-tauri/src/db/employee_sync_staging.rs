@@ -635,6 +635,14 @@ fn written_fields(row: &EmployeeSyncStagedRow) -> Result<&EmployeeSyncFields, St
         .ok_or_else(|| "Invalid full name: required".to_string())
 }
 
+/// Null and absent mean the same: a batch staged before a field existed has no key for it.
+fn without_nulls(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => map.into_iter().filter(|(_, v)| !v.is_null()).collect(),
+        other => other,
+    }
+}
+
 /// True when the app changed what this writing row was staged against.
 fn is_stale(
     row: &EmployeeSyncStagedRow,
@@ -657,7 +665,7 @@ fn is_stale(
         .map_err(|err| format!("failed to read EE List sync row: {err}"))?;
     let current_json = serde_json::to_value(current)
         .map_err(|err| format!("failed to encode EE List sync row: {err}"))?;
-    if staged != current_json {
+    if without_nulls(staged) != without_nulls(current_json) {
         return Ok(true);
     }
     // Offboarding only ever applies to an EE List employee with the asset count the owner saw.
@@ -1735,7 +1743,7 @@ mod tests {
 
     fn extra_hr(code: &str) -> MssqlStaffRecord {
         MssqlStaffRecord {
-            client_name: Some("FLEXIFUND".to_string()),
+            client_name: Some("FlexiFund".to_string()),
             project: Some("Alpha".to_string()),
             job_title: Some("Developer".to_string()),
             gender: Some("Female".to_string()),
@@ -1766,14 +1774,27 @@ mod tests {
         (a, b, c, d, e)
     }
 
-    #[test]
-    fn apply_new_row_writes_extra_hr_fields_matching_team_case_insensitively() {
-        let mut conn = open_test_connection();
-        conn.execute(
-            "INSERT INTO teams(name) VALUES ('FlexiFund'), ('Flexifund')",
-            [],
+    fn team_id(conn: &Connection, name: &str) -> i64 {
+        conn.query_row("SELECT id FROM teams WHERE name = ?1", [name], |row| {
+            row.get(0)
+        })
+        .expect("team id")
+    }
+
+    fn employee_team_id(conn: &Connection, code: &str) -> Option<i64> {
+        conn.query_row(
+            "SELECT team_id FROM employees WHERE employee_id = ?1",
+            [code],
+            |row| row.get(0),
         )
-        .expect("seed teams");
+        .expect("employee team id")
+    }
+
+    #[test]
+    fn apply_new_row_writes_extra_hr_fields_reusing_exact_team() {
+        let mut conn = open_test_connection();
+        conn.execute("INSERT INTO teams(name) VALUES ('FlexiFund')", [])
+            .expect("seed team");
         let batch = stage(&mut conn, &[extra_hr("EE-NEW")]);
         assert_eq!(
             row(&batch, "EE-NEW").source[0].asw_start_date.as_deref(),
@@ -1786,15 +1807,92 @@ mod tests {
             extra(&conn, "EE-NEW"),
             some(["FlexiFund", "Alpha", "Developer", "Female", "43521"])
         );
-        assert_eq!(table_count(&conn, "teams"), 2);
+        assert_eq!(
+            employee_team_id(&conn, "EE-NEW"),
+            Some(team_id(&conn, "FlexiFund"))
+        );
+        assert_eq!(table_count(&conn, "teams"), 1);
+    }
 
-        // A client with no team yet creates exactly one.
-        let mut other = extra_hr("EE-2");
-        other.client_name = Some("Brand New Client".to_string());
-        let batch = stage(&mut conn, &[extra_hr("EE-NEW"), other]);
+    #[test]
+    fn team_differing_only_in_case_is_changed_and_moves_to_exact_team() {
+        let mut conn = open_test_connection();
+        conn.execute(
+            "INSERT INTO teams(name) VALUES ('Flexifund'), ('FlexiFund')",
+            [],
+        )
+        .expect("seed teams");
+        seed(&conn, "EE-1", "Ann", "employee_list", false);
+        conn.execute(
+            "UPDATE employees SET team_id = (SELECT id FROM teams WHERE name = 'Flexifund')",
+            [],
+        )
+        .expect("app team");
+        let source = MssqlStaffRecord {
+            client_name: Some("FlexiFund".to_string()),
+            ..hr("EE-1", "Ann")
+        };
+
+        let batch = stage(&mut conn, &[source]);
+        assert_eq!(row(&batch, "EE-1").kind, "changed");
         apply_employee_sync_batch_conn(&mut conn, batch.id, None).expect("apply");
-        assert_eq!(extra(&conn, "EE-2").0.as_deref(), Some("Brand New Client"));
-        assert_eq!(table_count(&conn, "teams"), 3);
+
+        assert_eq!(
+            employee_team_id(&conn, "EE-1"),
+            Some(team_id(&conn, "FlexiFund"))
+        );
+        assert_eq!(table_count(&conn, "teams"), 2);
+    }
+
+    #[test]
+    fn apply_creates_team_with_hr_exact_name_when_none_exists() {
+        let mut conn = open_test_connection();
+        conn.execute("INSERT INTO teams(name) VALUES ('Brand new client')", [])
+            .expect("seed other-case team");
+        let source = MssqlStaffRecord {
+            client_name: Some("  Brand New Client ".to_string()),
+            ..hr("EE-1", "Ann")
+        };
+        let batch = stage(&mut conn, &[source]);
+
+        apply_employee_sync_batch_conn(&mut conn, batch.id, None).expect("apply");
+
+        assert_eq!(
+            employee_team_id(&conn, "EE-1"),
+            Some(team_id(&conn, "Brand New Client"))
+        );
+        assert_eq!(table_count(&conn, "teams"), 2);
+    }
+
+    #[test]
+    fn apply_batch_staged_before_extra_fields_is_not_stale() {
+        let mut conn = open_test_connection();
+        seed(&conn, "EE-1", "Old", "employee_list", false);
+        let batch = stage(&mut conn, &[hr("EE-1", "New")]);
+        // local_json as written before the extra HR fields existed.
+        let local_json: String = conn
+            .query_row("SELECT local_json FROM employee_sync_rows", [], |row| {
+                row.get(0)
+            })
+            .expect("local json");
+        let mut old: serde_json::Value = serde_json::from_str(&local_json).expect("json");
+        for key in [
+            "clientName",
+            "project",
+            "jobTitle",
+            "gender",
+            "aswStartDate",
+        ] {
+            old.as_object_mut().expect("object").remove(key);
+        }
+        conn.execute(
+            "UPDATE employee_sync_rows SET local_json = ?1",
+            [old.to_string()],
+        )
+        .expect("old shape");
+
+        apply_employee_sync_batch_conn(&mut conn, batch.id, None).expect("not stale");
+        assert_eq!(employee(&conn, "EE-1").expect("updated").1, "New");
     }
 
     #[test]
@@ -1862,7 +1960,7 @@ mod tests {
 
         assert_eq!(
             extra(&conn, "EE-ONB"),
-            some(["FLEXIFUND", "Alpha", "Developer", "Female", "43521"])
+            some(["FlexiFund", "Alpha", "Developer", "Female", "43521"])
         );
     }
 

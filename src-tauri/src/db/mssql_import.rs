@@ -1498,8 +1498,9 @@ pub(crate) fn sync_date_iso(value: &str) -> String {
     value
         .parse::<f64>()
         .ok()
-        // Excel serials run from 1 (1900-01-01) to 2958465 (9999-12-31).
-        .filter(|days| (1.0..2_958_466.0).contains(days))
+        // Only 20000 (1954-10-03) up to 2958465 (9999-12-31) is read as an Excel serial: a bare
+        // smaller number (e.g. a year) is compared as-is.
+        .filter(|days| (20_000.0..2_958_466.0).contains(days))
         .map(|days| excel_epoch() + chrono::Duration::days(days.trunc() as i64))
         .map(|date| date.format("%Y-%m-%d").to_string())
         .or_else(|| super::normalize_date_text(value))
@@ -1609,7 +1610,7 @@ fn sync_record_matches(source: &MssqlStaffRecord, local: &LocalEmployeeListRecor
         && hr_value_matches(
             source.client_name.as_deref(),
             local.client_name.as_deref(),
-            |value| value.to_lowercase(),
+            str::to_string,
         )
         && hr_value_matches(
             source.project.as_deref(),
@@ -1948,10 +1949,7 @@ struct SyncExtraValues {
 impl SyncExtraValues {
     fn resolve(tx: &Transaction<'_>, fields: &EmployeeSyncFields) -> Result<Self, String> {
         Ok(Self {
-            team_id: super::team::resolve_team_id_case_insensitive_tx(
-                tx,
-                fields.client_name.as_deref(),
-            )?,
+            team_id: super::team::resolve_sync_team_id_tx(tx, fields.client_name.as_deref())?,
             project: normalize_sync_text(fields.project.as_deref()),
             job_title: normalize_sync_text(fields.job_title.as_deref()),
             gender: normalize_sync_text(fields.gender.as_deref()),
@@ -2512,7 +2510,7 @@ mod tests {
             LocalEmployeeListRecord {
                 employee_id: "EE-1".into(),
                 full_name: "Ann".into(),
-                client_name: Some("flexifund".into()),
+                client_name: Some("FlexiFund".into()),
                 project: Some("Alpha".into()),
                 job_title: Some("Developer".into()),
                 gender: Some("Female".into()),
@@ -2523,10 +2521,18 @@ mod tests {
     }
 
     #[test]
-    fn employee_sync_diff_compares_client_case_insensitively_and_asw_start_by_date() {
+    fn employee_sync_diff_compares_asw_start_by_date() {
         let (source, local) = extra_pair();
         let diff = compare_employee_list(&[source], &[local], &[]);
         assert_eq!(diff.counts.unchanged, 1);
+    }
+
+    #[test]
+    fn employee_sync_diff_marks_changed_when_client_differs_only_in_case() {
+        let (source, mut local) = extra_pair();
+        local.client_name = Some("Flexifund".into());
+        let diff = compare_employee_list(&[source], &[local], &[]);
+        assert_eq!(diff.counts.changed, 1);
     }
 
     #[test]
@@ -2573,6 +2579,10 @@ mod tests {
         assert_eq!(sync_date_iso("43521"), "2019-02-25");
         assert_eq!(sync_date_iso(" 2019-02-25 "), "2019-02-25");
         assert_eq!(sync_date_iso("not a date"), "not a date");
+        // Small numbers (a year, a typo) are not Excel serials.
+        assert_eq!(sync_date_iso("2019"), "2019");
+        assert_eq!(sync_date_iso("19999"), "19999");
+        assert_eq!(sync_date_iso("20000"), "1954-10-03");
         assert_eq!(iso_to_excel_serial("2019-02-25").as_deref(), Some("43521"));
     }
 
