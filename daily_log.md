@@ -4427,4 +4427,5 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Dry run on a copy of the live DB: 377 junk monitors deleted, 292 computers created, 367 assigned, 27 kept, 2 moved (LAP146 to ASWVN1334, LAP150 to ASWVN1336), 1 returned (LAP141), 57 Broken, 2 staff IDs not in the app (ASWVN075 LAP390, ASWVN1340 LAP385 to store). Applied on the copy: only ASWVN148 and ASWCVN01 of the 391 EE List have no laptop; the 236 real VNMON### monitors are unchanged; no foreign-key errors.
 - Sheet notes: ASWVNIMAC001 is both assigned (ASWVN029) and Broken (assignment wins); ASWVNIMAC002 listed twice as Broken.
 - Tests: cargo 604/604; 2 new Rust tests (assign / keep / move / return / create / Broken / junk delete / model-named laptop kept; duplicate claim skipped).
-- Status: PASS on the copy; not yet applied to the live DB.
+- Applied to the live DB 2026-11-26 19:11 with the app closed (snapshot `snap_20261126_191157_before_laptop_baseline`). Same counts as the dry run; afterwards only ASWVN148 and ASWCVN01 have no laptop, 396 laptops assigned, 83 in store (57 Broken), 236 monitors, `integrity_check` ok, no foreign-key errors.
+- Status: PASS (applied to live DB; not yet checked in the running app).
