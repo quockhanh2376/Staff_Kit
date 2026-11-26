@@ -324,6 +324,38 @@ pub fn normalize_location(loc: &str) -> &'static str {
     }
 }
 
+#[derive(Debug)]
+struct AssignmentHeader {
+    row_index: usize,
+    staff_col: usize,
+    name_col: Option<usize>,
+    cty_col: Option<usize>,
+    nha_col: Option<usize>,
+}
+
+/// The header is one row holding both a Staff ID column and a Tại CTY / Tại NHÀ column.
+/// Each row is judged on its own: data cells (e.g. the name "Quỳnh Anh", which contains
+/// "nha") must never become columns.
+fn detect_assignment_header(rows: &[Vec<String>]) -> Option<AssignmentHeader> {
+    rows.iter().enumerate().find_map(|(row_index, row)| {
+        let (mut staff, mut name, mut cty, mut nha) = (None, None, None, None);
+        for (c_idx, cell) in row.iter().enumerate() {
+            let val = normalize_header_token(cell);
+            if val.contains("staffid") || val.contains("manhanvien") || val.contains("manv") || val.contains("eeid") {
+                staff = Some(c_idx);
+            } else if val.contains("nhanvien") || val.contains("hoten") || val == "name" || val == "fullname" || val == "ten" {
+                name = Some(c_idx);
+            } else if val.contains("cty") || val.contains("congty") || val.contains("office") {
+                cty = Some(c_idx);
+            } else if val == "nha" || val.starts_with("tainha") || val.contains("home") {
+                nha = Some(c_idx);
+            }
+        }
+        let staff_col = staff?;
+        (cty.is_some() || nha.is_some()).then_some(AssignmentHeader { row_index, staff_col, name_col: name, cty_col: cty, nha_col: nha })
+    })
+}
+
 pub fn parse_assignment_sheet(
     file_path: &str,
     sheet_name: Option<&str>,
@@ -355,36 +387,14 @@ pub fn parse_assignment_sheet(
         .worksheet_range(&sheet_to_read)
         .map_err(|err| format!("Failed to read sheet '{sheet_to_read}': {err}"))?;
 
-    let mut staff_id_col = None;
-    let mut name_col = None;
-    let mut cty_col = None;
-    let mut nha_col = None;
-    let mut header_row_idx = None;
-
-    // Detect header row
-    for (r_idx, row) in range.rows().enumerate() {
-        for (c_idx, cell) in row.iter().enumerate() {
-            let val = normalize_header_token(&cell_to_string(cell));
-            if val.contains("staffid") || val.contains("manhanvien") || val.contains("manv") || val.contains("eeid") {
-                staff_id_col = Some(c_idx);
-            } else if val.contains("nhanvien") || val.contains("hoten") || val == "name" || val == "fullname" || val == "ten" {
-                name_col = Some(c_idx);
-            } else if val.contains("cty") || val.contains("congty") || val.contains("office") {
-                cty_col = Some(c_idx);
-            } else if val.contains("nha") || val.contains("home") {
-                nha_col = Some(c_idx);
-            }
-        }
-        if staff_id_col.is_some() && (cty_col.is_some() || nha_col.is_some()) {
-            header_row_idx = Some(r_idx);
-            break;
-        }
-    }
-
-    let header_idx = header_row_idx
+    let rows: Vec<Vec<String>> = range
+        .rows()
+        .map(|row| row.iter().map(cell_to_string).collect())
+        .collect();
+    let header = detect_assignment_header(&rows)
         .ok_or_else(|| "Could not identify header row (required: Staff ID, Tại CTY / Tại NHÀ)".to_string())?;
-    let staff_col = staff_id_col
-        .ok_or_else(|| "Could not find 'Staff ID' column in sheet".to_string())?;
+    let (header_idx, staff_col, name_col, cty_col, nha_col) =
+        (header.row_index, header.staff_col, header.name_col, header.cty_col, header.nha_col);
 
     let mut parsed_rows = Vec::new();
 
@@ -1399,6 +1409,44 @@ mod tests {
             }
         }
         candidates[0].to_string()
+    }
+
+    fn sheet(rows: &[&[&str]]) -> Vec<Vec<String>> {
+        rows.iter().map(|r| r.iter().map(|c| c.to_string()).collect()).collect()
+    }
+
+    #[test]
+    fn header_is_not_built_from_data_rows() {
+        // The laptop list layout: no Tai CTY / Tai NHA column, and a name containing "nha" ("Quynh Anh").
+        let rows = sheet(&[
+            &["EE. ID", "Vietnamese Name", "Client (PMD)", "Computer Name", "Computer (2)", "Status"],
+            &["ASWVN001", "Trần Ngọc Quỳnh Trang", "AS White", "ASWVNLAP486", "", "Assigned"],
+            &["ASWVN049", "Nguyễn Viết Quỳnh Anh", "AS White", "ASWVNLAP413", "", "Assigned"],
+        ]);
+        assert!(detect_assignment_header(&rows).is_none());
+    }
+
+    #[test]
+    fn real_laptop_list_is_rejected_by_monitor_import() {
+        // Optional local check: the file that caused the 2026-11-25 junk import.
+        let file = r"D:\OneDrive - AS White Global\Desktop\Manage Asset VN_Laptop.xlsx";
+        if !Path::new(file).exists() {
+            return;
+        }
+        let err = parse_assignment_sheet(file, Some("Employees")).expect_err("laptop list must not parse as monitors");
+        assert!(err.starts_with("Could not identify header row"), "{err}");
+    }
+
+    #[test]
+    fn header_found_on_the_real_header_row() {
+        let rows = sheet(&[
+            &["Monitor list"],
+            &["Staff ID", "Họ tên", "Tại CTY", "Tại NHÀ"],
+            &["ASWVN1229", "Trần Tấn Quý", "MON690", "MON554"],
+        ]);
+        let header = detect_assignment_header(&rows).expect("header");
+        assert_eq!(header.row_index, 1);
+        assert_eq!((header.staff_col, header.name_col, header.cty_col, header.nha_col), (0, Some(1), Some(2), Some(3)));
     }
 
     #[test]

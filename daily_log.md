@@ -4429,3 +4429,11 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Tests: cargo 604/604; 2 new Rust tests (assign / keep / move / return / create / Broken / junk delete / model-named laptop kept; duplicate claim skipped).
 - Applied to the live DB 2026-11-26 19:11 with the app closed (snapshot `snap_20261126_191157_before_laptop_baseline`). Same counts as the dry run; afterwards only ASWVN148 and ASWCVN01 have no laptop, 396 laptops assigned, 83 in store (57 Broken), 236 monitors, `integrity_check` ok, no foreign-key errors.
 - Status: PASS (applied to live DB; not yet checked in the running app).
+
+## 2026-11-27 Monitor assignment import: header detection — End
+
+- Branch: `fix/assignment-import-header`. Coded by Claude in this session.
+- Problem: the Historical Assignment (monitor) import scanned rows until it had seen a Staff ID column and a Tại CTY / Tại NHÀ column, remembering columns across rows and testing data cells. On the laptop list it took "EE. ID" from the header row and then the name "Nguyễn Viết Quỳnh Anh" ("...quynhanh" contains "nha") as the Tại NHÀ column, creating 377 junk monitors on 2026-11-25 (cleaned up by the laptop baseline).
+- Fix: `detect_assignment_header` judges each row on its own (Staff ID and Tại CTY / Tại NHÀ must be in the same row), and NHÀ must be a header-like cell (`nha`, `tainha…`, or containing `home`). A file without those columns now fails with "Could not identify header row".
+- Tests: cargo 606/607 + the known flaky `test_move_database_internal_disk_full_fails_closed` passes alone (+3: laptop-list layout rejected; real header row found; the real `Manage Asset VN_Laptop.xlsx` is rejected when present on disk).
+- Status: PASS.
