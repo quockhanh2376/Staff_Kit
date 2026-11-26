@@ -34,10 +34,6 @@ export function getAssetImportActiveBatchTitle(): string {
   return "Preview Summary"
 }
 
-export function getAssetImportSerializedModeDescription(): string {
-  return "One serialized asset per row. The app auto-detects known columns and loads the file into staging, where rows can be edited or skipped before approval."
-}
-
 export function getAssetImportManualPanelTitle(): string {
   return "Quick Serialized Add"
 }

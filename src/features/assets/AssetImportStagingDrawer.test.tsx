@@ -149,4 +149,25 @@ describe("AssetImportStagingDrawer", () => {
         expect(confirm).toHaveBeenLastCalledWith("Discard this staged import? Nothing will be written.")
         confirm.mockRestore()
     })
+
+    it("shows the auto-detected Type and saves a picked Type", () => {
+        const updateRow = vi.fn()
+        render(
+            <AssetImportStagingDrawer
+                staging={staging(
+                    [stagedRow(1, { kind: "serialized" }), stagedRow(2, { assetType: "Mouse", kind: "quantity", serialNumber: null, quantity: "10" })],
+                    { updateRow },
+                )}
+                setGlobalNotice={vi.fn()}
+            />,
+        )
+
+        const laptopType = screen.getByLabelText("Type for VNLAP1") as HTMLSelectElement
+        expect(laptopType.selectedOptions[0].textContent).toBe("Auto (Serial)")
+        const mouseType = screen.getByLabelText("Type for VNLAP2") as HTMLSelectElement
+        expect(mouseType.selectedOptions[0].textContent).toBe("Auto (Quantity)")
+
+        fireEvent.change(laptopType, { target: { value: "quantity" } })
+        expect(updateRow).toHaveBeenCalledWith(1, "kind", "quantity")
+    })
 })

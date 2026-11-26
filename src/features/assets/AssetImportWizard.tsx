@@ -13,7 +13,6 @@ import {
     getAssetImportManualPanelPrimaryActionLabel,
     getAssetImportManualPanelTitle,
     getAssetImportPanelTitle,
-    getAssetImportSerializedModeDescription,
 } from "./assetImportCopy"
 import { getAssetImportModeLabel } from "./assetImportModeConfig"
 import { getAssetImportStatusMeta } from "./assetImportStatusMeta"
@@ -156,19 +155,10 @@ function ImportPanel({ assetImport }: AssetImportWizardProps) {
                     </div>
                 )}
 
-                <div className="grid gap-3 md:grid-cols-2">
-                    <ModeCard
-                        mode="serialized"
-                        active={assetImport.selectedImportMode === "serialized"}
-                        description={getAssetImportSerializedModeDescription()}
-                        onClick={() => assetImport.setSelectedImportMode("serialized")}
-                    />
-                    <ModeCard
-                        mode="quantity"
-                        active={assetImport.selectedImportMode === "quantity"}
-                        description="Import quantity stock rows directly into stock records after preview and approval."
-                        onClick={() => assetImport.setSelectedImportMode("quantity")}
-                    />
+                <div className="rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-3.5 text-xs text-[var(--text-secondary)]">
+                    One file for every asset. Each row is Serial or Quantity by its Category in Staff Kit; a new
+                    Category follows the file (Serial Number → Serial, Quantity → Quantity). You can change the Type
+                    of any row in staging before Approve.
                 </div>
 
                 <div className="rounded-[12px] border border-emerald-500/25 bg-emerald-500/5 p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
@@ -205,7 +195,7 @@ function ImportPanel({ assetImport }: AssetImportWizardProps) {
                             />
                             <InfoCard
                                 label="Import Mode"
-                                value={getAssetImportModeLabel(assetImport.selectedImportMode)}
+                                value={getAssetImportModeLabel("auto")}
                             />
                         </div>
 
@@ -247,35 +237,6 @@ function ImportPanel({ assetImport }: AssetImportWizardProps) {
                 )}
             </div>
         </SharedImportShell>
-    )
-}
-
-function ModeCard({
-    active,
-    description,
-    mode,
-    onClick,
-}: {
-    active: boolean
-    description: string
-    mode: AssetImportMode
-    onClick: () => void
-}) {
-    return (
-        <button
-            className={`rounded-[12px] border p-3 text-left transition ${
-                active
-                    ? "border-[var(--primary)]/45 bg-[var(--primary)]/10"
-                    : "border-[var(--border)] bg-[var(--surface-hover)]/20 hover:bg-[var(--surface-hover)]"
-            }`}
-            onClick={onClick}
-            type="button"
-        >
-            <div className="text-sm font-semibold text-[var(--text-primary)]">
-                {getAssetImportModeLabel(mode)}
-            </div>
-            <div className="mt-1 text-xs text-[var(--text-secondary)]">{description}</div>
-        </button>
     )
 }
 

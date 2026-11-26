@@ -11,7 +11,7 @@ type Options = {
 export type AssetImportStagingState = ReturnType<typeof useAssetImportStaging>
 
 const isPendingSerialized = (batch: AssetImportBatchSummary) =>
-    batch.status === "pending_review" && batch.importType === "serialized"
+    batch.status === "pending_review" && batch.importType !== "quantity"
 
 /** Serialized asset import staged in asset_import_batches: load, edit, skip, then approve or discard. */
 export function useAssetImportStaging({ setGlobalError, triggerReload }: Options) {
@@ -54,7 +54,7 @@ export function useAssetImportStaging({ setGlobalError, triggerReload }: Options
                 for (const old of batches.filter((item) => item.status === "pending_review")) {
                     await staffApi.deleteAssetImportBatch(old.id)
                 }
-                return staffApi.createAssetImportBatch({ importType: "serialized", filePath, sheetName })
+                return staffApi.createAssetImportBatch({ importType: "auto", filePath, sheetName })
             }, false)
             if (!detail) return false
             setBatch(detail)
