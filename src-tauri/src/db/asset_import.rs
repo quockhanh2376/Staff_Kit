@@ -2752,7 +2752,7 @@ fn generate_asset_import_request_key_tx(tx: &Transaction<'_>) -> Result<String, 
     Err("failed to generate a unique asset-import borrow request key".to_string())
 }
 
-fn create_owner_aware_import_loan_tx(
+pub(crate) fn create_owner_aware_import_loan_tx(
     tx: &Transaction<'_>,
     asset_id: i64,
     asset_code: &str,

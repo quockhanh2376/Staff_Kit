@@ -4418,3 +4418,14 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Check on a copy of the live DB: Asset_November.xlsx stages with 0 errors, 136 new, 20 existing (2 real serial corrections VNLAP163/VNLAP204, 7 blank serials filled); Approve imported 136 and removed the batch.
 - Tests: cargo 602/602 (+5; `backup::test_move_database_internal_disk_full_fails_closed` flaked once, passes alone), vitest 463/463 (+5 drawer), `tsc -b`, eslint, `vite build` clean.
 - Status: PASS (not yet checked in the running app, light and dark).
+
+## 2026-11-26 Laptop baseline (one-time) — End
+
+- Branch: `feat/laptop-baseline` (worktree `.worktrees/laptop-baseline`). Coded by Claude in this session.
+- Owner request: make the app match the IT laptop list once. A computer next to an employee in sheet "Employees" of `Manage Asset VN_Laptop.xlsx` (Computer Name + Computer (2)) is assigned to that employee; every other laptop goes to the IT store (`in_stock`, `office`; Broken stays Broken); computers the app does not know are created (Laptop category, code = name without `ASW`, no serial yet); the 377 monitors wrongly created from person names on 2026-11-25 08:14:35 are deleted with their loans and borrow requests. Owner fixes: ASWVN992 keeps only LAP237 (sheet typo "ASWVNLAP1"), LAP141 goes to store.
+- Tool: `laptop_baseline <db> <xlsx>` prints the plan; `--apply` takes a safety snapshot (`before_laptop_baseline`) and writes everything in one transaction. Run with the app closed.
+- Dry run on a copy of the live DB: 377 junk monitors deleted, 292 computers created, 367 assigned, 27 kept, 2 moved (LAP146 to ASWVN1334, LAP150 to ASWVN1336), 1 returned (LAP141), 57 Broken, 2 staff IDs not in the app (ASWVN075 LAP390, ASWVN1340 LAP385 to store). Applied on the copy: only ASWVN148 and ASWCVN01 of the 391 EE List have no laptop; the 236 real VNMON### monitors are unchanged; no foreign-key errors.
+- Sheet notes: ASWVNIMAC001 is both assigned (ASWVN029) and Broken (assignment wins); ASWVNIMAC002 listed twice as Broken.
+- Tests: cargo 604/604; 2 new Rust tests (assign / keep / move / return / create / Broken / junk delete / model-named laptop kept; duplicate claim skipped).
+- Applied to the live DB 2026-11-26 19:11 with the app closed (snapshot `snap_20261126_191157_before_laptop_baseline`). Same counts as the dry run; afterwards only ASWVN148 and ASWCVN01 have no laptop, 396 laptops assigned, 83 in store (57 Broken), 236 monitors, `integrity_check` ok, no foreign-key errors.
+- Status: PASS (applied to live DB; not yet checked in the running app).

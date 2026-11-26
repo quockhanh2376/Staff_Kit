@@ -45,6 +45,7 @@ pub mod team;
 pub mod historical_assignment_import;
 pub mod asset_metadata_reimport;
 pub mod storage_safety;
+pub mod laptop_baseline;
 
 // ── Re-exports (all public types bubble up to `db::`) ─────────────────────────
 pub use asset::*;
