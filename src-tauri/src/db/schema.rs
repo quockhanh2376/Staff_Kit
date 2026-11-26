@@ -361,6 +361,8 @@ CREATE TABLE IF NOT EXISTS asset_import_rows (
   imported_asset_id INTEGER REFERENCES assets(id) ON UPDATE CASCADE ON DELETE SET NULL,
   condition TEXT,
   review_notes_json TEXT NOT NULL DEFAULT '[]',
+  kind TEXT,
+  kind_override TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(batch_id, row_number)

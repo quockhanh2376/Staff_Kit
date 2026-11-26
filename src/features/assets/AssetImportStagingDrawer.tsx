@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { Drawer } from "../../components/Drawer"
-import type { AssetImportRowRecord, AssetImportRowUpdateInput } from "../../types/staff"
+import type { AssetImportRowRecord, AssetImportRowUpdateInput, AssetTrackingMode } from "../../types/staff"
 import { ASSET_CONDITIONS, CONDITION_LABELS } from "./assetCondition"
 import type { AssetImportStagingState } from "./useAssetImportStaging"
 
@@ -17,13 +17,17 @@ function kindOf(row: AssetImportRowRecord): Kind {
     return row.status === "skipped" ? "skipped" : "new"
 }
 
+const TYPE_LABELS: Record<AssetTrackingMode, string> = { serialized: "Serial", quantity: "Quantity" }
+
 const TEXT_COLUMNS: { key: AssetImportRowUpdateInput["fieldKey"]; label: string }[] = [
+    { key: "assetType", label: "Category" },
     { key: "assetCode", label: "Asset code" },
     { key: "displayName", label: "Name" },
     { key: "computerName", label: "Computer name" },
     { key: "brand", label: "Brand" },
     { key: "model", label: "Model" },
     { key: "serialNumber", label: "Serial" },
+    { key: "quantity", label: "Qty" },
     { key: "usageLocation", label: "Location" },
     { key: "notes", label: "Note" },
 ]
@@ -98,7 +102,7 @@ export function AssetImportStagingDrawer({ staging, setGlobalNotice }: Props) {
                     <table className="w-full min-w-max text-left text-xs">
                         <thead className="table-head sticky top-0 uppercase tracking-[0.04em] text-[var(--text-secondary)]">
                             <tr>
-                                {["Row", "Kind", ...TEXT_COLUMNS.map((c) => c.label), "Condition", "Skip", "Notes"].map((h) => (
+                                {["Row", "Kind", "Type", ...TEXT_COLUMNS.map((c) => c.label), "Condition", "Skip", "Notes"].map((h) => (
                                     <th key={h} className="px-2 py-2 font-semibold">{h}</th>
                                 ))}
                             </tr>
@@ -115,6 +119,19 @@ export function AssetImportStagingDrawer({ staging, setGlobalNotice }: Props) {
                                     >
                                         <td className="px-2 py-2 font-medium">{row.rowNumber}</td>
                                         <td className="px-2 py-2 text-[var(--text-secondary)]">{KIND_LABELS[kind]}</td>
+                                        <td className="px-2 py-2">
+                                            <select
+                                                aria-label={`Type for ${label}`}
+                                                className={inputClass}
+                                                value={row.kindOverride ?? ""}
+                                                disabled={staging.isBusy}
+                                                onChange={(e) => save(row, "kind", e.target.value)}
+                                            >
+                                                <option value="">{`Auto${row.kind ? ` (${TYPE_LABELS[row.kind]})` : ""}`}</option>
+                                                <option value="serialized">{TYPE_LABELS.serialized}</option>
+                                                <option value="quantity">{TYPE_LABELS.quantity}</option>
+                                            </select>
+                                        </td>
                                         {TEXT_COLUMNS.map(({ key, label: column }) => {
                                             const value = (row[key as keyof AssetImportRowRecord] as string | null | undefined) ?? ""
                                             return (

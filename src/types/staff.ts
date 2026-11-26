@@ -168,7 +168,8 @@ export type AssetRecord = {
 
 /** How an asset category tracks its items. */
 export type AssetTrackingMode = "serialized" | "quantity"
-export type AssetImportMode = AssetTrackingMode
+// "auto": one file with both kinds; each staged row gets its own kind.
+export type AssetImportMode = AssetTrackingMode | "auto"
 
 export type AssetCategoryRecord = {
   id: number
@@ -416,6 +417,10 @@ export type AssetImportRowRecord = {
   importedAssetId: number | null
   condition: string | null
   reviewNotes: string[]
+  /** Effective kind; null while the row's kind cannot be decided. */
+  kind?: AssetTrackingMode | null
+  /** Kind picked in staging; null means decided from the category / file. */
+  kindOverride?: AssetTrackingMode | null
 }
 
 // Rust flattens the summary into the detail (#[serde(flatten)]).
@@ -446,6 +451,7 @@ export type AssetImportRowUpdateInput = {
     | "submittedTeam"
     | "submittedPhoneNumber"
     | "condition"
+    | "kind"
   value?: string | null
 }
 

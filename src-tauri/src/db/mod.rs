@@ -525,7 +525,7 @@ fn sqlite_version(conn: &Connection) -> Result<String, String> {
         .map_err(|err| format!("failed to query sqlite version: {err}"))
 }
 
-pub(crate) const SCHEMA_USER_VERSION: u32 = 4;
+pub(crate) const SCHEMA_USER_VERSION: u32 = 5;
 
 pub(crate) fn apply_migrations(conn: &Connection) -> Result<(), String> {
     let current_version: u32 = conn
@@ -934,6 +934,8 @@ fn ensure_asset_model_tables(conn: &Connection) -> Result<(), String> {
         ("owner_warnings_json", "TEXT NOT NULL DEFAULT '[]'"),
         ("condition", "TEXT"),
         ("review_notes_json", "TEXT NOT NULL DEFAULT '[]'"),
+        ("kind", "TEXT"),
+        ("kind_override", "TEXT"),
     ] {
         if existing_row_columns.iter().any(|name| name == column_name) {
             continue;
@@ -3030,6 +3032,25 @@ mod tests {
             .query_row("PRAGMA user_version;", [], |r| r.get(0))
             .expect("read user_version");
         assert_eq!(version, SCHEMA_USER_VERSION);
+    }
+
+    #[test]
+    fn apply_migrations_adds_import_kind_columns_to_v4_db() {
+        let conn = Connection::open_in_memory().expect("open in-memory db");
+        apply_migrations(&conn).expect("apply migrations on fresh db");
+        conn.execute_batch(
+            r#"
+            ALTER TABLE asset_import_rows DROP COLUMN kind;
+            ALTER TABLE asset_import_rows DROP COLUMN kind_override;
+            PRAGMA user_version = 4;
+            "#,
+        )
+        .expect("rewind to a v4 import table");
+
+        apply_migrations(&conn).expect("apply migrations to v4 database");
+
+        assert!(column_exists(&conn, "asset_import_rows", "kind"));
+        assert!(column_exists(&conn, "asset_import_rows", "kind_override"));
     }
 
     #[test]

@@ -28,12 +28,14 @@ const IMPORT_BORROW_REQUEST_STATUS_APPROVED: &str = "approved";
 const IMPORT_BORROW_REQUEST_TYPE_BORROW: &str = "borrow";
 const IMPORT_ASSET_STATUS_ASSIGNED: &str = "assigned";
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum AssetImportMode {
     #[default]
     Serialized,
     Quantity,
+    /// One file holding both kinds; each row's kind is decided during review.
+    Auto,
 }
 
 impl AssetImportMode {
@@ -41,6 +43,7 @@ impl AssetImportMode {
         match self {
             Self::Serialized => "serialized",
             Self::Quantity => "quantity",
+            Self::Auto => "auto",
         }
     }
 
@@ -48,6 +51,7 @@ impl AssetImportMode {
         match value.trim().to_ascii_lowercase().as_str() {
             "serialized" => Ok(Self::Serialized),
             "quantity" => Ok(Self::Quantity),
+            "auto" => Ok(Self::Auto),
             other => Err(format!("unsupported asset import mode '{other}'")),
         }
     }
@@ -268,6 +272,9 @@ pub struct AssetImportRowRecord {
     pub imported_asset_id: Option<i64>,
     pub condition: Option<String>,
     pub review_notes: Vec<String>,
+    /// Effective kind ("serialized" / "quantity"); None while it cannot be decided.
+    pub kind: Option<String>,
+    pub kind_override: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -442,6 +449,7 @@ struct AssetImportRowState {
     submitted_team: Option<String>,
     /// Raw status cell; kept raw so the "unknown status" note can quote it.
     condition: Option<String>,
+    kind_override: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -954,6 +962,15 @@ pub(crate) fn update_asset_import_row_conn(
         "submittedStaffId" => normalize_submitted_staff_id(payload.value),
         "usageLocation" => normalize_usage_location(payload.value),
         "quantity" => normalize_optional_quantity_text(payload.value),
+        "kind" => match normalize_optional_asset_text(payload.value) {
+            None => None,
+            Some(value) => match AssetImportMode::parse(value.as_str()) {
+                Ok(mode @ (AssetImportMode::Serialized | AssetImportMode::Quantity)) => {
+                    Some(mode.as_str().to_string())
+                }
+                _ => return Err(format!("Invalid kind '{value}': use serialized or quantity")),
+            },
+        },
         _ => normalize_optional_asset_text(payload.value),
     };
 
@@ -976,6 +993,7 @@ pub(crate) fn update_asset_import_row_conn(
         "submittedTeam" => "submitted_team",
         "submittedPhoneNumber" => "submitted_phone_number",
         "condition" => "condition",
+        "kind" => "kind_override",
         _ => return Err("unsupported asset import field".to_string()),
     };
 
@@ -1100,7 +1118,8 @@ fn commit_batch_rows_conn(
     let mut imported_row_ids = Vec::new();
     let mut imported_asset_codes = Vec::new();
 
-    if summary.import_type == AssetImportMode::Quantity {
+    let mut imported_stock_item_ids = Vec::new();
+    {
         let mut stmt = tx
             .prepare(
                 r#"
@@ -1114,7 +1133,7 @@ fn commit_batch_rows_conn(
                   warehouse,
                   notes
                 FROM asset_import_rows
-                WHERE batch_id = ? AND status = ?
+                WHERE batch_id = ? AND status = ? AND kind = 'quantity'
                 ORDER BY row_number ASC, id ASC
                 "#,
             )
@@ -1138,8 +1157,6 @@ fn commit_batch_rows_conn(
             .map_err(|err| format!("failed to read valid quantity rows: {err}"))?;
 
         drop(stmt);
-
-        let mut imported_stock_item_ids = Vec::new();
 
         for (row_id, asset_type, display_name, brand, model, quantity, warehouse, notes) in rows {
             let category_value = asset_type
@@ -1197,39 +1214,6 @@ fn commit_batch_rows_conn(
             imported_row_ids.push(row_id);
             imported_stock_item_ids.push(stock_item_id);
         }
-
-        revalidate_batch_tx(&tx, batch_id)?;
-        let summary = load_batch_summary_tx(&tx, batch_id)?;
-
-        let payload_json = json!({
-            "importType": "quantity",
-            "importedRowIds": imported_row_ids,
-            "importedStockItemIds": imported_stock_item_ids,
-        })
-        .to_string();
-
-        audit::insert_audit_log_tx(
-            &tx,
-            "asset_import.import_valid_rows",
-            "local_account",
-            actor_ref.as_deref(),
-            "asset_import_batch",
-            batch_id.to_string().as_str(),
-            Some(payload_json.as_str()),
-        )?;
-
-        tx.commit()
-            .map_err(|err| format!("failed to commit asset import transaction: {err}"))?;
-
-        return Ok(AssetImportCommitResult {
-            batch_id,
-            imported_count: imported_row_ids.len() as i64,
-            imported_row_ids,
-            imported_asset_codes,
-            remaining_error_rows: summary.error_rows,
-            batch_status: summary.status,
-            condition_updated_rows: 0,
-        });
     }
 
     let mut stmt = tx
@@ -1258,7 +1242,7 @@ fn commit_batch_rows_conn(
               resolved_full_name,
               condition
             FROM asset_import_rows
-            WHERE batch_id = ? AND status = ?
+            WHERE batch_id = ? AND status = ? AND kind = 'serialized'
             ORDER BY row_number ASC, id ASC
             "#,
         )
@@ -1416,7 +1400,9 @@ fn commit_batch_rows_conn(
 
     let payload_json = json!({
         "importedRowIds": imported_row_ids,
+        "importType": summary.import_type.as_str(),
         "importedAssetCodes": imported_asset_codes,
+        "importedStockItemIds": imported_stock_item_ids,
         "serialUpdates": serial_updates
             .iter()
             .map(|(asset_id, serial)| json!({ "assetId": asset_id, "serialNumber": serial }))
@@ -2618,7 +2604,8 @@ fn normalize_import_field_key(value: &str) -> Result<String, String> {
         | "submittedFullName"
         | "submittedTeam"
         | "submittedPhoneNumber"
-        | "condition" => Ok(value.trim().to_string()),
+        | "condition"
+        | "kind" => Ok(value.trim().to_string()),
         _ => Err(format!("unsupported asset import field '{value}'")),
     }
 }
@@ -3082,6 +3069,7 @@ fn revalidate_batch_tx(
         .condition
         .is_some();
     let mut outcome = RevalidateOutcome::default();
+    let category_kinds = resolve_auto_category_kinds_tx(tx, &rows)?;
 
     let mut duplicate_counts: HashMap<String, usize> = HashMap::new();
     let mut duplicate_serial_counts: HashMap<String, usize> = HashMap::new();
@@ -3118,11 +3106,24 @@ fn revalidate_batch_tx(
             continue;
         }
 
+        let (row, kind_error) = resolve_row_kind(row, &category_kinds);
+        let row = &row;
         let owner_state = resolve_owner_state(row, &employee_lookup);
         let mut review_notes = Vec::new();
         // Existing assets: show the condition that will actually be stored, not the file value.
         let mut effective_condition: Option<String> = None;
-        let (validation_errors, next_status) = if row.import_type == AssetImportMode::Serialized {
+        let (validation_errors, next_status) = if let Some(kind_error) = kind_error {
+            let mut errors = vec![kind_error];
+            errors.extend(validate_staged_row(row));
+            (
+                errors,
+                if row.status == ROW_STATUS_SKIPPED {
+                    ROW_STATUS_SKIPPED
+                } else {
+                    ROW_STATUS_ERROR
+                },
+            )
+        } else if row.import_type == AssetImportMode::Serialized {
             match classify_serialized_asset_row(
                 row,
                 &existing_assets,
@@ -3224,6 +3225,7 @@ fn revalidate_batch_tx(
               status = ?,
               review_notes_json = ?,
               condition = COALESCE(?, condition),
+              kind = ?,
               updated_at = datetime('now')
             WHERE id = ?
             "#,
@@ -3238,6 +3240,7 @@ fn revalidate_batch_tx(
                 next_status,
                 to_json(&review_notes)?,
                 effective_condition,
+                (row.import_type != AssetImportMode::Auto).then(|| row.import_type.as_str()),
                 row.id
             ],
         )
@@ -3318,6 +3321,127 @@ fn review_import_condition(
         condition_label(next)
     ));
     (notes, Some(next))
+}
+
+struct AutoCategoryKind {
+    kind: Option<AssetImportMode>,
+    in_app: bool,
+}
+
+fn kind_label(kind: AssetImportMode) -> &'static str {
+    match kind {
+        AssetImportMode::Quantity => "Quantity",
+        _ => "Serial",
+    }
+}
+
+fn category_key(value: &str) -> String {
+    value.trim().to_lowercase()
+}
+
+/// Serial or Quantity per category in an auto batch. A category already in the app
+/// keeps its own setting; a new one follows the file: a picked Kind first, then any
+/// serial number means Serial, else any quantity means Quantity.
+fn resolve_auto_category_kinds_tx(
+    tx: &Transaction<'_>,
+    rows: &[AssetImportRowState],
+) -> Result<HashMap<String, AutoCategoryKind>, String> {
+    #[derive(Default)]
+    struct Evidence {
+        picked: HashSet<AssetImportMode>,
+        serial: bool,
+        quantity: bool,
+    }
+    let mut evidence: HashMap<String, (String, Evidence)> = HashMap::new();
+    for row in rows
+        .iter()
+        .filter(|row| row.import_type == AssetImportMode::Auto && row.status != ROW_STATUS_IMPORTED)
+    {
+        let Some(category) = row.asset_type.as_deref() else {
+            continue;
+        };
+        let (_, item) = evidence
+            .entry(category_key(category))
+            .or_insert_with(|| (category.to_string(), Evidence::default()));
+        if let Some(picked) = row.kind_override.as_deref().and_then(|v| AssetImportMode::parse(v).ok()) {
+            item.picked.insert(picked);
+        }
+        item.serial |= row.serial_number.is_some();
+        item.quantity |= row.quantity.is_some();
+    }
+
+    let mut kinds = HashMap::new();
+    for (key, (category, item)) in evidence {
+        let resolved = match asset::load_asset_category_by_code_or_name_tx(tx, category.as_str())? {
+            Some(existing) => AutoCategoryKind {
+                kind: AssetImportMode::parse(existing.tracking_mode.as_str()).ok(),
+                in_app: true,
+            },
+            None => AutoCategoryKind {
+                kind: if item.picked.len() > 1 {
+                    None
+                } else if let Some(picked) = item.picked.iter().next() {
+                    Some(*picked)
+                } else if item.serial {
+                    Some(AssetImportMode::Serialized)
+                } else if item.quantity {
+                    Some(AssetImportMode::Quantity)
+                } else {
+                    None
+                },
+                in_app: false,
+            },
+        };
+        kinds.insert(key, resolved);
+    }
+    Ok(kinds)
+}
+
+/// The row with its effective kind, plus the error that blocks it when the kind is
+/// missing or the row's data contradicts it. Non-auto batches pass through unchanged.
+fn resolve_row_kind(
+    row: &AssetImportRowState,
+    kinds: &HashMap<String, AutoCategoryKind>,
+) -> (AssetImportRowState, Option<String>) {
+    let mut resolved = row.clone();
+    if row.import_type != AssetImportMode::Auto {
+        return (resolved, None);
+    }
+    let Some(category) = row.asset_type.as_deref() else {
+        return (resolved, None);
+    };
+    let entry = kinds.get(&category_key(category));
+    let Some(kind) = entry.and_then(|item| item.kind) else {
+        return (
+            resolved,
+            Some(format!(
+                "Choose Kind for '{category}': add a Serial Number or a Quantity, or pick Serial/Quantity"
+            )),
+        );
+    };
+    resolved.import_type = kind;
+    let in_app = entry.is_some_and(|item| item.in_app);
+    let picked = row.kind_override.as_deref().and_then(|v| AssetImportMode::parse(v).ok());
+    let error = if picked.is_some_and(|picked| picked != kind) {
+        Some(if in_app {
+            format!("Kind conflict: '{category}' is {} in the app", kind_label(kind))
+        } else {
+            format!("Kind conflict: other '{category}' rows are {}", kind_label(kind))
+        })
+    } else if kind == AssetImportMode::Quantity && row.serial_number.is_some() {
+        Some(format!(
+            "Kind conflict: '{category}' is Quantity — remove the Serial Number or change Category"
+        ))
+    } else if kind == AssetImportMode::Serialized
+        && row.quantity.as_deref().and_then(|v| v.parse::<i64>().ok()).is_some_and(|qty| qty > 1)
+    {
+        Some(format!(
+            "Kind conflict: '{category}' is Serial — one row per device, Quantity must be 1"
+        ))
+    } else {
+        None
+    };
+    (resolved, error)
 }
 
 fn validate_staged_row(row: &AssetImportRowState) -> Vec<String> {
@@ -3462,7 +3586,8 @@ fn load_batch_row_states_tx(
               r.submitted_staff_id,
               r.submitted_full_name,
               r.submitted_team,
-              r.condition
+              r.condition,
+              r.kind_override
             FROM asset_import_rows r
             INNER JOIN asset_import_batches b ON b.id = r.batch_id
             WHERE r.batch_id = ?
@@ -3485,6 +3610,7 @@ fn load_batch_row_states_tx(
                 submitted_full_name: row.get(9)?,
                 submitted_team: row.get(10)?,
                 condition: row.get(11)?,
+                kind_override: row.get(12)?,
             })
         })
         .map_err(|err| format!("failed to query staged asset rows: {err}"))?;
@@ -3640,7 +3766,7 @@ fn load_asset_import_rows_for_batch(
               resolved_employee_id, resolved_employee_row_id, resolved_full_name, resolved_team_name,
               owner_match_status, owner_warnings_json,
               validation_errors_json, status, edited, edited_fields_json, imported_asset_id,
-              condition, review_notes_json
+              condition, review_notes_json, kind, kind_override
             FROM asset_import_rows
             WHERE batch_id = ?
             ORDER BY row_number ASC, id ASC
@@ -3671,7 +3797,7 @@ fn load_asset_import_row_record_conn(
           resolved_employee_id, resolved_employee_row_id, resolved_full_name, resolved_team_name,
           owner_match_status, owner_warnings_json,
           validation_errors_json, status, edited, edited_fields_json, imported_asset_id,
-          condition, review_notes_json
+          condition, review_notes_json, kind, kind_override
         FROM asset_import_rows
         WHERE id = ?
         "#,
@@ -3720,6 +3846,8 @@ fn map_asset_import_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AssetImport
         condition: parsed_import_condition(row.get::<_, Option<String>>(32)?.as_deref())
             .map(str::to_string),
         review_notes: from_json_row(Some(row.get(33)?))?,
+        kind: row.get(34)?,
+        kind_override: row.get(35)?,
     })
 }
 
@@ -6790,5 +6918,174 @@ mod tests {
             .expect("load create audit");
         let payload: serde_json::Value = serde_json::from_str(&payload).expect("parse payload");
         assert_eq!(payload["condition"], "broken");
+    }
+
+    fn auto_row_kinds(conn: &Connection, batch_id: i64) -> Vec<(i64, Option<String>, String, Vec<String>)> {
+        load_asset_import_batch_detail_conn(conn, batch_id)
+            .expect("load auto batch")
+            .rows
+            .into_iter()
+            .map(|row| (row.row_number, row.kind, row.status, row.validation_errors))
+            .collect()
+    }
+
+    #[test]
+    fn auto_batch_approves_serial_and_quantity_rows_in_one_go() {
+        let mut conn = open_test_connection();
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            sample_batch(
+                AssetImportMode::Auto,
+                vec![
+                    row(2, "VNLAP900", "Laptop", "Dell 7440"),
+                    quantity_row_without_asset_code(3, "Mouse", "Logitech M650", "10"),
+                ],
+            ),
+        )
+        .expect("create auto batch");
+
+        let kinds = auto_row_kinds(&conn, batch.summary.id);
+        assert_eq!(kinds[0].1.as_deref(), Some("serialized"), "{kinds:?}");
+        assert_eq!(kinds[1].1.as_deref(), Some("quantity"), "{kinds:?}");
+        assert_eq!(batch.summary.error_rows, 0, "{kinds:?}");
+
+        let result = approve_asset_import_batch_conn(&mut conn, batch.summary.id).expect("approve");
+        assert_eq!(result.imported_count, 2);
+        let laptop: i64 = conn
+            .query_row("SELECT COUNT(*) FROM assets WHERE asset_code = 'VNLAP900'", [], |r| r.get(0))
+            .expect("count laptop");
+        let mice: i64 = conn
+            .query_row(
+                "SELECT quantity_on_hand FROM stock_items WHERE item_name = 'Logitech M650'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("load mouse stock");
+        assert_eq!((laptop, mice), (1, 10));
+    }
+
+    #[test]
+    fn auto_batch_blocks_rows_that_contradict_the_category_kind() {
+        let mut conn = open_test_connection();
+        let mut mouse_with_serial = quantity_row_without_asset_code(2, "Mouse", "Logitech M650", "1");
+        mouse_with_serial.serial_number = Some("MS-1".to_string());
+        let mut five_laptops = row(3, "VNLAP901", "Laptop", "Dell 7440");
+        five_laptops.quantity = Some("5".to_string());
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            sample_batch(AssetImportMode::Auto, vec![mouse_with_serial, five_laptops]),
+        )
+        .expect("create auto batch");
+
+        let kinds = auto_row_kinds(&conn, batch.summary.id);
+        assert_eq!(kinds[0].2, "error");
+        assert!(kinds[0].3[0].contains("'Mouse' is Quantity"), "{kinds:?}");
+        assert_eq!(kinds[1].2, "error");
+        assert!(kinds[1].3[0].contains("Quantity must be 1"), "{kinds:?}");
+
+        let err = approve_asset_import_batch_conn(&mut conn, batch.summary.id).expect_err("blocked");
+        assert!(err.starts_with("Cannot approve"), "{err}");
+        let assets: i64 = conn
+            .query_row("SELECT COUNT(*) FROM assets", [], |r| r.get(0))
+            .expect("count assets");
+        assert_eq!(assets, 0);
+    }
+
+    #[test]
+    fn auto_batch_new_category_follows_the_file_or_the_picked_kind() {
+        let mut conn = open_test_connection();
+        let mut dock = row(4, "VNDOCK01", "Dock", "Dell WD19");
+        dock.serial_number = None;
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            sample_batch(
+                AssetImportMode::Auto,
+                vec![
+                    row(2, "VNWEB001", "Webcam", "Logi C920"),
+                    quantity_row_without_asset_code(3, "Cable", "HDMI 2m", "30"),
+                    dock,
+                ],
+            ),
+        )
+        .expect("create auto batch");
+
+        let kinds = auto_row_kinds(&conn, batch.summary.id);
+        assert_eq!(kinds[0].1.as_deref(), Some("serialized"), "{kinds:?}");
+        assert_eq!(kinds[1].1.as_deref(), Some("quantity"), "{kinds:?}");
+        assert_eq!(kinds[2].2, "error");
+        assert!(kinds[2].3[0].starts_with("Choose Kind for 'Dock'"), "{kinds:?}");
+
+        let dock_row_id = load_asset_import_batch_detail_conn(&conn, batch.summary.id)
+            .expect("load batch")
+            .rows[2]
+            .id;
+        update_asset_import_row_conn(
+            &mut conn,
+            AssetImportRowUpdateInput {
+                row_id: dock_row_id,
+                field_key: "kind".to_string(),
+                value: Some("serialized".to_string()),
+            },
+        )
+        .expect("pick kind");
+
+        approve_asset_import_batch_conn(&mut conn, batch.summary.id).expect("approve");
+        let modes: Vec<(String, String)> = conn
+            .prepare(
+                "SELECT category_name, tracking_mode FROM asset_categories WHERE category_name IN ('Webcam', 'Cable', 'Dock') ORDER BY category_name",
+            )
+            .expect("prepare")
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .expect("query")
+            .collect::<Result<_, _>>()
+            .expect("collect");
+        assert_eq!(
+            modes,
+            vec![
+                ("Cable".to_string(), "quantity".to_string()),
+                ("Dock".to_string(), "serialized".to_string()),
+                ("Webcam".to_string(), "serialized".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn template_example_sheet_imports_serial_and_quantity_rows() {
+        let mut conn = open_test_connection();
+        seed_employee(&conn, "ASWVN001", "Nguyen Van A", "Operations", "employee_list");
+        let template = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../templates/Asset_Import_Template.xlsx");
+        let parsed = super::parse_asset_import_source(&template, AssetImportMode::Auto, Some("Example"), None)
+            .expect("parse template example sheet");
+        let batch = create_asset_import_batch_seed_conn(
+            &mut conn,
+            super::asset_import_seed_from_parsed(parsed, AssetImportMode::Auto),
+        )
+        .expect("stage template");
+
+        let kinds: Vec<(Option<String>, Option<String>)> = batch
+            .rows
+            .iter()
+            .map(|row| (row.asset_type.clone(), row.kind.clone()))
+            .collect();
+        let expected = [
+            ("Laptop", "serialized"),
+            ("Laptop", "serialized"),
+            ("Monitor", "serialized"),
+            ("H Phone", "serialized"),
+            ("Mouse", "quantity"),
+            ("Keyboard", "quantity"),
+        ]
+        .map(|(c, k)| (Some(c.to_string()), Some(k.to_string())));
+        assert_eq!(kinds, expected.to_vec());
+        assert_eq!(batch.summary.error_rows, 0, "{:?}", batch.rows.iter().map(|r| &r.validation_errors).collect::<Vec<_>>());
+
+        approve_asset_import_batch_conn(&mut conn, batch.summary.id).expect("approve template");
+        let assets: i64 = conn.query_row("SELECT COUNT(*) FROM assets", [], |r| r.get(0)).expect("assets");
+        let stock: i64 = conn.query_row("SELECT SUM(quantity_on_hand) FROM stock_items", [], |r| r.get(0)).expect("stock");
+        let loans: i64 = conn.query_row("SELECT COUNT(*) FROM asset_loans", [], |r| r.get(0)).expect("loans");
+        assert_eq!((assets, stock, loans), (4, 35, 1));
+
+        let blank = super::parse_asset_import_source(&template, AssetImportMode::Auto, Some("Assets"), None);
+        assert!(blank.map(|p| p.rows.is_empty()).unwrap_or(true), "the Assets sheet ships empty");
     }
 }

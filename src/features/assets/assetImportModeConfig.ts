@@ -116,6 +116,7 @@ const OWNER_FIELD_ALIASES: Record<AssetImportOwnerFieldKey, string[]> = {
 const MODE_LABELS: Record<AssetImportMode, string> = {
     serialized: "Serialized Assets",
     quantity: "Quantity Stock",
+    auto: "Serial + Quantity (auto)",
 }
 
 const FIELD_ALIASES: Record<AssetImportWizardFieldKey, string[]> = {
