@@ -14,6 +14,7 @@ describe("AssetImportWizard — Auto-Create Category Preview", () => {
         errorRows: 0,
         skippedRows: 0,
         conditionUpdateRows: 0,
+        serialUpdateRows: 0,
         newCategories: [
             {
                 categoryName: "H Phone",
@@ -45,6 +46,7 @@ describe("AssetImportWizard — Auto-Create Category Preview", () => {
 
     const mockAssetImportState = {
         isWizardOpen: true,
+        staging: { pendingBatch: null, isBusy: false },
         panelMode: "direct",
         isInspectingFile: false,
         isPreviewingImport: false,

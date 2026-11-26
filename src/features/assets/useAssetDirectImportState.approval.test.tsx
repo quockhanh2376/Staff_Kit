@@ -59,6 +59,7 @@ function previewForStatuses(
         errorRows: rows.filter((row) => row.status === "error").length,
         skippedRows: rows.filter((row) => row.status === "skipped").length,
         conditionUpdateRows,
+        serialUpdateRows: 0,
         newCategories: [],
         rows,
         errors: [],

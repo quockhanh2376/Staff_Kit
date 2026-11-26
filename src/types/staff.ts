@@ -414,10 +414,12 @@ export type AssetImportRowRecord = {
   isEdited: boolean
   editedFields: string[]
   importedAssetId: number | null
+  condition: string | null
+  reviewNotes: string[]
 }
 
-export type AssetImportBatchDetail = {
-  summary: AssetImportBatchSummary
+// Rust flattens the summary into the detail (#[serde(flatten)]).
+export type AssetImportBatchDetail = AssetImportBatchSummary & {
   headers: string[]
   mapping: AssetImportFieldMapping
   rows: AssetImportRowRecord[]
@@ -443,6 +445,7 @@ export type AssetImportRowUpdateInput = {
     | "submittedFullName"
     | "submittedTeam"
     | "submittedPhoneNumber"
+    | "condition"
   value?: string | null
 }
 
@@ -500,6 +503,8 @@ export type AssetDirectImportPreview = {
   skippedRows: number
   /** Existing assets whose stored condition this import would change. */
   conditionUpdateRows: number
+  /** Existing assets whose serial this import would replace with the file's. */
+  serialUpdateRows: number
   newCategories: AssetDirectImportNewCategorySummary[]
   rows: AssetDirectImportPreviewRow[]
   errors: AssetDirectImportErrorItem[]

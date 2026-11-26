@@ -67,6 +67,7 @@ function preview(
         errorRows: 0,
         skippedRows: 0,
         conditionUpdateRows: 0,
+        serialUpdateRows: 0,
         newCategories: [],
         rows,
         errors: [],
