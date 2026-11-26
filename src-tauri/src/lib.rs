@@ -4,6 +4,11 @@ mod lan_assets;
 mod lan_auth;
 mod lan_server;
 pub mod recovery_ledger;
+
+/// One-time laptop baseline CLI (see `db::laptop_baseline`).
+pub fn laptop_baseline_cli(args: &[String]) -> i32 {
+    db::laptop_baseline::run_cli(args)
+}
 use tauri::Manager;
 
 // ── Public commands (no session required: bootstrap/login/diagnostics) ───────

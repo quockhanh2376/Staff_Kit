@@ -4,6 +4,7 @@ version = "2.2.1"
 description = "Staff Kit desktop employee management tool"
 authors = ["Staff Kit Team"]
 edition = "2021"
+default-run = "staff-kit"
 
 [package.metadata]
 
