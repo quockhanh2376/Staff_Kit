@@ -35,11 +35,12 @@
 - **Approve rule:** Approve is enabled only when no row has status `error`. Skipped rows are ignored.
 - **Serial rules:**
   - A row whose code and serial point to two *different* existing assets stays an error, because the file serial already belongs to another laptop. The owner must edit or skip it.
-  - Its review note shows `Serial sẽ cập nhật: <old> → <new>`.
+  - Its review note shows `Serial will update: <old> → <new>` (English, like the other import notes).
 - **Editable columns:** asset code, name, computer name, brand, model, serial, location, condition, note. These reuse `update_asset_import_row` field keys.
 - **One open batch per file.** Opening Asset Import with a pending batch offers *Continue* or *Discard and load again*.
 - After Approve, the batch is deleted, and its row ids and codes go into the existing `asset_import.import_valid_rows` audit payload.
-- The 11 stale `pending_review` batches from Aug/Oct test runs are deleted by a one-off cleanup on startup migration. They are old tests with no real data.
+- Loading a file into staging deletes every older `pending_review` batch, so the 11 stale Aug/Oct test batches go with the first load. (Changed while building: this needs no migration.)
+- An existing asset with a blank serial gets the file serial (the note shows `(none) → …`).
 - Light and dark mode both checked. Errors start with `Invalid` / `Not found` / `Cannot`.
 
 ## Left to the builder

@@ -16,6 +16,7 @@ import {
     buildManualSerializedAssetCreatedMessage,
     buildManualSerializedAssetRequiredMessage,
 } from "./assetImportCopy"
+import { useAssetImportStaging } from "./useAssetImportStaging"
 
 type UseAssetDirectImportStateOptions = {
     dbReady: boolean
@@ -78,6 +79,7 @@ export function useAssetDirectImportState({
     const [manualAssetResult, setManualAssetResult] = useState<AssetRecord | null>(null)
     const [manualAssetMessage, setManualAssetMessage] = useState("")
     const [isCreatingManualAsset, setCreatingManualAsset] = useState(false)
+    const staging = useAssetImportStaging({ setGlobalError, triggerReload })
 
     const loadAssetCategories = useCallback(async () => {
         if (!dbReady || !isAuthenticated) return
@@ -103,11 +105,27 @@ export function useAssetDirectImportState({
         setStatusMessage("")
     }, [])
 
+    const { checkPendingBatch, loadStaging, continueStaging } = staging
+
     const openImportWizard = useCallback(() => {
         setPanelMode("import")
         setWizardOpen(true)
         resetImportFlow()
-    }, [resetImportFlow])
+        void checkPendingBatch()
+    }, [checkPendingBatch, resetImportFlow])
+
+    // Serialized imports go through staging: the file is loaded, reviewed and edited before anything is written.
+    const handleLoadStaging = useCallback(async () => {
+        if (!selectedFilePath) {
+            setStatusMessage("Choose a CSV or Excel file before loading it to staging.")
+            return
+        }
+        if (await loadStaging(selectedFilePath, inspection?.selectedSheetName ?? null)) setWizardOpen(false)
+    }, [inspection?.selectedSheetName, loadStaging, selectedFilePath])
+
+    const handleContinueStaging = useCallback(async () => {
+        if (await continueStaging()) setWizardOpen(false)
+    }, [continueStaging])
 
     const openManualAssetPanel = useCallback(() => {
         setPanelMode("manual")
@@ -189,8 +207,9 @@ export function useAssetDirectImportState({
             await inspectFile(input.filePath, input.sheetName)
             setWizardOpen(true)
             setPanelMode('import')
+            void checkPendingBatch()
         },
-        [inspectFile, resetImportFlow],
+        [checkPendingBatch, inspectFile, resetImportFlow],
     )
 
     const handleChangeSelectedSheet = useCallback(
@@ -313,7 +332,9 @@ export function useAssetDirectImportState({
     const canPreviewCurrentFile = Boolean(selectedFilePath) && !isInspectingFile
     // A file of existing assets only is still worth approving when it changes their condition.
     const previewApproveDisabled =
-        ((preview?.validRows ?? 0) === 0 && (preview?.conditionUpdateRows ?? 0) === 0) ||
+        ((preview?.validRows ?? 0) === 0 &&
+            (preview?.conditionUpdateRows ?? 0) === 0 &&
+            (preview?.serialUpdateRows ?? 0) === 0) ||
         (preview?.importType === "serialized" && (preview?.errorRows ?? 0) > 0)
     const selectedFiles = useMemo(
         () => (selectedFilePath ? [selectedFilePath] : []),
@@ -321,6 +342,9 @@ export function useAssetDirectImportState({
     )
 
     return {
+        staging,
+        handleLoadStaging,
+        handleContinueStaging,
         isWizardOpen,
         isMetadataUpdateOpen,
         panelMode,

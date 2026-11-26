@@ -39,6 +39,7 @@ const ImportDrawer = lazy(() => import("./features/import/ImportDrawer").then(m 
 const TeamView = lazy(() => import("./features/teams/TeamView").then(m => ({ default: m.TeamView })))
 const BorrowAdminView = lazy(() => import("./features/borrow/BorrowAdminView").then(m => ({ default: m.BorrowAdminView })))
 const AssetImportWizard = lazy(() => import("./features/assets/AssetImportWizard").then(m => ({ default: m.AssetImportWizard })))
+const AssetImportStagingDrawer = lazy(() => import("./features/assets/AssetImportStagingDrawer").then(m => ({ default: m.AssetImportStagingDrawer })))
 const SettingsView = lazy(() => import("./features/settings/SettingsView").then(m => ({ default: m.SettingsView })))
 
 function App() {
@@ -632,6 +633,7 @@ function App() {
 
         <ImportDrawer importState={imp} />
         <AssetImportWizard assetImport={assetImport} />
+        <AssetImportStagingDrawer staging={assetImport.staging} setGlobalNotice={setGlobalNotice} />
         <DataImportPanel canImportData={auth.canImportData} dataImport={dataImport} />
       </Suspense>
     </div>

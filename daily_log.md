@@ -4407,3 +4407,14 @@ Deprecate the `employee_asset_seed` flow at the UI level while keeping the backe
 - Change: `EE_LIST_SYNC_QUERY` also requires `LastWorkingDate IS NULL OR LastWorkingDate >= today`. Owner confirmed the count in SSMS (391); the live HR test now reads 391 rows.
 - Tests: Rust 597/597 (query-text test seen failing first; live HR test floor lowered from 397 to 380).
 - Status: PASS (not yet checked in the running app).
+
+## 2026-11-26 Asset import staging — End
+
+- Branch: `feat/asset-import-staging` (worktree `.worktrees/asset-import-staging`). Coded by Claude in this session.
+- Context: on 2026-11-25 the laptop sheet `Manage Asset VN_Laptop.xlsx` was run through the monitor Historical Assignment import by mistake. Its header scan read the name "Nguyễn Viết Quỳnh Anh" as a "Tại NHÀ" column (contains "nha"), creating 377 junk Monitor assets named after people plus 377 pending borrow requests. Still in the live DB; snapshot `snap_20261125_151435_before_historical_assignment_apply` is the undo point (owner to decide).
+- Problem: `Asset_November.xlsx` (156 rows) was blocked by 7 "serialNumber does not match existing assetCode" errors; 5 differed only by a dash.
+- Change: serialized Asset Import now goes through the existing `asset_import_batches` staging (owner picked this over an in-memory or new-table design). New `AssetImportStagingDrawer`: editable rows (code, name, computer name, brand, model, serial, location, note, condition), Skip per row, filter chips, error rows highlighted. Approve is all-or-nothing (`Cannot approve: {n} rows still have errors`), takes the safety snapshot and deletes the batch; Discard deletes it. The wizard offers Continue / Discard for a waiting batch; loading a file deletes older pending batches.
+- Serial rules (owner: the file is the standard): matching ignores dashes, spaces and case; an existing code with a different or blank serial gets the file's serial on Approve (row note `Serial will update: old → new`); a serial owned by another asset stays an error.
+- Check on a copy of the live DB: Asset_November.xlsx stages with 0 errors, 136 new, 20 existing (2 real serial corrections VNLAP163/VNLAP204, 7 blank serials filled); Approve imported 136 and removed the batch.
+- Tests: cargo 602/602 (+5; `backup::test_move_database_internal_disk_full_fails_closed` flaked once, passes alone), vitest 463/463 (+5 drawer), `tsc -b`, eslint, `vite build` clean.
+- Status: PASS (not yet checked in the running app, light and dark).

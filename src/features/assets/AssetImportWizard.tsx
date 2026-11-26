@@ -44,6 +44,8 @@ function ImportPanel({ assetImport }: AssetImportWizardProps) {
     const inspection = assetImport.inspection
     const preview = assetImport.preview
     const report = assetImport.report
+    const isSerialized = assetImport.selectedImportMode === "serialized"
+    const pending = assetImport.staging.pendingBatch
 
     return (
         <SharedImportShell
@@ -55,11 +57,13 @@ function ImportPanel({ assetImport }: AssetImportWizardProps) {
             chooseButtonBusyLabel="Inspecting..."
             onChooseFiles={() => void assetImport.handlePickImportFile()}
             isChoosingFiles={assetImport.isInspectingFile}
-            primaryActionLabel="Preview Import"
-            primaryActionBusyLabel="Preparing Preview..."
-            onPrimaryAction={() => void assetImport.handlePreviewImport()}
+            primaryActionLabel={isSerialized ? "Load to staging" : "Preview Import"}
+            primaryActionBusyLabel={isSerialized ? "Loading..." : "Preparing Preview..."}
+            onPrimaryAction={() =>
+                void (isSerialized ? assetImport.handleLoadStaging() : assetImport.handlePreviewImport())
+            }
             isPrimaryActionDisabled={!assetImport.canPreviewCurrentFile}
-            isPrimaryActionBusy={assetImport.isPreviewingImport}
+            isPrimaryActionBusy={isSerialized ? assetImport.staging.isBusy : assetImport.isPreviewingImport}
             onClose={assetImport.closeWizard}
             preview={
                 preview
@@ -123,6 +127,32 @@ function ImportPanel({ assetImport }: AssetImportWizardProps) {
                 {assetImport.statusMessage && (
                     <div className="rounded-[8px] border border-[var(--primary)]/35 bg-[var(--primary)]/8 px-3 py-2 text-xs text-[var(--text-primary)]">
                         {assetImport.statusMessage}
+                    </div>
+                )}
+
+                {pending && (
+                    <div className="flex flex-wrap items-center gap-2 rounded-[8px] border border-[var(--border)] bg-[var(--surface-hover)] px-3 py-2 text-xs text-[var(--text-primary)]">
+                        <span className="mr-auto">{`A staged import is waiting: ${pending.sourceFileName} (${pending.totalRows} rows).`}</span>
+                        <button
+                            type="button"
+                            className="rounded-[6px] border border-[var(--border)] px-2 py-1 font-semibold hover:bg-[var(--surface)] disabled:opacity-60"
+                            disabled={assetImport.staging.isBusy}
+                            onClick={() => {
+                                if (window.confirm("Discard the staged import? Its edits are lost and nothing is written.")) {
+                                    void assetImport.staging.discard()
+                                }
+                            }}
+                        >
+                            Discard
+                        </button>
+                        <button
+                            type="button"
+                            className="rounded-[6px] border border-[var(--primary)] px-2 py-1 font-semibold text-[var(--primary)] hover:bg-[var(--primary)]/15 disabled:opacity-60"
+                            disabled={assetImport.staging.isBusy}
+                            onClick={() => void assetImport.handleContinueStaging()}
+                        >
+                            Continue
+                        </button>
                     </div>
                 )}
 
