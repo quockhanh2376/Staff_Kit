@@ -159,7 +159,10 @@ describe("Config Sync settings collapsible panel", () => {
             "synthetic-test-secret",
         ))
 
-        fireEvent.click(screen.getByRole("button", { name: "Test Connection" }))
+        // Save keeps every action button disabled until it finishes; a click before then is ignored.
+        const testButton = screen.getByRole("button", { name: "Test Connection" })
+        await waitFor(() => expect(testButton).toHaveProperty("disabled", false))
+        fireEvent.click(testButton)
         const connectedBtn = await screen.findByRole("button", { name: "✓ Connected" })
         expect(connectedBtn).toBeTruthy()
         expect(connectedBtn.className).toContain("bg-emerald-600")
